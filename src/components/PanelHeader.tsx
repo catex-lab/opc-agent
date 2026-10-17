@@ -71,13 +71,21 @@ export function PanelHeader({
 
   return (
     <header
-      className={`flex shrink-0 flex-col ${className}`}
+      className={`flex shrink-0 flex-col justify-center ${className}`}
       style={{
         minHeight: 'var(--panel-header-height)',
+        // 标题栏用 container 白底。
+        //
+        // 主区内容区是 page 灰底（--td-bg-color-page），标题栏原先不设背景、
+        // 直接透出这层灰 —— 结果标题栏和下面的内容糊成一片，看不出
+        // 「这是页面的头」，整屏也缺少层次。
+        // 左栏本来就是 container 白底，加上这个不会有变化，反而让左右两侧
+        // 的栏头在同一水平线上连成一条完整的白带。
+        backgroundColor: 'var(--td-bg-color-container)',
         ...(divider ? { borderBottom: '1px solid var(--td-component-stroke)' } : {}),
       }}
     >
-      <div className={`flex items-center gap-3 ${isPage ? 'px-6 py-4' : 'px-4 pt-2'}`}>
+      <div className={`flex items-center gap-3 ${isPage ? 'px-6 py-5' : 'px-4 pt-2'}`}>
         {leading}
 
         <div className="min-w-0 flex-1">

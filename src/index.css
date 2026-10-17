@@ -289,10 +289,12 @@ button:focus-visible {
   --leading-loose: 1.7;
 
   /* ── 标题栏统一高度 ──
-     主区标题栏 = 上下 py-4(32) + 标题行 24 + 间距 2 + 副标题 18 = 76，取 77 兜住像素误差。
+     主区标题栏 = 上下 py-5(40) + 标题行 24 + 间距 2 + 副标题 18 = 84，
+     取 88 兜住像素误差，多出的 4px 由 flex 居中分配（上下各 2px 呼吸）。
      窄栏（左栏「消息」）也用这个值，好让两侧的底边线在同一水平线上对齐 ——
-     不对齐会显得两个标题栏各说各话。窄栏内容靠 flex 在 77px 内分配。 */
-  --panel-header-height: 77px;
+     不对齐会显得两个标题栏各说各话。窄栏内容靠 flex 在 88px 内分配。
+     原值 77 偏紧，标题与底边线之间几乎没有留白，看起来像被压扁。 */
+  --panel-header-height: 88px;
 
   /* ── 阴影（只做分层，不做装饰）── */
   --shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.02);
@@ -468,6 +470,13 @@ button:focus-visible {
   font-size: var(--text-secondary);
   color: var(--td-text-color-placeholder);
   line-height: var(--leading-normal);
+}
+
+/* 资料页的信息行容器：只在相邻行之间画分割线，首行不画。
+   用 :not(:first-child) 而不是给每行加 border-top，是为了让圆角不被
+   首行顶部的线切开。 */
+.tc-detail-rows > * + * {
+  border-top: 1px solid var(--td-component-stroke);
 }
 
 /* ── 按钮 ──

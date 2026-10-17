@@ -9,3 +9,10 @@ release-p*/
 *.log
 .DS_Store
 Thumbs.db
+
+# 构建缓存：每次 tsc -b 都会重写，内容无意义，提交只会制造噪音
+*.tsbuildinfo
+
+# 验证脚本的截图产物：每次跑 verify:* 都会整批重写。
+# 它们是「给人看的证据」，不是需要版本化的资产 —— 留在磁盘上即可。
+.render-check/

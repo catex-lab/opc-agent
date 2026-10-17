@@ -15,6 +15,7 @@ import { type PermissionMode, type CustomAgent, type Session, type Model, type O
 import { NavRail, type NavKey } from './components/NavRail';
 import { ConversationList, markSessionRead } from './components/ConversationList';
 import { ContactsPanel } from './components/ContactsPanel';
+import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { ChatHeader } from './components/ChatHeader';
 import { SettingsPage } from './components/SettingsPage';
 import type { Message } from './types';
@@ -53,6 +54,14 @@ function AppContent() {
   const isSettingsPage = location.pathname === '/settings';
 
   const [nav, setNav] = useState<NavKey>('chats');
+  /**
+   * 正在查看资料的 Agent（通讯录点进去的二级页）。
+   *
+   * 用独立 state 而不是路由：资料页是「从通讯录临时点开看一眼」的浮层式
+   * 二级页，关掉就回到原处。走路由会污染浏览历史 —— 用户按浏览器后退
+   * 会退到上一个 Agent 的资料页，而不是离开通讯录。
+   */
+  const [detailAgentId, setDetailAgentId] = useState<string | null>(null);
 
   // Hooks
   const { theme, toggleTheme } = useTheme();
@@ -129,6 +138,9 @@ function AppContent() {
   // 当前会话绑定的 Agent
   const currentAgent = registry.getAgent(currentSession?.agentId);
   const currentAgentId = currentAgent?.id;
+  // 通讯录点开的资料页对象。名册刷新后若该 Agent 消失，这里自然变 undefined，
+  // 资料页随之退回空态，不会停在一个已不存在的人身上。
+  const detailAgent = detailAgentId ? registry.getAgent(detailAgentId) : undefined;
   // P4：当前会话绑定的场景（有则在头部显示场景标签）
   const currentScenario = getScenario(currentSession?.scenarioId);
 
@@ -245,6 +257,8 @@ function AppContent() {
   /** 从通讯录发起一对一对话：先建一个空的本地会话，首条消息发出时后端落库 */
   const handleStartChatWith = useCallback(
     (agentId: string) => {
+      // 从资料页点「发消息」时，资料页要让位给会话
+      setDetailAgentId(null);
       const existing = sessions.find(s => s.agentId === agentId);
       if (existing) {
         handleSelectSession(existing.id);
@@ -274,6 +288,8 @@ function AppContent() {
 
   const handleNavigate = useCallback((key: NavKey) => {
     setNav(key);
+    // 切换主导航时关掉资料页：否则点「聊天」后右侧还停在上一个 Agent 的资料
+    setDetailAgentId(null);
     if (key === 'contacts') navigate('/');
   }, [navigate]);
 
@@ -409,8 +425,8 @@ function AppContent() {
               probing={registry.probing}
               error={registry.error}
               onProbe={registry.probe}
-              onStartChat={handleStartChatWith}
               onCreateGroup={handleCreateGroup}
+              onViewDetail={setDetailAgentId}
             />
           )}
 
@@ -419,7 +435,13 @@ function AppContent() {
             className="flex min-w-0 flex-1 flex-col"
             style={{ backgroundColor: 'var(--td-bg-color-page)' }}
           >
-            {currentSession ? (
+            {detailAgent ? (
+              <AgentDetailPanel
+                agent={detailAgent}
+                onBack={() => setDetailAgentId(null)}
+                onStartChat={handleStartChatWith}
+              />
+            ) : currentSession ? (
               <>
                 {/*
                   群聊用自己的头部（成员堆叠 + 编排模式），由 ChatPage 内部渲染；

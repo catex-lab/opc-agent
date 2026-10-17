@@ -1,5 +1,4 @@
 import { MessageCircle, Users, Settings, Sun, Moon } from 'lucide-react';
-import { APP_CONFIG } from '../config';
 import type { Theme } from '../types';
 
 export type NavKey = 'chats' | 'contacts';
@@ -56,16 +55,10 @@ export function NavRail({
         borderRight: '1px solid var(--td-component-stroke)',
       }}
     >
-      {/* 应用标识 —— 名称/首字母统一取自 APP_CONFIG，避免与其它页面不一致 */}
-      <div
-        className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl text-title font-bold text-white shadow-card"
-        style={{ background: 'linear-gradient(135deg, var(--td-brand-color), var(--td-brand-color-hover))' }}
-        title={APP_CONFIG.name}
-      >
-        {APP_CONFIG.nameInitial}
-      </div>
-
-      {/* 主导航 */}
+      {/* 主导航。
+          原先这里有个品牌色「OP」方块，与窗口标题栏、通讯录头部重复表达
+          「这是哪个应用」，且把第一个导航项往下顶 —— 去掉后导航条从顶部
+          直接开始，视觉更干净。应用名由窗口标题承担。 */}
       <div className="flex flex-col items-center gap-1">
         {navItems.map(({ key, icon: Icon, label, badge }) => {
           const active = isActive(key);

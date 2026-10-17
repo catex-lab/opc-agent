@@ -143,16 +143,29 @@ await page.waitForTimeout(1400);
   check('模型下拉显示平台模型', selectText > 0);
 }
 
-console.log('\n[3] unreachable 状态在通讯录的呈现');
+console.log('\n[3] unreachable 状态在资料页的呈现');
 await page.goto(`${base}/`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(600);
-const openBtn = page.locator("text=打开通讯录").first(); const oc = await openBtn.count(); console.log("  打开通讯录按钮:", oc); if (oc) await openBtn.click(); await page.waitForTimeout(1200);
-await page.waitForTimeout(1400);
+const openBtn = page.locator("text=打开通讯录").first(); const oc = await openBtn.count(); console.log("  打开通讯录按钮:", oc); if (oc) await openBtn.click(); await page.waitForTimeout(1400);
 {
-  const dump = await page.evaluate(() => document.body.innerText.slice(0, 1200));
-  console.log("  --- 页面文本 ---\n" + dump.split("\n").filter(Boolean).slice(0, 30).map(l => "    " + l).join("\n"));
+  // 通讯录行现在只留「头像 + 名称 + 在线圆点」，状态文字收进了二级资料页。
+  // 所以必须先点进 Codex 的资料页再断言 —— 直接在列表里找「网络不通」会
+  // 永远找不到，而那正是这次改版的目的（列表不承载详情）。
+  const row = page.locator('button:has-text("Codex")').first();
+  const rc = await row.count();
+  check('通讯录能定位到 Codex 行', rc > 0, `matches=${rc}`);
+  if (rc) {
+    await row.click();
+    await page.waitForTimeout(800);
+  }
+
   const lbl = await page.locator("text=网络不通").count();
-  check('显示「网络不通」而不是「未接入/未探测」', lbl > 0, `matches=${lbl}`);
+  check('资料页显示「网络不通」而不是「未接入/未探测」', lbl > 0, `matches=${lbl}`);
+
+  // 反向断言：列表行里不该再出现厂商名。否则说明详情信息又漏回列表了，
+  // 改版等于白做 —— 这类「改回去了但没人发现」只能靠反向断言兜住。
+  const vendorInRow = await page.locator('button:has-text("Codex")').locator("text=OpenAI").count();
+  check('列表行不再显示厂商等详情', vendorInRow === 0, `matches=${vendorInRow}`);
 }
 
 check('无控制台错误', errors.length === 0, errors.slice(0, 3).join(' | '));
