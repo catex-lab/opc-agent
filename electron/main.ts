@@ -17,8 +17,9 @@
  *   那一层，天然早于所有模块初始化。
  */
 
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, screen, shell } from 'electron';
 import { once } from 'node:events';
+import { join } from 'node:path';
 import { server } from '../server/index.js';
 import { registry } from '../server/agents/registry.js';
 
@@ -45,6 +46,18 @@ if (process.env.OPC_SAFE_GRAPHICS === '1') {
 
 /** 开发态由 Vite 提供前端；打包态为空字符串，走进程内托管的 dist */
 const DEV_URL = process.env.OPC_DEV_SERVER_URL || '';
+
+/**
+ * Windows 任务栏图标的分组与通知归属靠 AppUserModelID 识别。
+ *
+ * 打包态 electron-builder 会按 appId 把它写进 exe，但开发态（npx electron .）
+ * 没有这层信息 —— 结果是任务栏上显示 Electron 默认的原子图标，
+ * 而且系统通知会归到「Electron」名下而不是本应用。
+ * 显式设置一次，两种形态就一致了。appId 必须与 electron-builder.yml 保持一致。
+ */
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.opc.agent');
+}
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -87,11 +100,38 @@ async function loadWithRetry(win: BrowserWindow, url: string, attempts = 30) {
 async function createWindow() {
   const url = await resolveAppUrl();
 
+  /**
+   * 默认窗口尺寸：按屏幕工作区取比例，再夹到合理区间。
+   *
+   * 原先写死 1360×900。在 1920×1080 上占 71% 看着还行，但在 1440×900、
+   * 1366×768 这类笔记本屏上几乎铺满整个桌面 —— 最大化按钮按下去几乎没变化，
+   * 等于失去了意义。
+   *
+   * 现在按工作区（已扣除任务栏）的 75% 算，再夹到 [960,1280] × [600,820]：
+   *   1920×1080 → 1280×820（约 67% × 76%，四周留出明显桌面）
+   *   1440×900  → 1080×675
+   *   1366×768  → 1024×600（触到下限，但仍不顶屏幕边缘）
+   * 用户上一次手动调整的尺寸仍由 Electron 自己记忆，这里只管首次启动。
+   */
+  const { workAreaSize } = screen.getPrimaryDisplay();
+  const width = Math.max(960, Math.min(1280, Math.round(workAreaSize.width * 0.75)));
+  const height = Math.max(600, Math.min(820, Math.round(workAreaSize.height * 0.75)));
+
+  console.log(
+    `[Main] 窗口 ${width}x${height}（工作区 ${workAreaSize.width}x${workAreaSize.height}，` +
+      `占 ${Math.round((width / workAreaSize.width) * 100)}% x ${Math.round((height / workAreaSize.height) * 100)}%）`
+  );
+
   mainWindow = new BrowserWindow({
-    width: 1360,
-    height: 900,
+    width,
+    height,
     minWidth: 960,
-    minHeight: 640,
+    minHeight: 600,
+    center: true,
+    // 窗口左上角与任务栏都用它。图标由 scripts/build-electron.mjs 拷到
+    // dist-electron/ —— 不能指向 build/icon.png，那个目录是构建资源、
+    // 不进 app.asar，打包态会静默失效。
+    icon: join(__dirname, 'icon.png'),
     show: false, // 等首帧渲染完再显示，避免白屏闪一下
     autoHideMenuBar: true,
     title: 'OPC Agent',

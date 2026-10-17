@@ -1,8 +1,9 @@
 node_modules/
 dist/
 dist-electron/
+release/
 release-out/
-release-p5*/
+release-p*/
 .trash-*/
 .tmp/
 *.log

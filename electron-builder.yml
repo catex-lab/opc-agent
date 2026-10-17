@@ -24,6 +24,9 @@ files:
   - dist-electron/**
   - node_modules/**
   - package.json
+  # 注意：窗口图标不在这里列。build/ 是 buildResources 目录，electron-builder
+  # 不会把它的内容复制进 app.asar —— 列了也无效。窗口图标由 build-electron.mjs
+  # 拷进 dist-electron/icon.png，随 dist-electron/** 一起进包。
   - '!**/*.map'
   - '!**/*.ts'
   - '!**/*.tsbuildinfo'
@@ -58,6 +61,17 @@ nodeGypRebuild: false
 buildDependenciesFromSource: false
 
 win:
+  # 应用图标（多尺寸 .ico，由 scripts/make-icons.py 从源图生成）。
+  #
+  # 这一处同时决定了五件事，所以必须配：
+  #   • exe 文件本身的图标（资源管理器里看到的）
+  #   • 安装包 / 便携版的图标
+  #   • 桌面快捷方式、开始菜单快捷方式
+  #   • 任务栏固定项
+  #   • Alt+Tab 切换器
+  # 不配的话 electron-builder 会用 Electron 默认的原子图标。
+  # 它虽然也会自动找 build/icon.ico，但显式写出来，换路径时不会静默失效。
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]

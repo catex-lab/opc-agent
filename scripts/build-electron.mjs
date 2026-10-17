@@ -38,4 +38,20 @@ await build({
 // 所以不能参与打包，直接原样拷过去。
 await cp('electron/bootstrap.cjs', `${OUT_DIR}/bootstrap.cjs`);
 
+/**
+ * 窗口图标要拷一份到 dist-electron/。
+ *
+ * 不能直接从 build/icon.png 读：`build/` 是 electron-builder 的 buildResources
+ * 目录，它**只用于构建期**（生成 exe 图标、安装包图标），不会被复制进 app.asar。
+ * 主进程在打包态去读 app.asar/build/icon.png 会拿到不存在的路径，
+ * BrowserWindow 的 icon 静默失效（不报错，只是回退成默认图标）。
+ *
+ * dist-electron/** 是被打进 asar 的，放在这里两种形态都能读到同一个相对路径。
+ */
+try {
+  await cp('build/icon.png', `${OUT_DIR}/icon.png`);
+} catch {
+  console.warn('⚠ 未找到 build/icon.png，跳过窗口图标（先运行 scripts/make-icons.py）');
+}
+
 console.log(`✓ ${OUT_DIR}/main.cjs + bootstrap.cjs 构建完成`);
