@@ -1,0 +1,884 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== 主题变量 ===== */
+:root {
+  /* Light Theme */
+  --color-primary: 23 23 23;
+  --color-primary-foreground: 255 255 255;
+  --color-background: 255 255 255;
+  --color-foreground: 23 23 23;
+  --color-muted: 245 245 245;
+  --color-muted-foreground: 115 115 115;
+  --color-border: 229 229 229;
+  --color-input: 250 250 250;
+  --color-card: 250 250 250;
+  --color-card-foreground: 23 23 23;
+  /* 腾讯品牌蓝 #0052D9 → RGB 分量写法，供 rgb(var(--color-accent)) 取用 */
+  --color-accent: 0 82 217;
+  --color-accent-foreground: 255 255 255;
+}
+
+:root.dark {
+  /* Dark Theme */
+  --color-primary: 255 255 255;
+  --color-primary-foreground: 23 23 23;
+  --color-background: 18 18 18;
+  --color-foreground: 250 250 250;
+  --color-muted: 38 38 38;
+  --color-muted-foreground: 163 163 163;
+  --color-border: 64 64 64;
+  --color-input: 38 38 38;
+  --color-card: 28 28 28;
+  --color-card-foreground: 250 250 250;
+  --color-accent: 69 138 255;
+  --color-accent-foreground: 23 23 23;
+}
+
+/* ===== 基础样式 ===== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  background-color: rgb(var(--color-background));
+  color: rgb(var(--color-foreground));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* ===== 原生控件外观重置 =====
+   Tailwind 的 preflight 被显式关闭（tailwind.config.js 里
+   `corePlugins.preflight = false`），因此浏览器**默认控件外观**会保留：
+     · 未设置背景的 <button> 会铺一层灰色 buttonface（#f0f0f0）——
+       导航条的主题切换按钮因此变成一块灰白方块，深色界面里格外突兀；
+     · 未设置边框的 <input> 会带一圈原生边框（Chrome 下是黑色细线）——
+       会话列表与通讯录的搜索框因此被描了一圈黑边。
+
+   这里只补回「外观型」属性，不涉及布局：
+     · 特异性仅 (0,0,1)，TDesign 的 `.t-button` / `.t-input__inner` 等
+       (0,1,0) 仍然覆盖它，组件库不受影响；
+     · 需要底色/边框的业务控件依旧靠自身的 class 或内联样式决定。 */
+button,
+input,
+textarea,
+select {
+  background-color: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* 原生控件原本靠 `outline-none` 关掉了聚焦轮廓，键盘用户会失去焦点位置。
+   这里用 :focus-visible 只对键盘操作补回品牌色轮廓（鼠标点击不显示），
+   特异性 (0,1,1) 高于 `.outline-none` 的 (0,1,0)，因此确实生效。 */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--td-brand-color);
+  outline-offset: 1px;
+}
+
+/* ===== 自定义滚动条 ===== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-border));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-muted-foreground));
+}
+
+/* ===== TDesign 全局 CSS 变量覆盖 ===== */
+:root {
+  /* 品牌色 —— 腾讯蓝 #0052D9
+     hover 用 #0594FA（腾讯官网链接色，比纯提亮更有「电子感」），
+     active 用 #003FB3（同色相压暗，避免变灰）。 */
+  --td-brand-color: #0052d9;
+  --td-brand-color-hover: #0594fa;
+  --td-brand-color-active: #003fb3;
+  --td-brand-color-focus: rgba(0, 82, 217, 0.2);
+  --td-brand-color-disabled: rgba(0, 82, 217, 0.35);
+  /* 浅色底：腾讯界面里品牌色的「选中态」底衬比通用组件底色更淡，
+     0.08 比 0.1 更克制，长列表选中时不刺眼 */
+  --td-brand-color-light: rgba(0, 82, 217, 0.08);
+  --td-brand-color-light-hover: rgba(0, 82, 217, 0.12);
+  --td-brand-color-1: rgba(0, 82, 217, 0.08);
+  --td-brand-color-2: rgba(0, 82, 217, 0.16);
+  --td-brand-color-6: #0052d9;
+  --td-brand-color-7: #0594fa;
+  --td-brand-color-8: #003fb3;
+  
+  /* 背景色 - 浅色模式 */
+  --td-bg-color-page: #ffffff;
+  --td-bg-color-container: #fafafa;
+  --td-bg-color-container-hover: #f5f5f5;
+  --td-bg-color-container-active: #eeeeee;
+  --td-bg-color-secondarycontainer: #f5f5f5;
+  --td-bg-color-secondarycontainer-hover: #eeeeee;
+  --td-bg-color-component: #f5f5f5;
+  --td-bg-color-component-hover: #eeeeee;
+  --td-bg-color-component-disabled: #f5f5f5;
+  
+  /* 文字色 - 浅色模式 */
+  --td-text-color-primary: #171717;
+  --td-text-color-secondary: #737373;
+  --td-text-color-placeholder: #a3a3a3;
+  --td-text-color-disabled: #d4d4d4;
+  --td-text-color-anti: #ffffff;
+  
+  /* 边框色 - 浅色模式 */
+  --td-border-level-1-color: #e5e5e5;
+  --td-border-level-2-color: #d4d4d4;
+  --td-component-stroke: #e5e5e5;
+  --td-component-border: #e5e5e5;
+  
+  /* 遮罩 */
+  --td-mask-active: rgba(0, 0, 0, 0.6);
+  --td-mask-disabled: rgba(255, 255, 255, 0.6);
+  
+  /* 阴影 —— 腾讯式的「两层叠加」：一层贴边定轮廓，一层扩散给高度。
+     不用 Tailwind 那种三层堆叠，避免多层半透明叠加后边缘发灰。 */
+  --td-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 6px -1px rgba(0, 0, 0, 0.04);
+  --td-shadow-2: 0 2px 6px rgba(0, 0, 0, 0.05), 0 8px 20px -4px rgba(0, 0, 0, 0.06);
+  --td-shadow-3: 0 4px 12px rgba(0, 0, 0, 0.06), 0 16px 40px -8px rgba(0, 0, 0, 0.1);
+  
+  /* 圆角 */
+  --td-radius-small: 4px;
+  --td-radius-default: 6px;
+  --td-radius-medium: 8px;
+  --td-radius-large: 12px;
+  --td-radius-extraLarge: 16px;
+
+  /* Agent 头像底衬（见 components/AgentAvatar.tsx）
+     必须是浅色且两个主题下都保持浅色：hermes / zcode / qoder 的官方 SVG
+     用 currentColor，在 <img> 里会解析成纯黑，垫深色底会直接看不见。
+     浅色主题下页面本身是 #ffffff，所以靠一圈深色细边把圆勾出来。 */
+  --agent-logo-tile: #ffffff;
+  --agent-logo-tile-ring: rgba(0, 0, 0, 0.08);
+}
+
+/* =====================================================================
+   深色模式 TDesign 变量
+
+   ⚠️ 选择器必须写 `:root.dark`，不能只写 `.dark`。
+
+   TDesign 自带的深色主题用的是：
+       :root.dark, :root[theme-mode='dark'] { --td-brand-color: ... }
+   特异性 (0,2,0)；而裸 `.dark` 只有 (0,1,0)。特异性更高的规则优先，
+   **与加载顺序无关**，所以裸 `.dark` 里覆盖的每一个 TDesign 变量都会失效。
+
+   实测（浏览器计算样式，非推断）：
+       裸 `.dark` 时  --td-brand-color = #4582e6  ← TDesign 的值
+                      --td-bg-color-page = #181818 ← TDesign 的值
+                      --td-error-color   = #c64751 ← TDesign 的值
+       改成 `:root.dark` 后才会取到本文件声明的值。
+
+   本文件在打包产物中位于 TDesign 样式之后，因此同特异性下由本文件胜出。
+   ===================================================================== */
+:root.dark {
+  /* 品牌色 —— 深色下不能直接用 #0052D9（在 #121212 上饱和度太低、显脏），
+     提亮到 #4589FF 保住腾讯蓝的色相，同时满足 4.5:1 对比度。 */
+  --td-brand-color: #4589ff;
+  --td-brand-color-hover: #6ba4ff;
+  --td-brand-color-active: #0052d9;
+  --td-brand-color-focus: rgba(69, 137, 255, 0.28);
+  --td-brand-color-disabled: rgba(69, 137, 255, 0.3);
+  --td-brand-color-light: rgba(69, 137, 255, 0.14);
+  --td-brand-color-light-hover: rgba(69, 137, 255, 0.2);
+  --td-brand-color-1: rgba(69, 137, 255, 0.14);
+  --td-brand-color-2: rgba(69, 137, 255, 0.24);
+  --td-brand-color-6: #4589ff;
+  --td-brand-color-7: #6ba4ff;
+  --td-brand-color-8: #0052d9;
+  
+  /* 背景色 - 深色模式 */
+  --td-bg-color-page: #121212;
+  --td-bg-color-container: #1c1c1c;
+  --td-bg-color-container-hover: #262626;
+  --td-bg-color-container-active: #303030;
+  --td-bg-color-secondarycontainer: #262626;
+  --td-bg-color-secondarycontainer-hover: #303030;
+  --td-bg-color-component: #262626;
+  --td-bg-color-component-hover: #303030;
+  --td-bg-color-component-disabled: #262626;
+  
+  /* 文字色 - 深色模式 */
+  --td-text-color-primary: #fafafa;
+  --td-text-color-secondary: #a3a3a3;
+  --td-text-color-placeholder: #737373;
+  --td-text-color-disabled: #525252;
+  --td-text-color-anti: #171717;
+  
+  /* 边框色 - 深色模式 */
+  --td-border-level-1-color: #404040;
+  --td-border-level-2-color: #525252;
+  --td-component-stroke: #404040;
+  --td-component-border: #404040;
+  
+  /* 遮罩 - 深色模式 */
+  --td-mask-active: rgba(0, 0, 0, 0.8);
+  --td-mask-disabled: rgba(38, 38, 38, 0.6);
+  
+  /* 阴影 - 深色模式：透明度提高，否则在 #1c1c1c 上完全看不出浮层 */
+  --td-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 6px -1px rgba(0, 0, 0, 0.24);
+  --td-shadow-2: 0 2px 6px rgba(0, 0, 0, 0.34), 0 8px 20px -4px rgba(0, 0, 0, 0.32);
+  --td-shadow-3: 0 4px 12px rgba(0, 0, 0, 0.4), 0 16px 40px -8px rgba(0, 0, 0, 0.44);
+
+  /* Agent 头像底衬：深色主题下仍保持浅色，只比纯白压暗一点点，
+     避免一大片纯白圆点在暗色界面里刺眼 */
+  --agent-logo-tile: #f2f2f2;
+  --agent-logo-tile-ring: rgba(255, 255, 255, 0.10);
+}
+
+/* =====================================================================
+   腾讯风格设计 Token（Design System Foundation）
+   设计原则：克制 / 清晰 / 高效
+   · 8pt 间距网格，节奏统一
+   · 层级化字号（caption → page），杜绝随手写 px
+   · 阴影只做「分层」，不做「装饰」
+   · 动效统一缓出曲线，时长 150–250ms
+   ===================================================================== */
+:root {
+  /* ── 间距（8pt 网格）── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* ── 字号层级（7 档，覆盖全场景）── */
+  --text-caption: 11px;   /* 角标 / 说明文字 */
+  --text-secondary: 12px; /* 辅助信息 / 时间戳 */
+  --text-body: 13px;      /* 正文 / 列表项 */
+  --text-body-lg: 14px;   /* 正文放大 / 卡片标题 */
+  --text-title: 15px;     /* 区块标题 */
+  --text-title-lg: 16px;  /* 页面标题 */
+  --text-page: 17px;      /* 顶部大标题 */
+
+  /* ── 行高（与字号绑定，避免每处手写）── */
+  --leading-tight: 1.4;
+  --leading-normal: 1.5;
+  --leading-loose: 1.7;
+
+  /* ── 标题栏统一高度 ──
+     主区标题栏 = 上下 py-4(32) + 标题行 24 + 间距 2 + 副标题 18 = 76，取 77 兜住像素误差。
+     窄栏（左栏「消息」）也用这个值，好让两侧的底边线在同一水平线上对齐 ——
+     不对齐会显得两个标题栏各说各话。窄栏内容靠 flex 在 77px 内分配。 */
+  --panel-header-height: 77px;
+
+  /* ── 阴影（只做分层，不做装饰）── */
+  --shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.02);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02);
+  --shadow-popup: 0 6px 16px -8px rgba(0, 0, 0, 0.08), 0 9px 28px rgba(0, 0, 0, 0.05);
+  --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.1), 0 2px 8px rgba(0, 0, 0, 0.04);
+  /* 深色下的投影更重，否则卡片会「浮」不起来 */
+  --shadow-card-dark: 0 1px 2px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.12);
+
+  /* ── 动效（统一缓出曲线）── */
+  --ease-tencent: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 250ms;
+
+  /* ── 语义色（TDesign 未内置的浅色底 + 主色组合）── */
+  /* 注意：组件里大量使用 var(--td-error-color) / var(--td-success-color) /
+     var(--td-warning-color) 这类**无后缀**变量名，而 TDesign 官方只提供
+     -1~-10 的色阶。这里必须把无后缀的基色一并补齐，否则那些引用会解析
+     失败、直接掉到浏览器默认色（黑/透明），表现为「未读红点看不见」。 */
+  --td-success-color: #2ba471;
+  --td-success-color-hover: #3dbb85;
+  --td-success-color-active: #1f8a5c;
+  --td-success-color-1: rgba(45, 162, 102, 0.08);
+  --td-success-color-2: rgba(45, 162, 102, 0.16);
+  --td-success-color-6: #2ba471;
+
+  --td-warning-color: #ed7b2f;
+  --td-warning-color-hover: #f5943f;
+  --td-warning-color-active: #d2661f;
+  --td-warning-color-1: rgba(237, 123, 47, 0.08);
+  --td-warning-color-2: rgba(237, 123, 47, 0.16);
+  --td-warning-color-6: #ed7b2f;
+
+  --td-error-color: #e34d59;
+  --td-error-color-hover: #e8646f;
+  --td-error-color-active: #c93b46;
+  --td-error-color-1: rgba(227, 77, 89, 0.06);
+  --td-error-color-2: rgba(227, 77, 89, 0.14);
+  --td-error-color-6: #e34d59;
+
+  /* 中性补充色：TDesign 的 tertiary/disabled 在自定义组件里也常被引用 */
+  --td-text-color-tertiary: #8b8b8b;
+
+  /* 工具调用的分类色：全部取自腾讯调色板，替代原先混入的 Ant Design 色。
+     用变量而非字面量，深色模式下才能统一提亮。 */
+  --tool-color-search: #0052d9;   /* 搜索 / 检索 */
+  --tool-color-network: #0594fa;  /* 联网抓取 */
+  --tool-color-file: #834ec2;     /* 读写文件 */
+  --tool-color-shell: #0e7a5f;    /* 命令执行 */
+  --tool-color-danger: #d54941;   /* 删除等破坏性操作 */
+  --tool-color-task: #e37318;     /* 任务 / 计划 */
+  --tool-color-skill: #0e7a5f;    /* 技能调用 */
+}
+
+:root.dark {
+  /* 深色下同样需要一份可读的语义色与分类色 */
+  --td-success-color: #2ba471;
+  --td-warning-color: #ed7b2f;
+  --td-error-color: #e34d59;
+  --td-text-color-tertiary: #8b8b8b;
+
+  --tool-color-search: #4589ff;
+  --tool-color-network: #3aa6ff;
+  --tool-color-file: #a06ce0;
+  --tool-color-shell: #2aa87f;
+  --tool-color-danger: #e8646f;
+  --tool-color-task: #f5943f;
+  --tool-color-skill: #2aa87f;
+}
+
+
+:root.dark {
+  --shadow-card: var(--shadow-card-dark);
+  --shadow-popup: 0 6px 16px -8px rgba(0, 0, 0, 0.3), 0 9px 28px rgba(0, 0, 0, 0.2);
+  --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+/* =====================================================================
+   腾讯风格通用组件类
+   供业务组件直接取用，把重复的内联样式收拢成一条 class。
+   ===================================================================== */
+
+/* 通用卡片：浅边框 + 极淡投影 + hover 抬升 */
+.tc-card {
+  background-color: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-medium);
+  box-shadow: var(--shadow-card);
+  transition:
+    box-shadow var(--duration-base) var(--ease-tencent),
+    border-color var(--duration-base) var(--ease-tencent),
+    transform var(--duration-base) var(--ease-tencent);
+}
+
+.tc-card--interactive:hover {
+  border-color: var(--td-brand-color);
+  box-shadow: var(--shadow-popup);
+}
+
+/* 通用列表项：hover 背景 + 激活态 */
+.tc-list-item {
+  border-radius: var(--td-radius-medium);
+  transition:
+    background-color var(--duration-fast) var(--ease-tencent),
+    color var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-list-item:hover:not(.is-active) {
+  background-color: var(--td-bg-color-component-hover);
+}
+
+.tc-list-item.is-active {
+  background-color: var(--td-brand-color-light);
+}
+
+/* 通用图标按钮：方形圆角，尺寸统一由组件控制 */
+.tc-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--td-radius-medium);
+  transition:
+    background-color var(--duration-fast) var(--ease-tencent),
+    color var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-icon-btn:hover {
+  background-color: var(--td-bg-color-component-hover);
+  color: var(--td-text-color-primary);
+}
+
+/* 分区标题：小号字重 600 + 次级色，腾讯典型的节标题样式 */
+.tc-section-title {
+  font-size: var(--text-title);
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+  letter-spacing: 0.01em;
+}
+
+/* 弱化说明文字 */
+.tc-hint {
+  font-size: var(--text-secondary);
+  color: var(--td-text-color-placeholder);
+  line-height: var(--leading-normal);
+}
+
+/* 头像外圈描边：让浅色 logo 在深色背景下仍有轮廓 */
+.tc-avatar-ring {
+  box-shadow: inset 0 0 0 1px var(--agent-logo-tile-ring);
+}
+
+/* ===== TDesign Select 选择器 ===== */
+.t-select__wrap {
+  background-color: var(--td-bg-color-component) !important;
+  border-color: var(--td-component-stroke) !important;
+  border-radius: var(--td-radius-default) !important;
+}
+
+.t-select__wrap:hover {
+  border-color: var(--td-brand-color) !important;
+}
+
+.t-select__wrap.t-is-focused {
+  border-color: var(--td-brand-color) !important;
+  box-shadow: 0 0 0 2px var(--td-brand-color-light) !important;
+}
+
+.t-input {
+  background-color: var(--td-bg-color-component) !important;
+  border-color: var(--td-component-stroke) !important;
+  color: var(--td-text-color-primary) !important;
+  border-radius: var(--td-radius-default) !important;
+}
+
+.t-input:hover {
+  border-color: var(--td-brand-color) !important;
+}
+
+.t-input.t-is-focused,
+.t-input:focus-within {
+  border-color: var(--td-brand-color) !important;
+  box-shadow: 0 0 0 2px var(--td-brand-color-light) !important;
+}
+
+.t-input__inner {
+  color: var(--td-text-color-primary) !important;
+  background: transparent !important;
+}
+
+.t-input__inner::placeholder {
+  color: var(--td-text-color-placeholder) !important;
+}
+
+.t-select-input {
+  background-color: transparent !important;
+}
+
+.t-select-input__wrap {
+  color: var(--td-text-color-primary) !important;
+}
+
+.t-select-input .t-input__suffix-icon {
+  color: var(--td-text-color-secondary) !important;
+}
+
+/* Select 下拉弹窗 */
+.t-popup__content {
+  background-color: var(--td-bg-color-container) !important;
+  border: 1px solid var(--td-component-stroke) !important;
+  border-radius: var(--td-radius-medium) !important;
+  box-shadow: var(--td-shadow-2) !important;
+}
+
+.t-select__list {
+  background-color: transparent !important;
+  padding: 4px !important;
+}
+
+.t-select-option {
+  color: var(--td-text-color-primary) !important;
+  background-color: transparent !important;
+  border-radius: var(--td-radius-small) !important;
+  margin: 2px 0 !important;
+}
+
+.t-select-option:hover,
+.t-select-option.t-is-hover {
+  background-color: var(--td-bg-color-component-hover) !important;
+}
+
+.t-select-option.t-is-selected {
+  background-color: var(--td-brand-color-light) !important;
+  color: var(--td-brand-color) !important;
+}
+
+.t-select-option.t-is-selected:hover {
+  background-color: var(--td-brand-color-light) !important;
+}
+
+/* ===== Select 下拉弹窗 —— 模型选择器专用增强 ===== */
+.model-select-popup .t-select__list,
+.permission-select-popup .t-select__list {
+  padding: 4px !important;
+}
+
+.model-select-popup .t-select-option,
+.permission-select-popup .t-select-option {
+  padding: 6px 10px !important;
+  border-radius: var(--td-radius-small) !important;
+  margin: 1px 0 !important;
+}
+
+.model-select-popup .t-select-option:hover,
+.model-select-popup .t-select-option.t-is-hover,
+.permission-select-popup .t-select-option:hover,
+.permission-select-popup .t-select-option.t-is-hover {
+  background-color: var(--td-bg-color-component-hover) !important;
+}
+
+.model-select-popup .t-select-option.t-is-selected,
+.permission-select-popup .t-select-option.t-is-selected {
+  background-color: var(--td-brand-color-light) !important;
+  color: var(--td-brand-color) !important;
+}
+
+/* Select 触发器 —— medium 尺寸高度修正 */
+.t-select-input--borderless .t-input,
+.t-select-input.t-input--medium,
+.t-select .t-input--medium {
+  min-height: 32px !important;
+  font-size: 13px !important;
+}
+
+/* ===== TDesign Button 按钮 ===== */
+.t-button--variant-outline {
+  border-color: var(--td-component-stroke) !important;
+  color: var(--td-text-color-primary) !important;
+  background-color: transparent !important;
+}
+
+.t-button--variant-outline:hover {
+  border-color: var(--td-brand-color) !important;
+  color: var(--td-brand-color) !important;
+  background-color: var(--td-brand-color-light) !important;
+}
+
+.t-button--variant-text {
+  color: var(--td-text-color-secondary) !important;
+  background-color: transparent !important;
+}
+
+.t-button--variant-text:hover {
+  color: var(--td-text-color-primary) !important;
+  background-color: var(--td-bg-color-component-hover) !important;
+}
+
+.t-button--variant-base {
+  background-color: var(--td-bg-color-component) !important;
+  color: var(--td-text-color-primary) !important;
+  border-color: var(--td-component-stroke) !important;
+}
+
+.t-button--variant-base:hover {
+  background-color: var(--td-bg-color-component-hover) !important;
+}
+
+/* ===== TDesign Tag 标签 ===== */
+.t-tag {
+  background-color: var(--td-bg-color-component) !important;
+  color: var(--td-text-color-secondary) !important;
+  border-color: var(--td-component-stroke) !important;
+}
+
+.t-tag--variant-outline,
+.t-tag--variant-light-outline {
+  background-color: transparent !important;
+  border-color: var(--td-component-stroke) !important;
+  color: var(--td-text-color-secondary) !important;
+}
+
+/* ===== TDesign Tooltip 提示 ===== */
+.t-tooltip .t-popup__content {
+  background-color: var(--td-bg-color-container) !important;
+  color: var(--td-text-color-primary) !important;
+  border: 1px solid var(--td-component-stroke) !important;
+}
+
+.t-tooltip__arrow::before {
+  background-color: var(--td-bg-color-container) !important;
+  border-color: var(--td-component-stroke) !important;
+}
+
+/* ===== ChatSender 样式 ===== */
+t-chat-sender,
+.t-chat-sender {
+  --td-chat-sender-bg: var(--td-bg-color-component) !important;
+  --td-chat-sender-border-color: var(--td-component-stroke) !important;
+  --td-chat-sender-text-color: var(--td-text-color-primary) !important;
+  --td-chat-sender-placeholder-color: var(--td-text-color-placeholder) !important;
+  --td-chat-sender-btn-bg: var(--td-brand-color) !important;
+  --td-chat-sender-btn-color: #fff !important;
+  width: 100% !important;
+}
+
+t-chat-sender::part(container),
+.t-chat-sender .t-chat-sender__container {
+  background-color: var(--td-bg-color-component) !important;
+  border-color: var(--td-component-stroke) !important;
+  border-radius: 16px !important;
+  /* 输入框是页面视觉重心之一，给一层极淡投影把内容区和输入区分开 */
+  box-shadow: var(--shadow-card) !important;
+  transition:
+    border-color var(--duration-base) var(--ease-tencent),
+    box-shadow var(--duration-base) var(--ease-tencent) !important;
+}
+
+t-chat-sender::part(container):focus-within,
+.t-chat-sender .t-chat-sender__container:focus-within {
+  border-color: var(--td-brand-color) !important;
+  box-shadow: 0 0 0 3px var(--td-brand-color-light), var(--shadow-card) !important;
+}
+
+/* footer 插槽（模型/权限选择器）：与输入区保持呼吸感 */
+.t-chat-sender__footer,
+.t-chat-sender .t-chat-sender__footer {
+  min-height: 40px !important;
+}
+
+t-chat-sender [slot='footer-prefix'],
+.t-chat-sender .t-chat-sender__footer-prefix {
+  display: flex !important;
+  align-items: center !important;
+  gap: var(--space-2) !important;
+}
+
+/* ===== 聊天气泡（腾讯 IM 风格）===== */
+/* 用户气泡用品牌蓝的「同色相微渐变」而不是两种不同蓝，
+   35deg 让高光落在左上，符合界面光源方向；深色下 gradient 变量自动跟随。 */
+.tc-bubble-user {
+  background: linear-gradient(135deg, var(--td-brand-color) 0%, var(--td-brand-color-hover) 100%);
+  color: #fff;
+  border-radius: 14px 14px 4px 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px -2px var(--td-brand-color-light);
+}
+
+.tc-bubble-assistant {
+  background-color: var(--td-bg-color-container);
+  color: var(--td-text-color-primary);
+  border-radius: 14px 14px 14px 4px;
+  border: 1px solid var(--td-component-stroke);
+  box-shadow: var(--shadow-subtle);
+}
+
+/* 消息入场：轻微上浮 + 淡入，避免长会话里新消息「砸」进来 */
+@keyframes tc-msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.tc-msg-enter {
+  animation: tc-msg-in var(--duration-slow) var(--ease-tencent) both;
+}
+
+/* 思考过程折叠块：比正文再退一层的克制样式 */
+.tc-thinking {
+  background-color: var(--td-bg-color-component);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-medium);
+  color: var(--td-text-color-secondary);
+  transition: border-color var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-thinking[open] {
+  border-color: var(--td-brand-color);
+}
+
+.tc-thinking > summary {
+  color: var(--td-text-color-placeholder);
+  font-size: var(--text-secondary);
+  line-height: var(--leading-normal);
+}
+
+.tc-thinking > summary:hover {
+  color: var(--td-text-color-secondary);
+}
+
+t-chat-sender::part(textarea),
+.t-chat-sender textarea,
+.t-chat-sender .t-textarea__inner {
+  color: var(--td-text-color-primary) !important;
+  background: transparent !important;
+}
+
+t-chat-sender::part(send-btn),
+.t-chat-sender .t-chat-sender__send-btn {
+  background-color: var(--td-brand-color) !important;
+  color: #fff !important;
+  border-radius: 50% !important;
+}
+
+t-chat-sender::part(send-btn):disabled,
+.t-chat-sender .t-chat-sender__send-btn:disabled {
+  background-color: var(--td-bg-color-component-disabled) !important;
+  color: var(--td-text-color-disabled) !important;
+}
+
+/* =====================================================================
+   ChatMarkdown 样式
+
+   ⚠️ 必须走 `::part()`，普通后代选择器一律无效。
+
+   @tdesign-react/chat 的 ChatMarkdown 把内容渲染进 **Shadow DOM**：
+       <t-chat-md-content exportparts="md_p,md_pre,md_code,md_table,...">
+         #shadow-root
+           <div class="t-chat__text"><div class="t-chat__text__markdown">…</div></div>
+       </t-chat-md-content>
+
+   外部 CSS 无法穿透 shadow 边界，因此原先写在这里的
+   `.chat-markdown pre` / `code` / `table` / `blockquote` / `a` / `ul` / `li`
+   全是**死代码** —— 实测 `document.querySelectorAll('pre')` 返回 0，
+   一个都没匹配上。后果是深色模式下代码块仍然是白底（TDesign 自带的
+   #fafafa），在暗色界面里像一块补丁。
+
+   组件已通过 exportparts 暴露可定制部件，用 ::part(name) 即可命中：
+     md_p / md_div / md_span  —— 段落、块、行内文本
+     md_pre                   —— 代码块容器
+     md_code                  —— 行内与块内 code（共用同一个 part）
+     md_blockquote            —— 引用块
+     md_table / md_thead / md_tbody / md_tr / md_th / md_td —— 表格
+   注意：::part() 之后不能再接后代选择器，所以行内 code 与块内 code
+   无法分别选中；下面的取色策略因此保证两者共用同一底色时都成立。
+   ===================================================================== */
+.chat-markdown {
+  color: var(--td-text-color-primary);
+  line-height: 1.7;
+  /* 代码底色：浅色下比气泡略深，深色下比气泡略更深，两个方向都拉开层次 */
+  --md-code-bg: #f7f7f8;
+  --md-code-border: rgba(0, 0, 0, 0.07);
+}
+
+:root.dark .chat-markdown {
+  --md-code-bg: #1b1b1b;
+  --md-code-border: rgba(255, 255, 255, 0.1);
+}
+
+/* 正文段落：TDesign 默认 14px，而它给 ul/li 却是 16px，同一段回答里
+   字号会跳变。这里统一到 14px（= --text-body-lg），保证正文节奏一致。 */
+.chat-markdown t-chat-md-content::part(md_p),
+.chat-markdown t-chat-md-content::part(md_span),
+.chat-markdown t-chat-md-content::part(md_li),
+.chat-markdown t-chat-md-content::part(md_ul),
+.chat-markdown t-chat-md-content::part(md_ol) {
+  font-size: var(--text-body-lg);
+  line-height: 1.7;
+  color: var(--td-text-color-primary);
+}
+
+/* 代码块容器 */
+.chat-markdown t-chat-md-content::part(md_pre) {
+  background-color: var(--md-code-bg);
+  border: 1px solid var(--md-code-border);
+  border-radius: var(--td-radius-medium);
+  padding: 12px 14px;
+  margin: 12px 0;
+  overflow-x: auto;
+}
+
+/* code：行内与块内共用。底色与代码块容器取同一值，
+   于是「行内是浅色小片、块内填满容器」两种情况都成立且无接缝。 */
+.chat-markdown t-chat-md-content::part(md_code) {
+  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: var(--text-body);
+  color: var(--td-text-color-primary);
+  background-color: var(--md-code-bg);
+  border-radius: var(--td-radius-small);
+  padding: 1px 5px;
+}
+
+/* 说明：无法写 `::part(md_pre)::part(md_code)` —— 规范不允许 ::part() 串联，
+   该选择器会被整条丢弃。这里靠「让 md_code 与 md_pre 使用同一底色」来保证
+   块内 code 与容器无接缝，行内 code 也自然得到一致的小片底色。 */
+
+/* 引用块 */
+.chat-markdown t-chat-md-content::part(md_blockquote) {
+  border-left: 3px solid var(--td-brand-color);
+  padding-left: 12px;
+  margin: 12px 0;
+  color: var(--td-text-color-secondary);
+}
+
+/* 表格 */
+.chat-markdown t-chat-md-content::part(md_table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+}
+
+.chat-markdown t-chat-md-content::part(md_th),
+.chat-markdown t-chat-md-content::part(md_td) {
+  border: 1px solid var(--td-component-stroke);
+  padding: 8px 12px;
+  text-align: left;
+  font-size: var(--text-body-lg);
+}
+
+.chat-markdown t-chat-md-content::part(md_th) {
+  background-color: var(--td-bg-color-component);
+  font-weight: 600;
+}
+
+/* ===== 工具类 ===== */
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ===== 内联权限确认卡片动画 ===== */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in-up var(--duration-slow) var(--ease-tencent) forwards;
+}

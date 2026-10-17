@@ -1,0 +1,96 @@
+# electron-builder 打包配置
+# 用法：npm run electron:build
+
+appId: com.opc.agent
+productName: OPC Agent
+
+directories:
+  output: release
+
+# 只打运行时真正需要的东西。
+#
+# ⚠️ 关键前提：package.json 里 `dependencies` **只留服务端运行时真正 require 的三个包**
+# （express / @tencent-ai/agent-sdk / uuid）。React、tdesign、d3、codemirror 这些
+# 全部在 devDependencies —— 它们已经被 Vite 打进 dist/assets/index-*.js 了，
+# 运行时根本不需要 node_modules 里的副本。
+#
+# 为什么必须这么拆：electron-builder 会把 `dependencies` 的生产依赖树交给
+# appFileCopier.computeNodeModuleFileSets()，那个函数对依赖图做**递归目录遍历**，
+# 而它拿到的其实是一棵从 DAG 展开出来的树（同一个包在多个位置各存一份子树）。
+# 依赖树一大，遍历量就呈组合式爆炸 —— 实测把前端库全算进去时，
+# 打包会卡在这一步 9 分钟以上毫无进展。拆干净之后这一步是秒级。
+files:
+  - dist/**
+  - dist-electron/**
+  - node_modules/**
+  - package.json
+  - '!**/*.map'
+  - '!**/*.ts'
+  - '!**/*.tsbuildinfo'
+  - '!**/{CHANGELOG.md,README.md,readme.md,LICENSE,LICENSE.md}'
+  - '!**/{.github,.vscode,__tests__,test,tests,example,examples,docs}/**'
+
+# ── Electron 运行时来源 ────────────────────────────────────────────────────
+# 默认流程是：下载 electron zip → 解压到 <out>/win-unpacked.tmp
+#            → fs.rm(<out>/win-unpacked) → fs.rename(win-unpacked.tmp, win-unpacked)
+# （见 app-builder-lib/out/util/electronGet.js 的 extractArchive()）。
+#
+# 这台机器上最后那步目录改名会稳定失败，因为 .tmp 里的 default_app.asar 会被
+# 文件系统过滤驱动咬住（实测：open r+ 成功，但 rename / unlink 一律 EBUSY）。
+# 更麻烦的是它连带让 .tmp 整棵树删不掉，污染下一次构建。
+#
+# 指向「已解压的 Electron 目录」可以绕开整条 zip 分支 —— ElectronFramework.js
+# 会改走 emptyDir() + copyDir()，既不创建 .tmp，也不做任何目录改名。
+# node_modules/electron/dist 就是 npm 包解压好的运行时，内容与官方 zip 完全一致
+# （实测 368 MB / 55 个 locale / default_app.asar 110862 B 逐一对应）。
+electronDist: node_modules/electron/dist
+
+asar: true
+
+asarUnpack:
+  # SDK 用 `path.resolve(__dirname, '../../cli/bin/codebuddy')` 定位自带的 CLI。
+  # asar 归档内的文件无法作为子进程执行，必须解包到 app.asar.unpacked/ 下。
+  - node_modules/@tencent-ai/agent-sdk/**
+
+# 本项目没有任何原生模块（SQLite 用的是 Electron 内置的 node:sqlite），
+# 所以显式关掉重建，避免 electron-builder 徒劳地去找编译工具链。
+nodeGypRebuild: false
+buildDependenciesFromSource: false
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  # ⚠️ artifactName **不能**写在 win 层：nsis 和 portable 的产物都是 .exe，
+  # 共用同一个名字会让后打的静默覆盖先打的（实测 portable 覆盖掉 nsis 安装器，
+  # 输出目录里只剩一个 exe，看不出少了一个）。两个目标各自命名，见下面两处。
+  # artifactName 只用于其他目标兜底。
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+# ⚠️ 必须显式写 null。
+# 不写的话，electron-builder 会去看环境变量：只要环境里有 GITHUB_TOKEN / GH_TOKEN，
+# 它就把 provider 当成 github 去解析发布配置；而本项目**不是 git 仓库**
+# （无 .git/config，拿不到 repository 信息），getResolvedPublishConfig() 返回 null，
+# 但 PublishManager 会把这个 null **原样放进数组**，随后 updateInfoBuilder 读
+# `publishConfiguration.provider` → TypeError: Cannot read properties of null。
+# 表现是「exe 已经打出来了，但进程退出码 1」，很容易误判成打包成功。
+# 写 null 即「不发布」，从源头跳过整条 updateInfo 生成链，不受宿主环境变量影响。
+publish: null
+
+nsis:
+  # 与 portable 区分开，避免同名覆盖
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: OPC Agent
+  # 卸载时保留 userData（会话数据库），避免用户聊天记录被顺手删掉
+  deleteAppDataOnUninstall: false
+
+portable:
+  # 与 nsis 区分开，避免同名覆盖
+  artifactName: ${productName}-${version}-${arch}-portable.${ext}

@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    /* 构建信息与声明产物都写到 node_modules 下，别把产物留在源码树里。
+       之前这里既没有 outDir 也没有 noEmit，`tsc -b` 会把 .js / .d.ts 直接
+       生成在 server/ 里，和 .ts 源码混在一起（实测一次就落了 26 个文件）。
+       这里不能用 noEmit：被 references 引用的 composite 工程禁止禁用输出，
+       会报 TS6310，所以改成「只产声明」并指定临时 outDir。 */
+    "emitDeclarationOnly": true,
+    "outDir": "./node_modules/.tmp/tsconfig.node",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+
+    /* 不写 target 时默认 ES5：Map / Set 的迭代会被判成
+       「需要 --downlevelIteration」，于是 server/ 下每一处
+       `for (const [k, v] of map)` 都编译不过。 */
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "types": ["node"],
+
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "strict": true
+  },
+  "include": ["vite.config.ts", "server/**/*.ts", "electron/**/*.ts", "shared/**/*.ts"]
+}

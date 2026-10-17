@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+release-out/
+release-p5*/
+.trash-*/
+.tmp/
+*.log
+.DS_Store
+Thumbs.db
