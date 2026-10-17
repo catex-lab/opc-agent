@@ -84,10 +84,63 @@ const sample = () => page.evaluate(() => {
     const a = luminance(cs.backgroundColor), b = luminance(cs.color);
     return Number(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toFixed(2));
   };
+
+  /**
+   * 全 DOM 扫蓝。
+   *
+   * 逐条断言只能覆盖「我记得去检查的那几处」；而「全局禁止蓝色」是个
+   * **遍历性**要求 —— 漏掉一个 32px 的图标按钮，肉眼很难在截图里发现。
+   * 所以这里把所有元素的实际渲染色都过一遍，把蓝色系揪出来。
+   *
+   * 覆盖 background-color / color / 四边 border-color / background-image
+   * （渐变里的色标）/ box-shadow。lucide 图标走 currentColor，会被 color 命中。
+   * 透明度为 0 的不算：看不见的颜色不构成设计。
+   */
+  const blueHits = [];
+  const toRgb = str => {
+    const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/g;
+    const out = [];
+    let x;
+    while ((x = m.exec(str))) out.push({ r: +x[1], g: +x[2], b: +x[3], a: x[4] === undefined ? 1 : +x[4] });
+    return out;
+  };
+  const blueEnough = ({ r, g, b }) => {
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    if (d === 0) return false;
+    const s = d / (255 - Math.abs(max + min - 255));
+    let h;
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h = ((h * 60) + 360) % 360;
+    return h >= 195 && h <= 265 && s > 0.15;
+  };
+  const PROPS = ['backgroundColor', 'color', 'borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor'];
+  for (const el of document.querySelectorAll('body *')) {
+    const cs = getComputedStyle(el);
+    const label = `${el.tagName.toLowerCase()}${el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : ''}`;
+    for (const prop of PROPS) {
+      const val = cs[prop];
+      if (!val || !val.includes('rgb')) continue;
+      const hit = toRgb(val).find(c => c.a > 0.02 && blueEnough(c));
+      if (hit) blueHits.push(`${label} ${prop}=${val}`);
+    }
+    for (const prop of ['backgroundImage', 'boxShadow']) {
+      const val = cs[prop];
+      if (!val || !val.includes('rgb')) continue;
+      const hit = toRgb(val).find(c => c.a > 0.02 && blueEnough(c));
+      if (hit) blueHits.push(`${label} ${prop} 含蓝 ${hit.r},${hit.g},${hit.b}`);
+    }
+  }
   return {
     brand: v('--td-brand-color'),
     onBrand: v('--tc-on-brand'),
     badgeContrast: contrastOf(badge),
+    blueHits: [...new Set(blueHits)].slice(0, 8),
+    blueCount: new Set(blueHits).size,
+    // 扫了多少个节点。没有它，「界面没渲染出来」和「渲染了但没蓝」都是
+    // blueCount=0，会被同一条断言判成通过 —— 空页面静默过测。
+    nodes: document.querySelectorAll('body *').length,
     pageBg: v('--td-bg-color-page'),
     container: v('--td-bg-color-container'),
     error: v('--td-error-color'),
@@ -114,6 +167,47 @@ const light = await sample();
 await page.evaluate(() => document.documentElement.classList.add('dark'));
 await page.waitForTimeout(600);
 const dark = await sample();
+
+/**
+ * 逐个界面扫蓝。
+ *
+ * 上面两次 sample() 只看了聊天页。但设置页、通讯录、资料页是完全独立的渲染
+ * 分支 —— 一个「全局去蓝」如果在设置页漏了一处，聊天页的断言照样全绿。
+ * 所以把能走到的界面都扫一遍。`sample()` 里所有取值都做了 null 保护，
+ * 换个界面调用不会炸。
+ *
+ * 走不到就跳过（不静默算通过）：结果里会带上实际扫到的界面名单。
+ */
+const surfaces = [];
+const clickIf = async sel => {
+  const l = page.locator(sel).first();
+  if (!(await l.count())) return false;
+  try {
+    await l.click({ timeout: 3000 });
+    await page.waitForTimeout(800);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const sweepSurface = async (name, marker) => {
+  const r = await sample();
+  // 「界面出来了没有」用**内容**判断，不用节点数。
+  // 一开始这里写的是 `nodes < 150 就算没渲染`，结果 150 这个数字是拍的 ——
+  // 整个应用本来就只有 90~130 个节点，于是三个界面全被误判成空白页。
+  // 真正该问的是「这页的标志性文字在不在」。
+  const rendered = await page.evaluate(m => document.body.innerText.includes(m), marker);
+  surfaces.push({ name, marker, rendered, count: r.blueCount, hits: r.blueHits, nodes: r.nodes });
+};
+
+await page.evaluate(() => document.documentElement.classList.remove('dark'));
+await page.waitForTimeout(400);
+if (await clickIf('button[title="通讯录"]')) {
+  await sweepSurface('通讯录列表', '在线');
+  if (await clickIf('button:has-text("WB")')) await sweepSurface('通讯录资料页', '详细资料');
+}
+await clickIf('button[title="聊天"]');
+if (await clickIf('button[title="设置"]')) await sweepSurface('设置页', '登录配置');
 
 const rgb = s => s && s.startsWith('#') ? s.toLowerCase() : s;
 
@@ -177,6 +271,18 @@ const checks = [
   ['深色 品牌底文字 = #171717', rgb(dark.onBrand), '#171717'],
   ['浅色 未读角标对比度 ≥ 4.5', light.badgeContrast >= 4.5 ? '达标' : `仅 ${light.badgeContrast}`, '达标'],
   ['深色 未读角标对比度 ≥ 4.5', dark.badgeContrast >= 4.5 ? '达标' : `仅 ${dark.badgeContrast}`, '达标'],
+  // 遍历性断言：整棵 DOM 里不许出现任何蓝色系渲染色。
+  ['浅色 全 DOM 无蓝色渲染色', light.blueCount === 0 ? '0 处' : `${light.blueCount} 处：${light.blueHits.join(' | ')}`, '0 处'],
+  ['深色 全 DOM 无蓝色渲染色', dark.blueCount === 0 ? '0 处' : `${dark.blueCount} 处：${dark.blueHits.join(' | ')}`, '0 处'],
+  // 其他界面（设置 / 通讯录 / 资料页）单独扫，见上面 surfaces
+  ...surfaces.map(s => {
+    const detail = s.count === 0 ? `0 处（扫了 ${s.nodes} 个节点）` : `${s.count} 处：${s.hits.join(' | ')}`;
+    return [
+      `${s.name} 无蓝色渲染色`,
+      s.rendered ? detail : `界面没出来（正文里找不到「${s.marker}」），这条不算数`,
+      s.rendered ? detail : `含「${s.marker}」`,
+    ];
+  }),
 ];
 
 let fail = 0;
