@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import {
   RefreshCw,
   Search,
-  ChevronRight,
   Loader2,
   UserPlus,
   Users,
@@ -47,8 +46,8 @@ interface ContactsPanelProps {
  * ## 宽度与会话栏对齐
  *
  * 这一栏原先是 `flex-1`，于是和右侧主区各占一半（1080 窗口下约 560px）。
- * 但列表行已经精简成「头像 + 名称 + 箭头」，560px 宽的行里名称和箭头之间
- * 空出四百多像素，看着像布局塌了；更麻烦的是从「消息」切到「通讯录」时，
+ * 但列表行已经精简成「头像 + 名称」，560px 宽的行里名称右端到栏边空出四百
+ * 多像素，看着像布局塌了；更麻烦的是从「消息」切到「通讯录」时，
  * 中栏宽度从 300 跳到 560，同一个位置的栏忽宽忽窄。
  *
  * 所以这里与会话列表统一成 300px 定宽 + `level="column"` 标题栏。
@@ -324,6 +323,11 @@ interface ContactRowProps {
  *
  * 行高、头像尺寸、内边距与会话列表的行完全一致（42px 头像 / px-2.5 py-2.5），
  * 两栏并排切换时列表节奏不跳。
+ *
+ * 行尾**不放 `>` 箭头**。微信通讯录的行也没有箭头：整行本来就可点，
+ * 悬停有底色反馈，箭头在 300px 的窄栏里只是把名称的可读宽度又切掉一截，
+ * 属于「解释一个已经说清楚的事」。可点性靠 hover 态和 `title` 承担。
+ * （多选建群时行尾有勾选圈，那是操作控件，不是指示符，另当别论。）
  */
 function ContactRow({
   agent,
@@ -348,7 +352,7 @@ function ContactRow({
       >
         {agent.name}
       </span>
-      {selectable ? (
+      {selectable && (
         <span
           className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition-colors"
           style={{
@@ -359,12 +363,6 @@ function ContactRow({
         >
           {selected && <Check size={12} />}
         </span>
-      ) : (
-        <ChevronRight
-          size={16}
-          className="shrink-0"
-          style={{ color: 'var(--td-text-color-placeholder)' }}
-        />
       )}
     </>
   );
