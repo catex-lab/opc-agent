@@ -1,5 +1,9 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+/*
+ * 注意：chat 组件库的样式**不在这里引**，统一放在 main.tsx。
+ * 在这里引会让 TDesign 的 :root 变量随懒加载后注入，把首屏的品牌色盖掉。
+ */
 import {
   Model,
   Session,

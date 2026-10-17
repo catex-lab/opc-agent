@@ -1,7 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
-import '@tdesign-react/chat/es/style/index.js';
 import { MessagesSquare, ArrowRight } from 'lucide-react';
 
 import { useAgents } from './hooks/useAgents';
@@ -18,8 +17,24 @@ import { ConversationList, markSessionRead } from './components/ConversationList
 import { ContactsPanel } from './components/ContactsPanel';
 import { ChatHeader } from './components/ChatHeader';
 import { SettingsPage } from './components/SettingsPage';
-import { ChatPage } from './pages/ChatPage';
 import type { Message } from './types';
+
+/**
+ * ChatPage 按需加载。
+ *
+ * 它连带引入 ChatMessages → ChatMarkdown → cherry-markdown，
+ * 而 cherry-markdown 又把 mermaid / katex / highlight.js 一起拖进来，
+ * 实测这条链占整个 bundle 的 **2 MB 以上**（gzip 后约 600 kB）。
+ *
+ * 但这些只有「真的在看消息」时才需要。用户打开应用先看到的是
+ * 空态页或新建对话页 —— 那时候花 2 MB 去加载一个 markdown 渲染器是纯浪费。
+ *
+ * 打包态由 Electron 用 `http://127.0.0.1` 托管 dist，chunk 就是普通 HTTP
+ * 请求，本地回环下延迟可忽略，所以这次拆分不会让用户感到「点了要等一下」。
+ */
+const ChatPage = lazy(() =>
+  import('./pages/ChatPage').then(m => ({ default: m.ChatPage }))
+);
 
 function App() {
   return (
@@ -423,30 +438,41 @@ function AppContent() {
                     onDelete={() => handleDeleteSession(currentSession.id)}
                   />
                 )}
-                <ChatPage
-                  currentSession={currentSession}
-                  currentSessionId={currentSessionId}
-                  models={activeModels}
-                  selectedModel={selectedModel}
-                  agents={legacyAgents}
-                  currentAgent={currentAgent}
-                  getAgent={registry.getAgent}
-                  upsertGroupMessage={upsertGroupMessage}
-                  isLoading={isLoading}
-                  inputValue={inputValue}
-                  permissionRequest={permissionRequest}
-                  permissionMode={permissionMode}
-                  onSendMessage={sendMessage}
-                  onStop={handleStop}
-                  onInputChange={setInputValue}
-                  onModelChange={updateCurrentSessionModel}
-                  onPermissionAllow={handlePermissionAllow}
-                  onPermissionDeny={handlePermissionDeny}
-                  onPermissionModeChange={setPermissionMode}
-                  onOrchestrationChange={handleOrchestrationChange}
-                  onMembersChange={handleMembersChange}
-                  onDelete={() => handleDeleteSession(currentSession.id)}
-                />
+                <Suspense
+                  fallback={
+                    <div
+                      className="flex flex-1 items-center justify-center text-body"
+                      style={{ color: 'var(--td-text-color-placeholder)' }}
+                    >
+                      正在加载会话…
+                    </div>
+                  }
+                >
+                  <ChatPage
+                    currentSession={currentSession}
+                    currentSessionId={currentSessionId}
+                    models={activeModels}
+                    selectedModel={selectedModel}
+                    agents={legacyAgents}
+                    currentAgent={currentAgent}
+                    getAgent={registry.getAgent}
+                    upsertGroupMessage={upsertGroupMessage}
+                    isLoading={isLoading}
+                    inputValue={inputValue}
+                    permissionRequest={permissionRequest}
+                    permissionMode={permissionMode}
+                    onSendMessage={sendMessage}
+                    onStop={handleStop}
+                    onInputChange={setInputValue}
+                    onModelChange={updateCurrentSessionModel}
+                    onPermissionAllow={handlePermissionAllow}
+                    onPermissionDeny={handlePermissionDeny}
+                    onPermissionModeChange={setPermissionMode}
+                    onOrchestrationChange={handleOrchestrationChange}
+                    onMembersChange={handleMembersChange}
+                    onDelete={() => handleDeleteSession(currentSession.id)}
+                  />
+                </Suspense>
               </>
             ) : (
               <EmptyState

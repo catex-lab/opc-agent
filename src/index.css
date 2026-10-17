@@ -802,10 +802,13 @@ t-chat-sender [slot='footer-prefix'],
 }
 
 /* ===== 聊天气泡（腾讯 IM 风格）===== */
-/* 用户气泡用品牌蓝的「同色相微渐变」而不是两种不同蓝，
-   35deg 让高光落在左上，符合界面光源方向；深色下 gradient 变量自动跟随。 */
+/* 用户气泡用**纯品牌色**，不做渐变。
+   原先写的是「同色相微渐变」，但两端取的是 --td-brand-color(#0052d9) 和
+   --td-brand-color-hover(#0594fa) —— 这两个色明度差太大，渐变出来是一整块
+   偏艳的亮蓝，跟左侧导航栏、权限标签的腾讯蓝放在一起像两套品牌色。
+   纯色反而更稳，也更接近 IM 里「我的消息」那种一块实色的观感。 */
 .tc-bubble-user {
-  background: linear-gradient(135deg, var(--td-brand-color) 0%, var(--td-brand-color-hover) 100%);
+  background-color: var(--td-brand-color);
   color: #fff;
   border-radius: 14px 14px 4px 14px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px -2px var(--td-brand-color-light);

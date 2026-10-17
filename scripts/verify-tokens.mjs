@@ -17,7 +17,13 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 
 const AGENTS = [{ id: 'wb', name: 'WB', vendor: 'v', kind: 'sdk', icon: 'workbuddy', color: '#0EC8A9', description: 'd', capabilities: ['chat'], status: { availability: 'ready' } }];
 const SESSIONS = [{ id: 's1', title: 'WB', agent_id: 'wb', model: 'm', created_at: new Date().toISOString() }];
-const MESSAGES = [{ id: 'm2', role: 'assistant', model: 'm', created_at: new Date().toISOString(), content: '段落含 `inline` 代码。\n\n```js\nconst a = 1;\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |\n' }];
+// 夹具必须同时含 user 与 assistant 两条消息：用户气泡的样式断言依赖
+// `.tc-bubble-user` 真实存在。早先只有 assistant 一条，querySelector 返回
+// null，气泡相关的断言会静默拿到 null（不断言时看不出来，一加断言就红）。
+const MESSAGES = [
+  { id: 'm1', role: 'user', created_at: new Date().toISOString(), content: '这段怎么解释？' },
+  { id: 'm2', role: 'assistant', model: 'm', created_at: new Date().toISOString(), content: '段落含 `inline` 代码。\n\n```js\nconst a = 1;\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |\n' },
+];
 
 const server = createServer(async (req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html';
@@ -75,6 +81,7 @@ const sample = () => page.evaluate(() => {
     codeBg: codeInPre ? getComputedStyle(codeInPre).backgroundColor : null,
     codeSize: codeInPre ? getComputedStyle(codeInPre).fontSize : null,
     bubbleImg: userBubble ? getComputedStyle(userBubble).backgroundImage : null,
+    bubbleBg: userBubble ? getComputedStyle(userBubble).backgroundColor : null,
     themeBtnBg: themeBtn ? getComputedStyle(themeBtn).backgroundColor : null,
     // 原生搜索框：preflight 关闭后会带一圈原生黑边
     rawInputBorder: (() => {
@@ -106,6 +113,13 @@ const checks = [
   ['浅色 主题按钮无原生灰底', rgb(light.themeBtnBg), 'rgba(0, 0, 0, 0)'],
   ['深色 主题按钮无原生灰底', rgb(dark.themeBtnBg), 'rgba(0, 0, 0, 0)'],
   ['搜索框无原生黑边', rgb(light.rawInputBorder), '0px'],
+  // 用户气泡：从「品牌色 → hover 色」的渐变改成纯品牌色实心。
+  // 渐变两端明度差太大（#0052d9 → #0594fa），渲染出来是一整块偏艳的亮蓝，
+  // 与导航栏的腾讯蓝并排看像两套品牌色。这里断言「实心 + 无渐变」，
+  // 防止以后有人手滑把渐变加回来。
+  ['浅色 用户气泡 = 品牌色实心', rgb(light.bubbleBg), 'rgb(0, 82, 217)'],
+  ['深色 用户气泡 = 深色品牌色', rgb(dark.bubbleBg), 'rgb(69, 137, 255)'],
+  ['浅色 用户气泡无渐变', rgb(light.bubbleImg), 'none'],
 ];
 
 let fail = 0;
