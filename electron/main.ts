@@ -17,7 +17,7 @@
  *   那一层，天然早于所有模块初始化。
  */
 
-import { app, BrowserWindow, screen, shell } from 'electron';
+import { app, BrowserWindow, screen, shell, nativeTheme, ipcMain } from 'electron';
 import { once } from 'node:events';
 import { join } from 'node:path';
 import { server } from '../server/index.js';
@@ -97,6 +97,74 @@ async function loadWithRetry(win: BrowserWindow, url: string, attempts = 30) {
   }
 }
 
+/**
+ * 主题同步 —— 把**原生 UI**（Windows 标题栏、原生滚动条、原生对话框）
+ * 的颜色与前端界面拉到同一档。
+ *
+ * ## 为什么前端 CSS 管不到标题栏
+ *
+ * 界面的深浅色由 CSS 变量驱动（`--tc-surface-chrome` 等），但
+ * Windows 的**原生标题栏**不由 CSS 绘制 —— 它由操作系统画，颜色取自
+ * `nativeTheme.themeSource`。CSS 再干净也碰不到它。
+ *
+ * 于是「前端选了深色、Windows 是浅色」时：
+ *   窗口顶部  原生标题栏（浅色，OS 画的）
+ *   窗口其余  界面（深色，CSS 画的）
+ * 一条白带压在黑界面上。反过来「前端浅色 + 系统深色」是黑带压白界面。
+ *
+ * ## 为什么不能只设 backgroundColor
+ *
+ * `backgroundColor` 只决定「内容渲染出来之前 / 窗口边缘露出的底色」，
+ * 真正管原生标题栏的是 `nativeTheme.themeSource`。两件都要做。
+ *
+ * ## 与系统跟随的关系
+ *
+ * 前端默认是「跟随系统」，此时 `preference === 'system'`，这里回设
+ * `themeSource = 'system'`，两边天然一致。
+ * 只有用户**手动固定**了浅色/深色时才需要干预 —— 那正是割裂出现的场合。
+ *
+ * 设了 `themeSource` 之后，渲染进程的 `prefers-color-scheme` 会跟着变；
+ * 但前端此时读的是自己选的 `preference`，不读系统，所以不会来回抖动。
+ */
+type ThemeMode = 'system' | 'light' | 'dark';
+
+/** 与 `--tc-surface-content` 保持一致：内容区的底色 */
+const SURFACE_CONTENT = { light: '#ffffff', dark: '#121212' } as const;
+
+function resolvedMode(mode: ThemeMode): 'light' | 'dark' {
+  if (mode !== 'system') return mode;
+  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+}
+
+/** 把主题应用到原生层：themeSource + 窗口背景色 */
+function applyNativeTheme(mode: ThemeMode) {
+  const resolved = resolvedMode(mode);
+  nativeTheme.themeSource = mode;
+  const bg = SURFACE_CONTENT[resolved];
+  // 窗口还没建时 setBackgroundColor 无从谈起，先把值留着，建窗口时用
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setBackgroundColor(bg);
+  }
+  return bg;
+}
+
+/**
+ * 系统主题变化时的兜底。
+ *
+ * 用户选了「跟随系统」时，Windows 一切深浅色，原生标题栏要跟着走。
+ * 注意这里**不主动推给前端**：前端自己监听着 `prefers-color-scheme`，
+ * 两边都从同一个源头拿值，不会分叉。
+ */
+function watchSystemTheme() {
+  nativeTheme.on('updated', () => {
+    const mode: ThemeMode = currentThemeMode;
+    if (mode === 'system') applyNativeTheme('system');
+  });
+}
+
+/** 当前生效的主题模式。初始为 system，等前端首帧 IPC 到达后更新 */
+let currentThemeMode: ThemeMode = 'system';
+
 async function createWindow() {
   const url = await resolveAppUrl();
 
@@ -138,7 +206,10 @@ async function createWindow() {
     show: false, // 等首帧渲染完再显示，避免白屏闪一下
     autoHideMenuBar: true,
     title: 'OPC Agent',
-    backgroundColor: '#ffffff',
+    // 窗口底色跟随主题，而不是写死白色。
+    // 写死 #ffffff 的后果：深色主题下首帧渲染前会白闪一下，
+    // 拖动/缩放时窗口边缘也会露出白边。
+    backgroundColor: SURFACE_CONTENT[resolvedMode(currentThemeMode)],
     webPreferences: {
       // 前端不依赖任何 Electron API，所以关掉 Node 集成：
       // 既让渲染进程与浏览器环境保持完全一致（同一套代码、同一套调试），
@@ -146,8 +217,29 @@ async function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      // 主题桥（见 preload.cjs）：前端把主题偏好同步过来，主进程据此调
+      // nativeTheme.themeSource + setBackgroundColor。
+      // 不配它前端就拿不到这个通道，原生标题栏会永远是系统色，
+      // 于是「应用深色 + 标题栏浅色」的割裂修不掉。
+      //
+      // ⚠️ 在 Electron 44 里 preload 必须写在 webPreferences 内 ——
+      // 它已从顶层 BrowserWindowConstructorOptions 移到 WebPreferences，
+      // 写在顶层 TS 会报 TS2353（不在已知属性里）。
+      preload: join(__dirname, 'preload.cjs'),
     },
   });
+
+  // 前端首帧会把主题偏好发过来；此后每次用户在设置里改主题都会再发一次。
+  ipcMain.on('opc:set-theme', (_e, mode: ThemeMode) => {
+    if (mode !== 'system' && mode !== 'light' && mode !== 'dark') return;
+    currentThemeMode = mode;
+    const bg = applyNativeTheme(mode);
+    // 打一行日志：这条链路（前端 → IPC → 原生主题）中间任何一环断了，
+    // 界面都照样正常 —— 出问题的只有原生标题栏，而它不出现在任何截图里。
+    // 所以让主进程把实际生效的值说出来，打靶脚本才能断言它。
+    console.log(`[Theme] 原生主题 themeSource=${nativeTheme.themeSource} bg=${bg}`);
+  });
+  watchSystemTheme();
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => {

@@ -4,6 +4,23 @@ import { Theme, ThemePreference } from '../types';
 const STORAGE_KEY = 'theme';
 const MEDIA = '(prefers-color-scheme: dark)';
 
+/**
+ * 把主题偏好同步给 Electron 主进程。
+ *
+ * **这一步不是可选的**。界面的深浅色由 CSS 变量驱动，但 Windows 的
+ * **原生标题栏**不由 CSS 画 —— 它由操作系统绘制，颜色取自
+ * `nativeTheme.themeSource`。不通知主进程的话：
+ *   用户在设置里固定「深色」+ Windows 是浅色
+ *   → 窗口顶部原生标题栏是浅色，下面整块界面是深色
+ *   → 一条白带压在黑界面上
+ *
+ * 用可选调用 `window.opc?.`：浏览器开发态没有这个桥，调用被跳过，
+ * 行为与以前完全一致（那时也没有原生标题栏可管）。
+ */
+function syncNativeTheme(mode: ThemePreference) {
+  (window as unknown as { opc?: { setTheme(m: ThemePreference): void } }).opc?.setTheme(mode);
+}
+
 /** 旧版本只存过 'light' / 'dark'，读出来仍然是合法的偏好值 */
 function readPreference(): ThemePreference {
   const saved = localStorage.getItem(STORAGE_KEY);
@@ -54,11 +71,18 @@ export function useTheme() {
     // 让原生控件（滚动条、日期选择器、表单自动填充底色）也跟着走，
     // 否则深色界面里会冒出浅色的原生滚动条。
     root.style.colorScheme = theme;
-  }, [theme]);
+    // 同步给主进程去调 nativeTheme.themeSource —— Windows 原生标题栏
+    // 的颜色由它决定，CSS 管不到。这一行漏掉就会出现
+    // 「应用是深色、标题栏是浅色」的割裂。
+    syncNativeTheme(preference);
+  }, [theme, preference]);
 
   const setPreference = useCallback((next: ThemePreference) => {
     setPreferenceState(next);
     localStorage.setItem(STORAGE_KEY, next);
+    // 立刻同步，不等 effect —— 用户点下去的瞬间标题栏就该变色，
+    // 而不是等下一个渲染周期。
+    syncNativeTheme(next);
   }, []);
 
   return { theme, preference, setPreference };

@@ -38,6 +38,12 @@ await build({
 // 所以不能参与打包，直接原样拷过去。
 await cp('electron/bootstrap.cjs', `${OUT_DIR}/bootstrap.cjs`);
 
+// preload 同样保持手写：它跑在沙箱化的渲染进程里，只做 IPC 转发。
+// 不拷的话 BrowserWindow 的 `preload` 路径会指向 asar 内不存在的文件，
+// Electron 直接拒绝创建窗口（报 "Unable to load preload script"），
+// 而且是**启动即崩**，不会静默降级。
+await cp('electron/preload.cjs', `${OUT_DIR}/preload.cjs`);
+
 /**
  * 窗口图标要拷一份到 dist-electron/。
  *
@@ -54,4 +60,4 @@ try {
   console.warn('⚠ 未找到 build/icon.png，跳过窗口图标（先运行 scripts/make-icons.py）');
 }
 
-console.log(`✓ ${OUT_DIR}/main.cjs + bootstrap.cjs 构建完成`);
+console.log(`✓ ${OUT_DIR}/main.cjs + bootstrap.cjs + preload.cjs 构建完成`);
