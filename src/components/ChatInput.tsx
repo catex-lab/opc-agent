@@ -147,7 +147,7 @@ export function ChatInput({
     <div
       className="px-4 pb-6 pt-4"
       style={{
-        backgroundColor: 'var(--td-bg-color-page)'
+        backgroundColor: 'var(--tc-surface-content)'
       }}
     >
       <div className="max-w-3xl mx-auto">
@@ -219,7 +219,7 @@ export function ChatInput({
           onChange={handleChange}
         >
           {/* 模型选择器和权限模式选择器放在 footer-prefix 插槽 */}
-          <div slot="footer-prefix" className="flex items-center gap-2">
+          <div slot="footer-prefix" className="flex flex-wrap items-center gap-2">
             {imageMode ? (
               <>
                 {/* 生图模型：默认 CogView-3-Flash（本机实测唯一免费可用） */}

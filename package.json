@@ -16,6 +16,8 @@
     "preview": "vite preview",
     "server": "tsx server/index.ts",
     "verify:tokens": "node scripts/verify-tokens.mjs",
+    "verify:theme": "node scripts/verify-theme.mjs",
+    "verify:responsive": "node scripts/verify-responsive.mjs",
     "verify:render": "node scripts/render-check.mjs",
     "verify:orchestrator": "tsx scripts/verify-orchestrator.ts",
     "verify:routing": "tsx scripts/verify-agent-routing.ts",
@@ -28,7 +30,7 @@
     "verify:image": "tsx scripts/verify-image.ts",
     "verify:image-ui": "node scripts/verify-image-ui.mjs",
     "verify:package": "node scripts/verify-package.mjs",
-    "verify:ui": "npm run build && npm run verify:tokens && npm run verify:render && npm run verify:modelgate && npm run verify:groupchat && npm run verify:scenario-ui && npm run verify:image-ui"
+    "verify:ui": "npm run build && npm run verify:tokens && npm run verify:theme && npm run verify:responsive && npm run verify:render && npm run verify:modelgate && npm run verify:groupchat && npm run verify:scenario-ui && npm run verify:image-ui"
   },
   "dependencies": {
     "@tencent-ai/agent-sdk": "^0.3.43",

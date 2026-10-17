@@ -5,6 +5,7 @@ import { MessagesSquare, ArrowRight } from 'lucide-react';
 
 import { useAgents } from './hooks/useAgents';
 import { useTheme } from './hooks/useTheme';
+import { useMediaQuery } from './hooks/useMediaQuery';
 import { useSessions } from './hooks/useSessions';
 import { useModels } from './hooks/useModels';
 import { useChat } from './hooks/useChat';
@@ -64,7 +65,15 @@ function AppContent() {
   const [detailAgentId, setDetailAgentId] = useState<string | null>(null);
 
   // Hooks
-  const { theme, toggleTheme } = useTheme();
+  const { preference, setPreference } = useTheme();
+  /**
+   * 单栏模式（窄屏）。
+   *
+   * 阈值 900：再窄下去「导航条 64 + 列表 272 + 内容」里内容区只剩 560 上下，
+   * 消息气泡和输入框都会被挤成细条。到这条线以下就改成「列表与内容二选一」，
+   * 用标题栏左侧的返回键回列表 —— 这是 IM 在手机上的标准行为。
+   */
+  const compact = useMediaQuery('(max-width: 899px)');
   // 旧的「自定义 Agent」功能保留在设置页里（本地提示词等）
   const { agents: customAgents, addAgent, updateAgent, deleteAgent } = useAgents();
   const { models, selectedModel, setSelectedModel, fetchModels } = useModels();
@@ -384,19 +393,34 @@ function AppContent() {
 
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
 
+  /**
+   * 单栏模式下「该显示哪一栏」。
+   *
+   * 判据是「用户是否正在看某个具体对象」：打开了资料页或会话 → 显示内容区；
+   * 否则显示列表。宽屏下两栏同时显示，这个判断不参与。
+   */
+  const showContent = !!detailAgent || !!currentSession;
+  const showColumn = !compact || !showContent;
+
+  /** 单栏模式的返回：回到列表（清掉会话与资料页） */
+  const handleBackToList = useCallback(() => {
+    setDetailAgentId(null);
+    setCurrentSessionId(null);
+    navigate('/');
+  }, [navigate, setCurrentSessionId]);
+
   return (
     <div
       className="flex h-screen w-screen overflow-hidden"
-      style={{ backgroundColor: 'var(--td-bg-color-page)' }}
+      style={{ backgroundColor: 'var(--tc-surface-content)' }}
     >
       {/* 最左：功能导航条 */}
       <NavRail
         active={isSettingsPage ? 'settings' : nav}
-        theme={theme}
         readyCount={registry.readyCount}
         onNavigate={handleNavigate}
         onOpenSettings={handleOpenSettings}
-        onToggleTheme={toggleTheme}
+        compact={compact}
       />
 
       {isSettingsPage ? (
@@ -405,11 +429,14 @@ function AppContent() {
           onAdd={addAgent}
           onUpdate={updateAgent}
           onDelete={deleteAgent}
+          themePreference={preference}
+          onThemePreferenceChange={setPreference}
+          onBack={compact ? handleBackToList : undefined}
         />
       ) : (
         <>
-          {/* 中间：会话列表 或 通讯录 */}
-          {nav === 'chats' ? (
+          {/* 中间：会话列表 或 通讯录。单栏模式下与内容区互斥。 */}
+          {showColumn && (nav === 'chats' ? (
             <ConversationList
               sessions={sessions}
               currentSessionId={currentSessionId}
@@ -418,6 +445,7 @@ function AppContent() {
               onSelect={handleSelectSession}
               onDelete={handleDeleteSession}
               onTogglePin={setSessionPinned}
+              compact={compact}
             />
           ) : (
             <ContactsPanel
@@ -429,15 +457,19 @@ function AppContent() {
               onProbe={registry.probe}
               onCreateGroup={handleCreateGroup}
               onViewDetail={setDetailAgentId}
+              compact={compact}
             />
-          )}
+          ))}
 
           {/* 右侧：会话内容 */}
+          {showContent || !compact ? (
           <main
             className="flex min-w-0 flex-1 flex-col"
-            style={{ backgroundColor: 'var(--td-bg-color-page)' }}
+            style={{ backgroundColor: 'var(--tc-surface-content)' }}
           >
             {detailAgent ? (
+              // 资料页自带的 onBack 清掉 detailAgent，单栏模式下这就等于
+              // 「回到通讯录列表」（showContent 变 false），无需另开一个返回口。
               <AgentDetailPanel
                 agent={detailAgent}
                 onBack={() => setDetailAgentId(null)}
@@ -460,6 +492,7 @@ function AppContent() {
                     scenario={currentScenario}
                     onModelChange={updateCurrentSessionModel}
                     onDelete={() => handleDeleteSession(currentSession.id)}
+                    onBack={compact ? handleBackToList : undefined}
                   />
                 )}
                 <Suspense
@@ -495,6 +528,7 @@ function AppContent() {
                     onOrchestrationChange={handleOrchestrationChange}
                     onMembersChange={handleMembersChange}
                     onDelete={() => handleDeleteSession(currentSession.id)}
+                    onBack={compact ? handleBackToList : undefined}
                   />
                 </Suspense>
               </>
@@ -506,6 +540,7 @@ function AppContent() {
               />
             )}
           </main>
+          ) : null}
         </>
       )}
     </div>
@@ -523,7 +558,7 @@ function EmptyState({
   nav: NavKey;
 }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
+    <div className="flex flex-1 flex-col items-center justify-center px-4 text-center sm:px-8">
       {/* 空态图标用品牌色淡底 + 品牌色线条，而不是灰色占位图。
           灰图标传达的是「这里什么都没有」，淡蓝底传达的是「等你开始」。 */}
       <div

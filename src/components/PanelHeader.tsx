@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { ChevronLeft } from 'lucide-react';
 
 /**
  * 统一标题栏 —— 全应用「标题栏长什么样」只在这里定义一次。
@@ -26,13 +27,13 @@ import type { ReactNode } from 'react';
  *   （标题行 24 + 间距 2 + 副标题 18 + 上下各 20 = 84，取 88 兜住像素误差，
  *   多出的 4px 由 flex 居中分配）。**窄栏与主区用完全相同的 py-5** ——
  *   两栏并排时标题必须落在同一条水平线上，否则并排看会「晃」。
- *   早先窄栏用 `pt-2` 是因为栏头里还塞着搜索框，88px 装不下才硬压；
- *   搜索框移到列表区吸顶之后，这个特殊处理已经删掉。
  * - **副标题**：一律 `text-secondary`（12px）+ `mt-0.5`，次要文字色。
- *   没传副标题时组件会用 aria-hidden 空行占位，保证块高恒为 44 ——
- *   靠「调用方记得传」来对齐是靠不住的。
+ *   文字块恒定 44px 高（`min-h-[44px]`），有没有副标题都一样 ——
+ *   块高一旦变了，标题在 88px 里的居中位置就会跟着变，两栏标题立刻错位。
+ * - **底色**：`--tc-surface-chrome`，与导航条、列表栏**同一个令牌**。
+ *   标题栏属于「框架」，不属于「内容」，三者要连成一条完整的外框。
  * - **底边线**：一律 1px `--td-component-stroke`，除非显式 `divider={false}`。
- * - **水平内边距**：主区 `px-6`，窄栏 `px-4`（随栏宽缩放，属刻意差异）。
+ * - **水平内边距**：主区 `px-6`，窄栏 `px-4`；窄屏（<640px）主区降到 `px-4`。
  *
  * 层级只用语义令牌表达，不要在调用处传 `text-[15px]` 这类任意值。
  */
@@ -41,7 +42,7 @@ export interface PanelHeaderProps {
   title: ReactNode;
   /** 标题右侧的徽标（在线状态、计数等），与标题同一行 */
   badge?: ReactNode;
-  /** 标题下方的副标题；不传则不占位 */
+  /** 标题下方的副标题；不传则只占住 44px 的块高 */
   subtitle?: ReactNode;
   /** 标题左侧的自定义内容，例如 Agent 头像 */
   leading?: ReactNode;
@@ -61,6 +62,13 @@ export interface PanelHeaderProps {
   level?: 'page' | 'column';
   /** 是否显示底边线，默认 true */
   divider?: boolean;
+  /**
+   * 返回上一级。只有单栏（窄屏）模式才需要 —— 那时内容区把列表挡住了，
+   * 没有返回键就回不到列表。宽屏下不传，标题栏左侧保持干净。
+   */
+  onBack?: () => void;
+  /** 返回键的无障碍文案 */
+  backLabel?: string;
   className?: string;
 }
 
@@ -73,6 +81,8 @@ export function PanelHeader({
   children,
   level = 'page',
   divider = true,
+  onBack,
+  backLabel = '返回',
   className = '',
 }: PanelHeaderProps) {
   const isPage = level === 'page';
@@ -84,21 +94,33 @@ export function PanelHeader({
       className={`flex shrink-0 flex-col justify-center ${className}`}
       style={{
         minHeight: 'var(--panel-header-height)',
-        // 标题栏用 container 白底。
-        //
-        // 主区内容区是 page 灰底（--td-bg-color-page），标题栏原先不设背景、
-        // 直接透出这层灰 —— 结果标题栏和下面的内容糊成一片，看不出
-        // 「这是页面的头」，整屏也缺少层次。
-        // 左栏本来就是 container 白底，加上这个不会有变化，反而让左右两侧
-        // 的栏头在同一水平线上连成一条完整的白带。
-        backgroundColor: 'var(--td-bg-color-container)',
+        // 标题栏属于「框架」：与导航条、列表栏同一个令牌。
+        // 三处共用一个值，才谈得上「标题栏色调与左侧栏一致」——
+        // 靠「三处都记得写同一个令牌」是靠不住的。
+        backgroundColor: 'var(--tc-surface-chrome)',
         ...(divider ? { borderBottom: '1px solid var(--td-component-stroke)' } : {}),
       }}
     >
-      <div className={`flex items-center gap-3 ${isPage ? 'px-6 py-5' : 'px-4 py-5'}`}>
+      <div
+        className={`flex items-center gap-3 ${
+          isPage ? 'px-4 py-5 sm:px-6' : 'px-4 py-5'
+        }`}
+      >
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            title={backLabel}
+            aria-label={backLabel}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--td-text-color-secondary)] transition-colors hover:bg-[var(--tc-hover-chrome)] hover:text-[var(--td-text-color-primary)]"
+          >
+            <ChevronLeft size={18} />
+          </button>
+        )}
+
         {leading}
 
-        <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col" style={{ minHeight: 44 }}>
           <div className="flex items-center gap-2">
             <TitleTag
               className={`truncate font-semibold ${isPage ? 'text-page' : 'text-title-lg'}`}
@@ -109,24 +131,25 @@ export function PanelHeader({
             {badge}
           </div>
 
-          {subtitle != null ? (
+          {/*
+           * 副标题。不传时**不渲染任何东西**，但上面那层 min-h-[44px]
+           * 已经把块高锁死了 —— 标题永远从这 44px 的**顶部**开始，
+           * 所以「有没有副标题」不会挪动标题的位置。
+           *
+           * 早先是塞一个 aria-hidden 的空 <p> 占位：能对齐，但会留下一段
+           * 无意义的空白行。改成给容器定高之后，对齐和「不留空行」两件事
+           * 才不冲突。
+           *
+           * ⚠️ 不要改成 justify-center —— 单行标题会被居中，比带副标题的
+           * 标题低 10px，两栏并排立刻错位。
+           */}
+          {subtitle != null && (
             <p
               className="mt-0.5 truncate text-secondary"
               style={{ color: 'var(--td-text-color-secondary)' }}
             >
               {subtitle}
             </p>
-          ) : (
-            /*
-             * 没传副标题也占住这一行。
-             *
-             * 标题块的高度是 24 + 2 + 18 = 44，头部靠 flex 在 88px 里居中，
-             * 于是「标题顶边」= (88 - 块高) / 2。块高一旦少了 20，标题就会
-             * 掉下去 10px —— 两栏并排时标题不在同一条水平线上。
-             * 用 aria-hidden 的空行占位，保证任何调用点都对齐，而不是靠
-             * 每个调用方记得「一定要传副标题」。
-             */
-            <p className="mt-0.5 h-[18px]" aria-hidden="true" />
           )}
         </div>
 

@@ -21,14 +21,21 @@ interface ChatHeaderProps {
   scenario?: ScenarioTemplate;
   onModelChange: (modelId: string) => void;
   onDelete: () => void;
+  /** 单栏（窄屏）模式下返回列表；宽屏不传 */
+  onBack?: () => void;
 }
 
 /**
  * 会话头部。
  *
- * 采用 IM 的「联系人卡片」式头部：头像 + 名字 + 在线状态 + 一句话简介，
- * 点开可看详情。模型选择收进一个次要的下拉，因为它是会话级设置，
- * 不该抢走头部最主要的视觉位置（工具型界面常犯的错）。
+ * 采用 IM 的「联系人卡片」式头部：头像 + 名字 + 在线状态。
+ * 模型选择收进一个次要的下拉，因为它是会话级设置，不该抢走头部最主要的
+ * 视觉位置（工具型界面常犯的错）。
+ *
+ * ⚠️ 这里**不显示 Agent 简介**（agent.description）。
+ * 简介是一段静态的营销文案，用户每天看几十次也不会多读一次，却占掉了标题
+ * 下方唯一一行副标题的位置 —— 那行位置该留给会变的东西（在线状态、场景、
+ * 正在输入）。想看简介去通讯录的资料页，那里有足够空间把它讲清楚。
  */
 export function ChatHeader({
   agent,
@@ -39,6 +46,7 @@ export function ChatHeader({
   scenario,
   onModelChange,
   onDelete,
+  onBack,
 }: ChatHeaderProps) {
   const [showDetail, setShowDetail] = useState(false);
   const [showModels, setShowModels] = useState(false);
@@ -50,6 +58,8 @@ export function ChatHeader({
   return (
     <PanelHeader
       className="relative"
+      onBack={onBack}
+      backLabel="返回消息列表"
       leading={
         <AgentAvatar
           id={agent?.id || fallbackTitle}
@@ -89,7 +99,6 @@ export function ChatHeader({
           )}
         </>
       }
-      subtitle={agent?.description || agent?.vendor || '本机 Agent'}
       actions={
         <>
           {/* 模型选择（会话级设置，次要位置） */}
@@ -101,9 +110,9 @@ export function ChatHeader({
                 // h-8 而不是 py-1.5：标题栏右侧的控件统一 32px 高，
                 // 与两个图标按钮齐平。原先靠 py 撑出来是 30px，
                 // 并排看会差 2px（上边差 1、下边差 1），看着像没对齐。
-                className="flex h-8 max-w-[190px] items-center gap-1 rounded-lg px-2.5 text-secondary"
+                className="flex h-8 max-w-[132px] sm:max-w-[190px] items-center gap-1 rounded-lg px-2.5 text-secondary"
                 style={{
-                  backgroundColor: 'var(--td-bg-color-secondarycontainer)',
+                  backgroundColor: 'var(--tc-surface-raised)',
                   color: 'var(--td-text-color-secondary)',
                 }}
                 title="切换模型"
@@ -159,7 +168,7 @@ export function ChatHeader({
             title="Agent 详情"
             className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
             style={{
-              backgroundColor: showDetail ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-secondarycontainer)',
+              backgroundColor: showDetail ? 'var(--td-brand-color-light)' : 'var(--tc-surface-raised)',
               color: showDetail ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)',
             }}
           >
@@ -174,7 +183,7 @@ export function ChatHeader({
                 onClick={() => setConfirmDelete(false)}
                 className="flex h-8 items-center rounded-lg px-2 text-secondary"
                 style={{
-                  backgroundColor: 'var(--td-bg-color-secondarycontainer)',
+                  backgroundColor: 'var(--tc-surface-raised)',
                   color: 'var(--td-text-color-secondary)',
                 }}
               >
@@ -202,7 +211,7 @@ export function ChatHeader({
               title="删除会话"
               className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
               style={{
-                backgroundColor: 'var(--td-bg-color-secondarycontainer)',
+                backgroundColor: 'var(--tc-surface-raised)',
                 color: 'var(--td-text-color-secondary)',
               }}
             >
@@ -220,7 +229,7 @@ export function ChatHeader({
         >
           <div
             className="space-y-2 rounded-xl px-4 py-3"
-            style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
+            style={{ backgroundColor: 'var(--tc-surface-raised)' }}
           >
             <div className="flex flex-wrap items-center gap-1.5">
               <span style={{ color: 'var(--td-text-color-placeholder)' }}>擅长领域</span>

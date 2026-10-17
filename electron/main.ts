@@ -125,8 +125,11 @@ async function createWindow() {
   mainWindow = new BrowserWindow({
     width,
     height,
-    minWidth: 960,
-    minHeight: 600,
+    // 最小尺寸给到 720 —— 前端在 900px 以下会切成单栏模式，
+    // 导航条 56 + 单栏内容，720 宽仍然够用。
+    // 原先 960 是「够放下三栏」的下限，但那把单栏模式也一并挡掉了。
+    minWidth: 720,
+    minHeight: 520,
     center: true,
     // 窗口左上角与任务栏都用它。图标由 scripts/build-electron.mjs 拷到
     // dist-electron/ —— 不能指向 build/icon.png，那个目录是构建资源、

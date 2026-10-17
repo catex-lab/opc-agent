@@ -23,14 +23,33 @@ import {
 } from 'tdesign-icons-react';
 import { Bot, Sparkles, Code, FileText, Globe, Lightbulb } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
-import { CustomAgent, PermissionMode } from '../types';
+import { CustomAgent, PermissionMode, ThemePreference } from '../types';
+import { Monitor, Sun, Moon } from 'lucide-react';
 
 interface SettingsPageProps {
   agents: CustomAgent[];
   onAdd: (agent: Omit<CustomAgent, 'id' | 'createdAt' | 'updatedAt'>) => CustomAgent;
   onUpdate: (id: string, updates: Partial<Omit<CustomAgent, 'id' | 'createdAt'>>) => void;
   onDelete: (id: string) => void;
+  /** 当前主题偏好（跟随系统 / 浅色 / 深色） */
+  themePreference: ThemePreference;
+  onThemePreferenceChange: (next: ThemePreference) => void;
+  /** 单栏（窄屏）模式下返回列表；宽屏不传 */
+  onBack?: () => void;
 }
+
+/** 主题偏好的三选一。文案要说清「跟随系统」和「固定」的区别，否则用户
+ *  分不清前两栏到底会不会随系统变。 */
+const THEME_OPTIONS: Array<{
+  value: ThemePreference;
+  label: string;
+  hint: string;
+  Icon: typeof Monitor;
+}> = [
+  { value: 'system', label: '跟随系统', hint: '跟着 Windows 的深浅色设置走', Icon: Monitor },
+  { value: 'light', label: '浅色', hint: '固定浅色', Icon: Sun },
+  { value: 'dark', label: '深色', hint: '固定深色', Icon: Moon },
+];
 
 type LoginMethod = 'env' | 'cli' | 'none';
 
@@ -110,7 +129,10 @@ export function SettingsPage({
   agents, 
   onAdd, 
   onUpdate, 
-  onDelete 
+  onDelete,
+  themePreference,
+  onThemePreferenceChange,
+  onBack
 }: SettingsPageProps) {
   const [editingAgent, setEditingAgent] = useState<CustomAgent | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -279,15 +301,76 @@ export function SettingsPage({
   return (
     <div
       className="flex min-w-0 flex-1 flex-col"
-      style={{ backgroundColor: 'var(--td-bg-color-page)' }}
+      style={{ backgroundColor: 'var(--tc-surface-content)' }}
     >
       {/* 标题栏统一由 PanelHeader 提供，与通讯录、会话头部同一套规范。
           此前这里是自己写的 h1 + text-2xl（24px），比别处大 50%，
           且没有 header 容器与底边线，是全应用最显眼的标题栏不一致。 */}
-      <PanelHeader title="设置" subtitle="管理登录配置和自定义 Agent" />
+      <PanelHeader
+        title="设置"
+        subtitle="外观、登录配置和自定义 Agent"
+        onBack={onBack}
+        backLabel="返回"
+      />
 
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
         <div className="max-w-3xl mx-auto space-y-8">
+
+        {/* 外观。放在最前面：它是唯一一个「一进来就该看到」的设置，
+            而且不依赖任何后端数据 —— 就算登录检查还在转圈，
+            用户也已经能把界面调成自己喜欢的深浅色。 */}
+        <div>
+          <div className="mb-4">
+            <h2 className="text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+              外观
+            </h2>
+            <p className="text-sm mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+              选择浅色或深色，或跟随系统设置
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {THEME_OPTIONS.map(({ value, label, hint, Icon }) => {
+              const selected = themePreference === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => onThemePreferenceChange(value)}
+                  aria-pressed={selected}
+                  className="flex items-center gap-3 rounded-lg p-3 text-left transition-all"
+                  style={{
+                    // 选中态用品牌色描边 + 淡底，不用实心填充：
+                    // 三张卡片并排，填实心会让视觉重心全压在被选中的那张上。
+                    backgroundColor: selected ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-component)',
+                    border: `1.5px solid ${selected ? 'var(--td-brand-color)' : 'transparent'}`,
+                  }}
+                >
+                  <span
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+                    style={{
+                      backgroundColor: selected ? 'var(--td-brand-color)' : 'var(--td-bg-color-container)',
+                      color: selected ? 'var(--tc-on-brand)' : 'var(--td-text-color-secondary)',
+                    }}
+                  >
+                    <Icon size={18} />
+                  </span>
+                  <span className="min-w-0">
+                    <span
+                      className="block text-body-lg font-medium"
+                      style={{ color: 'var(--td-text-color-primary)' }}
+                    >
+                      {label}
+                    </span>
+                    <span className="block text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                      {hint}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {/* 登录配置 */}
         <div>
@@ -370,7 +453,7 @@ export function SettingsPage({
             
             {showEnvConfig ? (
               <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label 
                       className="text-xs block mb-1"
@@ -652,7 +735,7 @@ export function SettingsPage({
                     <h4 className="text-sm font-medium mb-3" style={{ color: 'var(--td-text-color-secondary)' }}>
                       快速创建
                     </h4>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       {PRESET_TEMPLATES.map(template => {
                         const Icon = getIconComponent(template.icon);
                         return (

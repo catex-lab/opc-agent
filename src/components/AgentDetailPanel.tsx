@@ -31,7 +31,7 @@ export function AgentDetailPanel({ agent, onBack, onStartChat }: AgentDetailPane
   return (
     <div
       className="flex min-h-0 min-w-0 flex-1 flex-col"
-      style={{ backgroundColor: 'var(--td-bg-color-page)' }}
+      style={{ backgroundColor: 'var(--tc-surface-content)' }}
     >
       <PanelHeader
         title="详细资料"
@@ -53,7 +53,7 @@ export function AgentDetailPanel({ agent, onBack, onStartChat }: AgentDetailPane
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[560px] px-6 py-8">
+        <div className="mx-auto w-full max-w-[560px] px-4 py-8 sm:px-6">
           {/* 头部：头像 / 名称 / 状态 */}
           <div className="flex flex-col items-center text-center">
             <AgentAvatar
@@ -156,7 +156,7 @@ export function AgentDetailPanel({ agent, onBack, onStartChat }: AgentDetailPane
       >
         {/* 内层补上 px-6，与正文列的内边距一致 —— 否则按钮会比上面的卡片
             左右各宽 24px，看着像没对齐 */}
-        <div className="mx-auto w-full max-w-[560px] px-6">
+        <div className="mx-auto w-full max-w-[560px] px-4 sm:px-6">
           <button
             type="button"
             disabled={!canChat}

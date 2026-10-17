@@ -30,6 +30,8 @@ interface GroupChatHeaderProps {
   orchestration: OrchestrationMode;
   onOrchestrationChange: (mode: OrchestrationMode) => void;
   onDelete: () => void;
+  /** 单栏（窄屏）模式下返回列表；宽屏不传 */
+  onBack?: () => void;
 }
 
 export function GroupChatHeader({
@@ -39,6 +41,7 @@ export function GroupChatHeader({
   orchestration,
   onOrchestrationChange,
   onDelete,
+  onBack,
 }: GroupChatHeaderProps) {
   const shown = members.slice(0, 4);
   const rest = members.length - shown.length;
@@ -47,13 +50,15 @@ export function GroupChatHeader({
   return (
     <PanelHeader
       level="page"
+      onBack={onBack}
+      backLabel="返回消息列表"
       // 头像堆叠作为标题的 leading：一眼看出「这是一群人在说话」
       leading={
         <div className="flex flex-shrink-0 items-center">
           {shown.length === 0 ? (
             <div
               className="flex h-11 w-11 items-center justify-center rounded-full"
-              style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
+              style={{ backgroundColor: 'var(--tc-surface-raised)' }}
             >
               <Users size={20} style={{ color: 'var(--td-text-color-placeholder)' }} />
             </div>
@@ -67,7 +72,7 @@ export function GroupChatHeader({
                   marginLeft: i === 0 ? 0 : -10,
                   zIndex: shown.length - i,
                   // 描边用容器底色：深色主题下也接得住
-                  boxShadow: '0 0 0 2px var(--td-bg-color-container)',
+                  boxShadow: '0 0 0 2px var(--tc-surface-chrome)',
                 }}
               >
                 <AgentAvatar
@@ -86,9 +91,9 @@ export function GroupChatHeader({
               className="ml-[-10px] flex h-8 w-8 items-center justify-center rounded-full text-caption font-medium"
               style={{
                 zIndex: 0,
-                backgroundColor: 'var(--td-bg-color-secondarycontainer)',
+                backgroundColor: 'var(--tc-surface-raised)',
                 color: 'var(--td-text-color-secondary)',
-                boxShadow: '0 0 0 2px var(--td-bg-color-container)',
+                boxShadow: '0 0 0 2px var(--tc-surface-chrome)',
               }}
             >
               +{rest}
@@ -101,7 +106,7 @@ export function GroupChatHeader({
         <span
           className="rounded px-1.5 py-[1px] text-caption"
           style={{
-            backgroundColor: 'var(--td-bg-color-secondarycontainer)',
+            backgroundColor: 'var(--tc-surface-raised)',
             color: 'var(--td-text-color-secondary)',
           }}
         >
@@ -126,7 +131,7 @@ export function GroupChatHeader({
             title="删除群聊"
             className="flex h-8 w-8 items-center justify-center rounded-lg transition-opacity hover:opacity-80"
             style={{
-              backgroundColor: 'var(--td-bg-color-secondarycontainer)',
+              backgroundColor: 'var(--tc-surface-raised)',
               color: 'var(--td-text-color-secondary)',
             }}
           >
@@ -159,7 +164,7 @@ function ModePicker({
       <summary
         className="flex cursor-pointer list-none items-center gap-1 rounded-lg px-2.5 py-1.5 text-secondary"
         style={{
-          backgroundColor: 'var(--td-bg-color-secondarycontainer)',
+          backgroundColor: 'var(--tc-surface-raised)',
           color: 'var(--td-text-color-secondary)',
         }}
         title="切换编排模式"
@@ -173,7 +178,7 @@ function ModePicker({
       <div
         className="absolute right-0 top-full z-30 mt-1 w-[280px] rounded-xl py-1 shadow-popup"
         style={{
-          backgroundColor: 'var(--td-bg-color-container)',
+          backgroundColor: 'var(--tc-surface-raised)',
           border: '1px solid var(--td-component-stroke)',
         }}
       >

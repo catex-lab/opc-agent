@@ -1,36 +1,39 @@
-import { MessageCircle, Users, Settings, Sun, Moon } from 'lucide-react';
-import type { Theme } from '../types';
+import { MessageCircle, Users, Settings } from 'lucide-react';
 
 export type NavKey = 'chats' | 'contacts';
 
 interface NavRailProps {
   active: NavKey | 'settings';
-  theme: Theme;
   /** 在线 Agent 数量，显示在通讯录角标上 */
   readyCount: number;
   onNavigate: (key: NavKey) => void;
   onOpenSettings: () => void;
-  onToggleTheme: () => void;
+  /** 窄屏（单栏模式）下收窄，把像素让给内容 */
+  compact?: boolean;
 }
 
 /**
  * 最左侧的窄导航栏 —— 社交应用里那一条「功能切换条」。
  * 只放最高频的三个入口，不承载任何业务内容。
  *
- * 设计要点（2024-10-15 打磨后）：
+ * 设计要点：
  *   • 统一 44×44 按钮 + 20px 图标，节奏一致
  *   • 激活态用「左侧 3px 品牌色指示条 + 浅色背景」双重标识，位置感明确
  *   • hover 有微妙的背景色抬升，交互反馈即时
  *   • focus-visible 带品牌色 ring，键盘导航友好
  *   • 角标 18px/11px，确保两位数清晰可读
+ *
+ * ⚠️ 主题切换按钮**不在这里**。
+ * 深浅色是一个「设置」，不是「高频操作」—— 放在导航条上等于每天都要看到
+ * 一个几乎不用的按钮，还占掉了唯一一个「无标签图标位」。已移到设置页的
+ * 「外观」分区（跟随系统 / 浅色 / 深色）。
  */
 export function NavRail({
   active,
-  theme,
   readyCount,
   onNavigate,
   onOpenSettings,
-  onToggleTheme,
+  compact = false,
 }: NavRailProps) {
   const navItems: Array<{
     key: NavKey;
@@ -46,12 +49,12 @@ export function NavRail({
 
   return (
     <nav
-      className="flex w-[64px] shrink-0 flex-col items-center gap-1.5 py-3"
+      className={`flex shrink-0 flex-col items-center gap-1.5 py-3 ${compact ? 'w-[56px]' : 'w-[64px]'}`}
       style={{
-        // 原先用 var(--td-bg-color-settings-modal) —— 那是 TDesign 内部的
-        // 「设置弹窗」变量，不属于公开主题 API，升级组件库时可能被改名或删除，
-        // 届时这一栏会静默变成透明。改用公开的 container 令牌。
-        backgroundColor: 'var(--td-bg-color-container)',
+        // 框架面（--tc-surface-chrome）：导航条 / 列表栏 / 标题栏三者同色，
+        // 它们构成应用的「外框」。内容区（--tc-surface-content）比它亮一档，
+        // 于是「哪块是框架、哪块是内容」一眼能分。
+        backgroundColor: 'var(--tc-surface-chrome)',
         borderRight: '1px solid var(--td-component-stroke)',
       }}
     >
@@ -75,7 +78,7 @@ export function NavRail({
                 focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
                 ${active
                   ? 'text-[var(--td-brand-color)]'
-                  : 'text-[var(--td-text-color-secondary)] hover:text-[var(--td-text-color-primary)] hover:bg-[var(--td-bg-color-component-hover)]'
+                  : 'text-[var(--td-text-color-secondary)] hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
                 }
               `}
               style={{
@@ -105,17 +108,8 @@ export function NavRail({
 
       <div className="flex-1" />
 
-      {/* 底部工具按钮 */}
+      {/* 底部工具按钮。这里只剩「设置」—— 主题切换已移入设置页。 */}
       <div className="flex flex-col items-center gap-1 pb-1">
-        <button
-          type="button"
-          onClick={onToggleTheme}
-          title={theme === 'dark' ? '切换到浅色' : '切换到深色'}
-          className="flex h-11 w-11 items-center justify-center rounded-xl text-[var(--td-text-color-secondary)] transition-all duration-200 hover:bg-[var(--td-bg-color-component-hover)] hover:text-[var(--td-text-color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1"
-        >
-          {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-        </button>
-
         <button
           type="button"
           onClick={onOpenSettings}
@@ -127,7 +121,7 @@ export function NavRail({
             focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
             ${isActive('settings')
               ? 'text-[var(--td-brand-color)]'
-              : 'text-[var(--td-text-color-secondary)] hover:text-[var(--td-text-color-primary)] hover:bg-[var(--td-bg-color-component-hover)]'
+              : 'text-[var(--td-text-color-secondary)] hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
             }
           `}
           style={{

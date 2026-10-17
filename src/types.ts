@@ -181,7 +181,16 @@ export interface CustomAgent {
 // Agent 是 CustomAgent 的别名
 export type Agent = CustomAgent;
 
+/** 实际落到 DOM 上的主题 */
 export type Theme = 'light' | 'dark';
+
+/**
+ * 用户对主题的**偏好**。
+ *
+ * 比 Theme 多一个 'system'：跟随系统时，系统换肤要能带着应用一起换。
+ * 所以偏好与解析结果是两个值，不能只存一个（见 hooks/useTheme.ts）。
+ */
+export type ThemePreference = Theme | 'system';
 
 /**
  * 权限请求 - 用于工具调用确认

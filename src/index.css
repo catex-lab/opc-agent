@@ -190,6 +190,32 @@ button:focus-visible {
      浅色主题下页面本身是 #ffffff，所以靠一圈深色细边把圆勾出来。 */
   --agent-logo-tile: #ffffff;
   --agent-logo-tile-ring: rgba(0, 0, 0, 0.08);
+
+  /* ── 表面层级（框架 / 内容 / 浮起）────────────────────────────────────
+   *
+   * 应用只有三种表面，别再引入第四种：
+   *
+   *   chrome   框架面：导航条 + 列表栏 + **所有标题栏**
+   *   content  内容面：主内容区（消息流、表单页）
+   *   raised   浮起面：框架面上的控件（搜索框、图标按钮、行 hover）
+   *
+   * 为什么要单独抽 chrome，而不是继续用 --td-bg-color-container：
+   *
+   * 原先导航条和标题栏都用 container(#fafafa)，主内容区用 page(#ffffff)。
+   * 名义上「标题栏和左侧栏同色」是成立的，但 #fafafa 与 #ffffff 只差 2%，
+   * 屏幕上看不出来 —— 标题栏像没有底色，只剩一条分割线在暗示它的存在。
+   * 深色主题反过来：#1c1c1c 与 #121212 差得够开，标题栏是清楚的。
+   * 于是「同一个令牌」在两个主题里给出了完全不同的观感，这才是问题所在。
+   *
+   * 现在把差值拉到可感知的一档（浅色 6%），并且**框架三处共用一个令牌** ——
+   * 对齐靠的是同一个值，不是「记得三处都写 container」。 */
+  --tc-surface-chrome: #f0f0f0;
+  --tc-surface-content: #ffffff;
+  --tc-surface-raised: #ffffff;
+  /* 框架面上的行交互。不能沿用 --td-bg-color-component-hover(#eeeeee)：
+     它比 chrome 只深 1%，hover 等于没有。 */
+  --tc-hover-chrome: rgba(0, 0, 0, 0.06);
+  --tc-active-chrome: rgba(0, 0, 0, 0.12);
 }
 
 /* =====================================================================
@@ -268,6 +294,15 @@ button:focus-visible {
      避免一大片纯白圆点在暗色界面里刺眼 */
   --agent-logo-tile: #f2f2f2;
   --agent-logo-tile-ring: rgba(255, 255, 255, 0.10);
+
+  /* 表面层级（深色）。深色下「亮 = 靠前」：内容面最暗，框架面亮一档，
+     浮起面再亮一档。浅色下则相反（亮 = 靠后）。这是两种主题不能共用
+     一组数值的根本原因。 */
+  --tc-surface-chrome: #1b1b1b;
+  --tc-surface-content: #121212;
+  --tc-surface-raised: #262626;
+  --tc-hover-chrome: rgba(255, 255, 255, 0.07);
+  --tc-active-chrome: rgba(255, 255, 255, 0.14);
 }
 
 /* =====================================================================
@@ -426,7 +461,10 @@ button:focus-visible {
   outline: none;
 }
 
-/* 通用列表项：hover 背景 + 激活态 */
+/* 通用列表项：hover 背景 + 激活态。
+   两者都跑在**框架面**上（会话列表、通讯录），所以用 chrome 系列的交互色。
+   沿用 --td-bg-color-component-hover(#eeeeee) 的话，在 #f0f0f0 的栏底上
+   只深 1%，鼠标划过几乎看不出反馈。 */
 .tc-list-item {
   border-radius: var(--td-radius-medium);
   transition:
@@ -435,11 +473,11 @@ button:focus-visible {
 }
 
 .tc-list-item:hover:not(.is-active) {
-  background-color: var(--td-bg-color-component-hover);
+  background-color: var(--tc-hover-chrome);
 }
 
 .tc-list-item.is-active {
-  background-color: var(--td-brand-color-light);
+  background-color: var(--tc-active-chrome);
 }
 
 /* 通用图标按钮：方形圆角，尺寸统一由组件控制 */

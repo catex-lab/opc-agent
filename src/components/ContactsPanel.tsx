@@ -34,6 +34,8 @@ interface ContactsPanelProps {
    * 列表负责「快速扫一眼谁在线」，资料页负责「这个 Agent 到底是什么」。
    */
   onViewDetail: (agentId: string) => void;
+  /** 窄屏单栏模式：铺满整宽、不要右边线 */
+  compact?: boolean;
 }
 
 /**
@@ -63,6 +65,7 @@ export function ContactsPanel({
   onProbe,
   onCreateGroup,
   onViewDetail,
+  compact = false,
 }: ContactsPanelProps) {
   const [keyword, setKeyword] = useState('');
   // 多选建群模式。null = 普通通讯录；Set = 正在勾选成员
@@ -128,10 +131,10 @@ export function ContactsPanel({
 
   return (
     <div
-      className="flex w-[300px] shrink-0 flex-col"
+      className={`flex flex-col ${compact ? 'w-full' : 'w-[272px] shrink-0 lg:w-[300px]'}`}
       style={{
-        backgroundColor: 'var(--td-bg-color-container)',
-        borderRight: '1px solid var(--td-component-stroke)',
+        backgroundColor: 'var(--tc-surface-chrome)',
+        borderRight: compact ? undefined : '1px solid var(--td-component-stroke)',
       }}
     >
       {/* 顶部。搜索框放在 children 里，与标题共用同一条底边线 ——
@@ -156,8 +159,8 @@ export function ContactsPanel({
               style={{
                 backgroundColor: selecting
                   ? 'var(--td-brand-color)'
-                  : 'var(--td-bg-color-secondarycontainer)',
-                color: selecting ? '#fff' : 'var(--td-text-color-secondary)',
+                  : 'var(--tc-surface-raised)',
+                color: selecting ? 'var(--tc-on-brand)' : 'var(--td-text-color-secondary)',
               }}
             >
               {selecting ? <X size={16} /> : <UserPlus size={16} />}
@@ -171,7 +174,7 @@ export function ContactsPanel({
               aria-label="重新探测"
               className={actionBtn}
               style={{
-                backgroundColor: 'var(--td-bg-color-secondarycontainer)',
+                backgroundColor: 'var(--tc-surface-raised)',
                 color: 'var(--td-text-color-secondary)',
                 opacity: probing ? 0.6 : 1,
               }}
@@ -231,11 +234,11 @@ export function ContactsPanel({
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         <div
           className="sticky top-0 z-10 -mx-2 px-2 pb-2 pt-2"
-          style={{ backgroundColor: 'var(--td-bg-color-container)' }}
+          style={{ backgroundColor: 'var(--tc-surface-chrome)' }}
         >
           <div
             className="flex items-center gap-2 rounded-lg px-2.5 py-1.5"
-            style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
+            style={{ backgroundColor: 'var(--tc-surface-raised)' }}
           >
             <Search size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
             <input

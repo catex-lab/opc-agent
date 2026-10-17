@@ -99,7 +99,7 @@ export function NewChatView({
               {selectedScenario ? '再点一次可取消，回到自定义' : '可选，不选则直接挑 Agent'}
             </span>
           </div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {scenarios.map(s => {
               const isSelected = s.id === selectedScenarioId;
               const Icon = SCENARIO_ICONS[s.icon];
@@ -140,7 +140,7 @@ export function NewChatView({
           <label className="block text-body-lg font-medium mb-3" style={{ color: 'var(--td-text-color-primary)' }}>
             选择 Agent
           </label>
-          <div className="grid grid-cols-2 gap-3 max-h-[280px] overflow-y-auto">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 max-h-[280px] overflow-y-auto">
             {agents.map(agent => {
               const isSelected = agent.id === newChatAgentId;
               return (

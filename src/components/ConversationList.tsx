@@ -37,6 +37,8 @@ interface ConversationListProps {
   onDelete: (sessionId: string) => void;
   /** 置顶 / 取消置顶 */
   onTogglePin: (sessionId: string, pinned: boolean) => void;
+  /** 窄屏单栏模式：铺满整宽、不要右边线 */
+  compact?: boolean;
 }
 
 /**
@@ -54,6 +56,7 @@ export function ConversationList({
   onSelect,
   onDelete,
   onTogglePin,
+  compact = false,
 }: ConversationListProps) {
   const [keyword, setKeyword] = useState('');
   /** 右键菜单：位置来自指针坐标，targetId 是它指向的那一行 */
@@ -107,10 +110,12 @@ export function ConversationList({
 
   return (
     <div
-      className="flex w-[300px] shrink-0 flex-col"
+      className={`flex flex-col ${compact ? 'w-full' : 'w-[272px] shrink-0 lg:w-[300px]'}`}
       style={{
-        backgroundColor: 'var(--td-bg-color-container)',
-        borderRight: '1px solid var(--td-component-stroke)',
+        // 框架面：与导航条、标题栏同色（见 index.css 的 --tc-surface-chrome）
+        backgroundColor: 'var(--tc-surface-chrome)',
+        // 单栏模式下它是唯一的栏，右侧不需要分割线
+        borderRight: compact ? undefined : '1px solid var(--td-component-stroke)',
       }}
     >
       {/* 顶部：标题 + 发起新对话。
@@ -132,7 +137,7 @@ export function ConversationList({
             title="发起新对话"
             className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
             style={{
-              backgroundColor: 'var(--td-bg-color-secondarycontainer)',
+              backgroundColor: 'var(--tc-surface-raised)',
               color: 'var(--td-text-color-secondary)',
             }}
           >
@@ -147,11 +152,11 @@ export function ConversationList({
             但已经不占标题栏的高度预算 */}
         <div
           className="sticky top-0 z-10 -mx-2 px-2 pb-2 pt-1"
-          style={{ backgroundColor: 'var(--td-bg-color-container)' }}
+          style={{ backgroundColor: 'var(--tc-surface-chrome)' }}
         >
           <div
             className="flex items-center gap-2 rounded-lg px-2.5 py-1.5"
-            style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
+            style={{ backgroundColor: 'var(--tc-surface-raised)' }}
           >
             <Search size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
             <input

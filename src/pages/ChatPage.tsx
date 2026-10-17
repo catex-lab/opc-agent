@@ -51,6 +51,8 @@ interface ChatPageProps {
   /** 群聊：改成员（本地 + PATCH 后端） */
   onMembersChange: (agentIds: string[]) => void;
   onDelete: () => void;
+  /** 单栏（窄屏）模式下返回列表；宽屏不传 */
+  onBack?: () => void;
 }
 
 interface NewChatOptions {
@@ -89,6 +91,7 @@ export function ChatPage({
   onOrchestrationChange,
   onMembersChange,
   onDelete,
+  onBack,
 }: ChatPageProps) {
   const navigate = useNavigate();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -224,6 +227,7 @@ export function ChatPage({
           orchestration={orchestration}
           onOrchestrationChange={onOrchestrationChange}
           onDelete={onDelete}
+          onBack={onBack}
         />
       )}
 
