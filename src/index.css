@@ -117,23 +117,31 @@ button:focus-visible {
 
 /* ===== TDesign 全局 CSS 变量覆盖 ===== */
 :root {
-  /* 品牌色 —— 腾讯蓝 #0052D9
-     hover 用 #0594FA（腾讯官网链接色，比纯提亮更有「电子感」），
-     active 用 #003FB3（同色相压暗，避免变灰）。 */
-  --td-brand-color: #0052d9;
-  --td-brand-color-hover: #0594fa;
-  --td-brand-color-active: #003fb3;
-  --td-brand-color-focus: rgba(0, 82, 217, 0.2);
-  --td-brand-color-disabled: rgba(0, 82, 217, 0.35);
-  /* 浅色底：腾讯界面里品牌色的「选中态」底衬比通用组件底色更淡，
-     0.08 比 0.1 更克制，长列表选中时不刺眼 */
-  --td-brand-color-light: rgba(0, 82, 217, 0.08);
-  --td-brand-color-light-hover: rgba(0, 82, 217, 0.12);
-  --td-brand-color-1: rgba(0, 82, 217, 0.08);
-  --td-brand-color-2: rgba(0, 82, 217, 0.16);
-  --td-brand-color-6: #0052d9;
-  --td-brand-color-7: #0594fa;
-  --td-brand-color-8: #003fb3;
+  /* 品牌色 —— 石墨黑 #1F1F1F
+   *
+   * 不用蓝色：蓝是所有通用 SaaS 的默认解，和这个应用的黑白人物 logo 也接不上。
+   * 中性黑的好处是「不抢戏」—— 界面上唯一带颜色的东西只剩下状态色
+   * （在线绿 / 待处理橙 / 需修复红）和 Agent 头像，语义反而更清楚。
+   *
+   * hover 提亮到 #333（深底上「变亮」才像可点），active 压到纯黑。 */
+  --td-brand-color: #1f1f1f;
+  --td-brand-color-hover: #333333;
+  --td-brand-color-active: #000000;
+  --td-brand-color-focus: rgba(31, 31, 31, 0.16);
+  --td-brand-color-disabled: rgba(31, 31, 31, 0.3);
+  /* 浅色底：选中态底衬用极淡的灰，长列表里选中不刺眼 */
+  --td-brand-color-light: rgba(31, 31, 31, 0.06);
+  --td-brand-color-light-hover: rgba(31, 31, 31, 0.1);
+  --td-brand-color-1: rgba(31, 31, 31, 0.06);
+  --td-brand-color-2: rgba(31, 31, 31, 0.14);
+  --td-brand-color-6: #1f1f1f;
+  --td-brand-color-7: #333333;
+  --td-brand-color-8: #000000;
+  /* 品牌色底上的文字色。
+   *
+   * 浅色主题品牌色是深色 → 白字；深色主题品牌色**反转为浅灰** → 深字。
+   * 各处写死 #fff 的话，深色主题下按钮会变成「浅灰底 + 白字」，几乎不可读。 */
+  --tc-on-brand: #ffffff;
   
   /* 背景色 - 浅色模式 */
   --td-bg-color-page: #ffffff;
@@ -203,20 +211,25 @@ button:focus-visible {
    本文件在打包产物中位于 TDesign 样式之后，因此同特异性下由本文件胜出。
    ===================================================================== */
 :root.dark {
-  /* 品牌色 —— 深色下不能直接用 #0052D9（在 #121212 上饱和度太低、显脏），
-     提亮到 #4589FF 保住腾讯蓝的色相，同时满足 4.5:1 对比度。 */
-  --td-brand-color: #4589ff;
-  --td-brand-color-hover: #6ba4ff;
-  --td-brand-color-active: #0052d9;
-  --td-brand-color-focus: rgba(69, 137, 255, 0.28);
-  --td-brand-color-disabled: rgba(69, 137, 255, 0.3);
-  --td-brand-color-light: rgba(69, 137, 255, 0.14);
-  --td-brand-color-light-hover: rgba(69, 137, 255, 0.2);
-  --td-brand-color-1: rgba(69, 137, 255, 0.14);
-  --td-brand-color-2: rgba(69, 137, 255, 0.24);
-  --td-brand-color-6: #4589ff;
-  --td-brand-color-7: #6ba4ff;
-  --td-brand-color-8: #0052d9;
+  /* 品牌色 —— 深色下必须反过来提亮。
+   *
+   * 石墨黑在 #121212 上等于消失，所以深色主题的品牌色是**浅灰**：
+   * 按钮变成「浅灰底 + 深字」，气泡、导航激活条同理。
+   * 这不是妥协，是中性品牌色的必然 —— 一个色值不可能同时压住白底和黑底。 */
+  --td-brand-color: #e5e5e5;
+  --td-brand-color-hover: #fafafa;
+  --td-brand-color-active: #c6c6c6;
+  --td-brand-color-focus: rgba(229, 229, 229, 0.28);
+  --td-brand-color-disabled: rgba(229, 229, 229, 0.3);
+  --td-brand-color-light: rgba(229, 229, 229, 0.12);
+  --td-brand-color-light-hover: rgba(229, 229, 229, 0.18);
+  --td-brand-color-1: rgba(229, 229, 229, 0.12);
+  --td-brand-color-2: rgba(229, 229, 229, 0.2);
+  --td-brand-color-6: #e5e5e5;
+  --td-brand-color-7: #fafafa;
+  --td-brand-color-8: #c6c6c6;
+  /* 深色主题品牌色是浅灰 → 品牌底上的文字用深色 */
+  --tc-on-brand: #171717;
   
   /* 背景色 - 深色模式 */
   --td-bg-color-page: #121212;
@@ -342,8 +355,8 @@ button:focus-visible {
 
   /* 工具调用的分类色：全部取自腾讯调色板，替代原先混入的 Ant Design 色。
      用变量而非字面量，深色模式下才能统一提亮。 */
-  --tool-color-search: #0052d9;   /* 搜索 / 检索 */
-  --tool-color-network: #0594fa;  /* 联网抓取 */
+  --tool-color-search: #834ec2;   /* 搜索 / 检索 */
+  --tool-color-network: #0e7a8c;  /* 联网抓取 */
   --tool-color-file: #834ec2;     /* 读写文件 */
   --tool-color-shell: #0e7a5f;    /* 命令执行 */
   --tool-color-danger: #d54941;   /* 删除等破坏性操作 */
@@ -358,8 +371,8 @@ button:focus-visible {
   --td-error-color: #e34d59;
   --td-text-color-tertiary: #8b8b8b;
 
-  --tool-color-search: #4589ff;
-  --tool-color-network: #3aa6ff;
+  --tool-color-search: #a06ce0;
+  --tool-color-network: #35a8bc;
   --tool-color-file: #a06ce0;
   --tool-color-shell: #2aa87f;
   --tool-color-danger: #e8646f;
@@ -490,7 +503,7 @@ button:focus-visible {
   gap: 6px;
   border-radius: var(--td-radius-default);
   background-color: var(--td-brand-color);
-  color: #fff;
+  color: var(--tc-on-brand);
   transition:
     background-color var(--duration-fast) var(--ease-tencent),
     box-shadow var(--duration-fast) var(--ease-tencent);
@@ -775,7 +788,7 @@ t-chat-sender,
   --td-chat-sender-text-color: var(--td-text-color-primary) !important;
   --td-chat-sender-placeholder-color: var(--td-text-color-placeholder) !important;
   --td-chat-sender-btn-bg: var(--td-brand-color) !important;
-  --td-chat-sender-btn-color: #fff !important;
+  --td-chat-sender-btn-color: var(--tc-on-brand) !important;
   width: 100% !important;
 }
 
@@ -812,13 +825,13 @@ t-chat-sender [slot='footer-prefix'],
 
 /* ===== 聊天气泡（腾讯 IM 风格）===== */
 /* 用户气泡用**纯品牌色**，不做渐变。
-   原先写的是「同色相微渐变」，但两端取的是 --td-brand-color(#0052d9) 和
-   --td-brand-color-hover(#0594fa) —— 这两个色明度差太大，渐变出来是一整块
-   偏艳的亮蓝，跟左侧导航栏、权限标签的腾讯蓝放在一起像两套品牌色。
+   原先写的是「同色相微渐变」，但两端取的是品牌色和品牌 hover 色 ——
+   这两个色明度差太大，渐变出来是一整块偏艳的亮色，跟导航栏、权限标签
+   放在一起像两套品牌色。
    纯色反而更稳，也更接近 IM 里「我的消息」那种一块实色的观感。 */
 .tc-bubble-user {
   background-color: var(--td-brand-color);
-  color: #fff;
+  color: var(--tc-on-brand);
   border-radius: 14px 14px 4px 14px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px -2px var(--td-brand-color-light);
 }
@@ -880,7 +893,7 @@ t-chat-sender::part(textarea),
 t-chat-sender::part(send-btn),
 .t-chat-sender .t-chat-sender__send-btn {
   background-color: var(--td-brand-color) !important;
-  color: #fff !important;
+  color: var(--tc-on-brand) !important;
   border-radius: 50% !important;
 }
 

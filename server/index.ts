@@ -401,7 +401,7 @@ app.post("/api/sessions", (req, res) => {
 app.patch("/api/sessions/:sessionId", (req, res) => {
   try {
     const { sessionId } = req.params;
-    const { title, model, orchestration, agentIds, cwd, scenarioId, systemPrompt } = req.body;
+    const { title, model, orchestration, agentIds, cwd, scenarioId, systemPrompt, pinned } = req.body;
 
     const updates: Parameters<typeof db.updateSession>[1] = { title, model };
     // 群聊头部可以随时改编排模式与成员，这里一并支持
@@ -415,6 +415,8 @@ app.patch("/api/sessions/:sessionId", (req, res) => {
     if (typeof cwd === 'string') updates.cwd = cwd || null;
     if (typeof scenarioId === 'string') updates.scenario_id = scenarioId || null;
     if (typeof systemPrompt === 'string') updates.system_prompt = systemPrompt || null;
+    // 置顶开关（消息列表右键菜单）。只认布尔，避免 "false" 字符串被当成真
+    if (typeof pinned === 'boolean') updates.pinned = pinned ? 1 : 0;
 
     const success = db.updateSession(sessionId, updates);
 

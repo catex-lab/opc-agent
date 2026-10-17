@@ -141,6 +141,11 @@ export interface Session {
    */
   systemPrompt?: string;
   permissionMode?: PermissionMode;
+  /**
+   * 置顶。钉住的会话排在消息列表最前，与最近活跃时间无关。
+   * 由列表行的右键菜单切换，落库在 sessions.pinned。
+   */
+  pinned?: boolean;
   createdAt: Date;
   messages: Message[];
   /** 'direct' 一对一（默认）| 'group' 群聊 */
@@ -258,8 +263,8 @@ export interface RegisteredAgent {
 
 /** 能力标签的中文名与配色 */
 export const CAPABILITY_META: Record<AgentCapability, { label: string; color: string }> = {
-  chat: { label: '问答', color: '#0052D9' },
-  code: { label: '代码', color: '#0594FA' },
+  chat: { label: '问答', color: '#1F1F1F' },
+  code: { label: '代码', color: '#0E7A8C' },
   write: { label: '写作', color: '#834EC2' },
   tools: { label: '工具调用', color: '#0E7A5F' },
   image: { label: '生图', color: '#D54941' },

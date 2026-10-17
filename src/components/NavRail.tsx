@@ -92,8 +92,8 @@ export function NavRail({
               <Icon size={20} strokeWidth={active ? 2.5 : 2} />
               {badge !== undefined && badge > 0 && (
                 <span
-                  className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-caption font-semibold text-white shadow-card"
-                  style={{ backgroundColor: 'var(--td-brand-color)' }}
+                  className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-caption font-semibold shadow-card"
+                  style={{ backgroundColor: 'var(--td-brand-color)', color: 'var(--tc-on-brand)' }}
                 >
                   {badge > 99 ? '99+' : badge}
                 </span>

@@ -82,6 +82,7 @@ function AppContent() {
     addSession,
     updateSession,
     updateSessionMessages,
+    setSessionPinned,
   } = useSessions();
 
   /**
@@ -416,6 +417,7 @@ function AppContent() {
               onNewChat={handleNewChat}
               onSelect={handleSelectSession}
               onDelete={handleDeleteSession}
+              onTogglePin={setSessionPinned}
             />
           ) : (
             <ContactsPanel

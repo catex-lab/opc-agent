@@ -49,7 +49,7 @@ const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
     label: '默认模式', 
     shortLabel: '默认',
     icon: <LockOnIcon />, 
-    color: '#0052d9',
+    color: '#1f1f1f',
     description: '每次操作都需要确认'
   },
   'acceptEdits': { 

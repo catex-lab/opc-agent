@@ -39,8 +39,8 @@ const PRESET_ICONS = [
 
 // 预设色板 —— 与 SettingsPage 保持完全一致（腾讯调色板）
 const PRESET_COLORS = [
-  '#0052d9', '#0594fa', '#00a870', '#ed7b2f',
-  '#e34d59', '#834ec2', '#4b5eaa', '#0e7a5f',
+  '#1f1f1f', '#5f5e5a', '#00a870', '#ed7b2f',
+  '#e34d59', '#834ec2', '#b0479e', '#0e7a8c',
 ];
 
 const PRESET_TEMPLATES = [
@@ -49,7 +49,7 @@ const PRESET_TEMPLATES = [
     description: '专注于编程和代码相关任务',
     systemPrompt: '你是一个专业的编程助手。你擅长编写、审查和解释代码。请提供清晰、高效且符合最佳实践的代码解决方案。在解释时，请考虑代码的可读性、性能和可维护性。',
     icon: 'Code',
-    color: '#0594fa',
+    color: '#0e7a8c',
   },
   {
     name: '写作助手',
@@ -89,7 +89,7 @@ export function AgentConfigDialog({
     description: '',
     systemPrompt: '',
     icon: 'Bot',
-    color: '#0052d9',
+    color: '#1f1f1f',
   });
 
   const resetForm = () => {
@@ -98,7 +98,7 @@ export function AgentConfigDialog({
       description: '',
       systemPrompt: '',
       icon: 'Bot',
-      color: '#0052d9',
+      color: '#1f1f1f',
     });
     setEditingAgent(null);
     setIsCreating(false);
@@ -112,7 +112,7 @@ export function AgentConfigDialog({
       description: agent.description || '',
       systemPrompt: agent.systemPrompt,
       icon: agent.icon || 'Bot',
-      color: agent.color || '#0052d9',
+      color: agent.color || '#1f1f1f',
     });
     setIsCreating(true);
   };
@@ -317,7 +317,7 @@ export function AgentConfigDialog({
                         <div className="flex items-center gap-3">
                           <div 
                             className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
-                            style={{ backgroundColor: agent.color || '#0052d9' }}
+                            style={{ backgroundColor: agent.color || '#1f1f1f' }}
                           >
                             <Icon size={20} color="white" />
                           </div>

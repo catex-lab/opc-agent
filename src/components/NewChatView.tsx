@@ -72,11 +72,11 @@ export function NewChatView({
         <div className="text-center mb-8">
           <div
             className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-popup mx-auto"
-            style={{
-              background: 'linear-gradient(135deg, var(--td-brand-color), var(--td-brand-color-hover))'
-            }}
+            style={{ backgroundColor: 'var(--td-brand-color)' }}
           >
-            <span className="text-3xl font-bold text-white">{APP_CONFIG.nameInitial}</span>
+            <span className="text-3xl font-bold" style={{ color: 'var(--tc-on-brand)' }}>
+              {APP_CONFIG.nameInitial}
+            </span>
           </div>
           <h2
             className="text-2xl font-semibold mb-2"

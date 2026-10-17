@@ -67,6 +67,8 @@ export function useSessions() {
           cwd: s.cwd ?? undefined,
           scenarioId: s.scenario_id ?? undefined,
           systemPrompt: s.system_prompt ?? undefined,
+          // 置顶是持久状态，刷新后必须还原，否则「钉住的会话」每次重开都掉下来
+          pinned: s.pinned === 1 || s.pinned === true,
           createdAt: new Date(s.created_at),
           messages: []
         }));
@@ -188,6 +190,36 @@ export function useSessions() {
     ));
   }, []);
 
+  /**
+   * 置顶 / 取消置顶（消息列表右键菜单）。
+   *
+   * 乐观更新：先改本地让列表立刻重排，再落库。置顶是个「点了就该立刻看到」
+   * 的动作，等一个来回的网络再重排会明显发木。
+   *
+   * 失败时回滚，但 **404 不算失败** —— 从通讯录发起、还没发首条消息的会话
+   * 是纯本地对象，后端根本没有这条记录，此时 PATCH 必然 404。
+   * 本地置顶状态先留着，等首条消息落库后由后续 PATCH 补上。
+   */
+  const setSessionPinned = useCallback(
+    async (sessionId: string, pinned: boolean) => {
+      const prev = sessions.find(s => s.id === sessionId)?.pinned ?? false;
+      setSessions(p => p.map(s => (s.id === sessionId ? { ...s, pinned } : s)));
+
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pinned }),
+        });
+        if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
+      } catch (error) {
+        console.warn('[Sessions] 置顶落库失败，已回滚:', error);
+        setSessions(p => p.map(s => (s.id === sessionId ? { ...s, pinned: prev } : s)));
+      }
+    },
+    [sessions]
+  );
+
   // 当切换会话时，加载该会话的消息
   useEffect(() => {
     if (currentSessionId) {
@@ -213,5 +245,6 @@ export function useSessions() {
     addSession,
     updateSession,
     updateSessionMessages,
+    setSessionPinned,
   };
 }

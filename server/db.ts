@@ -67,6 +67,8 @@ db.exec(`
     scenario_id TEXT,
     -- 会话级系统提示词（场景注入），发送时优先于 Agent 自带
     system_prompt TEXT,
+    -- 置顶：1 = 钉在消息列表顶部。右键菜单切换
+    pinned INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -121,6 +123,7 @@ ensureColumn('sessions', 'orchestration', 'orchestration TEXT');
 ensureColumn('sessions', 'cwd', 'cwd TEXT');
 ensureColumn('sessions', 'scenario_id', 'scenario_id TEXT');
 ensureColumn('sessions', 'system_prompt', 'system_prompt TEXT');
+ensureColumn('sessions', 'pinned', 'pinned INTEGER NOT NULL DEFAULT 0');
 // 群聊消息来源。老消息为 NULL，前端按「无作者」渲染成单气泡，行为不变。
 ensureColumn('messages', 'author_agent_id', 'author_agent_id TEXT');
 // P4-4：生图消息的图片块。老消息为 NULL（纯文本），语义正确。
@@ -174,6 +177,14 @@ export interface DbSession {
   scenario_id: string | null;
   /** 会话级系统提示词（场景注入） */
   system_prompt: string | null;
+  /**
+   * 置顶标记。1 = 钉在消息列表顶部；老库迁移后为 0。
+   *
+   * 声明成可选是为了 `createSession()` 的调用点：新建会话一定是未置顶的，
+   * 让每个调用点都写一遍 `pinned: 0` 只是噪音。读取时列上永远有值
+   * （NOT NULL DEFAULT 0），所以 `s.pinned === 1` 判断是安全的。
+   */
+  pinned?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -222,10 +233,10 @@ export function createSession(session: DbSession): DbSession {
     INSERT INTO sessions (
       id, title, model, agent_id, sdk_session_id,
       kind, agent_ids, orchestration,
-      cwd, scenario_id, system_prompt,
+      cwd, scenario_id, system_prompt, pinned,
       created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     bind(session.id),
@@ -239,6 +250,7 @@ export function createSession(session: DbSession): DbSession {
     bind(session.cwd),
     bind(session.scenario_id),
     bind(session.system_prompt),
+    bind(session.pinned ?? 0),
     bind(session.created_at),
     bind(session.updated_at)
   );
@@ -261,11 +273,12 @@ export function updateSession(
       | 'cwd'
       | 'scenario_id'
       | 'system_prompt'
+      | 'pinned'
     >
   >
 ): boolean {
   const fields: string[] = [];
-  const values: Array<string | null> = [];
+  const values: Array<string | number | null> = [];
 
   if (updates.title !== undefined) {
     fields.push('title = ?');
@@ -306,6 +319,10 @@ export function updateSession(
   if (updates.system_prompt !== undefined) {
     fields.push('system_prompt = ?');
     values.push(updates.system_prompt);
+  }
+  if (updates.pinned !== undefined) {
+    fields.push('pinned = ?');
+    values.push(updates.pinned ? 1 : 0);
   }
 
   if (fields.length === 0) return false;

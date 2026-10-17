@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Plus, Search, Trash2 } from 'lucide-react';
+import { Plus, Search, Trash2, Pin, PinOff } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { PanelHeader } from './PanelHeader';
+import { ContextMenu } from './ContextMenu';
+import { ConfirmDialog } from './ConfirmDialog';
 import { AVAILABILITY_META, type RegisteredAgent, type Session } from '../types';
 
 const LAST_READ_KEY = 'opc:lastRead';
@@ -33,6 +35,8 @@ interface ConversationListProps {
   onNewChat: () => void;
   onSelect: (sessionId: string) => void;
   onDelete: (sessionId: string) => void;
+  /** 置顶 / 取消置顶 */
+  onTogglePin: (sessionId: string, pinned: boolean) => void;
 }
 
 /**
@@ -49,11 +53,13 @@ export function ConversationList({
   onNewChat,
   onSelect,
   onDelete,
+  onTogglePin,
 }: ConversationListProps) {
   const [keyword, setKeyword] = useState('');
-  const [hovered, setHovered] = useState<string | null>(null);
-  // 处于「待确认删除」状态的会话 id
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  /** 右键菜单：位置来自指针坐标，targetId 是它指向的那一行 */
+  const [menu, setMenu] = useState<{ targetId: string; x: number; y: number } | null>(null);
+  /** 待确认删除的会话（null = 没有对话框） */
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
 
   const lastRead = useMemo(() => readLastReadMap(), [sessions, currentSessionId]);
 
@@ -85,7 +91,14 @@ export function ConversationList({
             preview.toLowerCase().includes(keyword.toLowerCase())
           : true
       )
-      .sort((a, b) => b.lastAt.getTime() - a.lastAt.getTime());
+      .sort((a, b) => {
+        // 置顶的永远在最前，与最近活跃时间无关 —— 这正是「置顶」的意思。
+        // 两个都置顶或都不置顶时，才退回按时间倒序。
+        const pinA = a.session.pinned ? 1 : 0;
+        const pinB = b.session.pinned ? 1 : 0;
+        if (pinA !== pinB) return pinB - pinA;
+        return b.lastAt.getTime() - a.lastAt.getTime();
+      });
   }, [sessions, getAgent, lastRead, currentSessionId, keyword]);
 
   // 副标题里的未读数。用过滤后的 items 而非 sessions —— 搜索时副标题会变成
@@ -169,12 +182,13 @@ export function ConversationList({
                 onKeyDown={e => {
                   if (e.key === 'Enter') onSelect(session.id);
                 }}
-                onMouseEnter={() => setHovered(session.id)}
-                onMouseLeave={() => {
-                  setHovered(null);
-                  // 指针离开就撤销待确认态，避免「点了删除但不小心移开鼠标」
-                  // 之后下次悬停回来直接处于危险确认态
-                  setPendingDelete(p => (p === session.id ? null : p));
+                // 会话操作（置顶 / 删除）收进右键菜单。
+                // 原先删除按钮在悬停时浮现在行右上角，会压住时间戳和未读点，
+                // 而且鼠标扫过列表时一直在闪 —— 一个不可逆的破坏性操作，
+                // 不该靠「碰巧划过」触发。
+                onContextMenu={e => {
+                  e.preventDefault();
+                  setMenu({ targetId: session.id, x: e.clientX, y: e.clientY });
                 }}
                 className={`tc-list-item group relative mb-0.5 flex cursor-pointer items-center gap-2.5 px-2.5 py-2.5${isActive ? ' is-active' : ''}`}
               >
@@ -195,6 +209,15 @@ export function ConversationList({
                     >
                       {displayName}
                     </span>
+                    {/* 置顶标记：不标的话用户看不出「这条为什么排在最上面」 */}
+                    {session.pinned && (
+                      <Pin
+                        size={11}
+                        className="shrink-0"
+                        style={{ color: 'var(--td-text-color-placeholder)' }}
+                        aria-label="已置顶"
+                      />
+                    )}
                     <span
                       className="ml-auto shrink-0 text-caption"
                       style={{ color: 'var(--td-text-color-placeholder)' }}
@@ -226,69 +249,60 @@ export function ConversationList({
                     </span>
                   )}
                 </div>
-
-                {/* 悬停时出现的删除按钮。
-                    删除会话是不可逆的（后端直接 DELETE），所以做成
-                    「两步确认」：第一次点击只把按钮切换成确认态，
-                    第二次才真删。比弹 Modal 打扰更小，也比单击即删安全。 */}
-                {hovered === session.id && (
-                  pendingDelete === session.id ? (
-                    <div className="absolute right-2 top-2 flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={e => {
-                          e.stopPropagation();
-                          setPendingDelete(null);
-                        }}
-                        title="取消删除"
-                        className="flex h-6 items-center justify-center rounded-md px-1.5 text-caption"
-                        style={{
-                          backgroundColor: 'var(--td-bg-color-container)',
-                          color: 'var(--td-text-color-secondary)',
-                        }}
-                      >
-                        取消
-                      </button>
-                      <button
-                        type="button"
-                        onClick={e => {
-                          e.stopPropagation();
-                          setPendingDelete(null);
-                          onDelete(session.id);
-                        }}
-                        title="确认删除"
-                        className="flex h-6 items-center justify-center rounded-md px-1.5 text-caption font-medium"
-                        style={{
-                          backgroundColor: 'var(--td-error-color)',
-                          color: '#fff',
-                        }}
-                      >
-                        删除
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={e => {
-                        e.stopPropagation();
-                        setPendingDelete(session.id);
-                      }}
-                      title="删除会话"
-                      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md"
-                      style={{
-                        backgroundColor: 'var(--td-bg-color-container)',
-                        color: 'var(--td-text-color-secondary)',
-                      }}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )
-                )}
               </div>
             );
           })
         )}
       </div>
+
+      {/* 右键菜单 */}
+      {menu && (() => {
+        const target = items.find(i => i.session.id === menu.targetId);
+        if (!target) return null;
+        const isPinned = !!target.session.pinned;
+        return (
+          <ContextMenu
+            x={menu.x}
+            y={menu.y}
+            onClose={() => setMenu(null)}
+            items={[
+              {
+                key: 'pin',
+                label: isPinned ? '取消置顶' : '置顶',
+                icon: isPinned ? <PinOff size={14} /> : <Pin size={14} />,
+                onSelect: () => onTogglePin(target.session.id, !isPinned),
+              },
+              {
+                key: 'delete',
+                label: '删除会话',
+                icon: <Trash2 size={14} />,
+                danger: true,
+                onSelect: () =>
+                  setConfirmDelete({ id: target.session.id, name: target.displayName }),
+              },
+            ]}
+          />
+        );
+      })()}
+
+      {/* 删除确认。菜单里点「删除会话」不直接删 —— 后端是硬 DELETE，
+          删掉的消息找不回来，值得多一次明确的确认。 */}
+      <ConfirmDialog
+        open={!!confirmDelete}
+        title="删除会话"
+        confirmText="删除"
+        danger
+        onCancel={() => setConfirmDelete(null)}
+        onConfirm={() => {
+          if (confirmDelete) onDelete(confirmDelete.id);
+          setConfirmDelete(null);
+        }}
+      >
+        <p>确定删除「{confirmDelete?.name}」吗？</p>
+        <p className="mt-1.5" style={{ color: 'var(--td-text-color-placeholder)' }}>
+          该会话的全部消息会一并删除，无法恢复。
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }

@@ -11,7 +11,7 @@ const DEFAULT_AGENT: CustomAgent = {
   description: '一个通用的 AI 助手，可以帮助你完成各种任务',
   systemPrompt: '你是一个专业的AI助手，善于帮助用户解决各种问题。请用简洁清晰的方式回答问题。',
   icon: 'Bot',
-  color: '#0052d9',
+  color: '#1f1f1f',
   createdAt: new Date(),
   updatedAt: new Date(),
 };

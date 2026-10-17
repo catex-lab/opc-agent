@@ -67,8 +67,27 @@ const sample = () => page.evaluate(() => {
   // 导航条底部两个原生按钮：preflight 关闭后若不重置，会保留 Chrome 原生灰底
   const navBtns = Array.from(document.querySelectorAll('nav button'));
   const themeBtn = navBtns[navBtns.length - 2];
+  // 未读角标：品牌色底 + 品牌底上的文字色。
+  // 只看 --tc-on-brand 变量不够 —— 早先这里写死 `text-white`，
+  // 浅色主题（黑底白字）看着没问题，深色主题品牌色反转为浅灰后
+  // 就变成「浅灰底 + 白字」，等于隐形。所以要量真实渲染的对比度。
+  const badge = Array.from(document.querySelectorAll('nav span')).find(s => s.className.includes('-right-0.5'));
+  const luminance = c => {
+    const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => {
+      v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrastOf = el => {
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    const a = luminance(cs.backgroundColor), b = luminance(cs.color);
+    return Number(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toFixed(2));
+  };
   return {
     brand: v('--td-brand-color'),
+    onBrand: v('--tc-on-brand'),
+    badgeContrast: contrastOf(badge),
     pageBg: v('--td-bg-color-page'),
     container: v('--td-bg-color-container'),
     error: v('--td-error-color'),
@@ -97,15 +116,46 @@ await page.waitForTimeout(600);
 const dark = await sample();
 
 const rgb = s => s && s.startsWith('#') ? s.toLowerCase() : s;
+
+/**
+ * 判断一个颜色是不是「蓝色系」。
+ *
+ * 产品要求全局不用蓝色 —— 蓝是所有通用 SaaS 的默认解，和黑白 logo 也接不上。
+ * 光把当前值改掉不够：以后有人顺手把品牌色改回 #0052d9，测试照样全绿。
+ * 所以加一条**性质断言**：色相落在蓝/靛区间（195°~265°）且饱和度够，
+ * 就算违规。青（#0e7a8c，190°）和紫（#834ec2，267°）不在区间内。
+ */
+function isBlue(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  if (d === 0) return false; // 纯灰/黑白，没有色相
+  const s = d / (255 - Math.abs(max + min - 255));
+  let h;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h = ((h * 60) + 360) % 360;
+  return h >= 195 && h <= 265 && s > 0.15;
+}
+
 const checks = [
-  ['浅色 品牌色 = 腾讯蓝 #0052d9', rgb(light.brand), '#0052d9'],
-  ['深色 品牌色 = #4589ff（未被 TDesign 覆盖）', rgb(dark.brand), '#4589ff'],
+  ['浅色 品牌色 = 石墨黑 #1f1f1f', rgb(light.brand), '#1f1f1f'],
+  ['深色 品牌色 = #e5e5e5（未被 TDesign 覆盖）', rgb(dark.brand), '#e5e5e5'],
+  ['浅色 品牌色不是蓝色系', isBlue(light.brand) ? '是蓝' : '非蓝', '非蓝'],
+  ['深色 品牌色不是蓝色系', isBlue(dark.brand) ? '是蓝' : '非蓝', '非蓝'],
   ['浅色 页面底色 = #ffffff', rgb(light.pageBg), '#ffffff'],
   ['深色 页面底色 = #121212（未被 TDesign 覆盖）', rgb(dark.pageBg), '#121212'],
   ['浅色 错误色 = #e34d59', rgb(light.error), '#e34d59'],
   ['深色 错误色 = #e34d59（未被 TDesign 覆盖）', rgb(dark.error), '#e34d59'],
   ['深色 成功色已定义 = #2ba471', rgb(dark.success), '#2ba471'],
-  ['深色 工具搜索色已定义 = #4589ff', rgb(dark.toolSearch), '#4589ff'],
+  ['深色 工具搜索色已定义 = #a06ce0', rgb(dark.toolSearch), '#a06ce0'],
   ['浅色 代码块底色 = #f7f7f8', rgb(light.preBg), 'rgb(247, 247, 248)'],
   ['深色 代码块底色 = #1b1b1b（不再发白）', rgb(dark.preBg), 'rgb(27, 27, 27)'],
   ['深色 代码块圆角 = 8px', rgb(dark.preRadius), '8px'],
@@ -114,12 +164,19 @@ const checks = [
   ['深色 主题按钮无原生灰底', rgb(dark.themeBtnBg), 'rgba(0, 0, 0, 0)'],
   ['搜索框无原生黑边', rgb(light.rawInputBorder), '0px'],
   // 用户气泡：从「品牌色 → hover 色」的渐变改成纯品牌色实心。
-  // 渐变两端明度差太大（#0052d9 → #0594fa），渲染出来是一整块偏艳的亮蓝，
-  // 与导航栏的腾讯蓝并排看像两套品牌色。这里断言「实心 + 无渐变」，
+  // 渐变两端明度差太大，渲染出来是一整块偏艳的色块，
+  // 与导航栏并排看像两套品牌色。这里断言「实心 + 无渐变」，
   // 防止以后有人手滑把渐变加回来。
-  ['浅色 用户气泡 = 品牌色实心', rgb(light.bubbleBg), 'rgb(0, 82, 217)'],
-  ['深色 用户气泡 = 深色品牌色', rgb(dark.bubbleBg), 'rgb(69, 137, 255)'],
+  ['浅色 用户气泡 = 品牌色实心', rgb(light.bubbleBg), 'rgb(31, 31, 31)'],
+  ['深色 用户气泡 = 深色品牌色', rgb(dark.bubbleBg), 'rgb(229, 229, 229)'],
   ['浅色 用户气泡无渐变', rgb(light.bubbleImg), 'none'],
+  // 品牌底上的文字色：中性品牌色必须反向配对，否则深色主题下会隐形。
+  // 变量断言防「值被改错」，对比度断言防「变量定义了却没人用」——
+  // 这两件事的失败方式完全不同，各留一条。
+  ['浅色 品牌底文字 = #ffffff', rgb(light.onBrand), '#ffffff'],
+  ['深色 品牌底文字 = #171717', rgb(dark.onBrand), '#171717'],
+  ['浅色 未读角标对比度 ≥ 4.5', light.badgeContrast >= 4.5 ? '达标' : `仅 ${light.badgeContrast}`, '达标'],
+  ['深色 未读角标对比度 ≥ 4.5', dark.badgeContrast >= 4.5 ? '达标' : `仅 ${dark.badgeContrast}`, '达标'],
 ];
 
 let fail = 0;

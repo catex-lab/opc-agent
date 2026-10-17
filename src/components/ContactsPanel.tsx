@@ -363,7 +363,7 @@ function ContactRow({
           style={{
             backgroundColor: selected ? 'var(--td-brand-color)' : 'transparent',
             border: selected ? 'none' : '1.5px solid var(--td-component-stroke)',
-            color: '#fff',
+            color: 'var(--tc-on-brand)',
           }}
         >
           {selected && <Check size={12} />}
