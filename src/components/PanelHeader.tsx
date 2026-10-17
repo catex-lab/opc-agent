@@ -22,10 +22,15 @@ import type { ReactNode } from 'react';
  * - **字号**：主区 `text-page`（17px）；窄栏 `text-title-lg`（16px）。
  *   两者都是既有的语义令牌，不引入新的魔数。
  * - **字重**：一律 600（font-semibold）。
- * - **垂直节奏**：主区一律 `py-4`（16px），主区标题栏因此天然收敛到同一高度
- *   （标题行 24 + 间距 2 + 副标题 18 + 上下各 16 = 76px）。
- *   窄栏用 `py-3`（12px）——300px 宽的列表栏还要塞搜索框，`py-4` 会让栏头过高。
+ * - **垂直节奏**：主区一律 `py-5`（20px），标题栏因此天然收敛到同一高度
+ *   （标题行 24 + 间距 2 + 副标题 18 + 上下各 20 = 84，取 88 兜住像素误差，
+ *   多出的 4px 由 flex 居中分配）。**窄栏与主区用完全相同的 py-5** ——
+ *   两栏并排时标题必须落在同一条水平线上，否则并排看会「晃」。
+ *   早先窄栏用 `pt-2` 是因为栏头里还塞着搜索框，88px 装不下才硬压；
+ *   搜索框移到列表区吸顶之后，这个特殊处理已经删掉。
  * - **副标题**：一律 `text-secondary`（12px）+ `mt-0.5`，次要文字色。
+ *   没传副标题时组件会用 aria-hidden 空行占位，保证块高恒为 44 ——
+ *   靠「调用方记得传」来对齐是靠不住的。
  * - **底边线**：一律 1px `--td-component-stroke`，除非显式 `divider={false}`。
  * - **水平内边距**：主区 `px-6`，窄栏 `px-4`（随栏宽缩放，属刻意差异）。
  *
@@ -43,8 +48,13 @@ export interface PanelHeaderProps {
   /** 右侧操作区 */
   actions?: ReactNode;
   /**
-   * 标题行下方的整宽内容（如搜索框）。
-   * 渲染在标题栏内部、底边线之上，因此搜索框会随标题栏一起被分隔线收住。
+   * 标题行下方的整宽内容，渲染在标题栏内部、底边线之上。
+   *
+   * ⚠️ **不要用它放搜索框**。搜索框（约 32px）塞进来之后，窄栏的内容块
+   * 变成「标题 24 + 副标题 18 + 搜索 32」= 74，88px 高度装不下，只能靠
+   * `pt-2` 硬压 —— 结果是窄栏标题比主区标题高 4px，两栏并排能看出来。
+   * 搜索框应放在列表区顶部并 `sticky top-0` 吸顶（见 ConversationList /
+   * ContactsPanel），既保住标题对齐，又保留「滚动时不跑掉」。
    */
   children?: ReactNode;
   /** 主区（17px / px-6）还是窄栏（16px / px-4） */
@@ -85,7 +95,7 @@ export function PanelHeader({
         ...(divider ? { borderBottom: '1px solid var(--td-component-stroke)' } : {}),
       }}
     >
-      <div className={`flex items-center gap-3 ${isPage ? 'px-6 py-5' : 'px-4 pt-2'}`}>
+      <div className={`flex items-center gap-3 ${isPage ? 'px-6 py-5' : 'px-4 py-5'}`}>
         {leading}
 
         <div className="min-w-0 flex-1">
@@ -99,13 +109,24 @@ export function PanelHeader({
             {badge}
           </div>
 
-          {subtitle != null && (
+          {subtitle != null ? (
             <p
               className="mt-0.5 truncate text-secondary"
               style={{ color: 'var(--td-text-color-secondary)' }}
             >
               {subtitle}
             </p>
+          ) : (
+            /*
+             * 没传副标题也占住这一行。
+             *
+             * 标题块的高度是 24 + 2 + 18 = 44，头部靠 flex 在 88px 里居中，
+             * 于是「标题顶边」= (88 - 块高) / 2。块高一旦少了 20，标题就会
+             * 掉下去 10px —— 两栏并排时标题不在同一条水平线上。
+             * 用 aria-hidden 的空行占位，保证任何调用点都对齐，而不是靠
+             * 每个调用方记得「一定要传副标题」。
+             */
+            <p className="mt-0.5 h-[18px]" aria-hidden="true" />
           )}
         </div>
 

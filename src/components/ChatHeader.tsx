@@ -98,7 +98,10 @@ export function ChatHeader({
               <button
                 type="button"
                 onClick={() => setShowModels(v => !v)}
-                className="flex max-w-[190px] items-center gap-1 rounded-lg px-2.5 py-1.5 text-secondary"
+                // h-8 而不是 py-1.5：标题栏右侧的控件统一 32px 高，
+                // 与两个图标按钮齐平。原先靠 py 撑出来是 30px，
+                // 并排看会差 2px（上边差 1、下边差 1），看着像没对齐。
+                className="flex h-8 max-w-[190px] items-center gap-1 rounded-lg px-2.5 text-secondary"
                 style={{
                   backgroundColor: 'var(--td-bg-color-secondarycontainer)',
                   color: 'var(--td-text-color-secondary)',

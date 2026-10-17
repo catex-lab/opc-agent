@@ -88,6 +88,10 @@ export function ConversationList({
       .sort((a, b) => b.lastAt.getTime() - a.lastAt.getTime());
   }, [sessions, getAgent, lastRead, currentSessionId, keyword]);
 
+  // 副标题里的未读数。用过滤后的 items 而非 sessions —— 搜索时副标题会变成
+  // 「匹配 N 个会话」，两个数字必须来自同一个集合，否则会对不上。
+  const unreadCount = items.filter(i => i.unread).length;
+
   return (
     <div
       className="flex w-[300px] shrink-0 flex-col"
@@ -96,11 +100,18 @@ export function ConversationList({
         borderRight: '1px solid var(--td-component-stroke)',
       }}
     >
-      {/* 顶部：标题 + 发起新对话。搜索框放在 children 里，
-          使其与标题同处一个标题栏、共用同一条底边线 */}
+      {/* 顶部：标题 + 发起新对话。
+          搜索框不放这里 —— 它会被挤到列表区顶部吸顶（见下方 sticky 块）。
+          原因见 PanelHeader 的 children 注释：栏头塞进搜索框就装不下 88px，
+          标题会被顶高 4px，与主区标题对不齐。 */}
       <PanelHeader
         level="column"
         title="消息"
+        subtitle={
+          keyword
+            ? `匹配 ${items.length} 个会话`
+            : `${items.length} 个会话${unreadCount > 0 ? ` · ${unreadCount} 条未读` : ''}`
+        }
         actions={
           <button
             type="button"
@@ -115,8 +126,16 @@ export function ConversationList({
             <Plus size={17} />
           </button>
         }
-      >
-        <div className="px-4 pb-1">
+      />
+
+      {/* 列表 */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+        {/* 搜索框吸顶：滚动时列表从它下面穿过，看起来仍像「固定栏头」，
+            但已经不占标题栏的高度预算 */}
+        <div
+          className="sticky top-0 z-10 -mx-2 px-2 pb-2 pt-1"
+          style={{ backgroundColor: 'var(--td-bg-color-container)' }}
+        >
           <div
             className="flex items-center gap-2 rounded-lg px-2.5 py-1.5"
             style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
@@ -131,10 +150,6 @@ export function ConversationList({
             />
           </div>
         </div>
-      </PanelHeader>
-
-      {/* 列表 */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         {items.length === 0 ? (
           <div
             className="px-3 py-10 text-center text-body"

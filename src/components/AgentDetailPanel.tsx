@@ -35,6 +35,9 @@ export function AgentDetailPanel({ agent, onBack, onStartChat }: AgentDetailPane
     >
       <PanelHeader
         title="详细资料"
+        // 副标题放「这是谁」——页面滚下去之后大头像会离开视野，
+        // 标题栏里留着名字和厂商，才知道自己正在看谁。
+        subtitle={[agent.name, agent.vendor].filter(Boolean).join(' · ')}
         leading={
           <button
             type="button"

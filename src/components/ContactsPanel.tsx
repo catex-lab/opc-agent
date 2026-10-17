@@ -181,21 +181,6 @@ export function ContactsPanel({
           </>
         }
       >
-        <div className="px-4 pb-1">
-          <div
-            className="flex items-center gap-2 rounded-lg px-2.5 py-1.5"
-            style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
-          >
-            <Search size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
-            <input
-              value={keyword}
-              onChange={e => setKeyword(e.target.value)}
-              placeholder="搜索 Agent 或厂商"
-              className="w-full bg-transparent text-body outline-none"
-              style={{ color: 'var(--td-text-color-primary)' }}
-            />
-          </div>
-        </div>
       </PanelHeader>
 
       {/* 多选模式下的确认条：常驻在列表上方，选几个人一目了然 */}
@@ -241,8 +226,28 @@ export function ContactsPanel({
         </div>
       )}
 
-      {/* 分组列表 */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3 pt-2">
+      {/* 分组列表。搜索框吸顶，不占标题栏高度 —— 理由见 PanelHeader 的
+          children 注释（栏头塞进搜索框会让标题被顶高 4px）。 */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+        <div
+          className="sticky top-0 z-10 -mx-2 px-2 pb-2 pt-2"
+          style={{ backgroundColor: 'var(--td-bg-color-container)' }}
+        >
+          <div
+            className="flex items-center gap-2 rounded-lg px-2.5 py-1.5"
+            style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
+          >
+            <Search size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
+            <input
+              value={keyword}
+              onChange={e => setKeyword(e.target.value)}
+              placeholder="搜索 Agent 或厂商"
+              className="w-full bg-transparent text-body outline-none"
+              style={{ color: 'var(--td-text-color-primary)' }}
+            />
+          </div>
+        </div>
+
         {loading && total === 0 ? (
           <div
             className="px-3 py-10 text-center text-body"
