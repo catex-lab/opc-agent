@@ -473,17 +473,25 @@ function EmptyState({
   nav: NavKey;
 }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
+    <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
+      {/* 空态图标用品牌色淡底 + 品牌色线条，而不是灰色占位图。
+          灰图标传达的是「这里什么都没有」，淡蓝底传达的是「等你开始」。 */}
       <div
-        className="flex h-14 w-14 items-center justify-center rounded-2xl"
-        style={{ backgroundColor: 'var(--td-bg-color-container)' }}
+        className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl"
+        style={{
+          backgroundColor: 'var(--td-brand-color-light)',
+          color: 'var(--td-brand-color)',
+        }}
       >
-        <MessagesSquare size={26} style={{ color: 'var(--td-text-color-placeholder)' }} />
+        <MessagesSquare size={26} strokeWidth={1.75} />
       </div>
       <h3 className="text-title font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
         {nav === 'contacts' ? '从左侧选一个 Agent 开始对话' : '选择一个会话，或发起新对话'}
       </h3>
-      <p className="max-w-[380px] text-body leading-relaxed" style={{ color: 'var(--td-text-color-secondary)' }}>
+      <p
+        className="mt-2 max-w-[380px] text-body leading-relaxed"
+        style={{ color: 'var(--td-text-color-secondary)' }}
+      >
         本机共有 {readyCount} 个 Agent 处于在线状态。每个 Agent 都是通讯录里的一个联系人，
         可以单独对话，也可以拉进群聊协作。
       </p>
@@ -491,8 +499,7 @@ function EmptyState({
         <button
           type="button"
           onClick={onGoContacts}
-          className="mt-1 flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-body text-white"
-          style={{ backgroundColor: 'var(--td-brand-color)' }}
+          className="tc-btn-brand mt-5 px-3.5 py-2 text-body"
         >
           打开通讯录
           <ArrowRight size={14} />

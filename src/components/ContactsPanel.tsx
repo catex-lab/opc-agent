@@ -145,12 +145,7 @@ export function ContactsPanel({
             <button
               type="button"
               onClick={toggleSelecting}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-body transition-opacity"
-              style={{
-                backgroundColor: selecting ? 'var(--td-brand-color)' : 'var(--td-bg-color-container)',
-                color: selecting ? '#fff' : 'var(--td-text-color-primary)',
-                border: selecting ? 'none' : '1px solid var(--td-component-stroke)',
-              }}
+              className={`${selecting ? 'tc-btn-brand' : 'tc-btn-secondary'} px-3 py-1.5 text-body`}
             >
               <UserPlus size={14} />
               {selecting ? '取消' : '发起群聊'}
@@ -160,12 +155,7 @@ export function ContactsPanel({
               type="button"
               onClick={onProbe}
               disabled={probing}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-body transition-opacity disabled:opacity-60"
-              style={{
-                backgroundColor: 'var(--td-bg-color-container)',
-                color: 'var(--td-text-color-primary)',
-                border: '1px solid var(--td-component-stroke)',
-              }}
+              className="tc-btn-secondary px-3 py-1.5 text-body"
             >
               {probing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
               {probing ? '探测中…' : '重新探测'}
@@ -191,8 +181,7 @@ export function ContactsPanel({
             type="button"
             onClick={submitGroup}
             disabled={selectedCount === 0}
-            className="ml-auto flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-body text-white transition-opacity disabled:opacity-40"
-            style={{ backgroundColor: 'var(--td-brand-color)' }}
+            className="tc-btn-brand ml-auto px-3.5 py-1.5 text-body"
           >
             创建群聊
             <ArrowRight size={14} />
@@ -233,23 +222,20 @@ export function ContactsPanel({
             return (
             <section key={section.key} className="mb-7">
               <div className="mb-2 flex items-baseline gap-2">
-                <h3 className="text-body font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
-                  {section.title}
-                </h3>
+                <h3 className="tc-section-title text-body">{section.title}</h3>
                 <span className="text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
                   {section.list.length}
                 </span>
-                <span className="ml-auto text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                <span className="tc-hint ml-auto">
                   {selecting ? '点击选择成员' : section.hint}
                 </span>
               </div>
 
               {section.list.length === 0 ? (
-                <div
-                  className="rounded-xl px-4 py-6 text-center text-secondary"
-                  style={{ backgroundColor: 'var(--td-bg-color-container)', color: 'var(--td-text-color-placeholder)' }}
-                >
-                  {selecting ? '没有可邀请的在线成员' : '这一组暂无 Agent'}
+                <div className="tc-card tc-card--lg px-4 py-6 text-center">
+                  <span className="tc-hint">
+                    {selecting ? '没有可邀请的在线成员' : '这一组暂无 Agent'}
+                  </span>
                 </div>
               ) : (
                 <div className="grid gap-2">
@@ -388,8 +374,7 @@ function ContactRow({
                   type="button"
                   onClick={onStartChat}
                   title={`与 ${agent.name} 对话`}
-                  className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-secondary text-white"
-                  style={{ backgroundColor: 'var(--td-brand-color)' }}
+                  className="tc-btn-brand px-2.5 py-1.5 text-secondary"
                 >
                   <MessageSquarePlus size={13} />
                   对话
@@ -399,11 +384,8 @@ function ContactRow({
                 type="button"
                 onClick={onToggle}
                 title="详情"
-                className="flex h-7 w-7 items-center justify-center rounded-lg"
-                style={{
-                  backgroundColor: 'var(--td-bg-color-secondarycontainer)',
-                  color: 'var(--td-text-color-secondary)',
-                }}
+                aria-expanded={expanded}
+                className="tc-icon-btn tc-icon-btn--filled h-7 w-7"
               >
                 <ChevronRight
                   size={15}
@@ -415,10 +397,11 @@ function ContactRow({
         </div>
       </div>
 
-      {/* 展开详情：状态说明 / 修复指引 / 上次错误 */}
+      {/* 展开详情：状态说明 / 修复指引 / 上次错误。
+          卡片本身已无内边距，这里用 mx-3 + mb-3 让信息块内缩，不贴卡片边。 */}
       {expanded && !selectable && (
         <div
-          className="mt-3 space-y-1.5 rounded-lg px-3 py-2.5 text-secondary leading-relaxed"
+          className="mx-3 mb-3 space-y-1.5 rounded-lg px-3 py-2.5 text-secondary leading-relaxed"
           style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
         >
           <DetailRow label="状态" value={agent.status.message || meta.label} />
@@ -436,28 +419,25 @@ function ContactRow({
       <button
         type="button"
         onClick={onSelect}
-        className="block w-full rounded-xl text-left transition-opacity hover:opacity-95"
-        style={{
-          backgroundColor: selected ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-container)',
-          border: `1px solid ${selected ? 'var(--td-brand-color)' : 'var(--td-component-stroke)'}`,
-        }}
+        aria-pressed={selected}
+        className={`tc-card tc-card--lg block w-full text-left ${selected ? '' : 'tc-card--interactive'}`}
+        style={
+          selected
+            ? {
+                backgroundColor: 'var(--td-brand-color-light)',
+                borderColor: 'var(--td-brand-color)',
+              }
+            : undefined
+        }
       >
         {row}
       </button>
     );
   }
 
-  return (
-    <div
-      className="rounded-xl px-4 py-3"
-      style={{
-        backgroundColor: 'var(--td-bg-color-container)',
-        border: '1px solid var(--td-component-stroke)',
-      }}
-    >
-      {row}
-    </div>
-  );
+  // 内边距只在 row 内部给一次。这里再加一层 px-4 py-3 会叠成 32px，
+  // 联系人名字被推得离卡片左边太远，一行能塞下的信息也变少。
+  return <div className="tc-card tc-card--lg">{row}</div>;
 }
 
 function DetailRow({

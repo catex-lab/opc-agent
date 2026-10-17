@@ -389,9 +389,26 @@ button:focus-visible {
     transform var(--duration-base) var(--ease-tencent);
 }
 
-.tc-card--interactive:hover {
-  border-color: var(--td-brand-color);
+/* 大圆角变体：联系人卡片这类「有内容厚度」的卡片用 12px，
+   比 medium(8px) 更柔和；工具调用那种紧凑条仍用默认 medium。
+   注意本项目的圆角尺度被改写过：medium=8 / large=12 / extraLarge=16，
+   这里取 large —— extraLarge(16px) 在列表卡片上显得过于圆润。 */
+.tc-card--lg {
+  border-radius: var(--td-radius-large);
+}
+
+/* 可交互卡片：hover 只做「边框转向品牌色 + 阴影加深」。
+   不用品牌色实边——联系人一行行排着，每行都亮蓝边框会显得聒噪。
+   focus-visible 与 hover 同款，键盘走到哪一行一眼能看出来。 */
+.tc-card--interactive {
+  cursor: pointer;
+}
+
+.tc-card--interactive:hover,
+.tc-card--interactive:focus-visible {
+  border-color: var(--td-brand-color-focus);
   box-shadow: var(--shadow-popup);
+  outline: none;
 }
 
 /* 通用列表项：hover 背景 + 激活态 */
@@ -426,6 +443,18 @@ button:focus-visible {
   color: var(--td-text-color-primary);
 }
 
+/* 有底色的图标按钮：初始就有一层浅底，hover 时加深而不是变淡。
+   「详情」这类次要入口需要一点存在感，纯透明按钮会被忽略。 */
+.tc-icon-btn--filled {
+  background-color: var(--td-bg-color-secondarycontainer);
+  color: var(--td-text-color-secondary);
+}
+
+.tc-icon-btn--filled:hover {
+  background-color: var(--td-bg-color-component-hover);
+  color: var(--td-text-color-primary);
+}
+
 /* 分区标题：小号字重 600 + 次级色，腾讯典型的节标题样式 */
 .tc-section-title {
   font-size: var(--text-title);
@@ -441,9 +470,111 @@ button:focus-visible {
   line-height: var(--leading-normal);
 }
 
-/* 头像外圈描边：让浅色 logo 在深色背景下仍有轮廓 */
-.tc-avatar-ring {
-  box-shadow: inset 0 0 0 1px var(--agent-logo-tile-ring);
+/* ── 按钮 ──
+   原先各处的按钮靠 `transition-opacity` + hover 改透明度来做反馈，
+   视觉上是「整块变淡」，不是腾讯那种「底色加深」。而且禁用态与 hover 态
+   容易撞在一起。这里统一成按状态切换背景色。 */
+.tc-btn-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--td-radius-default);
+  background-color: var(--td-brand-color);
+  color: #fff;
+  transition:
+    background-color var(--duration-fast) var(--ease-tencent),
+    box-shadow var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-btn-brand:hover:not(:disabled) {
+  background-color: var(--td-brand-color-hover);
+}
+
+.tc-btn-brand:active:not(:disabled) {
+  background-color: var(--td-brand-color-active);
+}
+
+.tc-btn-brand:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--td-brand-color-light);
+}
+
+.tc-btn-brand:disabled {
+  background-color: var(--td-bg-color-component-disabled);
+  color: var(--td-text-color-disabled);
+  cursor: not-allowed;
+}
+
+/* 次要按钮：白底 + 浅描边，hover 时底色浮现 */
+.tc-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--td-radius-default);
+  background-color: var(--td-bg-color-container);
+  color: var(--td-text-color-primary);
+  border: 1px solid var(--td-component-stroke);
+  transition:
+    background-color var(--duration-fast) var(--ease-tencent),
+    border-color var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-btn-secondary:hover:not(:disabled) {
+  background-color: var(--td-bg-color-component-hover);
+  border-color: var(--td-brand-color-focus);
+}
+
+.tc-btn-secondary:focus-visible {
+  outline: none;
+  border-color: var(--td-brand-color);
+  box-shadow: 0 0 0 2px var(--td-brand-color-light);
+}
+
+.tc-btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── 可选卡片（场景 / Agent 选择）──
+   用 2px 边框而不是「1px 边框 + 选中时加粗」，避免选中瞬间卡片尺寸跳动。
+   未选中是白底 + 浅灰边，hover 转品牌淡色边；选中由组件用 inline 覆盖边框色。 */
+.tc-choice-card {
+  cursor: pointer;
+  border: 2px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-large);
+  background-color: var(--td-bg-color-container);
+  transition:
+    border-color var(--duration-fast) var(--ease-tencent),
+    background-color var(--duration-fast) var(--ease-tencent),
+    box-shadow var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-choice-card:hover {
+  border-color: var(--td-brand-color-focus);
+}
+
+.tc-choice-card:focus-visible {
+  outline: none;
+  border-color: var(--td-brand-color);
+  box-shadow: 0 0 0 2px var(--td-brand-color-light);
+}
+
+/* 选中态统一托起一层阴影，让「已选」不只靠颜色区分 */
+.tc-choice-card.is-selected {
+  box-shadow: var(--shadow-card);
+}
+
+/* ── 警示文字色 ──
+   TDesign 的 warning 基色（#ed7b2f）放在淡橙底上做正文对比度不足，
+   深色模式下更是直接糊掉。这里给一个「浅色用深棕、深色用亮橙」的成对值。 */
+:root {
+  --tc-warning-text: #8a4b00;
+}
+
+:root.dark {
+  --tc-warning-text: #f0a05a;
 }
 
 /* ===== TDesign Select 选择器 ===== */

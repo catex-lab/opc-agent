@@ -110,11 +110,12 @@ export function NewChatView({
                   data-scenario={s.id}
                   onClick={() => onSelectScenario(isSelected ? undefined : s.id)}
                   title={s.description}
-                  className="flex flex-col items-start gap-1.5 rounded-xl border-2 p-2.5 text-left transition-all"
-                  style={{
-                    borderColor: isSelected ? s.color : 'transparent',
-                    backgroundColor: isSelected ? `${s.color}14` : 'var(--td-bg-color-component)',
-                  }}
+                  className={`tc-choice-card flex flex-col items-start gap-1.5 p-2.5 text-left${isSelected ? ' is-selected' : ''}`}
+                  style={
+                    isSelected
+                      ? { borderColor: s.color, backgroundColor: `${s.color}14` }
+                      : undefined
+                  }
                 >
                   <span
                     className="flex h-7 w-7 items-center justify-center rounded-lg"
@@ -143,14 +144,17 @@ export function NewChatView({
             {agents.map(agent => {
               const isSelected = agent.id === newChatAgentId;
               return (
-                <div
+                <button
                   key={agent.id}
+                  type="button"
                   data-agent={agent.id}
-                  className="p-3 rounded-xl cursor-pointer transition-all border-2"
-                  style={{
-                    borderColor: isSelected ? 'var(--td-brand-color)' : 'transparent',
-                    backgroundColor: isSelected ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-component)',
-                  }}
+                  aria-pressed={isSelected}
+                  className={`tc-choice-card block w-full p-3 text-left${isSelected ? ' is-selected' : ''}`}
+                  style={
+                    isSelected
+                      ? { borderColor: 'var(--td-brand-color)', backgroundColor: 'var(--td-brand-color-light)' }
+                      : undefined
+                  }
                   onClick={() => {
                     onSelectAgent(agent.id);
                     // 自动应用 Agent 的默认权限模式
@@ -182,7 +186,7 @@ export function NewChatView({
                       )}
                     </div>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -199,9 +203,9 @@ export function NewChatView({
             data-permission-gap
             className="mb-6 flex items-start gap-1.5 rounded-lg px-3 py-2 text-caption"
             style={{
-              backgroundColor: 'rgba(227, 115, 24, 0.08)',
-              color: '#8A4B00',
-              border: '1px solid rgba(227, 115, 24, 0.28)',
+              backgroundColor: 'var(--td-warning-color-1)',
+              color: 'var(--tc-warning-text)',
+              border: '1px solid var(--td-warning-color-2)',
             }}
           >
             <AlertTriangle size={14} className="mt-[1px] flex-shrink-0" />
@@ -234,10 +238,7 @@ export function NewChatView({
 
         {/* 选中的场景 / Agent 预览 */}
         {(selectedScenario || selectedAgent) && (
-          <div
-            className="p-4 rounded-xl"
-            style={{ backgroundColor: 'var(--td-bg-color-component)' }}
-          >
+          <div className="tc-card tc-card--lg p-4">
             {selectedScenario && (
               <div className="flex items-center gap-2 mb-2">
                 <span

@@ -250,7 +250,7 @@ export function ChatMessages({
         return (
         <div
           key={message.id}
-          className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}
+          className={`tc-msg-enter flex gap-3 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}
         >
           {message.role === 'user' ? (
             // 用户侧：品牌色实心圆 + 人像图标。用户没有「官方 logo」，
