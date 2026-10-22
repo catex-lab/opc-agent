@@ -48,6 +48,12 @@ function read(rel: string): string {
 
 const SLEEP = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+/** 带超时的 fetch。API 卡住时不能把整个冒烟无限期拖住（实测挂住过）。 */
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+  return (await res.json()) as T;
+}
+
 /* ── A. 源码契约 ─────────────────────────────────────────────────────── */
 function checkContracts() {
   const cdp = read('electron/cdp.ts');
@@ -274,6 +280,7 @@ async function runSmoke() {
 
   try {
     // ── 端点发现：只靠 Chromium 写的文件，和真正的 Agent 同一条路 ──
+    console.log('  · 等 DevToolsActivePort…');
     const active = await waitForActivePort(dataDir);
     ok(!!active, '冒烟：Chromium 写出了 DevToolsActivePort（端口真的开了）');
     if (!active) throw new Error('没拿到调试端口\n' + log().slice(-1500));
@@ -290,6 +297,7 @@ async function runSmoke() {
       version?.webSocketDebuggerUrl
     );
 
+    console.log('  · 连接 ①（驱动应用渲染进程）…');
     /* ── 连接 ①：本脚本，驱动应用自己的渲染进程 ── */
     harness = await chromium.connectOverCDP(`http://127.0.0.1:${active.port}`, { timeout: 20_000 });
     const appPage = harness.contexts().flatMap(c => c.pages())[0];
@@ -300,12 +308,11 @@ async function runSmoke() {
     if (!m) throw new Error('没从启动日志拿到 API 端口\n' + log().slice(-1500));
     const api = `http://127.0.0.1:${m[1]}`;
 
-    const created = await fetch(`${api}/api/sessions`, {
+    const { session } = await fetchJson<{ session?: { id?: string } }>(`${api}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: 'CDP 附着实拍', cwd: root }),
     });
-    const { session } = (await created.json()) as { session?: { id?: string } };
     ok(!!session?.id, '冒烟：会话创建成功');
     if (!session?.id) throw new Error('会话没建出来');
 
@@ -349,6 +356,7 @@ async function runSmoke() {
       { timeout: 20_000 }
     );
 
+    console.log('  · 等 cdp.json 认出预览视图 target…');
     /* ── 描述符：主进程把预览视图的 target 认出来并落地 ── */
     const descriptor = await waitForDescriptorTarget(dataDir, probeUrl);
     ok(!!descriptor?.target, '冒烟：cdp.json 里认出了预览视图的 target', JSON.stringify(descriptor ?? null).slice(0, 300));
@@ -360,11 +368,12 @@ async function runSmoke() {
     ok(descriptor.target.url !== appWindowUrl, '冒烟：交出去的不是应用自己的窗口', `${descriptor.target.url} vs ${appWindowUrl}`);
 
     /* ── 服务端路由：与文件是同一份真相 ── */
-    const route = await fetch(`${api}/api/browser/cdp`).then(r => r.json());
+    const route = await fetchJson<Record<string, unknown>>(`${api}/api/browser/cdp`);
     ok(route.enabled === true, '冒烟：/api/browser/cdp 报 enabled', JSON.stringify(route));
     ok(route.port === active.port, '冒烟：路由报的端口与 Chromium 实际监听的一致', `${route.port} vs ${active.port}`);
     ok(route.hasTarget === true && route.targetUrl === probeUrl, '冒烟：路由报出预览视图的 URL', JSON.stringify(route));
 
+    console.log('  · 连接 ②（扮演 Agent，只认识描述符）…');
     /* ── 连接 ②：扮演 Agent。只认识 descriptor，别的什么都不知道 ── */
     agent = await chromium.connectOverCDP(`http://127.0.0.1:${active.port}`, { timeout: 20_000 });
     const agentPages = agent.contexts().flatMap(c => c.pages());
@@ -400,6 +409,7 @@ async function runSmoke() {
     const shownUrl = await appPage.inputValue('input[aria-label="预览地址"]');
     ok(shownUrl === probeUrl, '冒烟：面板地址栏与 Agent 驱动的页面一致', `${shownUrl} vs ${probeUrl}`);
 
+    console.log('  · 负面用例（OPC_CDP=0）…');
     /* ── 负面：OPC_CDP=0 时不开端口 ── */
     const off = launchApp({ OPC_CDP: '0' });
     try {

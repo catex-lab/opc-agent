@@ -23,6 +23,7 @@ import { join, isAbsolute } from 'node:path';
 import { server } from '../server/index.js';
 import { registry } from '../server/agents/registry.js';
 import { browserPanel, runBrowserSmoke } from './browser-view.js';
+import { terminal, type TerminalState } from './terminal.js';
 import {
   enableCdp,
   initCdpEndpoint,
@@ -383,6 +384,41 @@ function registerIpc() {
       targetUrl: d.target?.url ?? '',
     };
   });
+
+  /* ── P4：终端（管道版） ─────────────────────────────────────────────
+   *
+   * 与浏览器视图同一套口径：渲染进程只能「请求」，不能「操作」。shell 由
+   * 主进程创建，cwd 由主进程校验，生命周期由主进程收尾。
+   */
+  ipcMain.handle('opc:terminal-start', (_e, cwd: unknown) => {
+    if (typeof cwd !== 'string') return { ok: false, error: '工作目录参数不合法' };
+    return terminal.start(cwd);
+  });
+
+  ipcMain.on('opc:terminal-input', (_e, line: unknown) => {
+    if (typeof line !== 'string') return;
+    terminal.write(line);
+  });
+
+  ipcMain.handle('opc:terminal-kill', () => terminal.kill());
+
+  ipcMain.handle('opc:terminal-state', () => terminal.getState());
+
+  // 输出历史：用户先敲几条命令再切到文件标签，回来不该看到一片空白
+  ipcMain.handle('opc:terminal-output', () => terminal.getOutput());
+
+  const pushTerminalData = (chunk: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('opc:terminal-data', chunk);
+    }
+  };
+  const pushTerminalState = (s: TerminalState) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('opc:terminal-state', s);
+    }
+  };
+  terminal.onData(pushTerminalData);
+  terminal.onState(pushTerminalState);
 }
 
 async function createWindow() {
@@ -478,6 +514,9 @@ async function createWindow() {
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => {
+    // P4：shell 是一个能执行任意命令的活对象，不能比窗口活得久。
+    // 与 browserPanel.destroy() 同一个理由，同一处收尾。
+    terminal.kill();
     mainWindow = null;
   });
 
@@ -550,5 +589,12 @@ app.on('before-quit', () => {
     registry.disposeAll();
   } catch (err) {
     console.error('[Main] 清理子进程失败:', (err as Error).message);
+  }
+  // P4：同理，终端里的 shell 也不能变成孤儿进程。用户可能正跑着
+  // `npm run build`，直接走人会留下一个占着目录的 cmd.exe。
+  try {
+    terminal.kill();
+  } catch (err) {
+    console.error('[Main] 清理终端失败:', (err as Error).message);
   }
 });

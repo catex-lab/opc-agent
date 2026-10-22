@@ -131,11 +131,13 @@ function checkContracts() {
   const panel = read('src/components/WorkspacePanel.tsx');
   ok(panel.includes("role=\"tablist\""), '契约：标签行有无障碍语义');
   ok(panel.includes('<WorkspaceBrowser />'), '契约：浏览器标签挂了组件');
+  ok(panel.includes('<WorkspaceTerminal'), '契约：终端标签挂了组件（P4）');
   // 没做的功能不能摆按钮。只数 role="tab"：注释里提到「终端」是在解释
-  // 为什么不摆，不能把它当成标签本身。
+  // 为什么不摆/为什么摆，不能把它当成标签本身。
+  // P4 起终端真的做了，所以是三个：文件 / 浏览器 / 终端。
   const tabCount = (panel.match(/role="tab"/g) || []).length;
-  ok(tabCount === 2, '契约：恰好两个标签（文件 / 浏览器），没有终端', `实际 ${tabCount} 个`);
-  ok(!panel.includes('>终端<'), '契约：没有终端标签的渲染文本');
+  ok(tabCount === 3, '契约：恰好三个标签（文件 / 浏览器 / 终端）', `实际 ${tabCount} 个`);
+  ok(!panel.includes('>设置<'), '契约：没有设置标签（没有设置页，不摆空壳）');
 
   const header = read('src/components/ChatHeader.tsx');
   ok(header.includes('data-opc-overlay'), '契约：自绘更多菜单带浮层标记（否则被预览视图盖住）');

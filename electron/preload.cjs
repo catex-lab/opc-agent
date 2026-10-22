@@ -175,6 +175,48 @@ contextBridge.exposeInMainWorld('opc', {
     return ipcRenderer.invoke('opc:cdp-info');
   },
 
+  /**
+   * P4：终端（管道版）。
+   *
+   * `terminalStart` 只接受绝对路径，且由主进程校验目录真的存在 ——
+   * 前端传什么就信什么，等于把「能在哪执行命令」交给被约束方。
+   */
+  terminalStart(cwd) {
+    if (typeof cwd !== 'string') return Promise.resolve({ ok: false, error: 'cwd 参数不合法' });
+    return ipcRenderer.invoke('opc:terminal-start', cwd);
+  },
+
+  terminalInput(line) {
+    if (typeof line !== 'string') return;
+    ipcRenderer.send('opc:terminal-input', line);
+  },
+
+  terminalKill() {
+    return ipcRenderer.invoke('opc:terminal-kill');
+  },
+
+  terminalState() {
+    return ipcRenderer.invoke('opc:terminal-state');
+  },
+
+  /** 输出历史：先读回这段，再订阅增量（用户可能先敲了命令才切到这个标签） */
+  terminalOutput() {
+    return ipcRenderer.invoke('opc:terminal-output');
+  },
+
+  /** 订阅输出增量与状态变化，各自返回取消订阅函数 */
+  onTerminalData(cb) {
+    const handler = (_e, chunk) => cb(chunk);
+    ipcRenderer.on('opc:terminal-data', handler);
+    return () => ipcRenderer.removeListener('opc:terminal-data', handler);
+  },
+
+  onTerminalState(cb) {
+    const handler = (_e, state) => cb(state);
+    ipcRenderer.on('opc:terminal-state', handler);
+    return () => ipcRenderer.removeListener('opc:terminal-state', handler);
+  },
+
   windowControl: {
     /** @param {'minimize'|'maximize'|'close'} action */
     send(action) {

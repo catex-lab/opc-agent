@@ -471,7 +471,16 @@ if (await panel.count()) {
   // 浏览器标签在非桌面端要给说明，不能摆假地址栏
   const noBridge = await panel.locator('text=浏览器预览只在桌面端可用').count();
   console.log(noBridge ? '  ✓ 无原生能力时给出说明' : '  ❌ 浏览器标签没有降级说明');
-  // 回到文件标签，别把浏览器标签留给后面的深色截图
+
+  // P4：终端同理 —— 非桌面端必须说清楚，不能摆一个输了命令没反应的输入框
+  await panel.getByRole('tab', { name: '终端' }).click();
+  await page.waitForTimeout(300);
+  const termFallback = await panel.locator('text=终端只在桌面端可用').count();
+  console.log(termFallback ? '  ✓ 终端在非桌面端给出说明' : '  ❌ 终端没有降级说明');
+  const noFakeInput = await panel.locator('input[aria-label="终端输入"]').count();
+  console.log(noFakeInput === 0 ? '  ✓ 没有摆假的终端输入框' : '  ❌ 出现了不可用的终端输入框');
+
+  // 回到文件标签，别把浏览器/终端标签留给后面的深色截图
   await panel.getByRole('tab', { name: '文件' }).click();
   await page.waitForTimeout(300);
 

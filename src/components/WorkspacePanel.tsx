@@ -1,18 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronRight, File as FileIcon, Folder, Globe, RefreshCw, X } from 'lucide-react';
+import {
+  ChevronRight,
+  File as FileIcon,
+  Folder,
+  Globe,
+  RefreshCw,
+  TerminalSquare,
+  X,
+} from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
 import { WorkspaceBrowser } from './WorkspaceBrowser';
+import { WorkspaceTerminal } from './WorkspaceTerminal';
 
 /**
- * A77：右侧工作区面板（P1 只做「文件」）。
+ * A77：右侧工作区面板。三个标签：文件（P1）/ 浏览器（P2）/ 终端（P4）。
  *
- * ## 为什么只有文件，没有浏览器/终端标签
+ * ## 终端为什么现在摆得出来，而 P1 那时摆不出来
  *
- * 计划里那两块要 `WebContentsView` 与 PTY（见 PLAN-WORKSPACE-PANEL.md §4）。
- * 在它们落地之前，先摆一个点不动的标签，就是把「假控件」写进界面 ——
- * 本项目反复在防这件事（见 `permissions.ts` 的 limitation 口径）。
- * 等真做了再加标签，用户看到的就是能用的东西。
- * （P2 起「浏览器」标签已落地；「终端」仍未做，所以**没有**终端标签。）
+ * P1 那会儿浏览器和终端都还没做，先摆两个点不动的标签就是把「假控件」
+ * 写进界面 —— 本项目反复在防这件事（见 `permissions.ts` 的 limitation 口径）。
+ * 现在三个都是真能用的：文件树能看、浏览器能加载、终端能敲命令。
+ * 终端那一版**没有 PTY**（vim / top 不可用），这件事在 `WorkspaceTerminal`
+ * 里常驻说明，不靠用户自己踩出来。
  *
  * ## 为什么是只读
  *
@@ -81,9 +90,10 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
    * 记住上次停在哪个标签：用户常常是「开着浏览器标签干活，中途去文件树
    * 看一眼路径」，回来不该又回到文件标签 —— 那一下跳转比多一次点击更烦。
    */
-  const [tab, setTab] = useState<'files' | 'browser'>(() => {
+  const [tab, setTab] = useState<'files' | 'browser' | 'terminal'>(() => {
     try {
-      return localStorage.getItem(TAB_KEY) === 'browser' ? 'browser' : 'files';
+      const saved = localStorage.getItem(TAB_KEY);
+      return saved === 'browser' || saved === 'terminal' ? saved : 'files';
     } catch {
       return 'files';
     }
@@ -282,10 +292,31 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
           <Globe size={13} />
           浏览器
         </button>
+        {/*
+          P4：终端。**这一版是真的能敲命令的**（管道版 shell），所以摆得出来。
+          它没有 PTY —— 那件事在 WorkspaceTerminal 里常驻说明，不靠用户自己发现。
+        */}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'terminal'}
+          onClick={() => setTab('terminal')}
+          className="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-caption transition-colors"
+          style={{
+            backgroundColor: tab === 'terminal' ? 'var(--tc-hover-chrome)' : 'transparent',
+            color:
+              tab === 'terminal' ? 'var(--td-text-color-primary)' : 'var(--td-text-color-secondary)',
+          }}
+        >
+          <TerminalSquare size={13} />
+          终端
+        </button>
       </div>
 
       {tab === 'browser' ? (
         <WorkspaceBrowser />
+      ) : tab === 'terminal' ? (
+        <WorkspaceTerminal cwd={cwd} />
       ) : !cwd ? (
         <div
           className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center"

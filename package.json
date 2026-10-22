@@ -70,7 +70,9 @@
     "verify:qoder-sdk": "tsx scripts/verify-qoder-sdk.ts",
     "verify:a78-browser": "tsx scripts/verify-a78-browser.ts",
     "capture:browser-panel": "node scripts/capture-browser-panel.mjs",
-    "verify:a79-cdp": "tsx scripts/verify-a79-cdp.ts"
+    "capture:terminal-panel": "node scripts/capture-terminal-panel.mjs",
+    "verify:a79-cdp": "tsx scripts/verify-a79-cdp.ts",
+    "verify:a80-terminal": "tsx scripts/verify-a80-terminal.ts"
   },
   "dependencies": {
     "@qoder-ai/qoder-agent-sdk": "^1.0.55",
