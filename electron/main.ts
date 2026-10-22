@@ -22,6 +22,7 @@ import { once } from 'node:events';
 import { join, isAbsolute } from 'node:path';
 import { server } from '../server/index.js';
 import { registry } from '../server/agents/registry.js';
+import { browserPanel, runBrowserSmoke } from './browser-view.js';
 
 /**
  * 软件渲染逃生开关。
@@ -319,6 +320,40 @@ function registerIpc() {
       return e instanceof Error ? e.message : '打开失败';
     }
   });
+
+  /* ── P2：浏览器预览视图 ─────────────────────────────────────────────
+   *
+   * 渲染进程只能「请求」，不能「操作」：bounds / 可见性 / 导航全部经这里
+   * 转交 browserPanel。视图本身由主进程创建并挂在 contentView 上，
+   * 页面里跑的是任意远程内容，所以它拿不到我们那套 preload 桥。
+   */
+  ipcMain.on('opc:browser-rect', (_e, rect: unknown) => {
+    if (!rect || typeof rect !== 'object') return;
+    const r = rect as Record<string, unknown>;
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    browserPanel.setBounds({
+      x: num(r.x),
+      y: num(r.y),
+      width: num(r.width),
+      height: num(r.height),
+    });
+  });
+
+  ipcMain.on('opc:browser-visible', (_e, visible: unknown) => {
+    browserPanel.setVisible(visible === true);
+  });
+
+  ipcMain.handle('opc:browser-load', (_e, url: unknown) => {
+    if (typeof url !== 'string') return false;
+    // 只放行 http/https：拒绝时返回 false，前端在地址栏上如实提示
+    return browserPanel.load(url);
+  });
+
+  ipcMain.handle('opc:browser-back', () => browserPanel.goBack());
+  ipcMain.handle('opc:browser-forward', () => browserPanel.goForward());
+  ipcMain.handle('opc:browser-reload', () => browserPanel.reload());
+  ipcMain.handle('opc:browser-devtools', () => browserPanel.openDevTools());
+  ipcMain.handle('opc:browser-state', () => browserPanel.getState());
 }
 
 async function createWindow() {
@@ -417,6 +452,11 @@ async function createWindow() {
     mainWindow = null;
   });
 
+  // P2：浏览器预览视图绑定到窗口。窗口关掉时视图随之销毁
+  // （browserPanel.attach 里挂了 closed 监听）—— 它是一个持有登录态与
+  // 网络能力的活对象，不能比窗口活得久。
+  browserPanel.attach(mainWindow);
+
   // 外链交给系统浏览器，不在应用内开新窗口
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     void shell.openExternal(target);
@@ -440,7 +480,15 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    // 冒烟钩子：P2 的浏览器视图跑在 Electron 里，普通 Chrome（verify:render
+    // 用的那个）根本没有 window.opc，所以给它一条独立的最小实例路径。
+    // 必须走完整 bootstrap（环境变量与 userData 重定向都靠它），
+    // 因此钩子放在这里，而不是另起一个入口文件。
+    if (process.env.OPC_SMOKE === 'browser') {
+      await runBrowserSmoke(join(process.cwd(), '.tmp', 'browser-smoke.json'));
+      return;
+    }
     registerIpc();
     return createWindow();
   }).catch(err => {

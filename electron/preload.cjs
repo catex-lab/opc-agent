@@ -110,6 +110,60 @@ contextBridge.exposeInMainWorld('opc', {
     return ipcRenderer.invoke('opc:open-path', path);
   },
 
+  /**
+   * P2：浏览器预览视图。
+   *
+   * 这一组都是「请求」而不是「操作」—— 视图由主进程创建并挂在 contentView 上，
+   * 里面跑的是任意远程内容，因此它**没有** preload，也拿不到这里任何函数。
+   *
+   * `browserRect` 传的是 CSS 像素、相对窗口内容区（getBoundingClientRect 的
+   * 坐标系），主进程原样当成 DIP 用 —— 二者在 zoomFactor=1 时一致。
+   */
+  browserRect(rect) {
+    ipcRenderer.send('opc:browser-rect', rect);
+  },
+
+  browserVisible(visible) {
+    ipcRenderer.send('opc:browser-visible', visible === true);
+  },
+
+  /** @returns {Promise<boolean>} false = 协议不在白名单（只放行 http/https） */
+  browserLoad(url) {
+    if (typeof url !== 'string') return Promise.resolve(false);
+    return ipcRenderer.invoke('opc:browser-load', url);
+  },
+
+  browserBack() {
+    return ipcRenderer.invoke('opc:browser-back');
+  },
+
+  browserForward() {
+    return ipcRenderer.invoke('opc:browser-forward');
+  },
+
+  browserReload() {
+    return ipcRenderer.invoke('opc:browser-reload');
+  },
+
+  /** DevTools 开分离窗口：right 模式会和右侧面板抢同一块位置 */
+  browserDevtools() {
+    return ipcRenderer.invoke('opc:browser-devtools');
+  },
+
+  browserState() {
+    return ipcRenderer.invoke('opc:browser-state');
+  },
+
+  /**
+   * 订阅导航状态变化（URL / 标题 / 能否前进后退 / 是否在加载）。
+   * 返回取消订阅函数 —— React 的 effect 清理要用它。
+   */
+  onBrowserState(cb) {
+    const handler = (_e, state) => cb(state);
+    ipcRenderer.on('opc:browser-state', handler);
+    return () => ipcRenderer.removeListener('opc:browser-state', handler);
+  },
+
   windowControl: {
     /** @param {'minimize'|'maximize'|'close'} action */
     send(action) {

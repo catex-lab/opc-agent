@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronRight, File as FileIcon, Folder, RefreshCw, X } from 'lucide-react';
+import { ChevronRight, File as FileIcon, Folder, Globe, RefreshCw, X } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
+import { WorkspaceBrowser } from './WorkspaceBrowser';
 
 /**
  * A77：右侧工作区面板（P1 只做「文件」）。
@@ -11,6 +12,7 @@ import { PanelHeader } from './PanelHeader';
  * 在它们落地之前，先摆一个点不动的标签，就是把「假控件」写进界面 ——
  * 本项目反复在防这件事（见 `permissions.ts` 的 limitation 口径）。
  * 等真做了再加标签，用户看到的就是能用的东西。
+ * （P2 起「浏览器」标签已落地；「终端」仍未做，所以**没有**终端标签。）
  *
  * ## 为什么是只读
  *
@@ -69,6 +71,11 @@ function formatSize(bytes: number | undefined): string {
 export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps) {
   /** 相对 cwd 的路径，'' = 根目录 */
   const [rel, setRel] = useState('');
+  /**
+   * 当前标签。只有两个 —— **没有「终端」**：它还没做，摆一个点不动的标签
+   * 就是假控件（本项目反复在防的那件事）。
+   */
+  const [tab, setTab] = useState<'files' | 'browser'>('files');
   const [data, setData] = useState<FsListResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -173,29 +180,34 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
             >
               {folderName}
             </span>
-            <span
-              className="shrink-0 rounded px-1 py-[1px] text-caption"
-              style={{
-                backgroundColor: 'var(--tc-hover-chrome)',
-                color: 'var(--td-text-color-placeholder)',
-              }}
-            >
-              只读
-            </span>
+            {tab === 'files' && (
+              <span
+                className="shrink-0 rounded px-1 py-[1px] text-caption"
+                style={{
+                  backgroundColor: 'var(--tc-hover-chrome)',
+                  color: 'var(--td-text-color-placeholder)',
+                }}
+              >
+                只读
+              </span>
+            )}
           </span>
         }
         actions={
           <>
-            <button
-              type="button"
-              onClick={() => void load(rel)}
-              title="刷新"
-              aria-label="刷新目录"
-              className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--tc-hover-chrome)]"
-              style={{ color: 'var(--td-text-color-secondary)' }}
-            >
-              <RefreshCw size={14} className={loading ? 'animate-spin' : undefined} />
-            </button>
+            {/* 刷新只对文件标签有意义：浏览器标签有自己的刷新，且在工具栏里 */}
+            {tab === 'files' && (
+              <button
+                type="button"
+                onClick={() => void load(rel)}
+                title="刷新"
+                aria-label="刷新目录"
+                className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                style={{ color: 'var(--td-text-color-secondary)' }}
+              >
+                <RefreshCw size={14} className={loading ? 'animate-spin' : undefined} />
+              </button>
+            )}
             <button
               type="button"
               onClick={onClose}
@@ -210,7 +222,50 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
         }
       />
 
-      {!cwd ? (
+      {/* 标签行。放在栏头**下面**而不是塞进 actions：栏头要与聊天栏头
+          同高同线（PanelHeader compact 的 52px），往里加一排会把两栏的
+          分隔线错开。 */}
+      <div
+        className="flex h-9 shrink-0 items-center gap-1 px-2"
+        style={{ borderBottom: '1px solid var(--tc-hairline)' }}
+        role="tablist"
+        aria-label="工作区标签"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'files'}
+          onClick={() => setTab('files')}
+          className="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-caption transition-colors"
+          style={{
+            backgroundColor: tab === 'files' ? 'var(--tc-hover-chrome)' : 'transparent',
+            color:
+              tab === 'files' ? 'var(--td-text-color-primary)' : 'var(--td-text-color-secondary)',
+          }}
+        >
+          <Folder size={13} />
+          文件
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'browser'}
+          onClick={() => setTab('browser')}
+          className="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-caption transition-colors"
+          style={{
+            backgroundColor: tab === 'browser' ? 'var(--tc-hover-chrome)' : 'transparent',
+            color:
+              tab === 'browser' ? 'var(--td-text-color-primary)' : 'var(--td-text-color-secondary)',
+          }}
+        >
+          <Globe size={13} />
+          浏览器
+        </button>
+      </div>
+
+      {tab === 'browser' ? (
+        <WorkspaceBrowser />
+      ) : !cwd ? (
         <div
           className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center"
           style={{ color: 'var(--td-text-color-secondary)' }}

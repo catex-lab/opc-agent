@@ -177,6 +177,10 @@ export function ChatHeader({
           <div
             className="tc-glass absolute right-0 top-full z-30 mt-1 w-[160px] overflow-hidden rounded-xl py-1 shadow-popup"
             data-chat-more-menu
+            /* P2：给浮层哨兵一个识别点。这个菜单是自绘的（不是 TDesign 弹层），
+                       不加这个属性，浏览器预览视图会把它盖住 —— 用户看到的是
+                       「点了 ⋯ 没反应」。 */
+            data-opc-overlay
           >
             <button
               type="button"
