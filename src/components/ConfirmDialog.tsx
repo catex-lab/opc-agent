@@ -83,11 +83,8 @@ export function ConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="tc-confirm-title"
-        className="w-full max-w-[400px] rounded-xl p-6"
-        style={{
-          backgroundColor: 'var(--td-bg-color-container)',
-          boxShadow: 'var(--shadow-popup)',
-        }}
+        data-confirm-dialog
+        className="tc-glass w-full max-w-[400px] rounded-xl p-6"
       >
         <h2
           id="tc-confirm-title"
@@ -116,7 +113,10 @@ export function ConfirmDialog({
             className="px-3.5 py-1.5 text-body"
             style={{
               borderRadius: 'var(--td-radius-default)',
-              backgroundColor: danger ? 'var(--td-error-color)' : 'var(--td-brand-color)',
+              // A26：主按钮跟着透明度降档（与 .tc-btn-brand 同一套下限 0.72）。
+              // 危险按钮保持实色红：它是模态框里唯一的警示信号，且弹窗本身
+              // 已经有蒙层压暗，不需要再降 —— 降了反而削弱「这是危险操作」。
+              backgroundColor: danger ? 'var(--td-error-color)' : 'var(--tc-solid)',
               color: danger ? '#fff' : 'var(--tc-on-brand)',
             }}
           >

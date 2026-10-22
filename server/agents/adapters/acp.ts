@@ -464,7 +464,8 @@ export class AcpAdapter implements AgentProvider {
         queue.push({
           type: 'done',
           durationMs: Date.now() - started,
-          cost: typeof usage?.totalTokens === 'number' ? (usage.totalTokens as number) : undefined,
+          // ACP 只给 token 数，不给钱 —— 放进 tokens，别塞进 cost
+          tokens: typeof usage?.totalTokens === 'number' ? (usage.totalTokens as number) : undefined,
         });
         queue.close();
       })

@@ -23,6 +23,23 @@ import { findDef } from './agents/definitions.js';
 export const PLATFORM_DEFAULT_MODEL = 'claude-sonnet-4';
 
 /**
+ * 「这个模型是否属于该 Agent 的动态目录」的查表函数。
+ *
+ * 为什么用注入而不是直接 import `modelCatalog`：目录模块要读 `data/` 路径、
+ * 会拉起 CLI 子进程，而本文件是**纯判定逻辑**，被离线验证脚本直接调用。
+ * 反过来 import 会把这些副作用带进 `verify:routing`（顺带打开真实数据库）。
+ * 由 `index.ts` 在启动时把 `isCatalogModel` 注册进来。
+ */
+export type CatalogModelLookup = (agentId: string, modelId: string) => boolean;
+
+let catalogLookup: CatalogModelLookup | null = null;
+
+/** 注册/清除动态目录查表（传 null 可复位，供测试使用） */
+export function setCatalogModelLookup(fn: CatalogModelLookup | null): void {
+  catalogLookup = fn;
+}
+
+/**
  * 解析要传给某个 Agent 的模型。
  *
  * @param agentId   Agent 标识
@@ -43,6 +60,10 @@ export function resolveModelForAgent(
   const allowed = def.models;
   if (allowed && allowed.length > 0) {
     if (requested && allowed.includes(requested)) return requested;
+    // 动态目录里的模型同样是真的能跑的（清单由 CLI 自己枚举出来）。
+    // 不认这一条，用户在模型菜单里选了 `opencode/glm-5.3-flash-free`
+    // 会被静默换成默认模型 —— 菜单看起来能选，实际没生效。
+    if (requested && catalogLookup?.(agentId, requested)) return requested;
     return def.defaultModel ?? allowed[0];
   }
 

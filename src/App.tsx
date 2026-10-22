@@ -1,7 +1,16 @@
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  lazy,
+  Suspense,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
-import { MessagesSquare, ArrowRight } from 'lucide-react';
+import { MessagePlugin } from 'tdesign-react';
 
 import { useAgents } from './hooks/useAgents';
 import { useTheme } from './hooks/useTheme';
@@ -11,11 +20,15 @@ import { useModels } from './hooks/useModels';
 import { useChat } from './hooks/useChat';
 import { useAgentRegistry } from './hooks/useAgentRegistry';
 import { getScenario } from './scenarios';
+import { exportSessionToMarkdown } from './utils/exportSession';
 import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode } from './types';
 
 import { NavRail, type NavKey } from './components/NavRail';
+import { TitleBar } from './components/TitleBar';
+import { CursorGlow } from './components/CursorGlow';
 import { ConversationList, markSessionRead } from './components/ConversationList';
 import { ContactsPanel } from './components/ContactsPanel';
+import { SidebarResizer } from './components/SidebarResizer';
 import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { ChatHeader } from './components/ChatHeader';
 import { SettingsPage } from './components/SettingsPage';
@@ -92,6 +105,10 @@ function AppContent() {
     updateSession,
     updateSessionMessages,
     setSessionPinned,
+    setSessionReasoningEffort,
+    setSessionCwd,
+    clearSessionMessages,
+    isMessagesLoaded,
   } = useSessions();
 
   /**
@@ -129,6 +146,7 @@ function AppContent() {
     setInputValue,
     permissionRequest,
     sendMessage,
+    regenerate,
     handleStop,
     handlePermissionAllow,
     handlePermissionDeny,
@@ -162,10 +180,28 @@ function AppContent() {
    * 也让「模型」这个控件对它们失去意义。列表为空 = 前端不显示下拉。
    */
   const [agentModels, setAgentModels] = useState<Model[]>([]);
+  /**
+   * 该 Agent 自己的默认模型（后端随模型列表一起给出）。
+   *
+   * 为什么需要：模型列表按 provider 分组、免费在前，第一条**不是**默认模型
+   * （opencode 的默认是 zai/glm-4.7，列表第一条是 OpenCode Zen 的免费模型）。
+   * 靠下标选初始值等于把「默认」这个语义丢掉，用户会在不知情时换掉模型。
+   */
+  const [agentDefaultModel, setAgentDefaultModel] = useState<string>('');
+
+  /**
+   * 模型清单的「代号」。
+   *
+   * 设置页里点了「刷新模型清单」之后，后端会重新枚举，但下面那个 effect 只
+   * 依赖 `currentAgentId` —— 用户刷完回到会话，菜单还是刷新前那份，等于按钮
+   * 白点了。改一个计数器当依赖，就能在不换 Agent 的情况下强制重取。
+   */
+  const [modelsEpoch, setModelsEpoch] = useState(0);
 
   useEffect(() => {
     if (!currentAgentId) {
       setAgentModels([]);
+      setAgentDefaultModel('');
       return;
     }
     let cancelled = false;
@@ -176,16 +212,22 @@ function AppContent() {
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        if (!cancelled) setAgentModels(Array.isArray(data.models) ? data.models : []);
+        if (!cancelled) {
+          setAgentModels(Array.isArray(data.models) ? data.models : []);
+          setAgentDefaultModel(typeof data.defaultModel === 'string' ? data.defaultModel : '');
+        }
       } catch {
         // 拿不到就当没有：宁可不显示下拉，也不塞一份不属于它的模型列表
-        if (!cancelled) setAgentModels([]);
+        if (!cancelled) {
+          setAgentModels([]);
+          setAgentDefaultModel('');
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [currentAgentId]);
+  }, [currentAgentId, modelsEpoch]);
 
   /** SDK 类 Agent 用平台模型列表；其余用各自上报或声明的列表 */
   const activeModels = useMemo(() => {
@@ -193,7 +235,8 @@ function AppContent() {
     return currentAgent?.kind === 'sdk' ? models : [];
   }, [agentModels, currentAgent?.kind, models]);
 
-  // 切到某个 Agent 后，若当前选中的模型不属于它，改用它的第一个模型。
+  // 切到某个 Agent 后，若当前选中的模型不属于它，改用**它自己的默认模型**
+  // （后端随列表给出），拿不到默认值时才退到第一条。
   // 否则界面上会显示一个该 Agent 根本不认识的模型名。
   // 该 Agent 没有模型列表时（自管模型）清空选中：既避免显示一个陌生模型名，
   // 也不该为了这个空值去 PATCH 一次会话。
@@ -203,8 +246,11 @@ function AppContent() {
       return;
     }
     if (activeModels.some(m => m.modelId === selectedModel)) return;
-    setSelectedModel(activeModels[0].modelId);
-  }, [activeModels, selectedModel, setSelectedModel]);
+    const preferred = activeModels.some(m => m.modelId === agentDefaultModel)
+      ? agentDefaultModel
+      : activeModels[0].modelId;
+    setSelectedModel(preferred);
+  }, [activeModels, selectedModel, setSelectedModel, agentDefaultModel]);
 
   // 从 URL 同步 sessionId
   useEffect(() => {
@@ -220,11 +266,14 @@ function AppContent() {
     if (currentSessionId) markSessionRead(currentSessionId);
   }, [currentSessionId]);
 
-  // 当切换会话时，恢复该会话的模型选择
+  // 当切换会话时，恢复该会话的模型选择。
+  // 会话里**没有记模型**（新会话 / 老数据）时不要写空值 —— 那会把上面
+  // 按 Agent 默认模型选好的值清掉，界面变成一个空的模型下拉。
+  // 该 Agent 真的没有模型列表时，由上面的 effect 负责清空。
   useEffect(() => {
     if (currentSessionId && sessionModels[currentSessionId]) {
       setSelectedModel(sessionModels[currentSessionId]);
-    } else if (currentSession) {
+    } else if (currentSession?.model) {
       setSelectedModel(currentSession.model);
     }
   }, [currentSessionId, sessionModels, currentSession, setSelectedModel]);
@@ -249,8 +298,35 @@ function AppContent() {
     [deleteSession, navigate]
   );
 
+  /**
+   * 导出会话为 Markdown（P6）。
+   *
+   * 成败都要给反馈：下载动作发生在浏览器里，用户看不到文件系统，
+   * 静默成功和静默失败都让人以为「点了没反应」。Agent 名用注册表
+   * 现译，群聊导出时每个气泡才有作者名（而不是一串 id）。
+   */
+  const handleExportSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        const { fileName } = await exportSessionToMarkdown(
+          sessionId,
+          id => registry.getAgent(id)?.name ?? id
+        );
+        MessagePlugin.success(`已导出 ${fileName}`);
+      } catch (err) {
+        MessagePlugin.error(`导出失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+    [registry]
+  );
+
   const handleSelectSession = useCallback(
     (sessionId: string) => {
+      // A48（用户反馈）：从通讯录点开某个 Agent 的资料页后，再去点群聊目录里的群
+      // （或会话列表里的会话），右侧必须让位给会话。资料页的渲染优先级高于会话
+      // （见下面 `detailAgent ? ... : currentSession ? ...`），不清掉它就会
+      // 「地址跳到 /chat/xxx，右侧还停在联系人详情」。
+      setDetailAgentId(null);
       setNav('chats');
       setCurrentSessionId(sessionId);
       navigate(`/chat/${sessionId}`);
@@ -258,11 +334,51 @@ function AppContent() {
     [navigate, setCurrentSessionId]
   );
 
-  const handleNewChat = useCallback(() => {
+  /**
+   * A33 分支：把「截至这条消息」的会话复制成一个新会话并跳过去。
+   *
+   * 复制发生在**后端**（会话元数据 + 全部消息逐条重落），前端只拿新 id 走
+   * 「刷新列表 → 选中 → 导航」三步。为什么不本地复制：消息里可能带图片
+   * 块、成本统计、blocks JSON，本地拼一份迟早与库里的口径不一致，
+   * 而刷新后真正被读出来的是库里那份。
+   */
+  const handleBranch = useCallback(
+    async (message: Message) => {
+      if (!currentSessionId) return;
+      try {
+        const res = await fetch(`/api/sessions/${currentSessionId}/branch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageId: message.id }),
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(j?.error || `HTTP ${res.status}`);
+        // 新会话不在本地列表里，必须先拉一次列表 —— 否则刷新后它会消失
+        await fetchSessions();
+        handleSelectSession(j.sessionId);
+        MessagePlugin.success(`已分支出新会话（${j.messageCount} 条历史）`);
+      } catch (err) {
+        MessagePlugin.error(
+          `分支失败：${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    },
+    [currentSessionId, fetchSessions, handleSelectSession]
+  );
+
+  /**
+   * 会话栏「+」菜单里的「重新探测」。
+   *
+   * 这个应用里没有「加好友」——联系人就是本机已装、能被探测到的 Agent。
+   * 所以「重新探测」的正确落点是**通讯录 + 重新探测**：新装一个 Agent
+   * 之后，用户点这里就能让它出现在名单里，而不是给一个填 ID 的空表单。
+   */
+  const handleAddContacts = useCallback(() => {
     setNav('contacts');
     setCurrentSessionId(null);
     navigate('/');
-  }, [navigate, setCurrentSessionId]);
+    registry.probe();
+  }, [navigate, registry.probe, setCurrentSessionId]);
 
   /** 从通讯录发起一对一对话：先建一个空的本地会话，首条消息发出时后端落库 */
   const handleStartChatWith = useCallback(
@@ -296,14 +412,170 @@ function AppContent() {
     [sessions, registry, selectedModel, setSessions, setCurrentSessionId, navigate, handleSelectSession]
   );
 
+  /**
+   * 切换主导航。
+   *
+   * ## 为什么这里要**同步**清掉当前会话（2026-10-18 修卡顿）
+   *
+   * 从设置页点「消息 / 通讯录」时，原先只 `navigate('/')`，会话 id 由
+   * 「URL → sessionId」的 effect 在**渲染之后**清掉。于是这一帧里
+   * `currentSession` 还在：
+   *   ① React 先把整个 ChatPage 挂起来（懒加载组件 + 整段聊天记录重渲染，
+   *      消息里的 markdown 全部重新解析）；
+   *   ② effect 跑完，session 变 null，ChatPage 立刻又被卸载。
+   * 一次点击要付一次「完整挂载 + 完整卸载」的代价 —— 用户感受到的就是
+   * 「从设置页切回消息/通讯录明显卡一下」，会话越长越明显。
+   *
+   * 现在在同一个 handler 里先清会话再导航：第一帧就没有 ChatPage，
+   * 那一次昂贵的挂载根本不会发生。
+   *
+   * 注意「消息」页在**非**设置页时不清理 —— 那里点「消息」的语义是
+   * 「回到消息栏」，右侧正在看的会话应该留着（QQ 也是这样）。
+   */
   const handleNavigate = useCallback((key: NavKey) => {
     setNav(key);
     // 切换主导航时关掉资料页：否则点「聊天」后右侧还停在上一个 Agent 的资料
     setDetailAgentId(null);
-    if (key === 'contacts') navigate('/');
+    if (key === 'contacts' || isSettingsPage) {
+      setCurrentSessionId(null);
+      navigate('/');
+    }
+  }, [navigate, isSettingsPage, setCurrentSessionId]);
+
+  /**
+   * A37：设置从「整页路由」改成「弹窗」。
+   *
+   * 路由仍然是 `/settings`（深链、刷新、返回键都还能用），但界面上不再
+   * 把主内容替换掉 —— 会话留在下面当背景，设置浮在上面。
+   *
+   * 关闭时要回到**打开它之前**那一页，而不是固定跳回首页：用户常常是
+   * 「正在看某个会话 → 改个外观 → 关掉继续看」，跳回首页等于把上下文弄丢。
+   */
+  const settingsReturnRef = useRef('/');
+  const handleOpenSettings = useCallback(() => {
+    const here = location.pathname;
+    if (here && here !== '/settings') settingsReturnRef.current = here;
+    navigate('/settings');
+  }, [navigate, location.pathname]);
+
+  /**
+   * 打开设置并定位到某条 Agent 的凭据行（A71）。
+   *
+   * 为什么带 `?agent=` 而不是只打开设置页：`method:'key'` 的条目（豆包 / Kimi /
+   * WorkBuddy）的下一步就是"填一个 Key"，而设置页里有好几行凭据。只把用户送到
+   * 门口、让他自己在一列里找，等于把「快捷」丢掉了一半。
+   */
+  const handleOpenCredential = useCallback(
+    (agentId: string) => {
+      const here = location.pathname;
+      if (here && here !== '/settings') settingsReturnRef.current = here;
+      navigate(`/settings?agent=${encodeURIComponent(agentId)}`);
+    },
+    [navigate, location.pathname]
+  );
+
+  const handleCloseSettings = useCallback(() => {
+    const back = settingsReturnRef.current;
+    navigate(back && back !== '/settings' ? back : '/');
   }, [navigate]);
 
-  const handleOpenSettings = useCallback(() => navigate('/settings'), [navigate]);
+  // Esc 关闭设置弹窗。弹窗的键盘出口是必备项 —— 鼠标在滑杆上时，
+  // 用户最直觉的动作是「按 Esc」，而不是把指针移到右上角那个 × 上。
+  useEffect(() => {
+    if (!isSettingsPage) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleCloseSettings();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isSettingsPage, handleCloseSettings]);
+
+  /**
+   * 设置弹窗可以按住标题栏拖动（用户反馈：「设置页无法拖动」）。
+   *
+   * 它不是独立窗口，拖不动靠 `-webkit-app-region` —— 只能自己算位移。
+   * 三条约束：
+   *   1. **只认标题栏**（`header`），按钮 / 输入框上按下不算拖动 ——
+   *      否则「点 ×」会先变成一次 0 位移的拖动，鼠标微抖就点不中；
+   *   2. 位移**夹在遮罩容器内**，拖不出可视区（拖丢了就再也找不到弹窗）；
+   *   3. 关掉设置时**归零** —— 下次打开回到居中，不记忆上次的怪位置。
+   *
+   * ⚠️ 位移**不走 state**，直接写 `style.transform`：设置页里有滑杆、
+   *    记忆面板、Agent 列表，每次 pointermove 都 setState 等于每帧重渲染
+   *    整棵子树，拖动会明显发涩。这里只需要浏览器重绘一层合成层。
+   */
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
+  /** 当前累计位移（拖完要留着的那个值） */
+  const settingsOffsetRef = useRef({ x: 0, y: 0 });
+  const settingsDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    baseX: number;
+    baseY: number;
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+  } | null>(null);
+
+  const applySettingsOffset = (x: number, y: number) => {
+    settingsOffsetRef.current = { x, y };
+    const el = settingsPanelRef.current;
+    if (el) el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  };
+
+  const onSettingsDragStart = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (!target.closest('header')) return;
+    if (target.closest('button, a, input, textarea, select, [role="switch"]')) return;
+
+    const el = e.currentTarget;
+    const rect = el.getBoundingClientRect();
+    const host = el.parentElement?.getBoundingClientRect();
+    if (!host) return;
+
+    const base = settingsOffsetRef.current;
+    settingsDragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      baseX: base.x,
+      baseY: base.y,
+      // 当前已经带位移，所以边界要换算成「还能再挪多少」
+      minX: base.x + (host.left - rect.left),
+      maxX: base.x + (host.right - rect.right),
+      minY: base.y + (host.top - rect.top),
+      maxY: base.y + (host.bottom - rect.bottom),
+    };
+    el.setPointerCapture(e.pointerId);
+  }, []);
+
+  const onSettingsDragMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = settingsDragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const clamp = (v: number, lo: number, hi: number) =>
+      Math.min(Math.max(v, lo), Math.max(lo, hi));
+    applySettingsOffset(
+      clamp(d.baseX + e.clientX - d.startX, d.minX, d.maxX),
+      clamp(d.baseY + e.clientY - d.startY, d.minY, d.maxY)
+    );
+  }, []);
+
+  const onSettingsDragEnd = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = settingsDragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    settingsDragRef.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+  }, []);
+
+  useEffect(() => {
+    if (isSettingsPage) return;
+    settingsDragRef.current = null;
+    // 弹窗本身已卸载，这里只是把「下次打开」的起点复位
+    settingsOffsetRef.current = { x: 0, y: 0 };
+  }, [isSettingsPage]);
 
   /**
    * 追加/合并一条群聊消息。
@@ -346,7 +618,12 @@ function AppContent() {
     [currentSessionId, updateSession]
   );
 
-  /** 改群成员（本地 + PATCH）。目前只有建群时用到，预留增减成员的入口 */
+  /**
+   * 改群成员（本地 + PATCH）。
+   *
+   * 建群时写第一批名单，之后由群聊成员栏的「邀请 / 移出」增量修改
+   * （见 GroupMemberPanel）。两条路都走这里，落库形状一致。
+   */
   const handleMembersChange = useCallback(
     (agentIds: string[]) => {
       if (!currentSessionId) return;
@@ -358,6 +635,31 @@ function AppContent() {
       }).catch(err => console.error('保存群成员失败:', err));
     },
     [currentSessionId, updateSession]
+  );
+
+  /**
+   * 改群名。
+   *
+   * 本地先改（群聊头部立刻显示新名字），再 PATCH 持久化。
+   *
+   * ⚠️ 本地空壳会话（isLocal，从通讯录刚建、还没发过消息）**不发 PATCH** ——
+   *    后端此刻还没有这条记录，请求必然 404，控制台会多一条无意义的报错。
+   *    这类群的改名留在内存里，等首条消息落库时由 /api/group-chat 的
+   *    `title` 字段一起带上（见 useGroupChat 的 title 选项）。
+   */
+  const handleRenameGroup = useCallback(
+    (title: string) => {
+      if (!currentSessionId) return;
+      updateSession(currentSessionId, { title });
+      const isLocal = sessions.find(s => s.id === currentSessionId)?.isLocal;
+      if (isLocal) return;
+      void fetch(`/api/sessions/${currentSessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      }).catch(err => console.error('保存群名失败:', err));
+    },
+    [currentSessionId, updateSession, sessions]
   );
 
   /**
@@ -384,6 +686,11 @@ function AppContent() {
         isLocal: true,
       };
       setSessions(prev => [newSession, ...prev]);
+      // A48（用户反馈同因同治）：建完群要**真的进群**。资料页的渲染优先级
+      // 高于会话（`detailAgent ? ... : currentSession ? ...`），从通讯录资料页
+      // 点「发起群聊 → 完成」时若不清它，地址进了新群、右侧却还停在联系人详情
+      // —— 与「点群不进群」是同一个根因。
+      setDetailAgentId(null);
       setNav('chats');
       setCurrentSessionId(newSession.id);
       navigate(`/chat/${newSession.id}`);
@@ -410,184 +717,260 @@ function AppContent() {
   }, [navigate, setCurrentSessionId]);
 
   return (
-    <div
-      className="flex h-screen w-screen overflow-hidden"
-      style={{ backgroundColor: 'var(--tc-surface-content)' }}
-    >
-      {/* 最左：功能导航条 */}
-      <NavRail
-        active={isSettingsPage ? 'settings' : nav}
-        readyCount={registry.readyCount}
-        onNavigate={handleNavigate}
-        onOpenSettings={handleOpenSettings}
-        compact={compact}
-      />
+    /*
+     * 纵向两段：自绘标题栏（40px 固定）+ 三栏主体。
+     *
+     * 标题栏**不在**三栏里，而是压在它们上面横贯整窗 —— 这样它才能盖住
+     * 系统画的那三个窗口控件（`titleBarOverlay` 画在页面之上、右上角），
+     * 而左侧的导航条与列表栏从它下面开始。见 TitleBar.tsx 的注释。
+     *
+     * 主体必须 `min-h-0 flex-1`：flex 子项默认 `min-height: auto`，
+     * 消息列表一旦变长就会把整行撑出视口，`h-screen` 也拦不住。
+     */
+    <div className="flex h-screen w-screen flex-col overflow-hidden">
+      <TitleBar compact={compact} />
+      {/* 跟随鼠标的玻璃反光。固定定位 + `pointer-events: none`，不参与布局；
+          只在窗口真有 acrylic 材质时（`data-opc-glass=1`）才亮，见组件注释。 */}
+      <CursorGlow />
 
-      {isSettingsPage ? (
-        <SettingsPage
-          agents={customAgents}
-          onAdd={addAgent}
-          onUpdate={updateAgent}
-          onDelete={deleteAgent}
-          themePreference={preference}
-          onThemePreferenceChange={setPreference}
-          onBack={compact ? handleBackToList : undefined}
+      <div
+        className="relative flex min-h-0 flex-1 overflow-hidden"
+        style={{ backgroundColor: 'var(--tc-surface-content)' }}
+      >
+        {/* 最左：功能导航条 */}
+        <NavRail
+          active={isSettingsPage ? 'settings' : nav}
+          onNavigate={handleNavigate}
+          onOpenSettings={handleOpenSettings}
+          compact={compact}
         />
-      ) : (
+
+        {/* A37：设置不再替换主内容，而是浮在它上面（见下面的弹窗）。
+            主界面继续渲染 —— 遮罩后面能看见原来的会话，关掉就接着看。 */}
         <>
           {/* 中间：会话列表 或 通讯录。单栏模式下与内容区互斥。 */}
-          {showColumn && (nav === 'chats' ? (
-            <ConversationList
-              sessions={sessions}
-              currentSessionId={currentSessionId}
-              getAgent={registry.getAgent}
-              onNewChat={handleNewChat}
-              onSelect={handleSelectSession}
-              onDelete={handleDeleteSession}
-              onTogglePin={setSessionPinned}
-              compact={compact}
-            />
-          ) : (
-            <ContactsPanel
-              agents={registry.agents}
-              grouped={registry.grouped}
-              loading={registry.loading}
-              probing={registry.probing}
-              error={registry.error}
-              onProbe={registry.probe}
-              onCreateGroup={handleCreateGroup}
-              onViewDetail={setDetailAgentId}
-              compact={compact}
-            />
-          ))}
-
-          {/* 右侧：会话内容 */}
-          {showContent || !compact ? (
-          <main
-            className="flex min-w-0 flex-1 flex-col"
-            style={{ backgroundColor: 'var(--tc-surface-content)' }}
-          >
-            {detailAgent ? (
-              // 资料页自带的 onBack 清掉 detailAgent，单栏模式下这就等于
-              // 「回到通讯录列表」（showContent 变 false），无需另开一个返回口。
-              <AgentDetailPanel
-                agent={detailAgent}
-                onBack={() => setDetailAgentId(null)}
-                onStartChat={handleStartChatWith}
+            {showColumn && (nav === 'chats' ? (
+              <ConversationList
+                sessions={sessions}
+                currentSessionId={currentSessionId}
+                getAgent={registry.getAgent}
+                onAddContacts={handleAddContacts}
+                onSelect={handleSelectSession}
+                onDelete={handleDeleteSession}
+                onTogglePin={setSessionPinned}
+                onExport={handleExportSession}
+                compact={compact}
+                agents={registry.agents}
+                groups={sessions.filter(s => s.kind === 'group')}
+                onCreateGroup={handleCreateGroup}
+                onSelectGroup={handleSelectSession}
               />
-            ) : currentSession ? (
-              <>
-                {/*
-                  群聊用自己的头部（成员堆叠 + 编排模式），由 ChatPage 内部渲染；
-                  一对一才用 ChatHeader。两套头部都基于同一个 PanelHeader，
-                  规格统一，差别只在往槽位里填什么。
-                */}
-                {currentSession.kind !== 'group' && (
-                  <ChatHeader
-                    agent={currentAgent}
-                    fallbackTitle={currentSession.title || '新对话'}
-                    models={activeModels}
-                    selectedModel={selectedModel}
-                    isLoading={isLoading}
-                    scenario={currentScenario}
-                    onModelChange={updateCurrentSessionModel}
-                    onDelete={() => handleDeleteSession(currentSession.id)}
-                    onBack={compact ? handleBackToList : undefined}
-                  />
-                )}
-                <Suspense
-                  fallback={
-                    <div
-                      className="flex flex-1 items-center justify-center text-body"
-                      style={{ color: 'var(--td-text-color-placeholder)' }}
-                    >
-                      正在加载会话…
-                    </div>
-                  }
-                >
-                  <ChatPage
-                    currentSession={currentSession}
-                    currentSessionId={currentSessionId}
-                    models={activeModels}
-                    selectedModel={selectedModel}
-                    agents={legacyAgents}
-                    currentAgent={currentAgent}
-                    getAgent={registry.getAgent}
-                    upsertGroupMessage={upsertGroupMessage}
-                    isLoading={isLoading}
-                    inputValue={inputValue}
-                    permissionRequest={permissionRequest}
-                    permissionMode={permissionMode}
-                    onSendMessage={sendMessage}
-                    onStop={handleStop}
-                    onInputChange={setInputValue}
-                    onModelChange={updateCurrentSessionModel}
-                    onPermissionAllow={handlePermissionAllow}
-                    onPermissionDeny={handlePermissionDeny}
-                    onPermissionModeChange={setPermissionMode}
-                    onOrchestrationChange={handleOrchestrationChange}
-                    onMembersChange={handleMembersChange}
-                    onDelete={() => handleDeleteSession(currentSession.id)}
-                    onBack={compact ? handleBackToList : undefined}
-                  />
-                </Suspense>
-              </>
             ) : (
-              <EmptyState
-                readyCount={registry.readyCount}
-                onGoContacts={() => setNav('contacts')}
-                nav={nav}
+              <ContactsPanel
+                agents={registry.agents}
+                loading={registry.loading}
+                probing={registry.probing}
+                error={registry.error}
+                onProbe={registry.probe}
+                onCreateGroup={handleCreateGroup}
+                onViewDetail={setDetailAgentId}
+                getAgent={registry.getAgent}
+                groups={sessions.filter(s => s.kind === 'group')}
+                onSelectGroup={handleSelectSession}
+                compact={compact}
+                onOpenCredential={handleOpenCredential}
               />
-            )}
-          </main>
+            ))}
+
+            {/* 列表栏与内容区之间的宽度拖拽手柄。
+                只在宽屏、且列表栏真的在场时渲染 —— 单栏模式下两栏互斥，
+                中间没有缝可拖。手柄自己用负边距把 5px 的占位抵掉，所以
+                渲染它不会让主内容右移、也不会在接缝处露一条异色竖带
+                （见 SidebarResizer.tsx 的「手柄不占布局宽度」）。 */}
+            {showColumn && !compact && <SidebarResizer />}
+
+            {/* 右侧：会话内容 */}
+            {showContent || !compact ? (
+              <main
+                className="flex min-w-0 flex-1 flex-col"
+                style={{ backgroundColor: 'var(--tc-surface-content)' }}
+              >
+                {detailAgent ? (
+                  // 资料页自带的 onBack 清掉 detailAgent，单栏模式下这就等于
+                  // 「回到通讯录列表」（showContent 变 false），无需另开一个返回口。
+                  <AgentDetailPanel
+                    agent={detailAgent}
+                    onBack={() => setDetailAgentId(null)}
+                    onStartChat={handleStartChatWith}
+                    // A68：同族关系里的名字可直接跳到那条资料（例如 Kimi ⇄ Kimi Code CLI）。
+                    // 只换 detailAgentId，不碰会话 —— 资料页是只读的，跳转无副作用。
+                    onSelectAgent={setDetailAgentId}
+                    onReprobe={registry.probe}
+                    onOpenCredential={handleOpenCredential}
+                  />
+                ) : currentSession ? (
+                  <>
+                    {/*
+                      群聊用自己的头部（成员堆叠 + 编排模式），由 ChatPage 内部渲染；
+                      一对一才用 ChatHeader。两套头部都基于同一个 PanelHeader，
+                      规格统一，差别只在往槽位里填什么。
+                    */}
+                    {currentSession.kind !== 'group' && (
+                      <ChatHeader
+                        agent={currentAgent}
+                        fallbackTitle={currentSession.title || '新对话'}
+                        isLoading={isLoading}
+                        scenario={currentScenario}
+                        // A63：工作区徽标（方案二）。群聊有自己的头部，
+                        // 那里不放工作区 —— 群成员各有各的 cwd，单个徽标
+                        // 会谎报一个不存在的「共同工作目录」。
+                        cwd={currentSession.cwd}
+                        onCwdChange={cwd => void setSessionCwd(currentSession.id, cwd)}
+                        onDelete={() => handleDeleteSession(currentSession.id)}
+                        onBack={compact ? handleBackToList : undefined}
+                      />
+                    )}
+                    <Suspense
+                      fallback={
+                        <div
+                          className="flex flex-1 items-center justify-center text-body"
+                          style={{ color: 'var(--td-text-color-placeholder)' }}
+                        >
+                          正在加载会话…
+                        </div>
+                      }
+                    >
+                      <ChatPage
+                        currentSession={currentSession}
+                        currentSessionId={currentSessionId}
+                        messagesLoaded={isMessagesLoaded(currentSession.id)}
+                        models={activeModels}
+                        selectedModel={selectedModel}
+                        agents={legacyAgents}
+                        currentAgent={currentAgent}
+                        getAgent={registry.getAgent}
+                        allAgents={registry.agents}
+                        upsertGroupMessage={upsertGroupMessage}
+                        isLoading={isLoading}
+                        inputValue={inputValue}
+                        permissionRequest={permissionRequest}
+                        permissionMode={permissionMode}
+                        onSendMessage={sendMessage}
+                        onStop={handleStop}
+                        onInputChange={setInputValue}
+                        onModelChange={updateCurrentSessionModel}
+                        onPermissionAllow={handlePermissionAllow}
+                        onPermissionDeny={handlePermissionDeny}
+                        onPermissionModeChange={setPermissionMode}
+                        onOrchestrationChange={handleOrchestrationChange}
+                        onMembersChange={handleMembersChange}
+                        onRenameGroup={handleRenameGroup}
+                        onTogglePin={pinned => setSessionPinned(currentSession.id, pinned)}
+                        // A62：改当前会话的思考强度档位（useSessions 里 PATCH 落库）
+                        onReasoningEffortChange={setSessionReasoningEffort}
+                        onClearMessages={clearSessionMessages}
+                        onDelete={() => handleDeleteSession(currentSession.id)}
+                        onBack={compact ? handleBackToList : undefined}
+                        // A33：消息底部操作行的「重新生成」「分支」。
+                        // 群聊不让用：一条消息里多个作者，重跑该找谁的上下文、
+                        // 分支该切到哪都说不清（如实隐藏而不是给个含糊的动作）。
+                        onRegenerate={!(currentSession?.kind === 'group') ? regenerate : undefined}
+                        onBranch={!(currentSession?.kind === 'group') ? handleBranch : undefined}
+                      />
+                    </Suspense>
+                  </>
+                ) : (
+                  <EmptyState onGoContacts={() => setNav('contacts')} nav={nav} />
+                )}
+              </main>
           ) : null}
         </>
-      )}
+
+        {/* 设置弹窗（A37）。
+            · 定位在标题栏**下方**（父级是标题栏之外的那一行），所以三个
+              窗口按钮和拖动区仍然可用 —— 全屏 fixed 会把它们盖住。
+            · 遮罩点击 = 关闭（次要出口），右上角 × 是主出口（Esc 也行）。
+            · 尺寸用 min() 夹住：窗口再大也不会把弹窗撑成第二块全屏页面。 */}
+        {isSettingsPage && (
+          <div
+            className="absolute inset-0 z-40 flex items-center justify-center p-3 sm:p-6"
+            data-settings-modal
+          >
+            <div
+              className="absolute inset-0"
+              style={{ backgroundColor: 'rgba(0, 0, 0, 0.38)' }}
+              onClick={handleCloseSettings}
+              data-settings-backdrop
+            />
+            {/* 尺寸：`min()` 夹住 —— 窄窗口时铺满可用宽度，宽窗口时收在 900px。
+                用户反馈「宽度太大、与整体不协调」：1080 在 1080 的窗口里几乎
+                等于第二块全屏页面；900 之后两侧能看见遮罩与背后的会话，
+                「浮层」这层语义才成立。 */}
+            <div
+              ref={settingsPanelRef}
+              className="relative flex h-[min(700px,100%)] w-[min(900px,100%)] overflow-hidden rounded-2xl [&_header]:select-none"
+              style={{
+                border: '1px solid var(--td-component-stroke)',
+                boxShadow: 'var(--shadow-float)',
+                backgroundColor: 'var(--tc-surface-content)',
+                // 位移不在这里写：拖动时由 applySettingsOffset 直接改 DOM，
+                // 避免每帧重渲染设置页（见上面的注释）。
+              }}
+              onPointerDown={onSettingsDragStart}
+              onPointerMove={onSettingsDragMove}
+              onPointerUp={onSettingsDragEnd}
+              onPointerCancel={onSettingsDragEnd}
+              data-settings-panel
+            >
+              <SettingsPage
+                agents={customAgents}
+                onAdd={addAgent}
+                onUpdate={updateAgent}
+                onDelete={deleteAgent}
+                themePreference={preference}
+                onThemePreferenceChange={setPreference}
+                onCredentialsSaved={registry.load}
+                onModelsRefreshed={() => {
+                  // 两条来源都要重取：SDK 类走 useModels 那份，其余走下面那个 effect
+                  setModelsEpoch(v => v + 1);
+                  void fetchModels();
+                }}
+                onClose={handleCloseSettings}
+              />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 /** 未选中会话时的空态 */
 function EmptyState({
-  readyCount,
   onGoContacts,
   nav,
 }: {
-  readyCount: number;
   onGoContacts: () => void;
   nav: NavKey;
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-4 text-center sm:px-8">
-      {/* 空态图标用品牌色淡底 + 品牌色线条，而不是灰色占位图。
-          灰图标传达的是「这里什么都没有」，淡蓝底传达的是「等你开始」。 */}
-      <div
-        className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl"
-        style={{
-          backgroundColor: 'var(--td-brand-color-light)',
-          color: 'var(--td-brand-color)',
-        }}
-      >
-        <MessagesSquare size={26} strokeWidth={1.75} />
-      </div>
+      {/* A37：用户要求「右侧区域仅保留标题和打开通讯录组件」。
+          去掉的是一整块 56px 的图标 + 一段三行的解释文字：
+          那段话在通讯录页也会出现（那边讲的是同一件事），
+          两处都说等于都没说清；而这块区域本来就只是「空」，不需要装饰。 */}
       <h3 className="text-title font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-        {nav === 'contacts' ? '从左侧选一个 Agent 开始对话' : '选择一个会话，或发起新对话'}
+        {nav === 'contacts' ? '从左侧选一个 Agent 开始对话' : '选择一个会话，或发起新会话'}
       </h3>
-      <p
-        className="mt-2 max-w-[380px] text-body leading-relaxed"
-        style={{ color: 'var(--td-text-color-secondary)' }}
-      >
-        本机共有 {readyCount} 个 Agent 处于在线状态。每个 Agent 都是通讯录里的一个联系人，
-        可以单独对话，也可以拉进群聊协作。
-      </p>
       {nav === 'chats' && (
         <button
           type="button"
           onClick={onGoContacts}
           className="tc-btn-brand mt-5 px-3.5 py-2 text-body"
         >
+          {/* A37：去掉行尾的「→」。按钮本身有底色和圆角，已经明确是「可点」，
+              再挂一个箭头是重复的指示。 */}
           打开通讯录
-          <ArrowRight size={14} />
         </button>
       )}
     </div>

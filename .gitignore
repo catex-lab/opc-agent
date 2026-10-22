@@ -4,6 +4,11 @@ dist-electron/
 release/
 release-out/
 release-p*/
+# release-latest/ 是「最新一版」的二进制快照（约 775 MB），release-builds/ 是
+# build-installer.mjs 在默认输出目录被安全软件咬住时的回退输出目录 ——
+# 两者都是本地产物，绝不能进库（漏一个 `git add -A` 就是 775 MB 进历史）。
+release-latest/
+release-builds/
 .trash-*/
 .tmp/
 *.log
@@ -16,3 +21,11 @@ Thumbs.db
 # 验证脚本的截图产物：每次跑 verify:* 都会整批重写。
 # 它们是「给人看的证据」，不是需要版本化的资产 —— 留在磁盘上即可。
 .render-check/
+
+# 运行时缓存：模型目录（CLI 枚举 + models.dev 元数据），可随时重建；
+# 里面还记录了本机已授权的 provider，不该进版本库。
+data/model-catalog.json
+
+# 运行时记忆：应用自己写的 MEMORY.md / USER.md / skills，属于本机使用痕迹，
+# 与 model-catalog.json 同类 —— 可以重建，且含个人偏好，不进版本库。
+data/memory/

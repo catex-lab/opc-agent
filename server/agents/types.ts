@@ -12,6 +12,8 @@
 
 // ============= 事件协议 =============
 
+import type { RiskLevel } from './permission-gate.js';
+
 /** 统一事件流。与模板 SSE 契约一一对应。 */
 export type AgentEvent =
   | { type: 'init'; sessionId: string; model?: string; resumeToken?: string | null }
@@ -19,8 +21,32 @@ export type AgentEvent =
   /** 思考过程（Hermes ACP 的 agent_thought_chunk）。与正文分开，前端折叠展示 */
   | { type: 'thinking'; content: string }
   | { type: 'tool'; id: string; name: string; input?: unknown }
+  /**
+   * 工具执行过程中的增量输出（E5）。
+   *
+   * 有它才能做「bash 命令逐行滚」「长输出边跑边看」。没有的适配器不发，
+   * 前端只在收到时把内容追加到工具卡的 tail 区，不做任何假设。
+   */
+  | { type: 'tool_output'; toolId: string; content: string }
   | { type: 'tool_result'; toolId: string; content: string; isError?: boolean }
-  | { type: 'done'; durationMs?: number; cost?: number }
+  /**
+   * 用量上报（不产生块）。
+   *
+   * 单独一个事件而不是塞进 done：有的 CLI 每完成一步就报一次用量
+   * （opencode 的 step_finish、gemini 的 result），但整轮并没有结束。
+   * 适配器把最新一次报给 CLI 适配器，最终 done 时一并带上。
+   */
+  | { type: 'usage'; durationMs?: number; cost?: number; tokens?: number }
+  /**
+   * 一轮结束。三个usage字段语义不同，**不要互相冒充**：
+   *   - `durationMs`：耗时（毫秒），适配器自己量的 wall-clock
+   *   - `cost`：费用（美元）。只有 SDK 适配器真的拿到了平台账单价才会填
+   *   - `tokens`：token 数。ACP 的 `usage.totalTokens` 走这个字段
+   *
+   * 曾经 ACP 把 token 数塞进 `cost`，于是「成本统计」把 12000 个 token
+   * 显示成 $12000。同类字段必须各就各位，否则统计功能本身就是假数据。
+   */
+  | { type: 'done'; durationMs?: number; cost?: number; tokens?: number }
   | { type: 'error'; message: string }
   /**
    * 工具授权请求。
@@ -35,12 +61,22 @@ export type AgentEvent =
       toolUseId?: string;
       toolName: string;
       input: Record<string, unknown>;
+      /** A40 门禁给出的风险分级。缺失时前端按「未知」处理，不猜 */
+      risk?: RiskLevel;
+      /** 命中的规则原文 / 分类器说明，供审批弹窗解释「凭什么卡你」 */
+      rule?: string;
     };
 
 // ============= Agent 描述 =============
 
 /** Agent 的接入方式，决定用哪个适配器。 */
-export type AgentKind = 'sdk' | 'cli' | 'acp' | 'mock';
+/**
+ * 接入方式。
+ *
+ * `http` 是「只有 HTTP API、没有 CLI」的模型走的路（豆包 / Kimi 等）。
+ * 它**没有工具调用循环**，所以只能承载 chat / write 能力，不能标 code / tools。
+ */
+export type AgentKind = 'sdk' | 'cli' | 'acp' | 'http' | 'mock';
 
 /** Agent 能力标签，用于场景包与任务分派时筛选。 */
 export type AgentCapability =
@@ -50,6 +86,21 @@ export type AgentCapability =
   | 'tools'     // 可读写文件 / 执行命令
   | 'image'     // 可生成图像
   | 'search';   // 可联网检索
+
+/**
+ * 事件能力：这个 Agent 能把「过程」暴露到什么粒度。
+ *
+ * 与 AgentCapability 分开的理由见 AgentDescriptor.eventCapabilities 的注释。
+ * `text` / `done` / `error` 是所有适配器都能给的，不列在这里。
+ */
+export type AgentEventCapability =
+  | 'thinking'      // 思考过程（原文或摘要）
+  | 'thinking_summary' // 只给摘要（如 codex 的 reasoning summary）
+  | 'tool'          // 工具调用与结果
+  | 'tool_output'   // 工具执行中的增量输出
+  | 'usage'         // token 用量
+  | 'cost'          // 费用
+  | 'permission';   // 反向权限请求
 
 /** 可用性状态。前端据此渲染徽标与修复指引。 */
 export type AgentAvailability =
@@ -69,6 +120,63 @@ export type AgentAvailability =
   | 'unsupported'   // 本机形态无法无头调用（如仅 GUI）
   | 'unknown';      // 尚未探测
 
+/**
+ * 一条 Agent 在「本机没有」时，用户该怎么把它弄到机器上（A71）。
+ *
+ * 为什么不用一句话说清（原来的 `installHint` 就是一句话）：那 14 句话把
+ * **三件不同的事**混在了一起 —— 安装命令、登录步骤、环境变量。典型如 codex：
+ * `npm i -g @openai/codex，然后 codex login`。界面只能整句显示，
+ * 用户不知道哪半截该粘到终端、哪半截是装完之后的事。
+ *
+ * 拆开之后每个字段只有一个用途：
+ *   - `command` 整行可复制到终端（**只复制，不代跑**，理由见 PLAN-AGENT-INSTALL §3）
+ *   - `note`    装完之后还要做什么（登录 / 填 Key）
+ *   - `url`     核实过的官方页（核实不到就**不写**，不画按钮）
+ */
+export type InstallMethod =
+  /** npm 全局包，要求本机有 Node */
+  | 'npm'
+  /** 厂商提供的 PowerShell 安装脚本（`irm … | iex`），只在终端里由用户自己跑 */
+  | 'script'
+  /** 桌面端安装器，没有命令行安装方式 */
+  | 'installer'
+  /** 不需要安装，缺的是 API Key / 登录 */
+  | 'key'
+  /** 本应用没收录可信的安装入口 —— 界面不画按钮，只写说明 */
+  | 'unknown';
+
+export interface AgentInstall {
+  method: InstallMethod;
+  /** npm 包名（`method:'npm'` 必填，且必须出现在 `command` 里） */
+  pkg?: string;
+  /** 逐字命令，用于展示与复制 */
+  command?: string;
+  /** 官方下载/文档页，必须 https 且域名在 `INSTALL_HOSTS` 白名单里 */
+  url?: string;
+  /** 执行该命令的前置条件（用于界面如实提示「本机缺 Node」这类信息） */
+  requires?: 'node' | 'powershell' | 'none';
+  /** 装完之后还要做什么。**不是**安装步骤 */
+  note?: string;
+  /** 这条链接/命令的核实日期（ISO 日期）。链接会烂，这个字段是让它烂了能被发现 */
+  checkedAt?: string;
+  /** 怎么核实的（给人看的依据，便于下次复核时照着重做一遍） */
+  checkedFrom?: string;
+}
+
+/**
+ * 运行时环境探测结果（A71）。
+ *
+ * 与 `AgentInstall` 分开：前者是**静态元数据**（写死在定义表里），
+ * 这个是**本机实况**（有没有 Node、有没有 PowerShell）。
+ * 混在一起会让「换个机器同一份定义就变了」这件事变得说不清。
+ */
+export interface InstallEnv {
+  /** PATH 里有没有 node。**不报告版本号** —— 见 installEnv.ts 顶部说明 */
+  node?: { ok: boolean };
+  /** PATH 里有没有 powershell / pwsh */
+  powershell?: { ok: boolean };
+}
+
 /** Agent 的静态描述（不随探测结果变化）。 */
 export interface AgentDescriptor {
   /** 稳定标识，如 'codex' */
@@ -81,6 +189,17 @@ export interface AgentDescriptor {
   kind: AgentKind;
   /** 能力标签 */
   capabilities: AgentCapability[];
+  /**
+   * 事件能力（E1）。
+   *
+   * `capabilities` 描述「这个 Agent 会干什么」（问答/写代码/生图），
+   * 这里描述「它能把过程暴露到什么粒度」。两者不能混用：
+   * 一个能写代码的 Agent 完全可能只吐纯文本，UI 若按业务能力推断
+   * 「它应该有工具卡片」，就必然出现永远空着的折叠条。
+   *
+   * 缺省（undefined）= 只有最小公共集：text / done / error。
+   */
+  eventCapabilities?: AgentEventCapability[];
   /** 一句话说明，用于名册页 */
   description?: string;
   /** Logo 键，前端用它在 AGENT_LOGOS 里取官方 SVG（与 Agent id 同名） */
@@ -91,6 +210,107 @@ export interface AgentDescriptor {
   command?: string;
   /** 未就绪时的安装 / 修复指引 */
   installHint?: string;
+  /**
+   * 结构化的获取方式（A71）。有它时界面按 method 出按钮；
+   * 没有时退回 `installHint` 纯文字 —— 老条目不会因为缺字段而崩。
+   */
+  install?: AgentInstall;
+
+  /* ── 产品族元数据（A68，全部可选）────────────────────────────────
+   *
+   * 解决的问题：同一个厂商可能有 agent / CLI / IDE，有国际版 / 国内版，
+   * 光看 `name` 分不清「两个 Kimi 为什么是两个条目」「这个 Qoder 是哪个区的」。
+   *
+   * ⚠️ 与 `kind` 的区别：`kind` 是**我们怎么接**（sdk/cli/acp/http），
+   * `surface` 是**产品本身是什么形态**。同一个产品可以既有 IDE 又有 CLI
+   * （qoder / cursor / antigravity / kimi 都是），我们只接 CLI/ACP/HTTP 那一面，
+   * 所以 `surface` 永远不该出现 `ide`（见 verify:family 的断言）。
+   *
+   * 为什么把「机器键」和「官方显示名」分成两个字段：`authScope` 要参与唯一性断言
+   * （必须稳定、不能有空格和标点），而界面上必须显示**厂商自己的叫法**
+   * （腾讯叫「国内版/国际版」、Kimi 叫「中国站/国际站」），两者不能兼得。
+   */
+
+  /**
+   * 产品族标识（机器可读，同族共用）。
+   * 例：`kimi`（开放平台与 Kimi Code 同族）、`google`（Gemini 与 Antigravity 同族）。
+   */
+  family?: string;
+  /** 产品族的**官方显示名**。例：`WorkBuddy`、`Kimi`、`火山方舟`。 */
+  familyName?: string;
+  /** 产品形态（≠ 接入方式 `kind`）。`ide` 是保留值，本项目不接。 */
+  surface?: 'cli' | 'acp' | 'sdk' | 'http' | 'ide';
+  /** 凭据属于哪个市场。`any` = 不分区 / 跟随模型 provider / 本地运行。 */
+  region?: 'cn' | 'intl' | 'any';
+  /** 区域在**该厂商官方口径里**叫什么（腾讯「国内版」、Kimi「中国站」…）。 */
+  regionName?: string;
+  /**
+   * 账号体系标识（机器可读）—— 决定**额度算谁的**。
+   * 不同 `authScope` 必须是两条目：一个子进程只能持一份凭据，
+   * 合成一条就是「切了等于没切」的假控件。
+   */
+  authScope?: string;
+  /** 账号体系的官方叫法。例：`腾讯云账号`、`Kimi 开放平台 API Key`。 */
+  authScopeName?: string;
+  /**
+   * 运行时请求打到哪些主机（不含协议）。
+   *
+   * **不是**在定义表里另写一份：它由 `AgentDefinition.backendHosts` 在
+   * `registry.toInfo()` 里派生出来。理由很直接 —— 这份数据是给用户看
+   * 「我的请求到底发去哪」的，一旦有两份来源就一定会漂移，漂了就是骗人。
+   * 本地子进程类 Agent（无固定端点）留空，界面上不显示这一行，不写「未知」。
+   */
+  endpointHosts?: string[];
+  /**
+   * 同族的其他条目（不含自己），由 `registry.toInfo()` 从定义表派生。
+   *
+   * 为什么放在后端算：资料页要回答的那个问题 ——「这两个 Kimi 到底是不是一回事」
+   * —— 答案取决于**对方**的账号体系，而单个 descriptor 看不到别人。
+   * 客户端自己算就得先拿到全量名册再按 family 过滤，多一处容易漂的重复逻辑；
+   * 后端本来就持有全表，算一次给出去最省事也最准。
+   */
+  familyPeers?: Array<{
+    id: string;
+    name: string;
+    /** 对方的账号体系：与自己的相同 = 共用额度；不同 = 额度不互通 */
+    authScope?: string;
+    regionName?: string;
+  }>;
+  /**
+   * 同厂、但**没有接入**的另一个版本（A69 / PLAN §6 P2）。
+   *
+   * 与 `familyPeers` 的区别是「接没接」：peers 在名册里能点开，siblings 只有一句
+   * 「检测到了，为什么没接」。之所以要暴露这个，是因为用户机器上装着
+   * `~/.qoder-cn` / `~/.workbuddy-ai` 时，名册只有一个条目会让人以为「不支持」
+   * 甚至「现在这条就是国际版」。
+   *
+   * 由 `familyHints.ts` 探测，**只在真的探测到时挂上**；探不到就不出现，
+   * 不写「未知」占位。
+   */
+  localSiblings?: Array<{
+    id: string;
+    name: string;
+    regionName: string;
+    detectedPath: string;
+    evidence: string;
+    /** 没接入的具体原因（与 nextStep 互斥） */
+    blockedBy?: string;
+    /** 可接入时要用户准备什么 */
+    nextStep?: string;
+  }>;
+  /**
+   * 上次实际请求走的账号体系（目前只有 zcode 提供）。
+   *
+   * 措辞必须是「上次」：zcode 把当前 provider 存在加密字段里读不出来，
+   * 所以这里给的是**使用记录**（`model_usage` 表），带时间与来源。
+   */
+  lastRequest?: {
+    account: 'zai' | 'bigmodel' | 'custom' | 'unknown';
+    accountLabel: string;
+    model: string;
+    at: string;
+    source: string;
+  };
 }
 
 /** Agent 的动态状态（每次探测更新）。 */
@@ -104,6 +324,14 @@ export interface AgentStatus {
   version?: string;
   /** 面向用户的状态说明 */
   message?: string;
+  /**
+   * 需要登录时的认证地址。
+   *
+   * 单独一个字段而不是让前端从 message 里抠 URL：message 是给人看的
+   * 自然语言，抠 URL 等于把解析规则藏进 UI；而且 address 里可能带
+   * state 等一次性参数，抠错一个字符登录就失败。
+   */
+  authUrl?: string;
   /** 最近一次调用失败的原因（用于把运行时错误反馈到名册页） */
   lastError?: string;
   /** 探测时间（ISO） */
@@ -125,6 +353,12 @@ export interface AgentInfo extends AgentDescriptor {
   status: AgentStatus;
   /** P4-5：权限强制能力（UI 据此如实提示「该场景的只读约束落不了地」） */
   permissionSupport?: PermissionSupport;
+  /**
+   * 本机是否具备安装前置条件（A71）。只在 `install.requires` 需要时才挂上，
+   * 免得 14 条都拖着一个空对象。界面据此把「跑这条命令会失败」提前说清，
+   * 而不是让用户复制完才发现没装 Node。
+   */
+  installEnv?: InstallEnv;
 }
 
 // ============= 调用上下文 =============
@@ -140,6 +374,15 @@ export interface SendContext {
   cwd?: string;
   /** 指定模型 */
   model?: string;
+  /**
+   * 推理/思考强度（档位值，如 `low` / `xhigh`）。
+   *
+   * 由模型的 `reasoning.levels` 约束取值 —— 前端只能从那里面选，
+   * 不信任任意字符串（codex 传错的值会被 CLI 悄悄忽略，用户以为设了其实没有）。
+   *
+   * `undefined` = 不显式传参，用 CLI 自己的默认（等价于 config.toml 里那一行）。
+   */
+  reasoningEffort?: string;
   /** 上次调用返回的恢复令牌，用于续接上下文（CLI 的 --continue / --session） */
   resumeToken?: string | null;
   /** 权限模式，映射到各 CLI 的审批参数 */

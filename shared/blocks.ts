@@ -1,0 +1,371 @@
+/**
+ * 消息块模型与事件契约（前后端共用）。
+ *
+ * ## 为什么要这一层
+ *
+ * 一条助手回复内部有多种异构内容：思考、正文、工具调用、图片、编排叙述。
+ * 旧的表示法是**几个平行字段**（content / thinking / toolCalls / contentBlocks），
+ * 于是「思考 → 说话 → 再思考 → 调工具」这种顺序**根本无法表达** ——
+ * 思考被固定画在正文上方，刷新后还会丢（thinking 当年没落库）。
+ *
+ * 现在统一成**一条有序的 block 序列**：
+ *   - 顺序 = 数组顺序，不再靠字段位置猜
+ *   - 流式 = block_open / block_delta / block_patch / block_close 四种生命周期
+ *   - 落库 = 整条序列一次性存 JSON，刷新后与流式中**同一份数据**
+ *
+ * ## 分层
+ *
+ *   adapter（各家方言）→ AgentEvent（v1，最小公共集）
+ *        → RunProjector（server，唯一一处累积逻辑）
+ *        → RunEvent（v2，本文件）
+ *        → SSE / 落库 / 群聊多路复用
+ *
+ * 前端只认 RunEvent，不再各自实现一遍「往最后一个块里追加」。
+ *
+ * ⚠️ 本文件只放类型与纯函数，不许 import server/ 或 src/ 模块。
+ */
+
+// ============= 块 =============
+
+export type BlockState = 'streaming' | 'done' | 'error' | 'cancelled';
+
+export interface TextBlock {
+  id: string;
+  type: 'text';
+  text: string;
+  state: BlockState;
+}
+
+/**
+ * 思考块。
+ *
+ * `format` 区分「模型原始思考」与「厂商给出的摘要」：codex 只给 reasoning
+ * summary，硬标成「思考过程」会让用户以为看到了完整推理链。UI 据此换文案。
+ */
+export interface ThinkingBlock {
+  id: string;
+  type: 'thinking';
+  text: string;
+  state: BlockState;
+  format: 'raw' | 'summary';
+  startedAt: number;
+  endedAt?: number;
+}
+
+export type ToolBlockStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface ToolBlock {
+  id: string;
+  type: 'tool';
+  /** 厂商侧的工具调用 id，用于 tool_result 配对 */
+  toolId: string;
+  name: string;
+  input?: Record<string, unknown>;
+  /** 流式拼装中的半截 JSON（Anthropic 的 input_json_delta） */
+  inputRaw?: string;
+  /** 输出（bash 的 stdout、工具返回的文本） */
+  output?: string;
+  /** 输出被截断时置真，UI 提示「仅显示前 N 字」 */
+  outputTruncated?: boolean;
+  status: ToolBlockStatus;
+  startedAt: number;
+  endedAt?: number;
+  isError?: boolean;
+}
+
+/** 图片块的数据部分，字段与 src/types.ts 的 ImageBlock 保持结构兼容 */
+export interface BlockImage {
+  url: string;
+  prompt?: string;
+  size?: string;
+  model?: string;
+  provider?: string;
+  alt?: string;
+  sourceUrl?: string;
+  expiresAt?: string;
+}
+
+export interface ImageBlock {
+  id: string;
+  type: 'image';
+  image: BlockImage;
+}
+
+/** 编排叙述（群聊的「主控决定交给 X」「第 2/3 棒」） */
+export interface NoteBlock {
+  id: string;
+  type: 'note';
+  text: string;
+  level: 'info' | 'warn';
+}
+
+export type Block = TextBlock | ThinkingBlock | ToolBlock | ImageBlock | NoteBlock;
+
+// ============= 事件（v2） =============
+
+export type RunStatus = 'ok' | 'aborted' | 'error';
+
+export type BlockDeltaChannel = 'text' | 'input' | 'output';
+
+interface Seq {
+  /** 每个 run 内单调递增，从 1 开始。断线重放靠它定位 */
+  seq: number;
+  runId: string;
+}
+
+export type RunEvent = Seq &
+  (
+    | {
+        type: 'run_start';
+        sessionId: string;
+        messageId: string;
+        agentId: string;
+        model?: string;
+      }
+    | { type: 'block_open'; block: Block }
+    | { type: 'block_delta'; blockId: string; channel: BlockDeltaChannel; delta: string }
+    | { type: 'block_patch'; blockId: string; patch: Record<string, unknown> }
+    | { type: 'block_close'; blockId: string; state: BlockState }
+    | {
+        type: 'run_end';
+        status: RunStatus;
+        durationMs?: number;
+        cost?: number;
+        tokens?: number;
+      }
+    | {
+        type: 'error';
+        scope: 'run' | 'block' | 'tool';
+        message: string;
+        blockId?: string;
+        retryable?: boolean;
+      }
+    | {
+        type: 'permission_request';
+        requestId: string;
+        toolUseId?: string;
+        toolName: string;
+        input: Record<string, unknown>;
+        /** A40 门禁判出的风险分级（缺省 = safe） */
+        risk?: 'safe' | 'risky' | 'dangerous';
+        /** 命中的规则名（人话），弹窗上显示「为什么问这一句」 */
+        rule?: string;
+      }
+    /**
+     * 断线重连时先发的一条全量快照。
+     * 收到它意味着「丢掉本地这轮的所有块，以我为准」，然后接着收增量。
+     */
+    | { type: 'snapshot'; blocks: Block[] }
+  );
+
+/** 事件类型的判别联合，供 reducer 使用 */
+export type RunEventType = RunEvent['type'];
+
+// ============= 事件应用（前后端共用的唯一一份 reducer） =============
+
+/**
+ * 把一条事件应用到块数组上（原地修改）。
+ *
+ * 为什么放在 shared 而不是前端：断线重放的快照也要靠它算出来。
+ * 如果服务端另写一份「事件 → 当前块」的逻辑，两份迟早不一致，
+ * 重连后用户会看到和刚才不一样的界面 —— 这正是这次改造要消灭的问题。
+ *
+ * @returns 是否发生了变化（供调用方决定要不要重渲染）
+ */
+export function applyRunEvent(blocks: Block[], ev: RunEvent): boolean {
+  switch (ev.type) {
+    case 'block_open': {
+      // 重放时可能重复收到同一个块：按 id 去重，避免出现两份
+      const idx = blocks.findIndex(b => b.id === ev.block.id);
+      if (idx >= 0) blocks[idx] = { ...ev.block };
+      else blocks.push({ ...ev.block });
+      return true;
+    }
+
+    case 'block_delta': {
+      const block = blocks.find(b => b.id === ev.blockId);
+      if (!block) return false;
+      if (block.type === 'text' || block.type === 'thinking') {
+        block.text += ev.delta;
+      } else if (block.type === 'tool') {
+        if (ev.channel === 'input') block.inputRaw = (block.inputRaw ?? '') + ev.delta;
+        else block.output = (block.output ?? '') + ev.delta;
+      }
+      return true;
+    }
+
+    case 'block_patch': {
+      const block = blocks.find(b => b.id === ev.blockId);
+      if (!block) return false;
+      Object.assign(block, ev.patch);
+      return true;
+    }
+
+    case 'block_close': {
+      const block = blocks.find(b => b.id === ev.blockId);
+      if (!block) return false;
+      if (block.type === 'tool') {
+        block.status =
+          ev.state === 'done'
+            ? 'completed'
+            : ev.state === 'cancelled'
+              ? 'cancelled'
+              : 'failed';
+        block.endedAt = block.endedAt ?? Date.now();
+      } else if (block.type === 'text' || block.type === 'thinking') {
+        block.state = ev.state;
+        if (block.type === 'thinking') block.endedAt = block.endedAt ?? Date.now();
+      }
+      return true;
+    }
+
+    case 'snapshot': {
+      blocks.length = 0;
+      for (const b of ev.blocks) blocks.push({ ...b });
+      return true;
+    }
+
+    default:
+      return false;
+  }
+}
+
+/** 当前块序列的「进行中」摘要，供 UI 显示「思考中…」「执行中…」 */
+export function runActivity(blocks: readonly Block[]): 'thinking' | 'tool' | 'writing' | 'idle' {
+  const last = [...blocks].reverse().find(b => b.type !== 'note');
+  if (!last) return 'idle';
+  if (last.type === 'thinking' && last.state === 'streaming') return 'thinking';
+  if (last.type === 'tool' && (last.status === 'running' || last.status === 'pending')) return 'tool';
+  if (last.type === 'text' && last.state === 'streaming') return 'writing';
+  return 'idle';
+}
+
+/**
+ * 流式状态行的阶段文案（A34）。
+ *
+ * spinner mode：不同阶段说不同的话，而不是一个笼统词。
+ * 默认（刚发出、还没有任何块）是「正在处理」—— 中性、不借用任何厂商的
+ * 专属说法。放在 shared 是为了能被单测直接调用，且与 runActivity 用同一套判据。
+ */
+export function streamPhaseLabel(blocks: readonly Block[], imageMode = false): string {
+  if (imageMode) return '正在生成图像';
+  const activity = runActivity(blocks);
+  if (activity === 'thinking') return '正在思考';
+  if (activity === 'tool') {
+    const running = [...blocks]
+      .reverse()
+      .find(b => b.type === 'tool' && (b.status === 'running' || b.status === 'pending'));
+    return running && running.type === 'tool' ? `正在调用 ${running.name}` : '正在调用工具';
+  }
+  if (activity === 'writing') return '正在生成';
+  return '正在处理';
+}
+
+// ============= 纯函数工具 =============
+
+/** 拼接所有正文块（用于 message.content 这类兼容字段） */
+export function textOfBlocks(blocks: readonly Block[]): string {
+  return blocks
+    .filter((b): b is TextBlock => b.type === 'text')
+    .map(b => b.text)
+    .join('');
+}
+
+/** 拼接所有思考块 */
+export function thinkingOfBlocks(blocks: readonly Block[]): string {
+  return blocks
+    .filter((b): b is ThinkingBlock => b.type === 'thinking')
+    .map(b => b.text)
+    .join('');
+}
+
+/** 工具块 → 旧版 ToolCall 形状（给 ToolCallsCollapse 这类既有组件用） */
+export interface LegacyToolCall {
+  id: string;
+  name: string;
+  input?: Record<string, unknown>;
+  status: 'running' | 'completed' | 'error';
+  result?: string;
+  isError?: boolean;
+}
+
+export function toolCallsOfBlocks(blocks: readonly Block[]): LegacyToolCall[] {
+  return blocks
+    .filter((b): b is ToolBlock => b.type === 'tool')
+    .map(b => ({
+      id: b.toolId || b.id,
+      name: b.name,
+      input: b.input,
+      status:
+        b.status === 'completed'
+          ? 'completed'
+          : b.status === 'failed' || b.status === 'cancelled' || b.isError
+            ? 'error'
+            : 'running',
+      result: b.output,
+      isError: b.isError,
+    }));
+}
+
+/** 是否有任何块（用于「思考中…」占位判断） */
+export function hasVisibleContent(blocks: readonly Block[]): boolean {
+  return blocks.some(b => {
+    if (b.type === 'text') return b.text.length > 0;
+    if (b.type === 'thinking') return b.text.length > 0;
+    return true;
+  });
+}
+
+/**
+ * 旧数据 → 块序列。
+ *
+ * 老消息在库里只有 content / tool_calls / images 三列，**顺序信息已经丢了**。
+ * 这里按旧版渲染的既有顺序还原（思考 → 工具 → 图片 → 正文），
+ * 保证「刷新后」与用户当年看到的样子一致；新消息一律走 blocks 列，不进这里。
+ */
+export function legacyToBlocks(input: {
+  content?: string;
+  thinking?: string;
+  toolCalls?: LegacyToolCall[];
+  images?: BlockImage[];
+}): Block[] {
+  const out: Block[] = [];
+  const { content, thinking, toolCalls, images } = input;
+
+  if (thinking) {
+    out.push({
+      id: 'legacy-thinking',
+      type: 'thinking',
+      text: thinking,
+      state: 'done',
+      format: 'raw',
+      startedAt: 0,
+      endedAt: 0,
+    });
+  }
+
+  for (const t of toolCalls ?? []) {
+    out.push({
+      id: `legacy-tool-${t.id}`,
+      type: 'tool',
+      toolId: t.id,
+      name: t.name,
+      input: t.input,
+      output: t.result,
+      status: t.status === 'completed' ? 'completed' : t.status === 'error' ? 'failed' : 'running',
+      isError: t.isError,
+      startedAt: 0,
+      endedAt: 0,
+    });
+  }
+
+  for (const [i, img] of (images ?? []).entries()) {
+    out.push({ id: `legacy-image-${i}`, type: 'image', image: img });
+  }
+
+  if (content) {
+    out.push({ id: 'legacy-text', type: 'text', text: content, state: 'done' });
+  }
+
+  return out;
+}

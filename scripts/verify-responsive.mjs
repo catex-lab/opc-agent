@@ -12,7 +12,7 @@
  *  2. **窄屏单栏** —— 列表与内容同一时刻只能有一个在 DOM 里。
  *     用 hidden 只藏不删的话，藏起来的那半截仍在跑副作用、仍能 Tab 到。
  *  3. **返回键只在窄屏出现**。
- *  4. **导航条宽度随宽度收缩**（64 → 56）。
+ *  4. **导航条宽度随宽度收缩**（56 → 48）。
  *  5. **聊天页不再显示 Agent 简介**（agent.description）。
  */
 import { createServer } from 'node:http';
@@ -89,8 +89,10 @@ const read = () => page.evaluate(() => {
 // ── 宽屏 ──
 let r = await read();
 record('宽屏 标题栏与导航条同色', r.headerBgs[0], r.navBg);
-record('宽屏 主区头部与导航条同色', r.headerBgs[1], r.navBg);
-record('宽屏 导航条 64px', r.navWidth, 64);
+// 会话头部已改成内容面（与消息区同色，QQ 的做法）——
+// 它不再属于「框架」，所以这条断言比的是 main 而不是 nav。
+record('宽屏 主区头部与消息区同色（内容面）', r.headerBgs[1], r.mainBg);
+record('宽屏 导航条 56px', r.navWidth, 56);
 record('宽屏 列表与内容同时在 DOM', String(r.columnInDom && r.mainInDom), 'true');
 record('宽屏 没有返回键', r.backBtn, 0);
 record('宽屏 聊天页不出现 Agent 简介', r.chatText.includes('这句简介不该出现在聊天页'), false);
@@ -104,7 +106,7 @@ r = await read();
 record('窄屏 列表已从 DOM 移除（打开会话时）', r.columnInDom, false);
 record('窄屏 内容仍在', r.mainInDom, true);
 record('窄屏 有返回键', r.backBtn, 1);
-record('窄屏 导航条 56px', r.navWidth, 56);
+record('窄屏 导航条 48px', r.navWidth, 48);
 
 // ── 返回 → 只剩列表 ──
 await page.locator('button[title="返回消息列表"]').first().click();

@@ -14,6 +14,7 @@ import net from 'net';
 import { resolveModelForAgent, PLATFORM_DEFAULT_MODEL } from '../server/model-routing.js';
 import { allHostsUnreachable, checkHostReachable } from '../server/agents/probe.js';
 import { findDef } from '../server/agents/definitions.js';
+import type { PermissionMode } from '../server/agents/types.js';
 
 const failures: string[] = [];
 const checks = { total: 0 };
@@ -153,6 +154,49 @@ await reachabilitySuite();
   }
   // 真正该暴露白名单的是 CLI 类：参数是我们传的，当然能选
   ok(!!findDef('opencode')?.models?.length, 'opencode：CLI 的模型由我们传入，应暴露白名单');
+}
+
+// ── 思考强度档位（A62）──────────────────────────────────────────
+// 用户明令「不能造假」。这一段把「档位真的下去了」钉死：
+// 只有 CLI 真的有对应参数的 Agent 才加 flag，其余一个都不许多 ——
+// 给不认这个参数的 CLI 硬塞，用户会以为设了、其实被静默忽略。
+{
+  const ctx = { sessionId: 's', permissionMode: 'default' as PermissionMode };
+
+  const qoderArgs = findDef('qoder')!.cli!.buildArgs!('hi', {
+    ...ctx,
+    reasoningEffort: 'xhigh',
+  });
+  eq(
+    qoderArgs.slice(qoderArgs.indexOf('--reasoning-effort'), qoderArgs.indexOf('--reasoning-effort') + 2),
+    ['--reasoning-effort', 'xhigh'],
+    'qoder：档位必须走 --reasoning-effort（官方 CLI 的形态）'
+  );
+  ok(
+    !findDef('qoder')!.cli!.buildArgs!('hi', ctx).includes('--reasoning-effort'),
+    'qoder：不设档位时不能多出这个 flag（不传 = 用 CLI 自己的默认）'
+  );
+
+  const codexArgs = findDef('codex')!.cli!.buildArgs!('hi', {
+    ...ctx,
+    reasoningEffort: 'high',
+  });
+  eq(
+    codexArgs.slice(codexArgs.indexOf('-c'), codexArgs.indexOf('-c') + 2),
+    ['-c', 'model_reasoning_effort=high'],
+    'codex：档位必须走 -c model_reasoning_effort=（官方 config.toml 的那个键）'
+  );
+
+  // 没有对应参数的 Agent：一个 flag 都不能多
+  for (const id of ['claude', 'opencode', 'cursor', 'gemini', 'zcode']) {
+    const build = findDef(id)?.cli?.buildArgs;
+    if (!build) continue;
+    const args = build('hi', { ...ctx, reasoningEffort: 'high' });
+    ok(
+      !args.some(a => /reasoning/i.test(a)),
+      `${id}：CLI 没有推理档位参数，不许硬塞（塞了就是假控件）`
+    );
+  }
 }
 
 // ── 汇总 ─────────────────────────────────────────────────────────

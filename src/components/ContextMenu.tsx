@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 export interface ContextMenuItem {
@@ -7,6 +7,12 @@ export interface ContextMenuItem {
   icon?: ReactNode;
   /** 危险操作：文字用错误色，与普通项拉开距离 */
   danger?: boolean;
+  /**
+   * 在这一项**之前**画一条分隔线。
+   * 用来把「删除」这类破坏性操作与上面的日常操作分开 —— QQ 的右键菜单
+   * 也是这么分段的：靠一条线，而不是靠颜色，让误点率降下来。
+   */
+  divider?: boolean;
   onSelect: () => void;
 }
 
@@ -97,39 +103,52 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       ref={ref}
       role="menu"
       aria-label="会话操作"
-      className="fixed z-50 min-w-[168px] rounded-lg py-1"
+      className="tc-glass fixed z-50 min-w-[168px] overflow-hidden rounded-lg py-1"
       style={{
         left: pos.left,
         top: pos.top,
-        backgroundColor: 'var(--td-bg-color-container)',
-        border: '1px solid var(--td-component-stroke)',
-        boxShadow: 'var(--shadow-popup)',
       }}
       onContextMenu={e => e.preventDefault()}
     >
       {items.map(item => (
-        <button
-          key={item.key}
-          type="button"
-          role="menuitem"
-          onClick={() => {
-            // 先关菜单再执行：onSelect 里可能打开对话框或触发列表重排，
-            // 菜单留在屏幕上会挡住结果
-            onClose();
-            item.onSelect();
-          }}
-          className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-body transition-colors"
-          style={{ color: item.danger ? 'var(--td-error-color)' : 'var(--td-text-color-primary)' }}
-          onMouseEnter={e => {
-            e.currentTarget.style.backgroundColor = 'var(--td-bg-color-component-hover)';
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
-        >
-          {item.icon && <span className="flex shrink-0 items-center">{item.icon}</span>}
-          {item.label}
-        </button>
+        <Fragment key={item.key}>
+          {item.divider && (
+            <div
+              className="my-1 h-px"
+              style={{ backgroundColor: 'var(--td-component-stroke)' }}
+              role="separator"
+            />
+          )}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              // 先关菜单再执行：onSelect 里可能打开对话框或触发列表重排，
+              // 菜单留在屏幕上会挡住结果
+              onClose();
+              item.onSelect();
+            }}
+            // A50：与 menuItem.ts 同一套外形。高亮由 JS 直接写 backgroundColor，
+            // 所以这里不能靠 hover: 类名 —— 但「自己带圆角 + 左右内缩 4px」这条
+            // 几何规则一样要遵守，否则高亮块会从浮层圆角处溢出成直角。
+            // A74：宽度必须显式给（见 menuItem.ts 的 A74 段），否则 button 按内容
+            // 收缩，右键菜单的高亮只盖住文字。
+            className="mx-1 flex w-[calc(100%_-_8px)] items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-body transition-colors"
+            style={{ color: item.danger ? 'var(--td-error-color)' : 'var(--td-text-color-primary)' }}
+            onMouseEnter={e => {
+              /* A75：与 menuItem.ts 的行、下拉选项行同一档（0.06 黑）。
+                 原来是 --td-bg-color-component-hover(#eeeeee)，右键菜单
+                 和旁边的「⋯」菜单并排时，划过的高亮不是一个颜色。 */
+              e.currentTarget.style.backgroundColor = 'var(--tc-fill-hover)';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
+            {item.icon && <span className="flex shrink-0 items-center">{item.icon}</span>}
+            {item.label}
+          </button>
+        </Fragment>
       ))}
     </div>,
     document.body

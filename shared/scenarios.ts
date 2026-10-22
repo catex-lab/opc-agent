@@ -111,7 +111,11 @@ export const SCENARIOS: ScenarioTemplate[] = [
       '你是代码助手，专注代码生成与审查。给出可运行的代码，指出潜在缺陷与边界情况；改动尽量小而聚焦。',
     // Glob/Grep 归入 file 类（都是本机文件操作），所以只列 file 也能检索代码
     tools: ['file'],
-    recommendedAgentId: 'opencode',
+    // 推荐 Agent 必须**守得住这个场景的承诺**：本场景只许文件类工具，
+    // 而 opencode 没有工具级开关（`opencode run --help` 实测无相关参数），
+    // 它的默认行为照样能执行命令 —— 选它 = 一进页面就顶着「承诺落不了地」的警告。
+    // workbuddy 的 canUseTool 审批桥能逐次判白名单，是当前守得住的选择。
+    recommendedAgentId: 'workbuddy',
     permissionMode: 'acceptEdits',
     needsCwd: true,
     icon: 'code',
@@ -167,10 +171,46 @@ export function restrictsDangerousTools(tools: readonly ScenarioTool[]): boolean
   return !(tools.includes('file') && tools.includes('shell'));
 }
 
+/** 权限模式的中文名（提示文案用；与 ChatInput 的选择器标签同一套词） */
+export const PERMISSION_MODE_LABEL: Record<PermissionMode, string> = {
+  default: '默认模式',
+  acceptEdits: '自动编辑',
+  plan: '只读',
+  bypassPermissions: '全放行',
+};
+
 /** 把类别列表拼成给用户看的文字，如「文件 / 命令」 */
 export function describeTools(tools: readonly ScenarioTool[]): string {
   if (tools.length === 0) return '无';
   return tools.map(t => SCENARIO_TOOL_LABEL[t] ?? t).join(' / ');
+}
+
+/**
+ * 「这个权限模式，该 Agent 是不是落不了地、且值得提示」。
+ *
+ * 与 `enforcementGap()` 同一套判据，单独拆出来是为了**会话中实时切换
+ * 权限模式**时也能用（enforcementGap 的入参是整个场景，会话里没有场景
+ * 可选，只有当前模式 + 会话绑定的 Agent）。
+ *
+ * 什么时候算缺口：
+ *   - `plan`（只读）落不了地 → **安全性缺口**，必须提示；
+ *   - `deviates` 里登记的模式（声称支持但实际换了行为）→ **功能性偏差**，必须提示；
+ *   - 其他模式落不了地 → 只是「没有对应开关」，而那些模式的默认行为本就放行，
+ *     提示它属于噪音（开发场景配 opencode 就是这种情况）。
+ */
+export function isModeGap(
+  mode: PermissionMode,
+  support: PermissionSupport | undefined
+): boolean {
+  const modeEnforced = support?.enforced?.includes(mode) === true;
+  const deviates = support?.deviates?.includes(mode) === true;
+  if (modeEnforced && !deviates) return false;
+  return mode === 'plan' || deviates;
+}
+
+/** 能力矩阵的限制说明（没有就给人话兜底） */
+export function supportLimitation(support: PermissionSupport | undefined): string {
+  return support?.limitation ?? '该 Agent 未声明权限强制能力';
 }
 
 /**
@@ -194,20 +234,10 @@ export function enforcementGap(
   if (!scenario) return null;
 
   const mode = scenario.permissionMode;
-  const modeEnforced = support?.enforced?.includes(mode) === true;
   const toolsEnforced = support?.toolWhitelist?.enforced === true;
-  const modeReason = support?.limitation ?? '该 Agent 未声明权限强制能力';
-
-  /**
-   * 权限模式这一侧，什么时候算「需要提示的缺口」？
-   *
-   *   - `plan`（只读）落不了地 → **安全性缺口**，必须提示；
-   *   - Agent 有已知偏离（如 gemini 把 default 退化成只读）→ **功能性偏差**，必须提示；
-   *   - 其他模式（`default` / `acceptEdits` / `bypassPermissions`）落不了地
-   *     → 只是「没有对应的沙箱开关」，而这些模式的默认行为本来就是放行，
-   *       提示它属于噪音（例如「开发」场景配 opencode 会顶着一条无意义的警告）。
-   */
-  const modeGap = !modeEnforced && (mode === 'plan' || support?.deviates?.includes(mode) === true);
+  const modeReason = supportLimitation(support);
+  // 判据与「会话中实时切换权限模式」共用一份（isModeGap），不再各写一遍
+  const modeGap = isModeGap(mode, support);
 
   // ① 只读场景：承诺「不调用工具」，可执行手段是 permissionMode = plan
   if (scenario.tools.length === 0) {

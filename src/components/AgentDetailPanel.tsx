@@ -1,12 +1,18 @@
 import { ChevronLeft, MessageSquarePlus } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
-import { PanelHeader } from './PanelHeader';
-import { AVAILABILITY_META, CAPABILITY_META, type RegisteredAgent } from '../types';
+import { AgentDetailSections } from './AgentDetailSections';
+import { AVAILABILITY_META, type RegisteredAgent } from '../types';
 
 interface AgentDetailPanelProps {
   agent: RegisteredAgent;
   onBack: () => void;
   onStartChat: (agentId: string) => void;
+  /** 点「同族关系」里的名字直接切到那条资料（A68）。不传则名字不可点。 */
+  onSelectAgent?: (agentId: string) => void;
+  /** 装完之后的重新探测（A71）。整页场景给，弹窗场景不给 */
+  onReprobe?: () => void;
+  /** 跳设置页对应凭据行（A71，`method:'key'` 用） */
+  onOpenCredential?: (agentId: string) => void;
 }
 
 /**
@@ -18,42 +24,59 @@ interface AgentDetailPanelProps {
  * 之所以把这些从列表行里搬出来：通讯录是「扫一眼谁在线」的地方，
  * 每行塞六种信息会让扫描变成阅读；而「这个 Agent 到底能干什么、
  * 为什么连不上」是低频但需要深看的问题，值得单独一页。
+ *
+ * ## 为什么没有页标题（A23 用户反馈）
+ *
+ * 早先这里是一条 88px 的 `PanelHeader`：标题「详细资料」+ 副标题「名字·厂商」
+ * + 返回键。问题是这三样都是**冗余**的 ——
+ *   · 「详细资料」说了等于没说，用户点进来就知道这是资料页；
+ *   · 名字与厂商紧接着又在大头像下面出现一次，滚动前是重复的；
+ *   · 而这条 88px 把真正的内容（头像、状态、操作）整体压下去一截。
+ * 现在只留一颗返回键（52px 的窄条），资料区直接顶上来。
+ * 返回键必须保留：这是二级页面，没有它只能靠导航条绕回去。
  */
-export function AgentDetailPanel({ agent, onBack, onStartChat }: AgentDetailPanelProps) {
+export function AgentDetailPanel({
+  agent,
+  onBack,
+  onStartChat,
+  onSelectAgent,
+  onReprobe,
+  onOpenCredential,
+}: AgentDetailPanelProps) {
   const avail = agent.status.availability;
   const meta = AVAILABILITY_META[avail];
   const canChat = avail === 'ready';
-
-  const capabilities = agent.capabilities
-    .map(cap => ({ key: cap, meta: CAPABILITY_META[cap] }))
-    .filter((c): c is { key: typeof c.key; meta: NonNullable<typeof c.meta> } => !!c.meta);
 
   return (
     <div
       className="flex min-h-0 min-w-0 flex-1 flex-col"
       style={{ backgroundColor: 'var(--tc-surface-content)' }}
     >
-      <PanelHeader
-        title="详细资料"
-        // 副标题放「这是谁」——页面滚下去之后大头像会离开视野，
-        // 标题栏里留着名字和厂商，才知道自己正在看谁。
-        subtitle={[agent.name, agent.vendor].filter(Boolean).join(' · ')}
-        leading={
-          <button
-            type="button"
-            onClick={onBack}
-            title="返回通讯录"
-            aria-label="返回通讯录"
-            className="tc-icon-btn -ml-1 h-8 w-8"
-            style={{ color: 'var(--td-text-color-secondary)' }}
-          >
-            <ChevronLeft size={20} />
-          </button>
-        }
-      />
+      {/* 只有返回键的窄条。高度与别处的 compact 头部同值（--tc-header-height），
+          这样切栏时这条底边线跟通讯录栏头落在同一行。 */}
+      <div
+        className="flex shrink-0 items-center px-3"
+        style={{
+          height: 'var(--tc-header-height)',
+          borderBottom: '1px solid var(--tc-divider)',
+        }}
+      >
+        <button
+          type="button"
+          onClick={onBack}
+          title="返回通讯录"
+          aria-label="返回通讯录"
+          data-detail-back
+          className="tc-icon-btn h-8 w-8"
+          style={{ color: 'var(--td-text-color-secondary)' }}
+        >
+          <ChevronLeft size={20} />
+        </button>
+      </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[560px] px-4 py-8 sm:px-6">
+        {/* pt-3：窄条已经把标题栏省掉了，这里再留 32px 会把「上提」抵消掉 */}
+        <div className="mx-auto w-full max-w-[560px] px-4 pb-8 pt-3 sm:px-6">
           {/* 头部：头像 / 名称 / 状态 */}
           <div className="flex flex-col items-center text-center">
             <AgentAvatar
@@ -81,65 +104,14 @@ export function AgentDetailPanel({ agent, onBack, onStartChat }: AgentDetailPane
             </div>
           </div>
 
-          {/* 基本信息 */}
-          <section className="mt-7">
-            <h3 className="tc-section-title mb-2">基本信息</h3>
-            <div className="tc-detail-rows overflow-hidden rounded-xl" style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
-              <DetailRow label="状态" value={agent.status.message || meta.label} />
-              <DetailRow label="版本" value={agent.status.version ? `v${agent.status.version}` : '未上报'} />
-              <DetailRow label="接入方式" value={kindLabel(agent.kind)} />
-              {agent.installHint && <DetailRow label="接入说明" value={agent.installHint} />}
-            </div>
-          </section>
-
-          {/* 擅长领域 */}
-          {capabilities.length > 0 && (
-            <section className="mt-6">
-              <h3 className="tc-section-title mb-2">擅长领域</h3>
-              <div className="flex flex-wrap gap-2">
-                {capabilities.map(({ key, meta: cm }) => (
-                  <span
-                    key={key}
-                    className="rounded-md px-2 py-1 text-secondary"
-                    style={{ backgroundColor: `${cm.color}18`, color: cm.color }}
-                  >
-                    {cm.label}
-                  </span>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* 介绍 */}
-          {agent.description && (
-            <section className="mt-6">
-              <h3 className="tc-section-title mb-2">介绍</h3>
-              <p
-                className="rounded-xl px-4 py-3 text-body leading-relaxed"
-                style={{
-                  backgroundColor: 'var(--td-bg-color-container)',
-                  color: 'var(--td-text-color-secondary)',
-                }}
-              >
-                {agent.description}
-              </p>
-            </section>
-          )}
-
-          {/* 技术信息：路径与错误只在存在时才出现，没有就不占位 */}
-          {(agent.status.binaryPath || agent.status.lastError) && (
-            <section className="mt-6">
-              <h3 className="tc-section-title mb-2">技术信息</h3>
-              <div className="tc-detail-rows overflow-hidden rounded-xl" style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
-                {agent.status.binaryPath && (
-                  <DetailRow label="可执行文件" value={agent.status.binaryPath} mono />
-                )}
-                {agent.status.lastError && (
-                  <DetailRow label="上次错误" value={agent.status.lastError} error />
-                )}
-              </div>
-            </section>
-          )}
+          {/* 信息区块与「聊天页 ⋯ → Agent 详情」弹窗共用同一份内容，
+              见 AgentDetailSections。这里只负责整页的容器与页脚操作。 */}
+          <AgentDetailSections
+            agent={agent}
+            onSelectAgent={onSelectAgent}
+            onReprobe={onReprobe}
+            onOpenCredential={onOpenCredential}
+          />
         </div>
       </div>
 
@@ -151,74 +123,43 @@ export function AgentDetailPanel({ agent, onBack, onStartChat }: AgentDetailPane
         className="shrink-0 py-4"
         style={{
           backgroundColor: 'var(--td-bg-color-container)',
-          borderTop: '1px solid var(--td-component-stroke)',
+          borderTop: '1px solid var(--tc-divider)',
         }}
       >
         {/* 内层补上 px-6，与正文列的内边距一致 —— 否则按钮会比上面的卡片
             左右各宽 24px，看着像没对齐 */}
         <div className="mx-auto w-full max-w-[560px] px-4 sm:px-6">
-          <button
-            type="button"
-            disabled={!canChat}
-            onClick={() => onStartChat(agent.id)}
-            className="tc-btn-brand w-full py-2.5 text-body"
-          >
-            <MessageSquarePlus size={16} />
-            {canChat ? '发消息' : '当前不可对话'}
-          </button>
+          {/* A45（用户反馈）：「发消息」原来 `w-full` 铺满 560px 的信息列，
+              1440 窗口下是一根 500 多像素的实心长条，比整页任何一块内容都
+              抢眼 —— 它只是一个动作按钮，不该占一行的宽度。
+              改成按内容自适应、整行居中：宽度跟着「图标 + 四个字」走，
+              高度从 py-2.5 收到 py-2，与页脚其他次级按钮同一档。
+              外层 flex 是因为 `.tc-btn-brand` 是 inline-flex，
+              直接写 mx-auto 对 inline 级元素不生效。 */}
+          <div className="flex justify-center">
+            <button
+              type="button"
+              disabled={!canChat}
+              onClick={() => onStartChat(agent.id)}
+              className="tc-btn-brand px-6 py-2 text-body"
+              data-start-chat
+            >
+              <MessageSquarePlus size={16} />
+              {canChat ? '发消息' : '当前不可对话'}
+            </button>
+          </div>
+          {/* 状态原因优先用探测结果自带的 message —— 它已经写清了「去哪儿修」
+              （例如「请在设置 → 登录配置 → Agent API Key 填入 …」）。
+              早先这里无条件在后面拼一句「· 需要先完成登录或修复」，与
+              message 里的话重复，读起来像结巴。只有当探测没给 message 时
+              才退回这句通用说明。 */}
           {!canChat && (
             <p className="mt-2 text-center text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              {agent.status.message || meta.label} · 需要先完成登录或修复
+              {agent.status.message || `${meta.label} · 需要先完成登录或修复`}
             </p>
           )}
         </div>
       </div>
     </div>
   );
-}
-
-function DetailRow({
-  label,
-  value,
-  mono,
-  error,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-  error?: boolean;
-}) {
-  return (
-    <div className="flex gap-3 px-4 py-3">
-      <span
-        className="w-[76px] shrink-0 text-body"
-        style={{ color: 'var(--td-text-color-placeholder)' }}
-      >
-        {label}
-      </span>
-      <span
-        className={`min-w-0 flex-1 text-body leading-relaxed ${mono ? 'break-all font-mono' : 'break-words'}`}
-        style={{
-          color: error ? 'var(--td-error-color)' : 'var(--td-text-color-primary)',
-          fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
-        }}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
-/** 接入形态的人话表述。原始 kind 是 sdk/cli/acp 这种实现细节，用户看不懂。 */
-function kindLabel(kind: string): string {
-  switch (kind) {
-    case 'sdk':
-      return 'SDK 接入';
-    case 'cli':
-      return 'CLI 子进程';
-    case 'acp':
-      return 'ACP 协议';
-    default:
-      return '未接入';
-  }
 }

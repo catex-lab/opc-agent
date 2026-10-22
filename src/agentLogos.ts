@@ -26,6 +26,8 @@ import qoderLogo from './assets/agent-logos/qoder.svg';
 import doubaoLogo from './assets/agent-logos/doubao.svg';
 import zcodeLogo from './assets/agent-logos/zcode.svg';
 import kimicodeLogo from './assets/agent-logos/kimicode.svg';
+import piLogo from './assets/agent-logos/pi.png';
+import antigravityLogo from './assets/agent-logos/antigravity.png';
 
 export interface AgentLogo {
   /** Vite 解析后的资源地址 */
@@ -128,6 +130,21 @@ export const AGENT_LOGOS: Record<string, AgentLogo> = {
     fit: 'contain',
     hex: '#1783FF',
     source: 'https://asvg.app/icons/kimi-code',
+  },
+  pi: {
+    src: piLogo,
+    // 单色 logomark（官方只提供 mono 版本），浅底才看得清
+    tile: 'light',
+    fit: 'contain',
+    hex: '#3F3F46',
+    source: 'https://asvg.app/icons/pi',
+  },
+  antigravity: {
+    src: antigravityLogo,
+    tile: 'light',
+    fit: 'contain',
+    hex: '#4285F4',
+    source: 'https://asvg.app/icons/google-antigravity',
   },
 };
 

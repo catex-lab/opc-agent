@@ -107,21 +107,27 @@ const profileBefore = snapshotProfile();
 /** 启动一次应用，返回 { child, port } */
 function launch() {
   return new Promise((resolve, reject) => {
+    /**
+     * ⚠️ 宿主变量必须 **delete**，不能写成 `X: undefined`：
+     * `{ ...process.env, X: undefined }` 里 X 仍是原值（Node 只跳过 undefined
+     * 的键，不会删除已存在的键）。宿主若带 `ELECTRON_RUN_AS_NODE=1`，
+     * 打包版会被当成 node 跑、不开窗口，冒烟会卡在「等端口」上。
+     */
+    const env = {
+      ...process.env,
+      // 沙箱/EDR 注入环境下必须的软件渲染开关
+      OPC_SAFE_GRAPHICS: '1',
+      // 用临时目录，绝不碰真实 userData。
+      // 注意：必须是 OPC_USER_DATA_DIR（重定向整个 Chromium profile），
+      // 不能只用 OPC_DATA_DIR —— 后者只搬 SQLite，profile 仍会写进
+      // 真实 AppData（实测 blob_storage 被写过）。见 [6] 的隔离断言。
+      OPC_USER_DATA_DIR: dataDir,
+    };
+    delete env.NODE_OPTIONS;
+    delete env.ELECTRON_RUN_AS_NODE;
+    delete env.PORT;
     const child = spawn(EXE, EXTRA_ARGS, {
-      env: {
-        ...process.env,
-        // 清掉会干扰 Electron 的宿主变量（bootstrap.cjs 里有对应防呆）
-        NODE_OPTIONS: undefined,
-        ELECTRON_RUN_AS_NODE: undefined,
-        // 沙箱/EDR 注入环境下必须的软件渲染开关
-        OPC_SAFE_GRAPHICS: '1',
-        // 用临时目录，绝不碰真实 userData。
-        // 注意：必须是 OPC_USER_DATA_DIR（重定向整个 Chromium profile），
-        // 不能只用 OPC_DATA_DIR —— 后者只搬 SQLite，profile 仍会写进
-        // 真实 AppData（实测 blob_storage 被写过）。见 [6] 的隔离断言。
-        OPC_USER_DATA_DIR: dataDir,
-        PORT: undefined,
-      },
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -132,7 +138,9 @@ function launch() {
 
     const onData = d => {
       buf += String(d);
-      const m = /localhost:(\d+)/.exec(buf);
+      // 端口从启动横幅里取。横幅地址随 HOST 变（现在绑 127.0.0.1，
+      // 早先是 0.0.0.0），所以匹配「主机:端口」而不是写死 localhost。
+      const m = /(?:127\.0\.0\.1|localhost):(\d+)/.exec(buf);
       if (m) {
         clearTimeout(timer);
         resolve({ child, port: Number(m[1]), log: () => buf });
@@ -218,6 +226,33 @@ try {
     'opencode 如实标注「无法强制只读」'
   );
 
+  // A71：安装元数据 + installEnv 必须随 /api/agents 一起下发。
+  // 为什么必须在这里断言：installEnv 曾经是「后端算得出来但第一次请求时还没算」
+  // 的字段——installEnvCache 只在 probeAll() 里赋值，而本请求走的是
+  // ensureProbedInBackground() + list() 这条不等探测完成的路；第一版实现起子
+  // 进程取版本号，spawn 不返回时 promise 永不 settle，缓存永远不写，且界面
+  // 无任何报错。grep asar 只能证明字符串在包里，证明不了这条冷路径真的算过。
+  // 本段刻意用**第一次 /api/agents 的返回值**（上方 agentsRes，不带 refresh）。
+  const needEnv = agents.filter(a => a.install?.requires && a.install.requires !== 'none');
+  ok(
+    agents.every(a => a.install?.method),
+    '每个 Agent 都带 install 元数据（A71 代码已进包）',
+    `${agents.filter(a => a.install?.method).length}/${agents.length}`
+  );
+  ok(
+    needEnv.length > 0 && needEnv.every(a => a.installEnv),
+    'installEnv 在冷启动首请求就有值（A71 installEnv bug 的回归护栏）',
+    needEnv.length
+      ? `缺失：${needEnv.filter(a => !a.installEnv).map(a => a.id).join(',') || '无'}`
+      : '没有 requires 非 none 的 Agent'
+  );
+  const codexEnv = agents.find(a => a.id === 'codex')?.installEnv;
+  ok(
+    !!codexEnv && typeof codexEnv.node?.ok === 'boolean',
+    'codex（npm 类）installEnv.node.ok 是布尔值',
+    JSON.stringify(codexEnv ?? null)
+  );
+
   console.log('\n[3] P4-1 会话三字段落库');
   const created = await post(first.port, '/api/sessions', {
     title: 'P5 冒烟会话',
@@ -242,10 +277,14 @@ try {
   });
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    // 不用 networkidle：这个应用一开会话就挂着 SSE，A36 起还有 5s 一次的后台任务轮询，
+    // 「500ms 内没有任何网络连接」这条判据在机器忙时会一直等不到 —— 实测偶发 30s 超时，
+    // 单独重跑又 24/24 全过（假失败）。改成等真正要断言的东西出现，强度一样。
     await page.goto(`http://127.0.0.1:${first.port}/chat/${sessionId}`, {
-      waitUntil: 'networkidle',
+      waitUntil: 'domcontentloaded',
       timeout: 30000,
     });
+    await page.waitForSelector('[data-scenario]', { timeout: 30000 });
     await page.waitForTimeout(1200);
     const cards = await page.locator('[data-scenario]').count();
     ok(cards === 6, '渲染 6 张场景卡', `实际 ${cards}`);

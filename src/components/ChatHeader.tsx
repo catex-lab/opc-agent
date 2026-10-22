@@ -1,78 +1,117 @@
-import { useState } from 'react';
-import { ChevronDown, Trash2, Info, Loader2 } from 'lucide-react';
-import { AgentAvatar } from './AgentAvatar';
+import { useEffect, useRef, useState } from 'react';
+import { MoreHorizontal } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
-import {
-  AVAILABILITY_META,
-  CAPABILITY_META,
-  type Model,
-  type RegisteredAgent,
-} from '../types';
+import { AgentDetailModal } from './AgentDetailModal';
+import { ConfirmDialog } from './ConfirmDialog';
+import { WorkspaceBadge } from './WorkspaceBadge';
+import { MENU_ITEM_TEXT_CLASS } from './menuItem';
+import { AVAILABILITY_META, type RegisteredAgent } from '../types';
 import type { ScenarioTemplate } from '../scenarios';
+import { useAgentRemarks } from '../agentRemarks';
 
 interface ChatHeaderProps {
   agent: RegisteredAgent | undefined;
   /** 会话已绑定但 Agent 未注册（例如后端已下线该 Agent）时的兜底标题 */
   fallbackTitle: string;
-  models: Model[];
-  selectedModel: string;
   isLoading: boolean;
   /** P4：会话绑定的场景（有则显示场景标签） */
   scenario?: ScenarioTemplate;
-  onModelChange: (modelId: string) => void;
+  /** A63：会话的工作目录（undefined = 未指定，Agent 用后端进程目录） */
+  cwd?: string;
+  /** A63：换工作目录。'' = 清空回默认。不传则栏头不渲染工作区徽标 */
+  onCwdChange?: (cwd: string) => void;
   onDelete: () => void;
   /** 单栏（窄屏）模式下返回列表；宽屏不传 */
   onBack?: () => void;
 }
 
 /**
- * 会话头部。
+ * 会话头部（一对一）—— 一行紧凑条。
  *
- * 采用 IM 的「联系人卡片」式头部：头像 + 名字 + 在线状态。
- * 模型选择收进一个次要的下拉，因为它是会话级设置，不该抢走头部最主要的
- * 视觉位置（工具型界面常犯的错）。
+ * ## 从「88px 联系人卡片」压成「52px 一行」
  *
- * ⚠️ 这里**不显示 Agent 简介**（agent.description）。
- * 简介是一段静态的营销文案，用户每天看几十次也不会多读一次，却占掉了标题
- * 下方唯一一行副标题的位置 —— 那行位置该留给会变的东西（在线状态、场景、
- * 正在输入）。想看简介去通讯录的资料页，那里有足够空间把它讲清楚。
+ * 原来这里是 PanelHeader 的标准规格：头像 + 名字 + 在线状态 + 模型按钮 +
+ * 详情 + 删除，88px 高。看着像一张名片，但它每天出现几十次，而**聊天区
+ * 才是用户真正要看的地方** —— 一道 88px 的横条压在消息列表上面，
+ * 窄窗口里能少看好几条消息。
+ *
+ * 现在的取舍：
+ *   - **不显示头像**：头像在消息流里每条都有，头部再放一个大的属于重复；
+ *     名字 + 状态点已经说清「在跟谁说话」。
+ *   - **模型选择移出头**：输入框底部本来就有模型下拉（ChatInput 的
+ *     footer-prefix），头部再放一个同功能按钮是冗余控件。
+ *   - **详情 / 删除收进「⋯」**：两个低频操作不值得常驻右侧。
+ *     菜单用原生 details/summary（与群聊的模式选择同一手法）——
+ *     点外面自动收起，不用自己管 outside-click。
+ *
+ * ## 详情是弹窗，不是抽屉
+ *
+ * 早先点「Agent 详情」会在头部内部展开一块详情区，把消息区整体往下推。
+ * 现在改成浮层弹窗（AgentDetailModal）：背后的会话一动不动，点空白即关。
+ * 这样头部高度永远是 52px，两栏的分隔线不会跳。
  */
 export function ChatHeader({
   agent,
   fallbackTitle,
-  models,
-  selectedModel,
-  isLoading,
+  // isLoading 仍留在 props 里（调用方与 UI 探针都用它表达「正在生成」），
+  // 但头部不再渲染任何「正在输入」的字样 —— 见上面 badge 里的注释。
   scenario,
-  onModelChange,
+  cwd,
+  onCwdChange,
   onDelete,
   onBack,
 }: ChatHeaderProps) {
   const [showDetail, setShowDetail] = useState(false);
-  const [showModels, setShowModels] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const moreRef = useRef<HTMLDetailsElement>(null);
+  /** 备注优先：列表里显示什么名字，头部就显示什么名字，不能两处不一致 */
+  const remarks = useAgentRemarks();
+  const displayName = (agent && remarks[agent.id]) || agent?.name || fallbackTitle;
 
   const avail = agent?.status.availability;
   const meta = avail ? AVAILABILITY_META[avail] : null;
 
+  const closeMore = () => {
+    if (moreRef.current) moreRef.current.open = false;
+  };
+
+  // details 元素不会自动在点击空白处收起，需要手动补
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const el = moreRef.current;
+      if (el?.open && !el.contains(e.target as Node)) {
+        el.open = false;
+      }
+    };
+    document.addEventListener('click', onClick);
+    return () => document.removeEventListener('click', onClick);
+  }, []);
+
   return (
     <PanelHeader
+      compact
+      surface="content"
       className="relative"
       onBack={onBack}
       backLabel="返回消息列表"
-      leading={
-        <AgentAvatar
-          id={agent?.id || fallbackTitle}
-          name={agent?.name || fallbackTitle}
-          icon={agent?.icon}
-          color={agent?.color}
-          availability={avail}
-          size={38}
-        />
-      }
-      title={agent?.name || fallbackTitle}
+      title={displayName}
       badge={
         <>
+          {/* 在线状态紧贴名字：IM 里「在跟谁说话 / 他能不能回」是同一眼要读到的信息 */}
+          {meta ? (
+            <span
+              className="flex items-center gap-1 text-secondary"
+              style={{ color: meta.color }}
+              title={agent?.status.message || meta.label}
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: meta.dot }} />
+              {meta.label}
+            </span>
+          ) : (
+            <span className="text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
+              离线
+            </span>
+          )}
           {scenario && (
             <span
               className="rounded px-1.5 py-[1px] text-caption"
@@ -82,197 +121,81 @@ export function ChatHeader({
               {scenario.label}
             </span>
           )}
-          {meta && (
-            <span className="flex items-center gap-1 text-caption" style={{ color: meta.color }}>
-              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: meta.dot }} />
-              {meta.label}
-            </span>
-          )}
-          {isLoading && (
-            <span
-              className="flex items-center gap-1 text-caption"
-              style={{ color: 'var(--td-text-color-placeholder)' }}
-            >
-              <Loader2 size={11} className="animate-spin" />
-              正在输入…
-            </span>
-          )}
+          {/* A35（用户反馈）：这里原来还有一个「正在输入…」小徽标，删掉了。
+              理由有二：
+                1. 它是**假的** —— 这个位置跟的是「对方正在敲键盘」这个 IM 语义，
+                   而 Agent 不会先敲再发，请求一发出去就已经在生成；
+                2. 它是**多余的** —— 消息流末尾的状态行（正在处理 / 正在思考 /
+                   正在调用工具）比这里更准确，还会走进度秒数。两处同时闪，
+                   等于同一件事说两遍。 */}
         </>
       }
       actions={
         <>
-          {/* 模型选择（会话级设置，次要位置） */}
-          {models.length > 0 && (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowModels(v => !v)}
-                // h-8 而不是 py-1.5：标题栏右侧的控件统一 32px 高，
-                // 与两个图标按钮齐平。原先靠 py 撑出来是 30px，
-                // 并排看会差 2px（上边差 1、下边差 1），看着像没对齐。
-                className="flex h-8 max-w-[132px] sm:max-w-[190px] items-center gap-1 rounded-lg px-2.5 text-secondary"
-                style={{
-                  backgroundColor: 'var(--tc-surface-raised)',
-                  color: 'var(--td-text-color-secondary)',
-                }}
-                title="切换模型"
-              >
-                <span className="truncate">
-                  {models.find(m => m.modelId === selectedModel)?.name || selectedModel}
-                </span>
-                <ChevronDown size={13} />
-              </button>
-
-              {showModels && (
-                <div
-                  className="absolute right-0 top-full z-20 mt-1 max-h-[280px] w-[240px] overflow-y-auto rounded-xl py-1 shadow-popup"
-                  style={{
-                    backgroundColor: 'var(--td-bg-color-container)',
-                    border: '1px solid var(--td-component-stroke)',
-                  }}
-                >
-                  {models.map(m => (
-                    <button
-                      key={m.modelId}
-                      type="button"
-                      onClick={() => {
-                        onModelChange(m.modelId);
-                        setShowModels(false);
-                      }}
-                      className="block w-full px-3 py-2 text-left text-secondary"
-                      style={{
-                        color:
-                          m.modelId === selectedModel
-                            ? 'var(--td-brand-color)'
-                            : 'var(--td-text-color-primary)',
-                        backgroundColor:
-                          m.modelId === selectedModel ? 'var(--td-brand-color-light)' : 'transparent',
-                      }}
-                    >
-                      <div className="font-medium">{m.name}</div>
-                      {m.description && (
-                        <div className="mt-0.5 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                          {m.description}
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => setShowDetail(v => !v)}
-            title="Agent 详情"
-            className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
+          {/* A63：工作区徽标。放在「⋯」之前 —— 它表达的是「当前在哪儿干活」，
+              是随时要看的状态；删除是低频操作，继续躲在 ⋯ 里。 */}
+          {onCwdChange && <WorkspaceBadge cwd={cwd} onChange={onCwdChange} />}
+          <details ref={moreRef} className="relative" data-chat-more>
+          <summary
+            className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg transition-colors"
             style={{
-              backgroundColor: showDetail ? 'var(--td-brand-color-light)' : 'var(--tc-surface-raised)',
-              color: showDetail ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)',
+              backgroundColor: 'var(--tc-hover-chrome)',
+              color: 'var(--td-text-color-secondary)',
             }}
+            title="更多"
+            aria-label="更多操作"
           >
-            <Info size={15} />
-          </button>
+            <MoreHorizontal size={16} />
+          </summary>
 
-          {/* 删除会话：与左侧列表一致的两步确认，避免误点即永久删除 */}
-          {confirmDelete ? (
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(false)}
-                className="flex h-8 items-center rounded-lg px-2 text-secondary"
-                style={{
-                  backgroundColor: 'var(--tc-surface-raised)',
-                  color: 'var(--td-text-color-secondary)',
-                }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setConfirmDelete(false);
-                  onDelete();
-                }}
-                className="flex h-8 items-center rounded-lg px-2 text-secondary font-medium"
-                style={{
-                  backgroundColor: 'var(--td-error-color)',
-                  color: '#fff',
-                }}
-              >
-                确认删除
-              </button>
-            </div>
-          ) : (
+          <div
+            className="tc-glass absolute right-0 top-full z-30 mt-1 w-[160px] overflow-hidden rounded-xl py-1 shadow-popup"
+            data-chat-more-menu
+          >
             <button
               type="button"
-              onClick={() => setConfirmDelete(true)}
-              title="删除会话"
-              className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
-              style={{
-                backgroundColor: 'var(--tc-surface-raised)',
-                color: 'var(--td-text-color-secondary)',
+              onClick={() => {
+                closeMore();
+                setShowDetail(true);
               }}
+              className={MENU_ITEM_TEXT_CLASS}
+              style={{ color: 'var(--td-text-color-primary)' }}
             >
-              <Trash2 size={15} />
+              Agent 详情
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => {
+                closeMore();
+                setConfirmDelete(true);
+              }}
+              className={MENU_ITEM_TEXT_CLASS}
+              style={{ color: 'var(--td-error-color)' }}
+            >
+              删除会话
+            </button>
+          </div>
+        </details>
         </>
       }
     >
-      {/* 详情抽屉 */}
-      {showDetail && agent && (
-        <div
-          className="px-6 pb-3 pt-0 text-secondary leading-relaxed"
-          style={{ color: 'var(--td-text-color-secondary)' }}
-        >
-          <div
-            className="space-y-2 rounded-xl px-4 py-3"
-            style={{ backgroundColor: 'var(--tc-surface-raised)' }}
-          >
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span style={{ color: 'var(--td-text-color-placeholder)' }}>擅长领域</span>
-              {agent.capabilities.map(cap => {
-                const cm = CAPABILITY_META[cap];
-                if (!cm) return null;
-                return (
-                  <span
-                    key={cap}
-                    className="rounded px-1.5 py-[2px] text-caption"
-                    style={{ backgroundColor: `${cm.color}18`, color: cm.color }}
-                  >
-                    {cm.label}
-                  </span>
-                );
-              })}
-            </div>
-            <div>
-              <span style={{ color: 'var(--td-text-color-placeholder)' }}>接入方式 </span>
-              {agent.kind === 'sdk'
-                ? 'CodeBuddy SDK'
-                : agent.kind === 'cli'
-                  ? 'CLI 子进程'
-                  : agent.kind === 'acp'
-                    ? 'ACP 协议'
-                    : '未接入'}
-              {agent.status.version ? ` · v${agent.status.version}` : ''}
-            </div>
-            {agent.status.message && (
-              <div>
-                <span style={{ color: 'var(--td-text-color-placeholder)' }}>状态 </span>
-                {agent.status.message}
-              </div>
-            )}
-            {agent.status.lastError && (
-              <div style={{ color: 'var(--td-error-color)' }}>
-                <span style={{ color: 'var(--td-text-color-placeholder)' }}>上次错误 </span>
-                {agent.status.lastError}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* 详情改成浮层弹窗：不再往下顶消息区，点空白即关 */}
+      <AgentDetailModal open={showDetail} agent={agent} onClose={() => setShowDetail(false)} />
+
+      {/* 删除确认：与会话列表同一个对话框（两步确认，不误删） */}
+      <ConfirmDialog
+        open={confirmDelete}
+        title="删除会话"
+        confirmText="删除"
+        danger
+        onConfirm={() => {
+          setConfirmDelete(false);
+          onDelete();
+        }}
+        onCancel={() => setConfirmDelete(false)}
+      >
+        删除后聊天记录不可恢复。删除的只是这个会话，不会影响 Agent 本身。
+      </ConfirmDialog>
     </PanelHeader>
   );
 }

@@ -93,13 +93,23 @@ const MESSAGES = [
  */
 const SSE_BODY = [
   { type: 'group_init', sessionId: GID, orchestration: 'dispatch', members: AGENTS, userMessageId: 'u2' },
-  { type: 'turn_start', agentId: 'hermes', messageId: 'sse-h1', phase: 'dispatch', round: 0 },
-  { type: 'text', agentId: 'hermes', content: '主控正在判断该交给谁' },
-  { type: 'turn_done', agentId: 'hermes', messageId: 'sse-h1' },
+
+  // 第一棒：hermes 路由判断
+  { type: 'run_start', seq: 1, runId: 'r-h1', sessionId: GID, messageId: 'sse-h1', agentId: 'hermes', model: 'm', phase: 'route' },
+  { type: 'block_open', seq: 2, runId: 'r-h1', block: { id: 'h1-b1', type: 'text', text: '', state: 'streaming' } },
+  { type: 'block_delta', seq: 3, runId: 'r-h1', blockId: 'h1-b1', channel: 'text', delta: '主控正在判断该交给谁' },
+  { type: 'block_close', seq: 4, runId: 'r-h1', blockId: 'h1-b1', state: 'done' },
+  { type: 'turn_done', agentId: 'hermes', messageId: 'sse-h1', runId: 'r-h1' },
+
   { type: 'group_note', text: '路由判断：交给 OpenCode 处理代码问题' },
-  { type: 'turn_start', agentId: 'opencode', messageId: 'sse-o1' },
-  { type: 'text', agentId: 'opencode', content: 'SSE 流式正文渲染成功。' },
-  { type: 'turn_done', agentId: 'opencode', messageId: 'sse-o1' },
+
+  // 第二棒：opencode 执行
+  { type: 'run_start', seq: 1, runId: 'r-o1', sessionId: GID, messageId: 'sse-o1', agentId: 'opencode', model: 'm', phase: 'work' },
+  { type: 'block_open', seq: 2, runId: 'r-o1', block: { id: 'o1-b1', type: 'text', text: '', state: 'streaming' } },
+  { type: 'block_delta', seq: 3, runId: 'r-o1', blockId: 'o1-b1', channel: 'text', delta: 'SSE 流式正文渲染成功。' },
+  { type: 'block_close', seq: 4, runId: 'r-o1', blockId: 'o1-b1', state: 'done' },
+  { type: 'turn_done', agentId: 'opencode', messageId: 'sse-o1', runId: 'r-o1' },
+
   { type: 'done' },
 ].map(e => `data: ${JSON.stringify(e)}\n\n`).join('');
 
@@ -176,15 +186,16 @@ await page.waitForTimeout(2000);
 // ── [1] 群聊头部 ────────────────────────────────────────────────────
 console.log('\n[1] 群聊头部');
 check('标题显示群名', await page.locator('text=Hermes、OpenCode').count() > 0);
-check('徽标显示「2 人 · 2 在线」', /2 人 · 2 在线/.test(await page.evaluate(DEEP_TEXT)));
+check('群名后带人数「（2）」', /（2）/.test(await page.evaluate(DEEP_TEXT)));
+check('徽标显示「2 在线」', /2 在线/.test(await page.evaluate(DEEP_TEXT)));
 check('编排模式入口显示「分派」', await page.locator('text=分派').count() > 0);
 check('副标题含模式说明', /主控 Agent 判断该谁做/.test(await page.evaluate(DEEP_TEXT)));
 const h1 = await page.locator('h1').first().evaluate(el => {
   const cs = getComputedStyle(el);
   return { fontSize: cs.fontSize, fontWeight: cs.fontWeight };
 }).catch(() => null);
-check('标题字号/字重符合 PanelHeader 规范（17px/600）',
-  !!h1 && h1.fontSize === '17px' && h1.fontWeight === '600', JSON.stringify(h1));
+check('标题字号/字重符合 PanelHeader 规范（16px/600，compact 单行）',
+  !!h1 && h1.fontSize === '16px' && h1.fontWeight === '600', JSON.stringify(h1));
 
 // 头像堆叠：两个成员都是真实图片且互异（铁律 2：不按文件名匹配，比 src 值）
 const stack = await page.evaluate(() => {
@@ -218,14 +229,19 @@ const rows = await page.evaluate(() => {
     if (pill) return { kind: 'note', text: pill.textContent, centered: row.classList.contains('justify-center') };
     const col = row.querySelector(':scope > div.flex.flex-col');
     if (!col) return { kind: 'other', classes: row.className };
-    const label = col.querySelector(':scope > span.text-caption');
+    // A35：作者名从「气泡列内的一行小字」提到了消息头部（logo 后面），
+    // 所以标签要从 [data-msg-header] 里读；用户行没有头部，标签仍为 null。
+    const header = row.querySelector(':scope > [data-msg-header]');
+    const label = (header
+      ? header.querySelector('[data-msg-agent]')?.textContent
+      : col.querySelector(':scope > span.text-caption')?.textContent)?.trim() ?? null;
     const bubble = col.querySelector('.tc-bubble-assistant, .tc-bubble-user');
     const text = bubble ? deep(bubble, []).join(' ') : '';
     const img = row.querySelector('img');
     return {
       kind: 'msg',
       classes: row.className,
-      label: label ? label.textContent : null,
+      label,
       text,
       avatarSrc: img ? img.getAttribute('src') : null,
     };
@@ -249,16 +265,34 @@ check('用户气泡在右侧且不带作者标签',
 // ── [3] 输入框 ──────────────────────────────────────────────────────
 console.log('\n[3] 输入框');
 check('@ 成员 chip 条可见', await page.locator('text=@ 成员').count() > 0);
+// 用 data-mention-name 定位 chip，不要用文字或 title ——
+// 群名现在是个可点击改名的按钮，而群名就是成员名拼接（「Hermes、OpenCode」），
+// 按文字找会先命中群名按钮；title 又会随「已 @ / 未 @」变化。
+const chipHermes = page.locator('button[data-mention-name="Hermes"]');
+const chipOpencode = page.locator('button[data-mention-name="OpenCode"]');
 check('Hermes 与 OpenCode 的 chip 都在',
-  (await page.locator('button:has-text("Hermes")').count()) > 0 &&
-  (await page.locator('button:has-text("OpenCode")').count()) > 0);
+  (await chipHermes.count()) === 1 && (await chipOpencode.count()) === 1,
+  `hermes=${await chipHermes.count()} opencode=${await chipOpencode.count()}`);
 const ta = page.locator('textarea').first();
 const st = await ta.evaluate(el => ({ disabled: el.disabled, readOnly: el.readOnly }));
 check('发送键未被禁用（群聊无单一模型可选）',
   st.disabled === false && st.readOnly === false, JSON.stringify(st));
-await page.locator('button:has-text("Hermes")').first().click();
+await chipHermes.click();
+await page.waitForTimeout(200);
 const mentioned = await ta.inputValue().catch(() => '');
 check('点击 chip 插入 @提及', /@Hermes/.test(mentioned), JSON.stringify(mentioned));
+check('插入后 chip 变为「已选」', (await chipHermes.getAttribute('aria-pressed')) === 'true');
+
+// 再点一次 = 取消（chip 看起来就是个开关，按下去必须能弹起来）
+await chipHermes.click();
+await page.waitForTimeout(200);
+const removed = await ta.inputValue().catch(() => '');
+check('再次点击取消 @ 提及', !/@Hermes/.test(removed), JSON.stringify(removed));
+check('取消后 chip 回到未选', (await chipHermes.getAttribute('aria-pressed')) === 'false');
+
+// 点回来，后面的流程按「带 @ 的输入」继续
+await chipHermes.click();
+await page.waitForTimeout(200);
 
 // ── [4] 真 SSE 流驱动 useGroupChat ──────────────────────────────────
 console.log('\n[4] 真 SSE 流（发一条消息）');
@@ -300,6 +334,12 @@ check('group_note 不是气泡',
 check('opencode turn 气泡正文正确', /SSE 流式正文渲染成功。/.test(full));
 check('流式状态已收尾（无残留光标）',
   (await page.locator('.animate-cursor-blink').count()) === 0);
+
+// 发送后输入框必须清空。
+// 群聊走的是 useGroupChat，不经过 useChat 的 setInputValue('') ——
+// 早先漏了这一步，指令发出去还留在框里，用户以为没发成功又按一次回车。
+const afterSend = await ta.inputValue().catch(() => '<读不到>');
+check('发送后输入框已清空', afterSend === '', JSON.stringify(afterSend));
 check('无控制台错误', errors.length === 0, errors.slice(0, 2).join(' | '));
 
 await page.screenshot({ path: '.render-check/group-chat.png' });

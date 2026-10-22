@@ -15,6 +15,9 @@ import {
 } from '@tencent-ai/agent-sdk';
 import { AsyncQueue, PendingReplies, linkAbort } from '../channel.js';
 import { decideToolAccess } from '../toolPolicy.js';
+import { evaluateToolCall } from '../permission-gate.js';
+import { currentPermissionRules } from '../../permission-rules.js';
+import { withMemoryContext } from '../../memory.js';
 import type {
   AgentDescriptor,
   AgentEvent,
@@ -77,9 +80,9 @@ export class SdkAdapter implements AgentProvider {
         this.status = {
           availability: 'needs-auth',
           installed: true,
-          message: lastAuthUrl
-            ? `未登录，请先完成登录：${lastAuthUrl}`
-            : '未登录 CodeBuddy CLI，请先完成登录或配置 API Key',
+          message: '未登录，请先完成登录',
+          // 结构化地址：前端「去登录」按钮直接用它，不从 message 里抠
+          ...(lastAuthUrl ? { authUrl: lastAuthUrl } : {}),
           probedAt: now,
         };
       } else {
@@ -107,14 +110,20 @@ export class SdkAdapter implements AgentProvider {
       } else {
         // 鉴权调用本身失败（可能是网络问题，也可能就是未登录）。
         // 把原因如实带上，不假装是「已登录」。
-        this.status = {
-          availability: 'needs-auth',
-          installed: true,
-          message: lastAuthUrl
-            ? `未登录：${lastAuthUrl}`
-            : `鉴权检查失败：${message}`,
-          probedAt: now,
-        };
+        this.status = lastAuthUrl
+          ? {
+              availability: 'needs-auth',
+              installed: true,
+              message: '未登录，请先完成登录',
+              authUrl: lastAuthUrl,
+              probedAt: now,
+            }
+          : {
+              availability: 'needs-auth',
+              installed: true,
+              message: `鉴权检查失败：${message}`,
+              probedAt: now,
+            };
       }
     }
 
@@ -151,8 +160,33 @@ export class SdkAdapter implements AgentProvider {
         return { behavior: 'deny', message: gate.reason } as PermissionResult;
       }
 
-      // 全放行模式直接过
+      // ---- A40 权限门禁（规则匹配 + Bash 分类器 + 路径越界）----
+      // 放在 bypass 判断**之前**：全放行的含义是「不弹窗问人」，
+      // 不是「连 rm -rf / 也照跑」。后者由门禁的 dangerous 一档负责，
+      // 任何模式都拦。
+      const verdict = evaluateToolCall({
+        toolName,
+        input: (input ?? {}) as Record<string, unknown>,
+        cwd: ctx.cwd,
+        rules: currentPermissionRules(),
+      });
+      if (verdict.decision === 'deny') {
+        console.log(`[SDK] 门禁拦截 ${toolName}: ${verdict.rule} — ${verdict.reason ?? ''}`);
+        return {
+          behavior: 'deny',
+          message: `[权限门禁] ${verdict.reason ?? verdict.rule ?? '高危操作'}`,
+        } as PermissionResult;
+      }
+
+      // 全放行模式直接过（risky 也不问了 —— 用户已经表态）
       if (ctx.permissionMode === 'bypassPermissions') {
+        return { behavior: 'allow', updatedInput: input } as PermissionResult;
+      }
+
+      // 用户规则明示允许（A40 的 auto）：到这一步已经过完高危检查，
+      // 不必再为「已经表过态的工具」反复弹窗。内置分类器的 risky 不享受
+      // 这个待遇 —— 它只负责解释，不负责免问。
+      if (verdict.auto) {
         return { behavior: 'allow', updatedInput: input } as PermissionResult;
       }
 
@@ -163,6 +197,9 @@ export class SdkAdapter implements AgentProvider {
         toolUseId: (options as { toolUseID?: string })?.toolUseID,
         toolName,
         input: (input ?? {}) as Record<string, unknown>,
+        // 弹窗上要显示「为什么问这一句」，否则用户只看到一堵墙
+        risk: verdict.risk,
+        rule: verdict.rule,
       });
 
       // 挂起，直到前端 POST /api/permission-response
@@ -192,7 +229,10 @@ export class SdkAdapter implements AgentProvider {
             cwd: ctx.cwd || process.cwd(),
             model: ctx.model,
             maxTurns: 10,
-            systemPrompt: ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+            // A38：SDK 这条路的提示词由我们装配，记忆层在这里注入。
+            // 先落默认提示词再追加记忆 —— 反过来会在用户没配提示词时
+            // 把默认人格整个替换成一段记忆，agent 就「不会说人话」了。
+            systemPrompt: withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT),
             permissionMode: ctx.permissionMode || 'default',
             canUseTool,
             ...(ctx.resumeToken ? { resume: ctx.resumeToken } : {}),

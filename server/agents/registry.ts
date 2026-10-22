@@ -11,6 +11,9 @@
 
 import { AGENT_DEFS, findDef } from './definitions.js';
 import { createProvider, AcpAdapter } from './adapters/index.js';
+import { familyHintsFor } from './familyHints.js';
+import { installEnv } from './installEnv.js';
+import { getModelsForAgent, mergeModelOptions, type ModelOption } from './modelCatalog.js';
 import { permissionSupportFor } from './permissions.js';
 import { toAgentInfo, unknownStatus } from './types.js';
 import type {
@@ -18,6 +21,7 @@ import type {
   AgentInfo,
   AgentProvider,
   AgentStatus,
+  InstallEnv,
   PermissionDecision,
   AgentEvent,
   SendContext,
@@ -43,6 +47,8 @@ class AgentRegistry {
   private inflight = new Map<string, Promise<AgentInfo | undefined>>();
   /** 是否已经完成过至少一轮全量探测 */
   private probedOnce = false;
+  /** 本机安装前置条件（A71）：启动时预热，toInfo 同步读取 */
+  private installEnvCache?: InstallEnv;
 
   constructor() {
     for (const def of AGENT_DEFS) {
@@ -56,6 +62,17 @@ class AgentRegistry {
       }
     }
     console.log(`[Registry] 已注册 ${this.providers.size} 个 Agent`);
+    // A71：安装前置条件（Node / PowerShell）在构造时就探好。
+    //
+    // 为什么必须在构造函数里：`GET /api/agents` 在冷启动时走的是
+    // `ensureProbedInBackground()` + `registry.list()` 这条**不等探测完成**的路
+    // （ACP 握手要 20 秒以上，等它名册就空了）。如果只在 `probeAll()` 里赋值，
+    // 第一次拉名册时缓存还是空的，「本机没 Node」这行提示就永远不出来。
+    //
+    // 为什么可以直接同步赋值：`installEnv()` 只做 PATH 查找、不起子进程
+    // （第一版用 `node -v` 取版本号，spawn 一旦不返回就让整个 promise 挂住，
+    //  缓存永远不写 —— 一个可选的美化信息把必要的功能拖死了）。
+    this.installEnvCache = installEnv();
   }
 
   /** 全部 Agent 的 描述 + 状态 */
@@ -89,7 +106,54 @@ class AgentRegistry {
     descriptor: AgentDescriptor,
     status: AgentStatus
   ): AgentInfo {
-    return { ...toAgentInfo(descriptor, status), permissionSupport: permissionSupportFor(id) };
+    // 端点主机从定义层的 `backendHosts` 派生，**不在 descriptor 里再抄一份**：
+    // 这份数据是给用户看「请求打到哪」的，两份来源必然漂移，漂了就是骗人。
+    const hosts = findDef(id)?.backendHosts;
+    // 同族条目同理：资料页要回答「这两个 Kimi 是不是一回事」，答案取决于**对方**的
+    // 账号体系，单个 descriptor 看不到别人。后端本来就持有全表，算一次给出去。
+    const family = descriptor.family;
+    const peers = family
+      ? AGENT_DEFS.filter(d => d.descriptor.family === family && d.descriptor.id !== id).map(d => ({
+          id: d.descriptor.id,
+          name: d.descriptor.name,
+          ...(d.descriptor.authScope ? { authScope: d.descriptor.authScope } : {}),
+          ...(d.descriptor.regionName ? { regionName: d.descriptor.regionName } : {}),
+        }))
+      : [];
+    // A69：同厂「另一个版本」的本地痕迹与 zcode 的上次请求。
+    // 探测本身有缓存（30s TTL），不会每次刷新名册都开一次 sqlite。
+    // 只在真的探测到时挂字段 —— 探不到就不出现，不写「未知」占位。
+    const hints = familyHintsFor(id);
+    const env = this.installEnvFor(descriptor);
+    return {
+      ...toAgentInfo(descriptor, status),
+      ...(hosts && hosts.length > 0 ? { endpointHosts: hosts } : {}),
+      ...(peers.length > 0 ? { familyPeers: peers } : {}),
+      ...(hints?.localSiblings && hints.localSiblings.length > 0
+        ? { localSiblings: hints.localSiblings }
+        : {}),
+      ...(hints?.lastRequest ? { lastRequest: hints.lastRequest } : {}),
+      permissionSupport: permissionSupportFor(id),
+      ...(env ? { installEnv: env } : {}),
+    };
+  }
+
+  /**
+   * 只挂**这一条真正需要**的那一项（A71）。
+   *
+   * 为什么不整份下发：`requires:'node'` 的条目看到 `powershell` 是噪声，
+   * 而且 14 条各带一份完整对象，接口体积会白涨一倍。
+   * 拿不到缓存就返回 undefined —— 界面据此不显示「本机缺 Node」这种话，
+   * 而不是显示一个猜出来的结论。
+   */
+  private installEnvFor(descriptor: AgentDescriptor): InstallEnv | undefined {
+    const need = descriptor.install?.requires;
+    if (!need || need === 'none') return undefined;
+    const env = this.installEnvCache;
+    if (!env) return undefined;
+    if (need === 'node' && env.node) return { node: env.node };
+    if (need === 'powershell' && env.powershell) return { powershell: env.powershell };
+    return undefined;
   }
 
   getProvider(id: string): AgentProvider | undefined {
@@ -99,12 +163,18 @@ class AgentRegistry {
   /**
    * 某个 Agent 可用的模型（用于前端模型选择）。
    *
-   * 优先级：ACP Agent 运行时上报的模型 > 定义表里声明的静态白名单。
+   * 优先级：ACP Agent 运行时上报的模型 > 静态白名单 + 动态目录。
+   *
+   * 动态目录（`modelCatalog.ts`）解决的是「白名单只有几条、而 CLI 实际能跑
+   * 几十条」的问题：opencode 的清单来自它自己的 `opencode models`，
+   * 元数据（显示名 / 免费付费 / 上下文）来自 models.dev。白名单里的项
+   * 仍然排在最前 —— 那几条是逐个真实调用验证过的。
+   *
    * 两者都没有就返回空数组 —— 空数组对前端意味着「不显示模型下拉」，
    * 这比硬塞一份 SDK 的模型列表要诚实：那些模型名对该 Agent 毫无意义，
    * 选中后只会让调用直接失败。
    */
-  modelsFor(id: string): Array<{ modelId: string; name: string; description?: string }> {
+  async modelsFor(id: string): Promise<ModelOption[]> {
     const def = findDef(id);
 
     // ACP Agent 上报的 availableModels **不等于客户端能切换**。
@@ -120,8 +190,12 @@ class AgentRegistry {
       }
     }
 
-    const declared = def?.models;
-    return (declared ?? []).map(modelId => ({ modelId, name: modelId }));
+    const declared = def?.models ?? [];
+    const catalog = await getModelsForAgent(id);
+    if (catalog.length === 0) {
+      return declared.map(modelId => ({ modelId, name: modelId }));
+    }
+    return mergeModelOptions(declared, catalog);
   }
 
   private isFresh(id: string): boolean {
@@ -181,6 +255,8 @@ class AgentRegistry {
       }
     );
     await Promise.all(workers);
+    // A71：顺手刷新安装环境（60s 缓存，多数时候是空操作）
+    this.installEnvCache = installEnv();
     this.probedOnce = true;
     return this.list();
   }

@@ -10,6 +10,9 @@
  *   A. 静态渲染 —— 直接进会话页/通讯录/设置页，截图对比浅色与深色
  *   B. 流式渲染 —— 拦截 POST /api/chat 返回伪造 SSE，跑通
  *      「思考 → 工具调用 → 正文」整条链路
+ *   C. rAF 失效兜底 —— 把 rAF 换成永不回调的空洞，复现 Electron
+ *      backgroundThrottling 下窗口被遮挡导致 rAF 不触发的场景，
+ *      验证 delta 不会闷在内存里出不来
  */
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -135,26 +138,43 @@ const MODELS = [
   { modelId: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: '超长上下文' },
 ];
 
-// ── 伪造 SSE 流：覆盖 thinking / tool / tool_result / text / done ────────
-// 字段名必须严格对齐 server/index.ts 实际下发的形状：
-//   tool        → { type, id, name, input, status }
-//   tool_result → { type, toolId, content, isError }
-// 之前这里误写成 toolId/toolName，导致 tool.name 为 undefined，
-// 触发下游 toLowerCase 崩溃、整屏白屏 —— 夹具写错会伪装成产品缺陷。
-const sse = events => events.map(e => `data: ${JSON.stringify(e)}\n`).join('\n');
+// ── 伪造 SSE 流：覆盖 block_open / delta / patch / close / run_end ─────────
+// E5 之后前端只认 v2 事件契约（shared/blocks.ts 的 RunEvent 联合），
+// 所以夹具也必须按投影器真实下发的形状写 —— 按 v1 写不会报错，只会
+// 让浏览器里什么都不显示，然后报告一句「未捕获到流式回复」。
+// `id:` 行对齐服务端的 `writeEvent`（值 = 事件 seq），客户端按它做断线续传。
+const sse = events =>
+  events.map((e, i) => `id: ${e.seq ?? i + 1}\ndata: ${JSON.stringify(e)}\n`).join('\n');
 
 const STREAM_EVENTS = [
-  { type: 'init', sessionId: 's1', assistantMessageId: 'a-stream', model: 'claude-sonnet-4-5' },
-  { type: 'thinking', content: '用户想确认品牌色不一致的原因。先读 CSS 变量定义，再全局搜一遍腾讯蓝的硬编码位置，最后给出统一方案。' },
-  { type: 'tool', id: 'st1', name: 'Read', input: { file_path: 'src/index.css' }, status: 'running' },
-  { type: 'tool_result', toolId: 'st1', content: ':root { --td-brand-color: #3b82f6; }', isError: false },
-  { type: 'tool', id: 'st2', name: 'Bash', input: { command: 'grep -rn "0052D9" src/', description: '搜索腾讯蓝硬编码位置' }, status: 'running' },
-  { type: 'tool_result', toolId: 'st2', content: 'src/components/NavRail.tsx:58: #0052D9', isError: false },
-  { type: 'text', content: '已定位问题：' },
-  { type: 'text', content: '**两套品牌蓝同时在用**。' },
-  { type: 'text', content: '\n\n- `--td-brand-color` 是 `#3b82f6`（Tailwind）\n- `NavRail` 渐变用的是 `#0052D9`（腾讯蓝）\n\n统一到腾讯调色板即可修复。' },
-  { type: 'done' },
+  { seq: 1, type: 'run_start', runId: 'r-stream', sessionId: 's1', messageId: 'a-stream', agentId: 'wb', model: 'claude-sonnet-4-5' },
+  // 思考：首段随 block_open 下发，后续走 delta（与 RunProjector 一致）
+  { seq: 2, type: 'block_open', block: { id: 'r-stream-b1', type: 'thinking', text: '用户想确认品牌色不一致的原因。', state: 'streaming', format: 'raw', startedAt: 1710000000000 } },
+  { seq: 3, type: 'block_delta', blockId: 'r-stream-b1', channel: 'text', delta: '先读 CSS 变量定义，再全局搜一遍腾讯蓝的硬编码位置，最后给出统一方案。' },
+  { seq: 4, type: 'block_patch', blockId: 'r-stream-b1', patch: { endedAt: 1710000000500 } },
+  { seq: 5, type: 'block_close', blockId: 'r-stream-b1', state: 'done' },
+  // 工具一：流式输出 → 收尾 patch（工具块不进「续写」，两次工具各占一个块）
+  { seq: 6, type: 'block_open', block: { id: 'r-stream-b2', type: 'tool', toolId: 'st1', name: 'Read', input: { file_path: 'src/index.css' }, status: 'running', startedAt: 1710000000600 } },
+  { seq: 7, type: 'block_delta', blockId: 'r-stream-b2', channel: 'output', delta: ':root { --td-brand-color: #3b82f6; }' },
+  { seq: 8, type: 'block_patch', blockId: 'r-stream-b2', patch: { status: 'completed', isError: false, output: ':root { --td-brand-color: #3b82f6; }', endedAt: 1710000001200 } },
+  { seq: 9, type: 'block_close', blockId: 'r-stream-b2', state: 'done' },
+  // 工具二：Bash 的长输出，验证「输出中」与流式贴底
+  { seq: 10, type: 'block_open', block: { id: 'r-stream-b3', type: 'tool', toolId: 'st2', name: 'Bash', input: { command: 'grep -rn "0052D9" src/', description: '搜索腾讯蓝硬编码位置' }, status: 'running', startedAt: 1710000001300 } },
+  { seq: 11, type: 'block_delta', blockId: 'r-stream-b3', channel: 'output', delta: 'src/components/NavRail.tsx:58: #0052D9' },
+  { seq: 12, type: 'block_patch', blockId: 'r-stream-b3', patch: { status: 'completed', isError: false, output: 'src/components/NavRail.tsx:58: #0052D9', endedAt: 1710000002000 } },
+  { seq: 13, type: 'block_close', blockId: 'r-stream-b3', state: 'done' },
+  // 正文：两段 delta 拼成一段连续文本（模拟 projector 的续写合并）
+  { seq: 14, type: 'block_open', block: { id: 'r-stream-b4', type: 'text', text: '已定位问题：**两套品牌蓝同时在用**。', state: 'streaming' } },
+  { seq: 15, type: 'block_delta', blockId: 'r-stream-b4', channel: 'text', delta: '\n\n- `--td-brand-color` 是 `#3b82f6`（Tailwind）\n- `NavRail` 渐变用的是 `#0052D9`（腾讯蓝）\n\n统一到腾讯调色板即可修复。' },
+  { seq: 16, type: 'block_close', blockId: 'r-stream-b4', state: 'done' },
+  { seq: 17, type: 'run_end', runId: 'r-stream', status: 'ok', durationMs: 2000 },
 ];
+
+/**
+ * 当前流式夹具。C 组（rAF 失效兜底）会临时换成剥掉 run_end 的变体，
+ * 因为 run_end 自带一次直接 flushNow，会把这条路径上的退化掩盖掉。
+ */
+let currentStream = STREAM_EVENTS;
 
 const server = createServer(async (req, res) => {
   try {
@@ -189,7 +209,7 @@ await ctx.route('**/api/**', async route => {
   const json = o => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(o) });
 
   if (url.includes('/api/chat')) {
-    return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(STREAM_EVENTS) });
+    return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(currentStream) });
   }
   if (url.includes('/api/permission-response')) return json({ ok: true });
   if (url.includes('/api/agents/probe')) return json({ agents: AGENTS });
@@ -261,7 +281,7 @@ await shot('dark-settings');
 console.log('\n[B] 流式渲染（思考 → 工具 → 正文）');
 await go('/chat/s1');
 const before = await page.locator('text=已定位问题').count();
-const barsBefore = await page.getByText('查看步骤', { exact: false }).count();
+const barsBefore = await page.locator('[data-steps-bar]').count();
 try {
   await page.fill('textarea', '再帮我确认一次品牌色');
   await page.press('textarea', 'Enter');
@@ -279,9 +299,11 @@ try {
     // 否则「刚发完」与「刷新后」的同一条消息会长得不一样。
     // 注意：静态夹具里那条消息本来就有一个「查看步骤 (4)」条，
     // 所以这里比较的是**增量**，并单独确认出现了合并计数 (2)。
-    const barsAfter = await page.getByText('查看步骤', { exact: false }).count();
-    const grouped = await page.locator('text="(2)"').count();
-    console.log(`  折叠条增量=${barsAfter - barsBefore}，合并计数(2)=${grouped}`);
+    // A36：汇总行的文案改成了活动摘要（「编辑、已读取：x.ts」），
+    // 步骤数单独放在 [data-trace-count] 里，所以这里按节点数而不是按文案数。
+    const barsAfter = await page.locator('[data-steps-bar]').count();
+    const grouped = await page.locator('[data-trace-count]', { hasText: '2 步' }).count();
+    console.log(`  轨迹条增量=${barsAfter - barsBefore}，合并为「2 步」=${grouped}`);
     if (barsAfter - barsBefore === 1 && grouped === 1) console.log('  ✓ 连续工具调用已合并为一组');
     else console.log('  ⚠️ 工具调用未按预期合并');
     await shot('light-stream');
@@ -290,6 +312,47 @@ try {
   }
 } catch (e) {
   console.log('  ⚠️ 流式用例异常：' + String(e).slice(0, 160));
+}
+
+// ── C. rAF 失效时的兜底（模拟窗口被遮挡） ────────────────────────────────
+// 2026-10-19 用户实测形态：「过一会儿自己出现，但一整块跳出来」。根因是
+// flushNow 一度只有 rAF 一条出路，而 Electron 的 backgroundThrottling 让
+// 窗口被遮挡/最小化时 rAF 完全不触发，且 rafId 一旦非空就再不排新帧 ——
+// 整轮 delta 闷在内存里出不来。这里把 rAF 换成永不回调的空洞复现该环境。
+//
+// 两个关键手法（少一个这个用例就失去意义）：
+//   1. addInitScript 在 app 启动**前**注入，否则 React 已持有真 rAF；
+//   2. 夹具剥掉 run_end —— 它自带一次直接 flushNow，会把退化掩盖掉。
+//      剥掉后内容还能出现，只能靠 setTimeout 兜底 / finally 看门狗，
+//      而改动前的代码两者都没有，所以本用例在旧代码上必红。
+console.log('\n[C] rAF 失效时内容仍须抵达（模拟窗口被遮挡）');
+try {
+  await page.addInitScript(() => {
+    // 拦截成空洞：注册即忘，永不回调。返回 id 0 满足调用方对返回值的预期。
+    window.requestAnimationFrame = () => 0;
+  });
+  await go('/chat/s1');
+  const cBefore = await page.locator('text=已定位问题').count();
+  currentStream = STREAM_EVENTS.filter(e => e.type !== 'run_end');
+  await page.fill('textarea', '窗口被遮挡时也要把内容刷出来');
+  await page.press('textarea', 'Enter');
+  await page.waitForTimeout(2500);
+  let cAfter = await page.locator('text=已定位问题').count();
+  if (cAfter === cBefore) {
+    await page.locator('.t-chat-sender__send-btn, [class*="send-btn"]').last().click().catch(() => {});
+    await page.waitForTimeout(2500);
+    cAfter = await page.locator('text=已定位问题').count();
+  }
+  if (cAfter > cBefore) {
+    console.log('  ✓ rAF 失效时内容仍抵达界面（兜底生效）');
+    await shot('light-stream-no-raf');
+  } else {
+    console.log('  ❌ rAF 失效时内容丢失 —— 兜底没生效（内容闷在内存里出不来）');
+  }
+  currentStream = STREAM_EVENTS;
+} catch (e) {
+  currentStream = STREAM_EVENTS;
+  console.log('  ⚠️ 兜底用例异常：' + String(e).slice(0, 160));
 }
 
 // ── 汇总 ────────────────────────────────────────────────────────────────

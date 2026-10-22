@@ -9,7 +9,11 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        // 用 127.0.0.1 而不是 localhost：后端现在只绑回环地址（见 server/index.ts
+        // 里 HOST 的注释，绑 0.0.0.0 会让 Windows 防火墙每次启动都弹窗）。
+        // localhost 可能先解析到 ::1，代理会先吃一次连接失败再回退 —— 写死
+        // 字面量地址，两条链路（前端加载、开发态代理）指同一个地址。
+        target: 'http://127.0.0.1:3000',
         changeOrigin: true
       }
     }

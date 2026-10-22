@@ -64,13 +64,13 @@ await page.locator('button[title="设置"]').first().click();
 await page.waitForTimeout(900);
 // 选择器要避开「跟随系统」那张卡：它的说明文案里也含「浅色」二字
 // （"跟着 Windows 的深浅色设置走"），用 :has-text("浅色") 会命中两张卡。
-await page.locator('button:has-text("固定浅色")').first().click();
+await page.locator('[data-theme-option="light"]').first().click();
 await page.waitForTimeout(400);
 const r3 = await state();
 await page.emulateMedia({ colorScheme: 'dark' });
 await page.waitForTimeout(600);
 const r4 = await state();
-await page.locator('button:has-text("跟随系统")').first().click();
+await page.locator('[data-theme-option="system"]').first().click();
 await page.waitForTimeout(600);
 const r5 = await state();
 

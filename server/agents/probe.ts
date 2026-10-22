@@ -250,7 +250,156 @@ export function resolvePythonLauncher(binPath: string): LaunchTarget | null {
 }
 
 /**
- * 统一的启动目标解析：依次尝试 JS 垫片、Python 启动器，最后退回原样执行。
+ * 版本的「可排序数字」形式：`YYYY.MM.DD[-HH-MM-SS]-hash` → `YYYYMMDD`。
+ * 与 cursor-agent.ps1 里的 `Parse-VersionString` 保持一致（按月/日补零后拼整数），
+ * 否则 `2026.9.8` 会排在 `2026.10.16` 后面（字符串序/MD 拼接序的经典陷阱）。
+ */
+function versionSortKey(name: string): number | null {
+  const datePart = name.split('-')[0];
+  const parts = datePart.split('.');
+  if (parts.length !== 3) return null;
+  const [y, m, d] = parts;
+  if (!/^\d{4}$/.test(y) || !/^\d{1,2}$/.test(m) || !/^\d{1,2}$/.test(d)) return null;
+  return Number(y + m.padStart(2, '0') + d.padStart(2, '0'));
+}
+
+/**
+ * 解析「PowerShell 包装」型垫片。
+ *
+ * 有一类安装器**不用 npm 的 bin 垫片**，而是自己写两层包装：
+ *
+ *   agent.cmd            → powershell -NoProfile -File "...\cursor-agent.ps1" %*
+ *   cursor-agent.ps1     → & "$nodePath" "...\versions\<最新版本>\index.js" $args
+ *
+ * 这种形态下 `resolveLaunchTarget` 一条都匹配不上（没有 `node_modules/xxx.js`，
+ * 也没有原生二进制），只能标成"无法解析垫片"—— Cursor Agent 就是如此，
+ * 明明装好了却被判不可用。
+ *
+ * 这里的做法是把 .ps1 的逻辑**读出来再按其结构解析**，最终仍归结为
+ * `node <index.js>`，与 JS 垫片解析的结果同构，于是 spawn 侧完全不用改，
+ * 也**不会退回到 shell 执行**（解析不成功就返回 null，交给调用方判不可用）。
+ *
+ * 三件事要从 .ps1 里挖出来：node 与 js 的路径模板、版本目录名、版本筛选正则。
+ * 挖不全就返回 null —— 宁可不可用，也不猜。
+ */
+export function resolvePowerShellShim(binPath: string): LaunchTarget | null {
+  const ext = path.extname(binPath).toLowerCase();
+  if (ext !== '.cmd' && ext !== '.bat') return null;
+
+  // .cmd 里定位那一句 `-File "...ps1"`
+  const cmd = readTextFile(binPath);
+  if (!cmd) return null;
+
+  // 先把垫片里的路径变量归一成 baseDir，否则匹配到的会是
+  // `%SCRIPT_DIR%\xxx.ps1` 这种无法解析的占位串（第一次写就栽在这）。
+  // cmd 的两种写法：`%~dp0`（去尾杠）与自定义变量 `%SCRIPT_DIR%`（已含杠）。
+  const baseDir = path.dirname(binPath);
+  const normCmd = cmd
+    .replace(/%~dp0/gi, baseDir + path.sep)
+    .replace(/%[A-Za-z_][A-Za-z0-9_]*%/g, m =>
+      m.toUpperCase() === '%SCRIPT_DIR%' ? baseDir : m
+    );
+
+  const ps1Rel = normCmd.match(/-File\s+"([^"]+\.ps1)"/i)?.[1];
+  if (!ps1Rel) return null;
+
+  const ps1Path = path.isAbsolute(ps1Rel)
+    ? ps1Rel
+    : path.resolve(baseDir, ps1Rel.replace(/[\\/]/g, path.sep));
+  const ps1 = readTextFile(ps1Path);
+  if (!ps1) return null;
+
+  // 1) 同目录自带 node.exe 的形态（开发态）
+  const localNode = path.join(baseDir, 'node.exe');
+  const localJs = path.join(baseDir, 'index.js');
+  if (isFile(localNode) && isFile(localJs)) {
+    return { command: localNode, prefixArgs: [localJs], displayPath: binPath };
+  }
+
+  // 2) versions\<版本> 形态。.ps1 里关键三行是：
+  //      $nodePath = "$scriptPath\versions\$versionName\node.exe"
+  //      & "$nodePath" "$scriptPath\versions\$versionName\index.js" $args
+  //    分别取「赋值行」与「调用行第二个参数」当作路径模板。
+  const nodeTemplate = ps1.match(/\$nodePath\s*=\s*"([^"]+)"/)?.[1];
+  const scriptTemplate = ps1.match(/&\s+"\$nodePath"\s+"([^"]+)"/)?.[1];
+  if (!nodeTemplate || !scriptTemplate) return null;
+
+  // 版本目录名。
+  // **不要**用 `-Path "$scriptPath\versions"` 去提 —— 那个正则很容易被 .ps1
+  // 里别的 -Path 行抢先匹配（实测匹配到了 node.exe）。直接从上面已经拿到
+  // 的路径模板里切第二段：`$scriptPath\versions\$versionName\node.exe`
+  // → ['$scriptPath','versions','$versionName','node.exe'] → 'versions'。
+  const tplParts = nodeTemplate.split(/[\\/]+/).filter(Boolean);
+  const versionsIdx = tplParts.indexOf('$scriptPath') + 1;
+  const versionsDirName = tplParts[versionsIdx];
+  if (!versionsDirName || versionsDirName.startsWith('$')) return null;
+  const versionsDir = path.join(baseDir, versionsDirName);
+  if (!isDirectory(versionsDir)) return null;
+
+  // 版本筛选正则：.ps1 里 `$name -match '^\d{4}\....$'` 那一条
+  const versionRe = ps1.match(/-match\s+'([^']+)'/)?.[1];
+  const pick = (name: string) => {
+    if (versionRe) {
+      try { if (!new RegExp(versionRe).test(name)) return false; } catch { return false; }
+    }
+    return versionSortKey(name) !== null;
+  };
+
+  let best: { dir: string; key: number } | null = null;
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(versionsDir, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .map(e => e.name);
+  } catch {
+    return null;
+  }
+  for (const name of entries) {
+    if (!pick(name)) continue;
+    const key = versionSortKey(name)!;
+    if (!best || key > best.key) best = { dir: path.join(versionsDir, name), key };
+  }
+  if (!best) return null;
+
+  const jsPath = scriptTemplate
+    .replace(/\$scriptPath/g, baseDir)
+    .replace(/\$versionName/g, path.basename(best.dir));
+  const nodePath = nodeTemplate
+    .replace(/\$scriptPath/g, baseDir)
+    .replace(/\$versionName/g, path.basename(best.dir));
+
+  const absJs = path.resolve(jsPath);
+  const absNode = path.resolve(nodePath);
+  if (!isFile(absNode) || !isFile(absJs)) return null;
+
+  return { command: absNode, prefixArgs: [absJs], displayPath: binPath };
+}
+
+/**
+ * 读文本文件，兼容 UTF-8 BOM 与 UTF-16LE（PowerShell 的 `Out-File` 默认
+ * 会写成 UTF-16LE，直接 toString('utf8') 会得到一串 `\0`）。
+ */
+function readTextFile(p: string): string | null {
+  try {
+    const buf = fs.readFileSync(p);
+    if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return buf.toString('utf16le').replace(/^\uFEFF/, '');
+    return buf.toString('utf8').replace(/^\uFEFF/, '');
+  } catch {
+    return null;
+  }
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 统一的启动目标解析：依次尝试 JS 垫片、Python 启动器、PowerShell 包装，
+ * 最后退回原样执行。
  */
 export function resolveAnyLaunchTarget(binPath: string): LaunchTarget {
   const js = resolveLaunchTarget(binPath);
@@ -258,6 +407,9 @@ export function resolveAnyLaunchTarget(binPath: string): LaunchTarget {
 
   const py = resolvePythonLauncher(binPath);
   if (py) return py;
+
+  const ps = resolvePowerShellShim(binPath);
+  if (ps) return ps;
 
   return { command: binPath, prefixArgs: [], displayPath: binPath };
 }

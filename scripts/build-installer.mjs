@@ -105,12 +105,70 @@ for (const [key, value] of Object.entries(mirrorsFromNpmrc())) {
 // 没有代码签名证书，跳过自动发现，免得白等
 env.CSC_IDENTITY_AUTO_DISCOVERY ??= 'false';
 
+/**
+ * 输出目录防锁回退（A63 打包时发现的本机坑）。
+ *
+ * 安全软件（Microsoft PC Manager / Defender）会**永久锁死**
+ * `release/win-unpacked/resources/default_app.asar` —— 实测锁了 6 天，
+ * `rm` / `rename` / `unlink` 一律 Permission denied。一旦默认 output 目录里
+ * 残留这份被锁死的文件，electron-builder 的 `emptyDir(appOutDir)` / 清理阶段
+ * `unlink` 就会撞锁、整包失败（表现就是「第一次能打包、第二次必挂」）。
+ *
+ * 应对：试着删一次锁文件，删得掉就不算污染（正常情况）；删不掉就**改用全新的
+ * 时间戳输出目录**，彻底避开锁文件。新目录事后可能也被锁而无法删除，属已知残留，
+ * 待重启清理 —— 但至少当次构建能成。
+ *
+ * ⚠️ A66（打 release-p48 时）修掉的两个 bug —— 这个回退分支此前**一次都没真正生效过**：
+ *   1. `configArg` 算出来之后**从未拼进 spawn 参数**（死变量），于是日志说「改用新目录」，
+ *      实际 electron-builder 仍往 `release/` 写 → 立刻 EBUSY 整包失败。
+ *      症状极易误判成「锁文件删不掉所以打不了包」，其实是覆盖参数根本没传下去。
+ *   2. 临时 yml 的写法本身有副作用：`--config` 会把 electron-builder 解析**相对路径**
+ *      的基准从项目根换成 config 文件所在目录（`buildResources` 等会跑偏），
+ *      而且文件名与目录名各调了一次 `Date.now()`，两者不同号。
+ *   改为直接用 CLI 的 `-c.directories.output=<dir>` 覆盖：不动基准、不落临时文件。
+ */
+const DEFAULT_OUT = 'release';
+const LOCKED_ASAR = path.join(DEFAULT_OUT, 'win-unpacked', 'resources', 'default_app.asar');
+
+/**
+ * 调用方是否自己指定了输出目录（`-c.directories.output=xxx` / `--config.directories.output=xxx`）。
+ *
+ * 回退目录只用来躲开**默认目录**里的锁文件。调用方既然显式指定了别的目录，
+ * 就说明它已经绕开这个问题 —— 此时再塞一个覆盖，会把调用方的意图悄悄改掉
+ * （典型场景：打 `release-p48` 时既要躲锁、又要落到约定目录）。
+ */
+const callerSetOutput = extraArgs.some(a => /^-c(?:onfig)?\.directories\.output=/.test(a));
+
+let outDir = DEFAULT_OUT;
+let configArg = [];
+if (fs.existsSync(LOCKED_ASAR)) {
+  try {
+    fs.unlinkSync(LOCKED_ASAR);
+  } catch {
+    if (callerSetOutput) {
+      console.log(
+        `[build-installer] 默认输出目录 ${DEFAULT_OUT}/ 有被锁死的 default_app.asar，但调用方已指定输出目录，按调用方的来`
+      );
+    } else {
+      outDir = path.join('release-builds', `b${Date.now()}`);
+      fs.mkdirSync(outDir, { recursive: true });
+      configArg = [`-c.directories.output=${outDir}`];
+      console.log(
+        `[build-installer] 默认输出目录 ${DEFAULT_OUT}/ 含被锁死的 default_app.asar，改用 ${outDir}/ 避开`
+      );
+    }
+  }
+}
+
 const cli = path.join('node_modules', 'electron-builder', 'out', 'cli', 'cli.js');
 console.log('[build-installer] NODE_OPTIONS 已从子进程环境移除（避免 safe-delete 垫片干扰）');
 for (const key of Object.values(MIRROR_ENV)) {
   if (env[key]) console.log(`[build-installer] ${key}=${env[key]}`);
 }
 console.log(`[build-installer] 目标平台 win/x64${extraArgs.length ? '，额外参数 ' + extraArgs.join(' ') : ''}`);
+console.log(
+  `[build-installer] 输出目录：${callerSetOutput ? '（由调用方参数指定）' : `${outDir}/`}（快照到 release-pNN 时以此为源）`
+);
 
 /**
  * 打包前把 `default_app.asar` 从 electronDist 源里挪走，结束后放回。
@@ -162,7 +220,9 @@ function restoreDefaultAppAsar(hidden) {
 
 const hidden = hideDefaultAppAsar();
 
-const child = spawn(process.execPath, [cli, '--win', '--x64', ...extraArgs], {
+// configArg 必须排在 extraArgs **之后**：两者都可能给 `directories.output`，
+// 后出现的覆盖先出现的，这样「调用方显式指定 > 脚本自动回退」的优先级才成立。
+const child = spawn(process.execPath, [cli, '--win', '--x64', ...extraArgs, ...configArg], {
   stdio: 'inherit',
   env,
 });

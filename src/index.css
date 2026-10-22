@@ -87,13 +87,24 @@ button {
 
 /* 原生控件原本靠 `outline-none` 关掉了聚焦轮廓，键盘用户会失去焦点位置。
    这里用 :focus-visible 只对键盘操作补回品牌色轮廓（鼠标点击不显示），
-   特异性 (0,1,1) 高于 `.outline-none` 的 (0,1,0)，因此确实生效。 */
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible,
+   特异性 (0,1,1) 高于 `.outline-none` 的 (0,1,0)，因此确实生效。
+
+   ⚠️ 文字输入控件**不在此列**（A24 用户反馈：不要选中回显态的黑色框）。
+   原因是 `:focus-visible` 对文本输入框的匹配规则与按钮不同 —— 输入框只要
+   获得焦点就匹配（因为它接受键盘输入），鼠标点进去也算。而本项目的品牌色
+   是 #1f1f1f（近黑），于是点一下搜索框就套上一个 2px 的近黑方框。
+   去掉之后焦点提示由各自的外壳承担：TDesign 的 `.t-input` / `.t-select`
+   有「边框转品牌色 + 2px 柔光」（见下面的 .t-input.t-is-focused），
+   自绘的搜索胶囊本身就是一块 raised 面，光标在里面很清楚。 */
 button:focus-visible {
   outline: 2px solid var(--td-brand-color);
   outline-offset: 1px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
 }
 
 /* ===== 自定义滚动条 ===== */
@@ -129,8 +140,13 @@ button:focus-visible {
   --td-brand-color-active: #000000;
   --td-brand-color-focus: rgba(31, 31, 31, 0.16);
   --td-brand-color-disabled: rgba(31, 31, 31, 0.3);
-  /* 浅色底：选中态底衬用极淡的灰，长列表里选中不刺眼 */
-  --td-brand-color-light: rgba(31, 31, 31, 0.06);
+  /* 浅色底：选中态底衬用极淡的灰，长列表里选中不刺眼。
+   *
+   * A75：这里不再写裸色值，改为引用交互填充的**第二档**（见下方 --tc-fill-*）。
+   * 原来写的是 rgba(31,31,31,0.06)，与框架面 hover 的 rgba(0,0,0,0.06)
+   * 视觉等价、数值不同 —— 同一档灰在界面上有四种写法，截图并排就能看出
+   * 「有的偏暖、有的偏深」，而且「选中」与「悬停」同色，等于没有选中态。 */
+  --td-brand-color-light: var(--tc-fill-selected);
   --td-brand-color-light-hover: rgba(31, 31, 31, 0.1);
   --td-brand-color-1: rgba(31, 31, 31, 0.06);
   --td-brand-color-2: rgba(31, 31, 31, 0.14);
@@ -195,8 +211,8 @@ button:focus-visible {
    *
    * 应用只有三种表面，别再引入第四种：
    *
-   *   chrome   框架面：导航条 + 列表栏 + **所有标题栏**
-   *   content  内容面：主内容区（消息流、表单页）
+   *   chrome   框架面：导航条 + 左侧列表栏
+   *   content  内容面：主内容区（消息流、表单页）+ **会话头部**
    *   raised   浮起面：框架面上的控件（搜索框、图标按钮、行 hover）
    *
    * 为什么要单独抽 chrome，而不是继续用 --td-bg-color-container：
@@ -207,15 +223,108 @@ button:focus-visible {
    * 深色主题反过来：#1c1c1c 与 #121212 差得够开，标题栏是清楚的。
    * 于是「同一个令牌」在两个主题里给出了完全不同的观感，这才是问题所在。
    *
-   * 现在把差值拉到可感知的一档（浅色 6%），并且**框架三处共用一个令牌** ——
-   * 对齐靠的是同一个值，不是「记得三处都写 container」。 */
-  --tc-surface-chrome: #f0f0f0;
+   * 现在**框架两处共用一个令牌** —— 对齐靠的是同一个值，不是「记得三处都写
+   * container」。
+   *
+   * 会话头部为什么改用 content 而不是 chrome（QQ 的做法）：
+   * 聊天区是一条连续的白色工作面，头部如果压一块灰，会像「一条横条盖在消息上」；
+   * 头部与消息同色、只留一条 1px 分隔线，视觉上才是一整块。而左侧列表栏保持
+   * chrome，才分得清「框架」与「内容」。
+   *
+   * 浅色取 #f5f5f5（比内容面暗 4%）：再深就会显得整条左栏发灰、像被禁用；
+   * 再浅（原 #fafafa）则和内容面分不开。 */
+  --tc-surface-chrome: #f5f5f5;
   --tc-surface-content: #ffffff;
   --tc-surface-raised: #ffffff;
-  /* 框架面上的行交互。不能沿用 --td-bg-color-component-hover(#eeeeee)：
-     它比 chrome 只深 1%，hover 等于没有。 */
-  --tc-hover-chrome: rgba(0, 0, 0, 0.06);
-  --tc-active-chrome: rgba(0, 0, 0, 0.12);
+  /* 标题条专用的表面色。A24 起三个窗口按钮也由页面画（见 TitleBar.tsx），
+     标题条与按钮同属一个 DOM，于是这里可以**跟着框架面一起变半透明** ——
+     不再需要「玻璃态下改成实色」那条例外。
+     仍然单独立一个令牌，是因为标题条的取值语义是「整窗顶部那条」，
+     将来若要给它单独一点色差，改一处即可。 */
+  --tc-titlebar-surface: var(--tc-surface-chrome);
+  /* 三个窗口按钮的宽度：46px 是 Windows 自带的规格（46×标题条高度）。
+     换宽度会让按钮的落点与用户肌肉记忆错位，非必要不要改。 */
+  --tc-caption-width: 46px;
+  /* 按钮的交互态。取值参照 Windows 11：hover 只是一层极淡的罩，
+     按下再深一档；关闭按钮 hover 是红底白字（唯一带颜色的那个）。 */
+  --tc-caption-hover: rgba(0, 0, 0, 0.06);
+  --tc-caption-active: rgba(0, 0, 0, 0.11);
+  --tc-caption-close-hover: #c42b1c;
+  --tc-caption-close-active: #b0261a;
+  /* 关闭按钮 hover 时的字形色。固定白，不跟主题走 —— 红底上只有白色可读 */
+  --tc-caption-close-glyph: #ffffff;
+  /* ── 交互填充：三档灰（A75）──────────────────────────────────────────
+   *
+   * 用户要求「选中回显态的填充色要一致」。此前同一档浅灰有四种写法：
+   *   rgba(0,0,0,0.06)     框架面 hover   --tc-hover-chrome
+   *   rgba(31,31,31,0.06)  选中回显        --td-brand-color-light
+   *   #eeeeee              组件面 hover    --td-bg-color-component-hover
+   *   rgba(0,0,0,0.12)     框架面激活      --tc-active-chrome
+   * 四者肉眼几乎是同一档灰，但并排就能看出偏暖/偏深/明度不一致；更糟的是
+   * 权限下拉里「选中」与「悬停」同色（都是 0.06），选中态形同虚设。
+   *
+   * 现在收成三档，语义唯一、值唯一，其余地方一律引用、不再写裸色：
+   *   hover     悬停     —— 只做「可点」提示
+   *   selected  选中/回显 —— 必须压得住 hover，这是 A75 的核心
+   *   pressed   按下     —— 瞬时反馈，最重
+   *
+   * 为什么用 alpha 而不是 #eeeeee 这类实色：浮层、栏底、卡片底的明度各不
+   * 相同，实色会「按自己的明度」盖上去，于是同一档灰在不同底上深浅不一。
+   * alpha 叠在任意底上都是「这一层比底深 X%」，跨底一致。
+   *
+   * 三档的步长（0.06 → 0.12 → 0.18）是按「白底上相邻两档差 15 个 RGB 级」
+   * 定的。第一版取的是 0.06/0.10/0.16，实测在会话列表里选中行与悬停行
+   * 只差 10 级，两行并排几乎看不出哪一行是「当前会话」—— 而这一档差
+   * 恰恰是「选中回显」唯一的存在方式（选中行没有边框、没有图标）。
+   * 小于 6 级在普通屏上看不出，大于 20 级整块界面会发脏，15 级是中间值。 */
+  --tc-fill-hover: rgba(0, 0, 0, 0.06);
+  --tc-fill-selected: rgba(0, 0, 0, 0.12);
+  --tc-fill-pressed: rgba(0, 0, 0, 0.18);
+
+  /* 旧名保留为别名：20+ 处引用不必逐个改，语义与值都跟着上面走。 */
+  --tc-hover-chrome: var(--tc-fill-hover);
+
+  /* ── 板块分割线 ──────────────────────────────────────────────────────
+   *
+   * **A25：置为 transparent —— 板块之间不再画线。**
+   *
+   * 历史：A19 曾把它从 #e5e5e5 调淡到 #ebebeb（深色 #404040 → #2b2b2b），
+   * 想的是「线轻一点就不割裂」。实测证明方向不对：只要有线，无论多淡，
+   * 界面就被切成几块互不相干的矩形 —— 深色下尤其明显，一条比底色亮的
+   * 细线像浮在最上层。用户第二次提「取消分割线」，这次是真的取消。
+   *
+   * 为什么保留令牌而不是把 11 处 `border: 1px solid` 全删掉：
+   *   1. 透明边框仍然**占位 1px**，删掉会让所有栏宽/行高整体位移 1px，
+   *      打靶脚本里一堆「等于 344 / 等于 236」的断言会连锁失败；
+   *   2. 万一将来要恢复，改这一个值即可，不用再把 11 处找回来。
+   *
+   * 板块之间靠**表面色差**区分（框架面 chrome 比内容面 content 暗一档），
+   * 不靠线 —— 这也是现代 IM 的做法（QQ / 微信 / Telegram 都不画栏间线）。
+   *
+   * ⚠️ 控件描边不要用这个令牌：输入框/按钮/卡片的轮廓仍用
+   * `--td-component-stroke`。那条线是有功能含义的（告诉用户哪里能点、
+   * 哪里是输入区），跟着一起透明会让控件失去边界。 */
+  --tc-divider: transparent;
+
+  /* ── A26 兜底值（非玻璃模式）───────────────────────────────────────
+   *
+   * 玻璃模式下这四个令牌由 `--opc-chrome-alpha` 重新推导（见下面
+   * `html[data-opc-glass='1']` 那一大段）。这里给的是普通浏览器打靶、
+   * 以及 `?glass=1` 缺席时的取值 —— 必须与「玻璃模式 t=0」大致对得上，
+   * 否则同一个界面在两种模式下会差一档色。
+   *
+   * `--tc-veil` / `--tc-halo` 在非玻璃模式下必须是透明：它们是给
+   * 「底不可预测」准备的保险，而不透明模式下底是我们自己画的，不需要。 */
+  --tc-split: rgb(0 0 0 / 0.08);
+  --tc-hairline: rgb(0 0 0 / 0.1);
+  --tc-hairline-strong: rgb(0 0 0 / 0.16);
+  --tc-veil: transparent;
+  --tc-halo: transparent;
+  /* 非玻璃模式没有透明度可调，实色块就该是实色 */
+  --tc-solid: var(--td-brand-color);
+  --tc-solid-hover: var(--td-brand-color-hover);
+  --tc-solid-active: var(--td-brand-color-active);
+  --tc-logo-alpha: 1;
 }
 
 /* =====================================================================
@@ -247,7 +356,13 @@ button:focus-visible {
   --td-brand-color-active: #c6c6c6;
   --td-brand-color-focus: rgba(229, 229, 229, 0.28);
   --td-brand-color-disabled: rgba(229, 229, 229, 0.3);
-  --td-brand-color-light: rgba(229, 229, 229, 0.12);
+  /* A75：与浅色同一套三档（见 :root 的 --tc-fill-* 说明）。
+   *
+   * 深色下「变亮」才是「更靠前」，所以三档是白色的三档透明度。
+   * selected 取 rgba(229,229,229,0.12) —— 与改动前的 --td-brand-color-light
+   * 完全同值，深色主题的选中观感零变化；变的是 hover 与 selected 现在
+   * 明确分档（0.07 / 0.12），不再像浅色那样挤在一起。 */
+  --td-brand-color-light: var(--tc-fill-selected);
   --td-brand-color-light-hover: rgba(229, 229, 229, 0.18);
   --td-brand-color-1: rgba(229, 229, 229, 0.12);
   --td-brand-color-2: rgba(229, 229, 229, 0.2);
@@ -301,8 +416,29 @@ button:focus-visible {
   --tc-surface-chrome: #1b1b1b;
   --tc-surface-content: #121212;
   --tc-surface-raised: #262626;
-  --tc-hover-chrome: rgba(255, 255, 255, 0.07);
-  --tc-active-chrome: rgba(255, 255, 255, 0.14);
+  /* A75：与浅色同一套三档（见 :root 的 --tc-fill-* 说明）。
+   * 深色下「变亮 = 更靠前」，所以三档是白色的三档透明度。 */
+  --tc-fill-hover: rgba(255, 255, 255, 0.07);
+  --tc-fill-selected: rgba(229, 229, 229, 0.12);
+  --tc-fill-pressed: rgba(255, 255, 255, 0.18);
+  --tc-hover-chrome: var(--tc-fill-hover);
+  /* 窗口按钮（深色）：深色下罩白而不是罩黑 —— 罩黑在 #1b1b1b 上看不出来 */
+  --tc-caption-hover: rgba(255, 255, 255, 0.08);
+  --tc-caption-active: rgba(255, 255, 255, 0.13);
+
+  /* 板块分割线（深色）：**A25 起同样置为 transparent**。
+   *
+   * 深色下这条线原本最刺眼 —— `--td-component-stroke` 是 #404040，画在
+   * #1b1b1b 的框架面上就是一整条亮线，把窗口切成几块发亮的格子。
+   * A19 调淡到 #2b2b2b 只是「没那么亮」，并没有解决「有线就割裂」。
+   * 用户第二次提出取消，于是浅色/深色一起归零，两套主题口径一致。 */
+  --tc-divider: transparent;
+
+  /* A26 兜底值（深色，非玻璃模式）：底数比浅色高一档，
+     因为深色的原描边 #404040 在 #1b1b1b 上约等于 14% 白。 */
+  --tc-split: rgb(255 255 255 / 0.12);
+  --tc-hairline: rgb(255 255 255 / 0.14);
+  --tc-hairline-strong: rgb(255 255 255 / 0.22);
 }
 
 /* =====================================================================
@@ -336,6 +472,28 @@ button:focus-visible {
   --leading-normal: 1.5;
   --leading-loose: 1.7;
 
+  /* ── 栏宽 ──
+     会话列表 / 通讯录共用同一个宽度令牌，切栏时中栏不会忽宽忽窄。
+     原先两处各写 `w-[272px] lg:w-[300px]`：靠「记得两个文件都改」来保持一致，
+     一旦有人只改一处，两栏并排就能看出错位。收敛到这里后只有一个真值。
+
+     288px 是 QQ 的比例：1080 宽的窗口里列表约占 27%，比 300 窄一档，
+     把省下的 12px 让给消息区（右侧还要放群成员栏）。 */
+  --tc-sidebar-width: 264px;
+
+  /* ── 群成员栏宽度（仅群聊、宽屏显示）── */
+  --tc-member-panel-width: 236px;
+
+  /* ── 自绘标题条高度 ──
+     窗口用的是 `titleBarStyle: 'hidden'`：系统标题栏整条去掉，页面从窗口
+     第 0 行开始，这条 40px 的横条就是新的标题栏。
+
+     ⚠️ 必须与 electron/main.ts 的 `TITLE_BAR_HEIGHT` 完全相等。
+     主进程按它设 `titleBarOverlay.height`（系统画的最小化/最大化/关闭三个
+     按钮占多高），渲染进程按它画这条横条。两边差 1px，按钮就会压在横条
+     的底边线上；差得多，按钮会悬在横条上方或探到下面的标题栏里。 */
+  --tc-titlebar-height: 40px;
+
   /* ── 标题栏统一高度 ──
      主区标题栏 = 上下 py-5(40) + 标题行 24 + 间距 2 + 副标题 18 = 84，
      取 88 兜住像素误差，多出的 4px 由 flex 居中分配（上下各 2px 呼吸）。
@@ -343,6 +501,13 @@ button:focus-visible {
      不对齐会显得两个标题栏各说各话。窄栏内容靠 flex 在 88px 内分配。
      原值 77 偏紧，标题与底边线之间几乎没有留白，看起来像被压扁。 */
   --panel-header-height: 88px;
+
+  /* ── 会话头部（compact）高度 ──
+     PanelHeader 的 compact 变体、群设置面板的顶边、群成员栏的栏头，
+     三处是同一个数：群设置面板要从「会话头部底边」开始往下铺，
+     与群成员栏上下对齐（用户要求「高度与群成员侧栏一致」）。
+     写成一个令牌，才不会出现「面板比成员栏高 52px」这种事。 */
+  --tc-header-height: 52px;
 
   /* ── 阴影（只做分层，不做装饰）── */
   --shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.02);
@@ -422,6 +587,151 @@ button:focus-visible {
   --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
+/* 宽屏下侧栏放宽一档（与原先的 272→300 同一节奏，只是把真值收到令牌里）。
+   ⚠️ 只改令牌、不要在组件里再写 `lg:w-[...]` —— 那会重新出现两个真值。 */
+@media (min-width: 1024px) {
+  :root {
+    --tc-sidebar-width: 288px;
+  }
+}
+
+/* 浮层出现：淡入 + 轻微上移/放大。
+   用于头像名片、下拉菜单这类「突然出现在鼠标旁边」的东西 ——
+   没有过渡时它们像是被硬贴上去的，有了这 150ms 才像「弹出来」。 */
+@keyframes tc-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.tc-pop-in {
+  animation: tc-pop-in var(--duration-fast) var(--ease-tencent);
+  transform-origin: top left;
+}
+
+/* =====================================================================
+   窗口拖动区（自绘标题栏用）
+
+   `titleBarStyle: 'hidden'` 之后，窗口不再有系统标题栏 —— 也就没有了
+   「按住标题栏拖窗口」这条系统行为。`-webkit-app-region: drag` 把某个
+   区域重新声明成「标题栏」，按住它就等于按住原来的标题栏：拖动、双击
+   最大化、Win+方向键贴靠都会恢复。
+
+   两个容易踩的点：
+   1. drag 区域**吞掉所有鼠标事件**。里面的按钮/输入框如果不声明
+      no-drag，就变成「按下去毫无反应」—— 所以下面用一条通配兜住，
+      而不是每加一个控件都记着补一次。
+   2. 浏览器里（`npm run dev`）这条属性被直接忽略，等于普通 div。
+      所以开发态和打包态是同一套 DOM，不需要 `if (isElectron)`。 */
+.tc-drag {
+  -webkit-app-region: drag;
+  /* 拖动时不要顺带选中文字，否则松手会留下一片高亮 */
+  user-select: none;
+}
+
+.tc-drag button,
+.tc-drag a,
+.tc-drag input,
+.tc-drag select,
+.tc-drag textarea,
+.tc-drag [role='button'] {
+  -webkit-app-region: no-drag;
+}
+
+/* 拖动左侧栏宽度期间（SidebarResizer 在 body 上挂 data-resizing）。
+   手柄只有 5px，指针一偏就划到列表文字上，整页变成蓝色选区；顺带把光标
+   统一成 col-resize —— 指针跑到消息区上方时，光标不该变回箭头。
+   用 `*` 是必要的：单个元素上的 cursor 会盖掉继承值。 */
+body[data-resizing='1'],
+body[data-resizing='1'] * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* ── 界面透明度滑动条（设置页）──
+   原生 `<input type="range">` 只留滑块可见：轨道由外层的 div 画（底色 +
+   已选段 + 默认刻度），因为原生 track 没法按当前值分段填色。
+   滑块中心与轨道的对齐靠 `margin-top: -5px`（(4 − 14) / 2），
+   改滑块尺寸时这个值必须跟着改，否则滑块会歪在轨道上沿。 */
+.tc-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tc-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  /* 透明：底下那层自绘轨道要透出来 */
+  background: transparent;
+}
+
+.tc-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--td-bg-color-container);
+  border: 2px solid var(--td-brand-color);
+  box-shadow: var(--shadow-subtle);
+  transition: transform 0.12s ease-out;
+}
+
+.tc-range:active::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+
+.tc-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* 键盘聚焦：滑块的环要看得见（原生 range 默认没有可见焦点样式） */
+.tc-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--td-brand-color-focus);
+}
+
+/* ── A44（用户反馈）：滑杆不画圆形滑块 ──
+   设置页那三条滑杆（界面透明度 / 光斑大小 / 光斑亮度）只要轨道和已选段，
+   滑块那颗圆点不再出现。
+
+   **滑块本身仍然存在**（14px 宽），只是透明。这一点很关键：拖动命中区、
+   两端各留 7px 的「滑块中心」几何（见 `.tc-range-ticks` 与 SettingsPage
+   里的 posOf）、键盘操作都依赖它。改的是「看不看得见」，不是「有没有」——
+   把宽高设成 0 会让百分比位置整体偏移 7px，已选段的末端就对不上默认刻度。
+
+   `box-shadow` 必须显式清掉：它按元素盒子绘制、不跟背景透明度走，只把
+   background 设成 transparent 会留下一个淡淡的圆形影子。 */
+.tc-range--flat::-webkit-slider-thumb {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  transform: none;
+}
+
+/* 圆点没了，键盘焦点得有个落点：整条轨道亮一圈。
+   只在 :focus-visible（键盘 Tab）出现，鼠标点按看不到。 */
+.tc-range--flat:focus-visible {
+  outline: 2px solid var(--td-brand-color);
+  outline-offset: 1px;
+  border-radius: 999px;
+}
+
+/* 覆盖上面那条 focus-visible 的滑块光环 —— 否则键盘聚焦时圆点又冒出来 */
+.tc-range--flat:focus-visible::-webkit-slider-thumb {
+  box-shadow: none;
+}
+
 /* =====================================================================
    腾讯风格通用组件类
    供业务组件直接取用，把重复的内联样式收拢成一条 class。
@@ -476,8 +786,18 @@ button:focus-visible {
   background-color: var(--tc-hover-chrome);
 }
 
+/* A75：当前项（会话列表的「正在这个会话」、通讯录的「正在看这个 Agent」）
+ * 归到 selected 档，而不是原来更深的 0.12 —— 用户的要求是「选中回显态的
+ * 填充色要一致」，所以左侧导航的选中、会话行的选中、下拉里的选中必须是
+ * 同一个色。0.12 只留给瞬时按下（--tc-fill-pressed）。 */
 .tc-list-item.is-active {
-  background-color: var(--tc-active-chrome);
+  background-color: var(--tc-fill-selected);
+}
+
+/* 按下的一瞬间：比选中再深一档。这一档是 --tc-fill-pressed 的唯一使用者 ——
+   三档里若没有它，pressed 就成了一个没人引用的死令牌。 */
+.tc-list-item:active:not(.is-active) {
+  background-color: var(--tc-fill-pressed);
 }
 
 /* 通用图标按钮：方形圆角，尺寸统一由组件控制 */
@@ -491,13 +811,19 @@ button:focus-visible {
     color var(--duration-fast) var(--ease-tencent);
 }
 
+/* A75：透明底的图标按钮，hover 走 --tc-fill-hover。
+ * 原来用 --td-bg-color-component-hover(#eeeeee) —— 在 #f0f0f0 的栏底上
+ * 只深 1%，鼠标划过去几乎没反应；而且在白卡片上是 #eee、在菜单行上是
+ * 0.06 黑，同一屏两套灰。 */
 .tc-icon-btn:hover {
-  background-color: var(--td-bg-color-component-hover);
+  background-color: var(--tc-fill-hover);
   color: var(--td-text-color-primary);
 }
 
 /* 有底色的图标按钮：初始就有一层浅底，hover 时加深而不是变淡。
-   「详情」这类次要入口需要一点存在感，纯透明按钮会被忽略。 */
+   「详情」这类次要入口需要一点存在感，纯透明按钮会被忽略。
+   ⚠️ 这里**不能**换成 --tc-fill-hover：它的底是 #f5f5f5，叠一层 0.06 黑
+   会变得比常态还浅，看起来像「按下去了反而变亮」。 */
 .tc-icon-btn--filled {
   background-color: var(--td-bg-color-secondarycontainer);
   color: var(--td-text-color-secondary);
@@ -528,6 +854,664 @@ button:focus-visible {
    首行顶部的线切开。 */
 .tc-detail-rows > * + * {
   border-top: 1px solid var(--td-component-stroke);
+}
+
+/* =====================================================================
+   液态玻璃（liquid glass）
+
+   给「浮在内容之上的那一层」用的半透明材质：群聊设置面板、Agent 详情弹窗、
+   确认框、右键菜单、悬停名片、头部下拉。它们的共同点是 —— 出现时背后的
+   东西应该还**看得见一点**（用户明确要求「有一点点透视效果」），但不能
+   糊到读不出字。
+
+   三条硬约束，都是实测出来的，改数值前先读一遍：
+
+   1. **alpha 不能低于 ~0.8**。玻璃底再透一点，压在有颜色的消息气泡或
+       图片消息上时，正文与背景的对比度会掉到 3:1 以下 —— 浅色主题下
+       尤其明显（白字变灰字只要 0.75 的 alpha）。所以取
+       浅色 0.82 / 深色 0.78：刚好透出底下的形状与色彩，字还站得住。
+   2. **必须同时写 `-webkit-backdrop-filter` 与 `backdrop-filter`**。
+       Chromium 只认带前缀的那个（Electron 用的是 Chromium），只写标准
+       属性在这里等于没写。
+   3. **半透明底要让投影帮它「落地」**。实色卡片靠底色就能看出边界，
+       半透明卡片必须靠 `--tc-glass-shadow`（含一层极淡外发光）才不会
+       像一张塑料片贴在屏幕上。
+
+   玻璃感由三层叠出来（缺一层就会变成「磨砂塑料」而不是「玻璃」）：
+       底色   半透明表面色 —— 主体
+       模糊   blur + **saturate**：提饱和让透出来的颜色更透亮，
+              只有 blur 会发灰
+       高光   inset 顶边 1px 亮线 —— 玻璃受光的那条边缘；
+              外加一圈极淡的光晕，即「一点点透视光晕」
+   ===================================================================== */
+:root {
+  /* 浅色：白玻璃。底色取纯白而不是 --tc-surface-content 的半透明版 ——
+     内容面是 #ffffff，浮层它一档即可，透出来的灰度由 blur 决定。 */
+  --tc-glass-bg: rgba(255, 255, 255, 0.82);
+  /* 浮层表面色的非玻璃态兜底：与 --td-bg-color-container 同值，
+     保证「不开窗口玻璃」时弹层看起来和以前一模一样 */
+  --tc-overlay-surface: #fafafa;
+  --tc-overlay-surface-strong: #ffffff;
+  --tc-glass-border: rgba(0, 0, 0, 0.08);
+  --tc-glass-blur: 18px;
+  --tc-glass-saturate: 180%;
+  /* 浅色下的高光是「白上叠白」，只压在顶边一条，宽了会像蒙了层雾 */
+  --tc-glass-highlight: rgba(255, 255, 255, 0.9);
+  /* 外发光用中性灰，不要用 slate 蓝灰 —— verify:tokens 会扫「全 DOM 有没有
+     蓝色渲染色」，带蓝的投影会让那条断言失败（而且深灰更不抢主题色） */
+  --tc-glass-shadow: var(--shadow-float), 0 0 24px rgba(0, 0, 0, 0.06);
+}
+
+:root.dark {
+  /* 深色：黑玻璃。底色比内容面（#121212）亮一档到 #262626 系 ——
+     「亮 = 靠前」在深色下成立，浮层必须比内容亮才浮得起来；
+     但 alpha 只有 0.78，透出的仍是背后的消息与图片。 */
+  --tc-glass-bg: rgba(38, 38, 38, 0.78);
+  --tc-overlay-surface: #1c1c1c;
+  --tc-overlay-surface-strong: #262626;
+  --tc-glass-border: rgba(255, 255, 255, 0.12);
+  /* 深色下 blur 收窄一档：同样的 18px 在暗背景上糊得更明显 */
+  --tc-glass-blur: 14px;
+  --tc-glass-saturate: 160%;
+  --tc-glass-highlight: rgba(255, 255, 255, 0.1);
+  /* 深色下外发光换成黑：让面板边缘「沉」下去半层，而不是亮出一圈光边 */
+  --tc-glass-shadow: var(--shadow-float), 0 0 28px rgba(0, 0, 0, 0.35);
+}
+
+/* 用法：把原位上的 `backgroundColor: var(--*-container)` + `border` 内联样式
+   删掉，改挂这个 class。**不要再在内联样式里写背景色** —— 内联优先级
+   高于 class，会把半透明底盖回实色，玻璃就失效了（且这种失效没有报错，
+   只是看起来「跟以前一样」）。 */
+.tc-glass {
+  background-color: var(--tc-glass-bg);
+  border-color: var(--tc-glass-border);
+  box-shadow: var(--tc-glass-shadow), inset 0 1px 0 var(--tc-glass-highlight);
+  -webkit-backdrop-filter: blur(var(--tc-glass-blur)) saturate(var(--tc-glass-saturate));
+  backdrop-filter: blur(var(--tc-glass-blur)) saturate(var(--tc-glass-saturate));
+}
+
+/* =====================================================================
+   应用本体玻璃（窗口级透视）
+
+   与上面的 `.tc-glass` 不是一回事：
+     · `.tc-glass` 是**应用内**浮层，模糊的是页面里压在它下面的内容；
+     · 这一块是**窗口本体**，模糊的是**桌面**——由 Windows 11 的
+       acrylic 材质（`backgroundMaterial`）在窗口背后画出来，
+       CSS 只负责把表面调成半透明，好让那层材质透上来。
+
+   为什么整块都由 `data-opc-glass` 开关控制：
+     浏览器开发态没有窗口材质，body 一旦透明就会露出浏览器的白底/黑底，
+     看起来像「界面坏了」；而 Playwright 打靶脚本也是在浏览器里跑 dist，
+     它们断言的是实色（`rgb(245, 245, 245)`）。所以默认**完全不变**，
+     只有 Electron 主进程确认材质可用时，才在 URL 上带 `?glass=1`，
+     渲染进程据此给 <html> 打标记。
+
+   alpha 的取法：
+     · 框架面（导航条 / 列表栏 / 通讯录）默认 0.72 —— 桌面透得出来，
+       但文字仍压在 0.72 的白上，对比度足够；
+     · 内容面（聊天区）默认 0.82 —— 消息正文是**长时间阅读**的地方，
+       比框架面再实一档，图片与代码块才不会跟桌面花纹打架；
+     · 抬升面（输入框 / 气泡 / 卡片 / 弹窗）默认 0.878 —— 三层里最实的一档，
+       保证「压在内容之上」的层级感。**A25 起它也参与调节**（此前是实色例外），
+       拉到底同样归零。
+
+   深色下反过来：亮 = 靠前，所以玻璃底色比内容面亮一档（与 .tc-glass 同理）。
+
+   ## 这四个 alpha 现在由设置页的滑动条统一驱动
+
+   `--opc-chrome-alpha` / `--opc-content-alpha` / `--opc-raised-alpha` /
+   `--opc-overlay-alpha` 由 `src/uiPrefs.ts` 写到 <html> 的内联样式上
+   （首帧之前就位）。四个一起变，而不是只让某一块变 —— 用户的原话是
+   「要将标题栏和主内容纳入统一管理」，A25 又补了「包括本体、消息卡片、
+   内容卡片等等」。
+
+   ⚠️ 第四个**不叫 glass 而叫 overlay**，也不等于内容面：它有独立下限 0.9
+   （A27）。浮层压的是**内容**而不是桌面，跟到 0 就会把下层正文整片透上来。
+
+   ## A24：标题条也参与了，所以范围真的是 0–100
+
+   A23 时标题条被排除在外（玻璃态下强制实色），因为那时三个窗口按钮由系统
+   画，控件区底下垫的是系统填的固定色（实测 ≈240，页面侧 ≈226），同一个
+   alpha 必然合成出两种颜色 —— 只有 alpha = 1 才同色，于是标题条只能不透明。
+
+   A24 把三个按钮改成自绘（`frame: false`），整窗每一块都由页面画，
+   于是这里不再有例外：`--tc-titlebar-surface` 直接等于 `--tc-surface-chrome`。
+   滑动条 0 = 全不透明，100 = 只剩系统 acrylic（毛玻璃本身还在，
+   所以 100 不是「窗口消失」，而是一块纯磨砂玻璃）。
+   ===================================================================== */
+/* ── A25：抬升面与 TDesign 容器族也纳入同一个数字 ──────────────────────
+ *
+ * 上一轮为止这里只有 chrome / content / glass 三档，`--tc-surface-raised`
+ * （气泡、输入框、卡片、弹窗）是实色例外。用户指出这层例外让「全局毛玻璃」
+ * 名不副实：滑动条越拉，周围的半透明越明显，那些实色卡片反而越跳。
+ *
+ * 现在四档一起走，**顺序不变**（chrome < content < raised），
+ * 所以卡片仍然是「压在消息区之上」的那一层，层级关系没被拉平。
+ *
+ * TDesign 那一族为什么要逐个覆盖：弹窗、下拉、Select 面板都是组件库自己
+ * 用 `--td-bg-color-container` 画的，不覆盖的话它们会是整屏唯一不透明的
+ * 几块，和 `--tc-surface-raised` 的卡片差一截色。base 色沿用各主题原来的
+ * 取值（浅 #fafafa / #f5f5f5，深 #1c1c1c / #262626），只换 alpha。
+ */
+html[data-opc-glass='1'] {
+  --tc-surface-chrome: rgb(245 245 245 / var(--opc-chrome-alpha, 0.72));
+  --tc-surface-content: rgb(255 255 255 / var(--opc-content-alpha, 0.82));
+  --tc-surface-raised: rgb(255 255 255 / var(--opc-raised-alpha, 0.878));
+  /**
+   * A27：浮层底色**不再取内容面**，改用独立的 `--opc-overlay-alpha`
+   * （下限 0.9，见 `src/uiPrefs.ts` 的 OVERLAY_ALPHA_FLOOR）。
+   *
+   * 旧写法是 `var(--opc-glass-alpha)` = 内容面，t=100 时等于 0，于是
+   * `.tc-glass` 只剩一层 `backdrop-filter` —— 用户报的「弹窗把下层内容
+   * 展示出来、页面杂乱」就是这个 0。模糊救不了它：模糊只降低细节，
+   * 不降低对比度，字变成灰影仍然是字。
+   */
+  --tc-glass-bg: rgb(255 255 255 / var(--opc-overlay-alpha, 0.9));
+  /* 浮层表面色：TDesign 的弹层族（Popup / Dialog / Message）与自绘浮层
+     共用同一档 alpha，免得「弹窗 0.9、下拉 0」这种分叉。 */
+  --tc-overlay-surface: rgb(250 250 250 / var(--opc-overlay-alpha, 0.9));
+  --tc-overlay-surface-strong: rgb(255 255 255 / var(--opc-overlay-alpha, 0.9));
+
+  /* ── A26：表面协调性四件套 ──────────────────────────────────────────
+   *
+   * 起因是用户把透明度拉到 100% 之后，页面像「玻璃上贴了一堆贴纸」：
+   * 白块、黑块、深色下一条发黑的分栏线。根因不是颜色写错了，而是**这些
+   * 地方绕过了透明度体系**（详见 PLAN-A26.md）。这里给三类东西各设一个
+   * 由同一个数字推导的规则，而不是逐个调色。
+   *
+   * 核心派生量：
+   *   --opc-t = 1 − chrome    透明度进度：0（全不透明）→ 1（纯玻璃）
+   *
+   * 为什么全部用 calc 而不是在 JS 里算：这些值要跟着滑动条**实时**变，
+   * 写在 CSS 里浏览器自己就重算了，不用每帧回写。而且 t=0 / t=100 两个
+   * 端点天然成立，不需要 if 分支。
+   *
+   * ── 三类线，两个方向 ──
+   *
+   * 结构分栏线（--tc-split）和控件轮廓线（--tc-hairline）在玻璃态下必须
+   * **反向走**：
+   *
+   *   · 结构线表达「这是两个区块」。区块都透明了，划分就该退场 —— 所以
+   *     它随透明度**减弱**。但底数不能是 0：默认档 28% 下现在那条
+   *     #e5e5e5（10% 黑）是用户认可的观感，公式必须在这个点对得上。
+   *     取 0.08 + 0.08t：t=0.28 时 0.102，与现状几乎一致；t=1 时 0.16。
+   *   · 控件线表达「这里能点」。界面越虚，这个信号越重要 —— 所以它随
+   *     透明度**增强**。底数对齐各主题原来的描边：#e5e5e5 ≈ 10% 黑、
+   *     #404040 在 #1b1b1b 上 ≈ 14% 白，所以浅色从 0.10 起、深色从 0.14 起。
+   *
+   * 关键的一条：**深色下绝不能用固定灰阶**。不透明时 #404040 比面亮
+   * （提亮线），透明后透出的是用户的壁纸（大概率是亮的），#404040 反而
+   * 比底下暗 —— 同一条线语义反转成「一条压暗的黑线」，这就是用户报的
+   * 「深色下左侧二栏右边线是黑色」。alpha 白/黑的对比度是「相对底下」的
+   * 恒定百分比，壁纸是黑是白都不会反转。
+   *
+   * ── 实色块下限（--tc-solid）──
+   *
+   * 品牌色实心的按钮（打开通讯录 / 发消息 / 发送键）上面是**反色文字**，
+   * 没有底色可退让，只能给一个 alpha 下限：1.0 → 0.72。
+   * 为什么是 0.72 而不是气泡的 0.65：气泡里是长句正文，5.1:1 就够；
+   * 按钮上是 2–4 个字、14px、还要传达「可点」，0.72 时合成色约 #5a5a5a，
+   * 白字对比度 7.4:1，更稳。而且主按钮全页只有一两个，留一点视觉重量
+   * 反而给页面一个锚点 —— 全部虚掉的界面会让人不知道从哪儿下手。
+   *
+   * ── 公共底噪（--tc-veil）──
+   *
+   * 这是「协调性」的真正机制，不是「更不透明」的机制。所有表面之下、
+   * 系统 acrylic 之上垫一层极薄中性色，让每块表面共享同一个底 ——
+   * 块与块之间的差异被抹平，看起来是「一整块玻璃上有内容」。
+   * 微软 Acrylic 的「排除混合层」是同一个思路：光靠模糊不够，必须垫一层
+   * 来保证对比度。
+   *
+   * 方向要注意：浅色主题的底应该是**亮**的（深色文字需要亮底），所以垫白；
+   * 深色主题的底应该是**暗**的（浅色文字需要暗底），所以垫黑。垫反了等于
+   * 帮倒忙。
+   * ------------------------------------------------------------------ */
+  --opc-t: calc(1 - var(--opc-chrome-alpha, 0.72));
+
+  /* 结构分栏线：随透明度减弱，但保留底数（见上） */
+  --tc-split-alpha: calc(0.08 + 0.08 * var(--opc-t));
+  /* 控件轮廓线：始终可见，随透明度略强 */
+  --tc-hairline-alpha: calc(0.1 + 0.06 * var(--opc-t));
+  /* 强描边（TDesign 的 border-level-2，dashed 按钮等）：比常规再深一档 */
+  --tc-hairline-strong-alpha: calc(0.16 + 0.04 * var(--opc-t));
+  /* 公共底噪。
+   *
+   * A26 实测后从方案里的 0.12 调到 0.16。0.12 在「浅色主题 + 深色壁纸」
+   * 这一档下正文对比度约 3.1:1（低于 4.5:1 的正文线）；试过 0.22，
+   * 但整窗会明显发白，而且必须靠加粗 halo 才救得回来 —— 那时文字开始发糊，
+   * 观感反而更差。0.16 是「仍然一眼看出壁纸的色相」和「文字立得住」的折中。
+   *
+   * ⚠️ 必须说清楚一个前提：真实窗口底下是 Windows 画的 acrylic ——
+   * 它**已经**做过模糊和重度着色（浅色模式下是一层很厚的白）。
+   * 而 verify-surface 的夹具铺的是**原始壁纸**，比现实苛刻得多。
+   * 也就是说截图里 t=100 的效果是**最坏情况**，真机上会明显更清。
+   * 所以这里没有按「纯黑壁纸也保证 4.5:1」去堆数值 —— 那需要 0.55 以上，
+   * 已经不是「彻底透明」了。 */
+  --tc-veil-alpha: calc(0.16 * var(--opc-t));
+  /* 实色块下限 */
+  --tc-solid-alpha: calc(1 - 0.28 * var(--opc-t));
+  /* 品牌 logo：只降 15%，识别性优先于「变透」 */
+  --tc-logo-alpha: calc(1 - 0.15 * var(--opc-t));
+  /* 文字 halo：默认档几乎为 0，只有拉到很透才出来救命 */
+  --tc-halo-alpha: calc(0.7 * var(--opc-t));
+
+  --tc-split: rgb(0 0 0 / var(--tc-split-alpha));
+  --tc-hairline: rgb(0 0 0 / var(--tc-hairline-alpha));
+  --tc-hairline-strong: rgb(0 0 0 / var(--tc-hairline-strong-alpha));
+  --tc-veil: rgb(255 255 255 / var(--tc-veil-alpha));
+  --tc-solid: rgb(31 31 31 / var(--tc-solid-alpha));
+  --tc-solid-hover: rgb(31 31 31 / calc(1 - 0.18 * var(--opc-t)));
+  --tc-solid-active: rgb(31 31 31 / calc(1 - 0.1 * var(--opc-t)));
+  --tc-halo: rgb(255 255 255 / var(--tc-halo-alpha));
+
+  /* 一刀接管 TDesign 的所有控件描边。不接管的话它们全是固定灰阶，
+     在玻璃态下就是一条条不该出现的线（深色下尤其明显）。 */
+  --td-component-stroke: var(--tc-hairline);
+  --td-border-level-1-color: var(--tc-hairline);
+  --td-border-level-2-color: var(--tc-hairline-strong);
+
+  --td-bg-color-container: rgb(250 250 250 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-container-hover: rgb(245 245 245 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-container-active: rgb(238 238 238 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-secondarycontainer: rgb(245 245 245 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-secondarycontainer-hover: rgb(238 238 238 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-component: rgb(245 245 245 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-component-hover: rgb(238 238 238 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-component-active: rgb(238 238 238 / var(--opc-raised-alpha, 0.878));
+
+  /* R1 根因（A26）：dashed 按钮、空态块、部分面板底用的都是这个变量，
+     而 A25 的七项覆盖漏了它。它在浅色下是 #fff、深色下是 transparent ——
+     所以「从头创建 Agent」**只在浅色**下是一块白，深色下恰好没事。
+     这一条就是用户报告的「浅色 100% 下从头创建 agent 仍是白块」。 */
+  --td-bg-color-specialcomponent: var(--tc-surface-raised);
+
+  /* 禁用态（TDesign 里用得最多的背景变量，11 处）：不能跟着归零，
+     否则禁用控件会彻底消失、用户不知道那里有个东西。给一层极淡中性底，
+     「不可用」由 --td-text-color-disabled 表达，而不是靠一块实色灰。 */
+  --td-bg-color-component-disabled: rgb(0 0 0 / 0.04);
+}
+
+/* 用户气泡：品牌色实心，但跟着透明度走 —— 只到 0.65 为止。
+ *
+ * 为什么这里要写死品牌色的 rgb 而不是用 `var(--td-brand-color)`：
+ * CSS 变量本身不带 alpha 通道，没法给它「套一层 alpha」。要么用
+ * `rgb(from ...)` 相对色语法（Electron 44 支持，但老内核会整条失效），
+ * 要么在这里把两个主题的品牌色各写一遍。品牌色只有两个值（#1f1f1f /
+ * #e5e5e5），写两行比赌内核版本稳。
+ *
+ * 下限 0.65 的理由见 uiPrefs.ts 的 BUBBLE_ALPHA_FLOOR：白字压在 0.5 以下
+ * 的深色气泡上会掉到 3.6:1。界面可以彻底透明，**自己说的话不行**。 */
+html[data-opc-glass='1'] .tc-bubble-user {
+  background-color: rgb(31 31 31 / var(--opc-bubble-alpha, 1));
+}
+
+html[data-opc-glass='1'].dark .tc-bubble-user {
+  background-color: rgb(229 229 229 / var(--opc-bubble-alpha, 1));
+}
+
+html[data-opc-glass='1'].dark {
+  --tc-surface-chrome: rgb(27 27 27 / var(--opc-chrome-alpha, 0.72));
+  --tc-surface-content: rgb(18 18 18 / var(--opc-content-alpha, 0.84));
+  --tc-surface-raised: rgb(38 38 38 / var(--opc-raised-alpha, 0.878));
+  --tc-glass-bg: rgb(38 38 38 / var(--opc-overlay-alpha, 0.9));
+  --tc-overlay-surface: rgb(28 28 28 / var(--opc-overlay-alpha, 0.9));
+  --tc-overlay-surface-strong: rgb(38 38 38 / var(--opc-overlay-alpha, 0.9));
+
+  /* ── A26 深色：底数整体比浅色高，方向整体反过来 ──
+   *
+   * 底数更高：深色主题原来的描边 #404040 在 #1b1b1b 面上约等于 14% 白，
+   * 而浅色是 10% 黑。沿用同一个底数会让深色的控件轮廓明显变淡。
+   *
+   * 方向反过来：浅色垫**白**（深色文字需要亮底），深色垫**黑**
+   * （浅色文字需要暗底）。垫反了等于帮倒忙 —— 白纱会让深色主题的字更糊。 */
+  --tc-split-alpha: calc(0.12 + 0.06 * var(--opc-t));
+  --tc-hairline-alpha: calc(0.14 + 0.06 * var(--opc-t));
+  --tc-hairline-strong-alpha: calc(0.22 + 0.04 * var(--opc-t));
+
+  --tc-split: rgb(255 255 255 / var(--tc-split-alpha));
+  --tc-hairline: rgb(255 255 255 / var(--tc-hairline-alpha));
+  --tc-hairline-strong: rgb(255 255 255 / var(--tc-hairline-strong-alpha));
+  --tc-veil: rgb(0 0 0 / var(--tc-veil-alpha));
+  --tc-solid: rgb(229 229 229 / var(--tc-solid-alpha));
+  --tc-solid-hover: rgb(229 229 229 / calc(1 - 0.18 * var(--opc-t)));
+  --tc-solid-active: rgb(229 229 229 / calc(1 - 0.1 * var(--opc-t)));
+  --tc-halo: rgb(0 0 0 / var(--tc-halo-alpha));
+
+  --td-bg-color-container: rgb(28 28 28 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-container-hover: rgb(38 38 38 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-container-active: rgb(48 48 48 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-secondarycontainer: rgb(38 38 38 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-secondarycontainer-hover: rgb(48 48 48 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-component: rgb(38 38 38 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-component-hover: rgb(48 48 48 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-component-active: rgb(48 48 48 / var(--opc-raised-alpha, 0.878));
+
+  --td-bg-color-specialcomponent: var(--tc-surface-raised);
+  --td-bg-color-component-disabled: rgb(255 255 255 / 0.05);
+
+  /* ⚠️ 这三条必须在**这个**块里再写一遍，不能只写在上面那个浅色块里。
+   *
+   * 特异性算一下就知道为什么：
+   *   `:root.dark`                    → (0,2,0)   ← 深色 TDesign 变量块（#404040 在这里）
+   *   `html[data-opc-glass='1']`      → (0,1,1)   ← 浅色玻璃块
+   *   `html[data-opc-glass='1'].dark` → (0,2,1)   ← 本块
+   *
+   * (0,2,0) > (0,1,1)，所以只写在浅色块里的话，**深色下会被 #404040 压回去** ——
+   * 这正是「浅色边线已经对了、深色还是 #404040」的原因（verify-surface [2] 抓到的）。
+   * 浅色没暴露，是因为浅色的 `:root` 只有 (0,1,0)，比 (0,1,1) 低。
+   */
+  --td-component-stroke: var(--tc-hairline);
+  --td-border-level-1-color: var(--tc-hairline);
+  --td-border-level-2-color: var(--tc-hairline-strong);
+}
+
+/* ── 浮层的磨砂底：透明之后「字还读得清」靠的是这一层 ───────────────────
+ *
+ * 气泡和卡片不需要它 —— 它们彼此不重叠，透出来的是窗口的 acrylic（已经
+ * 是模糊过的桌面），文字下面不会有第二份锐利的字。
+ *
+ * 但**浮层会压在内容上**：下拉菜单 / 弹窗背后就是消息正文。如果它们只是
+ * 半透明而不模糊，背后的字会直接穿过菜单、与菜单里的字叠在一起 —— 那才是
+ * 真正的读不清。所以这几类必须自带 backdrop-filter。
+ *
+ * ## A27：光有 blur 不够，必须有底色
+ *
+ * 上面这段注释在 A26 写的时候是「alpha 掉到 0 时它仍然是一块磨砂玻璃」，
+ * 实测证明这句话是错的：blur 只降低**细节**，不降低**对比度**。背后的
+ * 14px 正文被 blur(18px) 之后是一团灰影，灰影压在同样透明的浮层上，
+ * 观感就是「弹窗里透出乱七八糟的东西」—— 用户报的正是这个。
+ *
+ * 更关键的是：`backdrop-filter` 在**透明窗口**（本应用的常态，窗口底色是
+ * `#00000000` + 系统 acrylic）里并不可靠，实测在真实窗口里可能整块空转。
+ * 所以浮层的可读性**不能依赖 blur**，只能靠底色。
+ *
+ * 结论：底色用 `--tc-overlay-surface`（下限 0.9），blur 退化成「有则更好」。
+ * 两者同时存在时，0.9 的底把穿透压到 1.3:1 以内，blur 再抹掉剩下的形状。
+ *
+ * 不把 blur 铺到气泡上的原因：一屏几十条消息各带一层 backdrop-filter，
+ * 滚动时会明显掉帧，而收益是零（背后没有可读的东西）。
+ */
+html[data-opc-glass='1'] .t-popup__content,
+html[data-opc-glass='1'] .t-dialog,
+html[data-opc-glass='1'] .t-message,
+html[data-opc-glass='1'] .t-notification {
+  background-color: var(--tc-overlay-surface);
+}
+
+/* 深色下弹窗底比内容面亮一档（亮 = 靠前），与 `.tc-glass` 同理 */
+html[data-opc-glass='1'].dark .t-popup__content,
+html[data-opc-glass='1'].dark .t-dialog,
+html[data-opc-glass='1'].dark .t-message,
+html[data-opc-glass='1'].dark .t-notification {
+  background-color: var(--tc-overlay-surface-strong);
+}
+
+html[data-opc-glass='1'] .t-popup__content,
+html[data-opc-glass='1'] .t-dialog,
+html[data-opc-glass='1'] .t-dialog__body,
+html[data-opc-glass='1'] .t-message,
+html[data-opc-glass='1'] .t-notification {
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+  backdrop-filter: blur(18px) saturate(170%);
+}
+
+html[data-opc-glass='1'].dark .t-popup__content,
+html[data-opc-glass='1'].dark .t-dialog,
+html[data-opc-glass='1'].dark .t-dialog__body,
+html[data-opc-glass='1'].dark .t-message,
+html[data-opc-glass='1'].dark .t-notification {
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
+}
+
+/* ── 跟随鼠标的光斑（A25）───────────────────────────────────────────────
+ *
+ * 一块跟着指针走的柔和光晕，模拟「光打在玻璃上」的那点反光。四个要点：
+ *
+ *   1. **纯装饰层**：`pointer-events: none` + `aria-hidden`，永远不吃事件。
+ *      少了这一条，它会盖住按钮导致点不到 —— 这类浮层最常见的翻车方式。
+ *   2. **位置走 transform，不走 left/top**：transform 由合成器处理，
+ *      每帧只重绘图层；改 left/top 会触发整条布局链，鼠标一动就掉帧。
+ *      JS 侧再用 rAF 合并高频 pointermove（见 CursorGlow.tsx）。
+ *   3. **离开就淡出**：不是隐藏（display:none 会打断过渡），
+ *      而是把 opacity 归零，220ms 收干净 —— 硬切会像「关灯」。
+ *   4. **它是「镜头」而不是「白漆」**（第一版做错的地方）。
+ *
+ * ## 为什么不能用一层白色径向渐变铺在上面
+ *
+ * 第一版就是那么写的，`background: radial-gradient(white ...)`。问题在
+ * 鼠标划过正文时：那层白是**画在字上面**的，白 alpha 一高，字就被冲淡，
+ * 正好违背「文字必须清晰」。而且 `screen` / `plus-lighter` 更糟 ——
+ * 白叠黑字，字直接消失。
+ *
+ * 改成 `backdrop-filter` 的**提亮**：光斑本身几乎不带颜色，只是把
+ * 它背后那一小块调亮。亮度是乘上去的，黑字乘 1.1 还是黑的，字一点不糊。
+ *
+ * ## 为什么 backdrop 里**不能带 blur**（第二次踩的坑）
+ *
+ * 第一版写的是 `blur(10px) brightness(1.09)`，想着「磨砂 + 提亮」更像玻璃。
+ * 实测截图：鼠标划过正文时，那一块的字被**糊成一团**——backdrop-filter
+ * 模糊的是它背后的一切，包括文字本身。用户要的是「文字清晰」，
+ * 一个走到哪儿糊到哪儿的镜头显然不合格。
+ *
+ * 所以这里只有 brightness + saturate：只改亮度与饱和度，不动清晰度。
+ * 玻璃感由「柔和的光斑形状 + 一点点白」提供，不需要模糊。
+ *
+ * ## 圆形边缘靠 mask 收，不靠渐变
+ *
+ * backdrop-filter 的作用范围就是这个元素的形状，如果直接给圆角，边缘会是
+ * 一个**硬圆**，像贴了个放大镜。所以再叠一层径向 `mask-image`，
+ * 让镜头效果在中段之后逐渐消失 —— 没有边界，只有光。
+ *
+ * 深浅两套的差别：深色背景亮度要提得更多才看得出来（1.35 vs 1.09）。
+ *
+ * ## A28：brightness 变成「基准 × 倍率」
+ *
+ * 设置页要提供亮度调节。倍率由 `<html>` 上的 `--tc-glow-brightness`
+ * 提供（JS 只写这一个数），基准仍由主题决定 —— 深色继续比浅色提得更亮，
+ * 用户调的是「在各自基准上放大/缩小多少倍」。
+ * JS 不设这个变量时回落到 1，即 A25 的原始设计值，外观逐像素不变。
+ */
+:root {
+  /* A35：设计值单独一个变量，`--tc-glow-size` 默认取它。
+   *
+   * 为什么要拆：设置页要在滑杆上画一根「默认刻度」。用户拖过之后，内联的
+   * `--tc-glow-size` 会覆盖掉主题声明，此时再读 `--tc-glow-size` 读到的是
+   * 用户当前值，刻度就会跟着滑块跑（等于没有刻度）。
+   * 拆出一个 design 变量后，JS 读它即可拿到主题设计值，且不必「临时摘掉
+   * 内联值再读回来」—— 那个做法会在拖动时每一帧闪一次尺寸。 */
+  --tc-glow-size-design: 440px;
+  --tc-glow-size: var(--tc-glow-size-design);
+  /* 只留一点点白色：主要靠 backdrop 提亮，这点白是给纯白底上的微弱可见度 */
+  --tc-glow-core: rgba(255, 255, 255, 0.1);
+  /* ⚠️ 不要在这里加 blur —— 会把光斑底下的文字糊掉（见上面的说明） */
+  --tc-glow-filter: brightness(calc(1.12 * var(--tc-glow-brightness, 1))) saturate(1.06);
+}
+
+:root.dark {
+  --tc-glow-size-design: 380px;
+  --tc-glow-size: var(--tc-glow-size-design);
+  --tc-glow-core: rgba(255, 255, 255, 0.04);
+  --tc-glow-filter: brightness(calc(1.38 * var(--tc-glow-brightness, 1))) saturate(1.12);
+}
+
+/**
+ * 关闭光斑（A28）。
+ *
+ * 用 `display:none` 而不是删掉 React 节点：这层是纯视觉装饰，
+ * 挂载与否由 CSS 一句话决定，省掉一次重渲染，也避免开关时
+ * 「元素重新插入导致 pointermove 监听重建」的那一帧抖动。
+ * 开关本身由 JS 在 <html> 上写 `data-opc-glow="0"`（见 uiPrefs.applyGlow）。
+ */
+html[data-opc-glow='0'] .tc-cursor-glow {
+  display: none;
+}
+
+.tc-cursor-glow {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--tc-glow-size);
+  height: var(--tc-glow-size);
+  margin-left: calc(var(--tc-glow-size) / -2);
+  margin-top: calc(var(--tc-glow-size) / -2);
+  border-radius: 50%;
+  pointer-events: none;
+  /* 压在板块之上、弹窗蒙层（50）之下：光斑不该照亮一个正在「隔离」页面的蒙层 */
+  z-index: 45;
+  opacity: 0;
+  transition: opacity 220ms var(--ease-tencent);
+  will-change: transform, opacity;
+  background: radial-gradient(
+    circle at center,
+    var(--tc-glow-core) 0%,
+    transparent 60%
+  );
+  -webkit-backdrop-filter: var(--tc-glow-filter);
+  backdrop-filter: var(--tc-glow-filter);
+  /* 中段实、外圈渐隐：镜头效果的软边，避免出现一个硬圆 */
+  -webkit-mask-image: radial-gradient(
+    circle at center,
+    #000 0%,
+    #000 26%,
+    transparent 66%
+  );
+  mask-image: radial-gradient(circle at center, #000 0%, #000 26%, transparent 66%);
+}
+
+.tc-cursor-glow[data-visible='1'] {
+  opacity: 1;
+}
+
+/* ── A28：TDesign Switch 开启态跟着透明度降档 ──────────────────────────
+ *
+ * 设置页的「鼠标光斑」开关是本项目第一个用 Switch 的地方，verify:surface
+ * 当场抓住它：TDesign 的开启态用 `--td-brand-color` 铺整块底（alpha 1.0），
+ * 而 glass 模式下 body 只是一层 0.16 的 veil —— 一颗不透光的药丸贴在
+ * 玻璃上，正是 A26 一路在收的「实色块」（上一次是主按钮和发送键）。
+ *
+ * 为什么不能改成淡底 + 品牌色边：开关上是白色圆钮（反色），跟主按钮同一
+ * 处境，没有底色可退让。所以处理方式也同款 —— 换走 `--tc-solid`，
+ * 下限 0.72（见上面 A26 按钮那一节的论证）。
+ *
+ * 只覆盖开启态：关闭态的底取自 `--td-bg-color-component`，本来就跟抬升面
+ * 一起参与透明度体系，扫不出来。
+ *
+ * ⚠️ 这条规则**不能**只写在设置页组件里：下一个人加 Switch 时不会知道
+ * 有这回事，而 verify:surface 扫的是全应用。放在全局 + 只认
+ * `.t-is-checked`，是让「以后每一个开关都自动合规」的办法。 */
+html[data-opc-glass='1'] .t-switch.t-is-checked {
+  background-color: var(--tc-solid);
+}
+
+/* ── 三个窗口按钮（A24 起由页面画）──────────────────────────────────────
+ *
+ * 尺寸照 Windows 自带控件：宽 46px、高占满标题条（40px）。落点一致，
+ * 用户不必重新学一个位置；hover 只是一层极淡的罩，按下再深一档；
+ * 关闭按钮 hover 红底白字 —— 全系统只有它带颜色，这是用户已有的预期。
+ *
+ * 为什么 hover 不做过渡：系统控件的反馈是**瞬时**的，加 150ms 过渡反而
+ * 显得迟钝。整条标题栏只有这三块会变，瞬变不会让人眼花。
+ */
+.tc-caption-btn {
+  width: var(--tc-caption-width);
+  height: 100%;
+  background-color: transparent;
+  color: var(--td-text-color-secondary);
+  /* 去掉浏览器默认的按钮外观（白底、边框、内边距）—— 不然会看到一块方块 */
+  border: 0;
+  padding: 0;
+  outline: none;
+}
+
+.tc-caption-btn:hover {
+  background-color: var(--tc-caption-hover);
+}
+
+.tc-caption-btn:active {
+  background-color: var(--tc-caption-active);
+}
+
+/* 关闭：hover 红底、字形转白。`:active` 用更深的红，跟系统一致 */
+.tc-caption-btn[data-danger='1']:hover {
+  background-color: var(--tc-caption-close-hover);
+  color: var(--tc-caption-close-glyph);
+}
+
+.tc-caption-btn[data-danger='1']:active {
+  background-color: var(--tc-caption-close-active);
+  color: var(--tc-caption-close-glyph);
+}
+
+/* 键盘用户：焦点环画在按钮内侧，不撑破标题条 */
+.tc-caption-btn:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--td-brand-color);
+}
+
+/* body 是最后一道底：它不透明，上面所有半透明表面就等于白调了。
+   `transition: color` 而不是沿用 body 上的 `background-color .3s`：
+   玻璃态下底色是「透明」，那条过渡没有意义，反而会在启动时把 body 从
+   白色淡出到透明 —— 窗口先白一下再透出桌面，正是要避免的闪。 */
+html[data-opc-glass='1'] {
+  background-color: transparent;
+}
+
+/* ── A26：body 从「透明」改成「公共底噪」 ─────────────────────────────
+ *
+ * 这是一处方向性的改动，值得说清楚为什么。
+ *
+ * 之前 body 是 transparent，页面完全靠上面那一层层半透明表面叠出质感。
+ * 拉到 100% 之后每层 alpha 都归零，透出来的就是**未经过我们控制的桌面**：
+ * 用户的壁纸可能很花、可能是深色、可能对比极强。于是每一块内容都直接
+ * 压在任意背景上 —— 白块、黑块、发黑的线，全是「底下不可预测」的症状。
+ *
+ * veil 是给整窗铺一层 12% 的中性色（浅色垫白、深色垫黑，见上面令牌段），
+ * 它有三个性质：
+ *   1. **在表面之下、acrylic 之上** —— 所以它不会盖住任何内容；
+ *   2. **12% 不改变「看得见桌面」这件事** —— 仍然是彻底透明，只是玻璃
+ *      有了自己的色调（真实玻璃本来就有折射率和微微的着色）；
+ *   3. **所有表面共享同一个底** —— 块与块之间的差异被抹平，看起来是
+ *      「一整块玻璃上有内容」，而不是「一堆贴纸贴在玻璃上」。
+ *
+ * 这就是「协调性」的机制。它不是偷偷把不透明度调回去 —— 表面 alpha
+ * 仍然是 0，veil 是另一层东西，调滑动条时它的强度反向增长（越透越需要）。
+ *
+ * 微软 Acrylic 的「排除混合层」是同一个思路：官方文档明确写了光靠模糊
+ * 不够，必须在玻璃下垫一层来保证对比度。 */
+html[data-opc-glass='1'] body {
+  background-color: var(--tc-veil);
+  transition: color 0.3s;
+}
+
+/* ── A26：文字 halo ────────────────────────────────────────────────────
+ *
+ * veil 解决不了极端情况：浅色主题 + 深色壁纸 + t=100，深色文字压在
+ * 模糊的深色桌面上就是读不清 —— 这是「文字色固定、背景不可预测」的
+ * 组合本身无解，垫多少都不够（垫到够就不是透明了）。
+ *
+ * 1px 的反向描边是这类场景的标准解法（地图、字幕、图片叠加文字都用它）：
+ * 每段文字自带一圈极淡的「自己的底」，无论背后是什么都能立住。
+ *
+ * 强度随透明度增长（t=0 时为 0，默认 28% 时约 0.17 几乎看不出），
+ * 所以正常使用下完全不影响观感，只在拉到很透时出来救命。
+ *
+ * 已知有实色底的文字不加：白 halo 落在白字上只会让字发胖。 */
+html[data-opc-glass='1'] body {
+  /* 只加 1px 一层。试过「1px 勾边 + 2px 过渡」的双层写法，对比度确实更高，
+     但正文开始发糊 —— 字边缘被白光糊掉，读起来比低对比更累。 */
+  text-shadow: 0 0 1px var(--tc-halo);
+}
+
+html[data-opc-glass='1'] .tc-btn-brand,
+html[data-opc-glass='1'] .tc-bubble-user {
+  text-shadow: none;
+}
+
+/* 弹窗蒙层：比 ConfirmDialog 的 0.45 再淡一档。
+   详情弹窗是「看一眼就走」的东西，蒙层压得太死就违背了玻璃的初衷 ——
+   背后的图片消息应该还能看出是彩色的。 */
+:root {
+  --tc-mask-soft: rgba(0, 0, 0, 0.34);
 }
 
 /* ── 按钮 ──
@@ -564,6 +1548,120 @@ button:focus-visible {
   background-color: var(--td-bg-color-component-disabled);
   color: var(--td-text-color-disabled);
   cursor: not-allowed;
+}
+
+/* ── A26：品牌色实心按钮跟着透明度降档 ────────────────────────────────
+ *
+ * 用户报告的「打开通讯录 / 发消息 / 发送按钮」在 100% 下是黑块（浅色）
+ * 或白块（深色），根因是它们直接用 `--td-brand-color` 做 background-color，
+ * 完全绕过了透明度体系。
+ *
+ * 为什么这类**不能**改成描边或淡底：按钮上是反色文字（白字压深底），
+ * 没有底色可退让。改成淡底 + 品牌色字，主按钮就失去了「这是页面上唯一
+ * 的强动作」这个作用 —— 全部虚掉的界面会让人不知道从哪儿下手。
+ *
+ * 所以保留实心，只给一个下限 `--tc-solid`（1.0 → 0.72）。
+ *
+ * hover / active 用**叠一层 background-image** 而不是改 alpha：t=0 时
+ * 实色块已经是 alpha 1.0，alpha 没有上升空间了，只能改 RGB。叠一层
+ * 10%/18% 的同向色在两种主题下都对 —— 浅色品牌色是深的，叠黑 = 变深；
+ * 深色品牌色是浅的，叠白 = 变亮。两者都读作「按下去更实」。 */
+html[data-opc-glass='1'] .tc-btn-brand:not(:disabled) {
+  background-color: var(--tc-solid);
+}
+
+html[data-opc-glass='1'] .tc-btn-brand:hover:not(:disabled) {
+  background-color: var(--tc-solid);
+  background-image: linear-gradient(rgb(0 0 0 / 0.1), rgb(0 0 0 / 0.1));
+}
+
+html[data-opc-glass='1'] .tc-btn-brand:active:not(:disabled) {
+  background-color: var(--tc-solid);
+  background-image: linear-gradient(rgb(0 0 0 / 0.18), rgb(0 0 0 / 0.18));
+}
+
+html[data-opc-glass='1'].dark .tc-btn-brand:hover:not(:disabled) {
+  background-image: linear-gradient(rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.1));
+}
+
+html[data-opc-glass='1'].dark .tc-btn-brand:active:not(:disabled) {
+  background-image: linear-gradient(rgb(255 255 255 / 0.18), rgb(255 255 255 / 0.18));
+}
+
+/* ── A26：分栏处的渐隐细线 ────────────────────────────────────────────
+ *
+ * 替代原来的 `borderRight: 1px solid var(--td-component-stroke)`。
+ *
+ * 两个改进叠在一起：
+ *
+ *   1. **换成 alpha 线**（`--tc-split`）。原来的固定灰阶在深色下是
+ *      #404040，不透明时是「提亮线」，透明后透出亮壁纸就反转成
+ *      「压暗的黑线」—— 用户报的就是这一条。alpha 白/黑只贡献相对
+ *      底下的恒定对比，永远不反转。
+ *
+ *   2. **两端渐隐**。一条贯穿整个高度的实线读起来是「把页面切一刀」；
+ *      两端淡出、只有中段存在，读起来是「两个区域之间的一点过渡」。
+ *      macOS 侧栏的分界就是这么画的，而不是一条通到底的线。
+ *
+ * 强度随透明度增长（`--tc-split-alpha`）：t=0 时接近原值，拉到 100%
+ * 表面色差消失，这条线就成为唯一的边界。 */
+.tc-split-hairline {
+  position: relative;
+}
+
+.tc-split-hairline::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent 0,
+    var(--tc-split) 14%,
+    var(--tc-split) 86%,
+    transparent 100%
+  );
+}
+
+/* ── A26：彩色图标块（快速创建模板 / 自定义 Agent 的图标）──────────────
+ *
+ * 40×40 的饱和色块是 100% 透明度下视觉重量最集中的东西 —— 面积不大，
+ * 但因为饱和度最高，比大块的白卡还跳（用户报的「设置页 Agent 图标块」
+ * 实测是 rgb(14,122,140) / rgb(0,168,112) 两块纯色）。
+ *
+ * 处理方式与消息流里的用户头像一致：按 `--opc-t` 从「实色 + 白图标」
+ * 插值到「16% 淡底 + 同色图标」。t=0 时结果与原来**完全一致**，
+ * 不会改掉用户已经认可的那一档观感；t=1 时只剩一块淡淡的色晕。
+ *
+ * 颜色由调用方通过内联 `--tile` 传入 —— 每个模板的色不一样，写不进 CSS。
+ * 图标用 `currentColor` 继承这里的 color，所以不要给 Icon 传 color="white"。
+ */
+.tc-tile {
+  background-color: color-mix(
+    in srgb,
+    var(--tile) calc((1 - var(--opc-t, 0)) * 100%),
+    color-mix(in srgb, var(--tile) 16%, transparent)
+  );
+  color: color-mix(in srgb, #fff calc((1 - var(--opc-t, 0)) * 100%), var(--tile));
+}
+
+/* 品牌色版本（设置页主题卡选中态的图标块）：同样的插值，只是颜色固定取品牌色。
+   与 .tc-tile 分开是因为图标色要取 `--tc-on-brand`（深色主题下它不是白色），
+   而不是写死的 #fff。 */
+.tc-chip-brand {
+  background-color: color-mix(
+    in srgb,
+    var(--td-brand-color) calc((1 - var(--opc-t, 0)) * 100%),
+    var(--td-brand-color-light)
+  );
+  color: color-mix(
+    in srgb,
+    var(--tc-on-brand) calc((1 - var(--opc-t, 0)) * 100%),
+    var(--td-brand-color)
+  );
 }
 
 /* 次要按钮：白底 + 浅描边，hover 时底色浮现 */
@@ -648,9 +1746,18 @@ button:focus-visible {
   border-color: var(--td-brand-color) !important;
 }
 
+/* A30（用户反馈）：聚焦时**不要描边**。
+ *
+ * 原先是「边框转品牌色 + 2px 柔光」，本意是提示焦点位置；但聊天区底部
+ * 一次就并排放着模型选择器和权限选择器，点其中任何一个，那颗按钮立刻
+ * 亮起一圈深色光环，而用户点它只是为了展开下拉 —— 焦点提示反而成了噪音。
+ *
+ * 保留 hover 的边框变化（那是「可以点」的提示），只把 focus 态还原成
+ * 与常态完全一致的边框与投影。键盘可达性由 `button:focus-visible` 那条
+ * 全局规则负责（下拉触发器是 button，Tab 过去仍有焦点环）。 */
 .t-select__wrap.t-is-focused {
-  border-color: var(--td-brand-color) !important;
-  box-shadow: 0 0 0 2px var(--td-brand-color-light) !important;
+  border-color: var(--td-component-stroke) !important;
+  box-shadow: none !important;
 }
 
 .t-input {
@@ -664,10 +1771,12 @@ button:focus-visible {
   border-color: var(--td-brand-color) !important;
 }
 
+/* 同上：输入类控件获得焦点时不再描边（含搜索框、备注框、设置页输入框）。
+   文本框本来就有光标作为焦点指示，多一圈深色描边只是把界面弄脏。 */
 .t-input.t-is-focused,
 .t-input:focus-within {
-  border-color: var(--td-brand-color) !important;
-  box-shadow: 0 0 0 2px var(--td-brand-color-light) !important;
+  border-color: var(--td-component-stroke) !important;
+  box-shadow: none !important;
 }
 
 .t-input__inner {
@@ -691,9 +1800,15 @@ button:focus-visible {
   color: var(--td-text-color-secondary) !important;
 }
 
-/* Select 下拉弹窗 */
+/* Select 下拉弹窗（也覆盖 Tooltip / Popconfirm / Dropdown —— TDesign 的
+   弹层族共用 `.t-popup__content` 这个面板）
+ *
+ * A27：底色从 `--td-bg-color-container` 换成 `--tc-overlay-surface`。
+ * 前者跟的是「抬升面」，t=100 时归零；弹层是**压在内容之上**的那一类，
+ * 必须走 0.9 下限。这里的 `!important` 是为了压掉 TDesign 的行内/组件样式，
+ * 所以换变量也只能在这一条里换。 */
 .t-popup__content {
-  background-color: var(--td-bg-color-container) !important;
+  background-color: var(--tc-overlay-surface) !important;
   border: 1px solid var(--td-component-stroke) !important;
   border-radius: var(--td-radius-medium) !important;
   box-shadow: var(--td-shadow-2) !important;
@@ -711,44 +1826,61 @@ button:focus-visible {
   margin: 2px 0 !important;
 }
 
+/* A75：下拉选项的悬停/选中统一到 --tc-fill-* 两档。
+ *
+ * 原来 hover 走 --td-bg-color-component-hover(#eeeeee)，是我们自绘菜单行
+ * （--tc-hover-chrome）之外的**第二套灰**：同一屏里「模型菜单的行」和
+ * 「权限下拉的行」hover 起来不是一个颜色。而选中态用的是
+ * --td-brand-color-light，浅色下正好也是 0.06 —— 于是**选中与悬停同色**，
+ * 用户看到的「选中回显」其实只是鼠标恰好停在上面。
+ *
+ * 现在：hover = --tc-fill-hover(0.06)、selected = --tc-fill-selected(0.10)。
+ * 选中比悬停深一档，鼠标划过已选中项时也不会「变浅」。 */
 .t-select-option:hover,
 .t-select-option.t-is-hover {
-  background-color: var(--td-bg-color-component-hover) !important;
+  background-color: var(--tc-fill-hover) !important;
 }
 
 .t-select-option.t-is-selected {
-  background-color: var(--td-brand-color-light) !important;
+  background-color: var(--tc-fill-selected) !important;
   color: var(--td-brand-color) !important;
 }
 
+/* 选中项被 hover 时保持 selected 档：不能被 hover 的浅色盖回去。 */
 .t-select-option.t-is-selected:hover {
-  background-color: var(--td-brand-color-light) !important;
+  background-color: var(--tc-fill-selected) !important;
 }
 
-/* ===== Select 下拉弹窗 —— 模型选择器专用增强 ===== */
-.model-select-popup .t-select__list,
+/* ===== Select 下拉弹窗增强 =====
+   A73 起模型选择器不再是 TDesign Select（换成自绘 ModelSelectPopup），
+   所以这里只剩权限模式选择器一条。原来给模型选择器写的那几条
+   （.model-select-popup …）随组件一起删掉，不留死规则。 */
 .permission-select-popup .t-select__list {
   padding: 4px !important;
 }
 
-.model-select-popup .t-select-option,
 .permission-select-popup .t-select-option {
   padding: 6px 10px !important;
   border-radius: var(--td-radius-small) !important;
   margin: 1px 0 !important;
 }
 
-.model-select-popup .t-select-option:hover,
-.model-select-popup .t-select-option.t-is-hover,
+/* 权限下拉的几何收窄（内边距/圆角/间距），配色继承上面两条 A75 规则，
+   这里不再重复写色 —— 一处改、两处生效。 */
 .permission-select-popup .t-select-option:hover,
 .permission-select-popup .t-select-option.t-is-hover {
-  background-color: var(--td-bg-color-component-hover) !important;
+  background-color: var(--tc-fill-hover) !important;
 }
 
-.model-select-popup .t-select-option.t-is-selected,
 .permission-select-popup .t-select-option.t-is-selected {
-  background-color: var(--td-brand-color-light) !important;
+  background-color: var(--tc-fill-selected) !important;
   color: var(--td-brand-color) !important;
+}
+
+/* 同上：选中项 hover 时保持 selected 档。缺了这条，鼠标一划过当前档位，
+   底色就从 0.10 掉回 0.06，看起来像「选中被取消了」。 */
+.permission-select-popup .t-select-option.t-is-selected:hover {
+  background-color: var(--tc-fill-selected) !important;
 }
 
 /* Select 触发器 —— medium 尺寸高度修正 */
@@ -757,6 +1889,128 @@ button:focus-visible {
 .t-select .t-input--medium {
   min-height: 32px !important;
   font-size: 13px !important;
+}
+
+/* ===== 输入框底部的「芯片式」选择器（A74）=====
+ *
+ * 用户反馈：思考强度 / 权限模式两颗下拉自带边框和灰底，跟左边那颗自绘的
+ * 模型触发器（无边框、透明底）并排时「不是一个体系」；字号也不一致
+ * （自绘 11px、TDesign 14px）。
+ *
+ * 做法：TDesign Select 开 `borderless`，再用这一条把三件事对齐 ——
+ *   1. 背景透明 + 无边框，hover 时才浮出一层浅底（与自绘触发器同一反馈）；
+ *   2. 字号 = --text-body(13px)，与浮层里的选项行同档；
+ *   3. 圆角 8px、左右内边距 8px，与自绘触发器同几何。
+ *
+ * ⚠️ 用 `.opc-chip-select` 这个自有类限定作用域，不要去改 `.t-select` 全局 ——
+ * 设置页 / 新对话页还有别的下拉，它们需要保留边框（那里是表单，不是工具条）。
+ */
+/* A75：外层壳必须**透明**。
+ *
+ * TDesign 给 `.t-select__wrap` 铺了 --td-bg-color-component(#f5f5f5)，而我们
+ * 只把内层 `.t-input` 改成了透明 —— 于是两颗 Select 芯片底下其实一直压着
+ * 一块 #f5f5f5，只是它和输入区的 #fafafa 只差 5 个色阶，肉眼几乎看不出。
+ *
+ * 看不出来不等于没问题：悬停时「壳 + 内层」各叠一层 0.06，合成出来是
+ * 0.12 —— 比左边那颗自绘模型触发器（单层 0.06）明显深一档，并排就能看出
+ * 三颗芯片不是一套。壳透明后只剩内层一层，三颗完全同色。 */
+.opc-chip-select {
+  background-color: transparent !important;
+}
+
+.opc-chip-select .t-input {
+  border: 0 !important;
+  background-color: transparent !important;
+  border-radius: 8px !important;
+  padding: 0 8px !important;
+  font-size: var(--text-body) !important;
+  color: var(--td-text-color-primary) !important;
+  transition: background-color 0.15s ease;
+}
+
+/* A75：三颗芯片的「悬停 / 展开」必须与左边那颗自绘触发器完全同步。
+ *
+ * 底色只认两个信号：
+ *   · `:hover`                                —— 鼠标在
+ *   · `.t-select-input--popup-visible`        —— 弹层真的开着
+ * 自绘那颗对应的是 `[aria-expanded='true']`。
+ *
+ * ⚠️ **不能用 `t-is-focused`**。TDesign 关掉弹层后仍把这个类留在触发器上
+ * （输入框还持有焦点），实测按 Esc 关闭后模型芯片立刻回落到透明、而两颗
+ * Select 芯片一直亮着 0.06 —— 三颗并排，一颗亮一颗不亮。
+ * 焦点只负责「不要描边、不要投影」，不负责底色。 */
+.opc-chip-select .t-input:hover,
+.opc-chip-select .t-select-input--popup-visible .t-input,
+.opc-chip-select .t-input[aria-expanded='true'],
+.opc-chip-select[aria-expanded='true'] .t-input {
+  background-color: var(--tc-fill-hover) !important;
+  box-shadow: none !important;
+}
+
+/* 焦点态：只清描边与投影，不上底色（理由见上）。 */
+.opc-chip-select .t-input--focused,
+.opc-chip-select .t-input.t-is-focused,
+.opc-chip-select .t-input:focus-within {
+  box-shadow: none !important;
+}
+
+/* 自绘的模型触发器（不是 TDesign Select，没有 .t-input 这一层）。
+ * 它的底色完全由这个类决定 —— 早先靠 Tailwind 的
+ * `hover:bg-[var(--tc-hover-chrome)]`，那条是**非 important**，
+ * 在 TDesign 的 `.t-select .t-input--medium` 一族规则面前优先级不够，
+ * 于是三颗芯片里只有它 hover 不亮、展开后也不亮。 */
+.opc-chip {
+  background-color: transparent;
+  transition: background-color var(--duration-fast) var(--ease-tencent);
+}
+
+.opc-chip:hover,
+.opc-chip[aria-expanded='true'] {
+  background-color: var(--tc-fill-hover);
+}
+
+/* ===== 开关型按钮的三态（A75）=====
+ *
+ * 附件回形针、群成员面板的「邀请」、群设置里的「邀请」都是**开关**：
+ * 常态透明、悬停浮一层、展开时常亮一层。
+ *
+ * 这些按钮原来把 `backgroundColor` 写在**内联 style** 里
+ * （`open ? brand-light : 'transparent'`），而内联样式的优先级高于
+ * Tailwind 的 `hover:bg-[...]` 类 —— 结果就是「悬停完全没有反馈」，
+ * 并且展开时的底色是 --td-brand-color-light、别的选中项也是它，
+ * 一旦那个令牌变了，这里会漏改。
+ *
+ * 现在三态全部收在这里，组件只负责打 data 标记 + aria-expanded。
+ * 用 aria-expanded 而不是另起一个 data-open：这个属性本来就该有
+ * （屏幕阅读器要知道这是个可展开的开关），不必再发明一个。
+ */
+[data-attach-toggle],
+[data-invite-toggle],
+[data-settings-invite-toggle] {
+  background-color: transparent;
+}
+
+[data-attach-toggle]:hover,
+[data-invite-toggle]:hover,
+[data-settings-invite-toggle]:hover {
+  background-color: var(--tc-fill-hover);
+}
+
+[data-attach-toggle][data-has-attachment='1'],
+[data-invite-toggle][aria-expanded='true'],
+[data-settings-invite-toggle][aria-expanded='true'] {
+  background-color: var(--tc-fill-selected);
+}
+
+/* 前缀图标与文字之间的呼吸：TDesign 默认给的是 8px，这里收到 4px，
+   否则「图标 + 两个字 + 箭头」在 120px 里挤成一条 */
+.opc-chip-select .t-input__prefix {
+  margin-right: 4px !important;
+}
+
+.opc-chip-select .t-input__suffix {
+  margin-left: 2px !important;
+  color: var(--td-text-color-secondary) !important;
 }
 
 /* ===== TDesign Button 按钮 ===== */
@@ -777,9 +2031,12 @@ button:focus-visible {
   background-color: transparent !important;
 }
 
+/* A75：文字按钮是透明底的，hover 与其它透明控件同一档（0.06 黑）。
+ * 原来写 #eeeeee —— 在白卡片上和 0.06 几乎一样，但落在 #fafafa 的容器上
+ * 就明显偏亮，和旁边的图标按钮并排能看出差别。 */
 .t-button--variant-text:hover {
   color: var(--td-text-color-primary) !important;
-  background-color: var(--td-bg-color-component-hover) !important;
+  background-color: var(--tc-fill-hover) !important;
 }
 
 .t-button--variant-base {
@@ -818,20 +2075,36 @@ button:focus-visible {
   border-color: var(--td-component-stroke) !important;
 }
 
-/* ===== ChatSender 样式 ===== */
-t-chat-sender,
-.t-chat-sender {
+/* ===== ChatSender 样式 =====
+ *
+ * ⚠️ A26 修正：这一段此前**大半是死代码**，这次实测才发现。
+ *
+ *   · `<t-chat-sender>` 是 custom element，标签名是 `t-chat-sender`，
+ *     **不存在** `.t-chat-sender` 这个 class —— 所有带这个 class 的后代
+ *     选择器从来没匹配到任何元素。
+ *   · 它 shadow root 里真实存在的 part 名是
+ *     `t-chat__input` / `t-chat__input__content` / `t-chat__input__textarea__wrapper`
+ *     / `t-chat__input__footer` / `t-chat__input__actions__*` 这一套；
+ *     原来写的 `container` / `textarea` / `send-btn` 在 DOM 里是 `no-element`
+ *     （逐条注入 `outline: 3px solid rgb(255,0,255)` 验证过）。
+ *
+ * 后果之一就是用户报的「输入框是白块」：视觉上那个盒子是
+ * `::part(t-chat__input__content)`，它自带 `background: #fff`（浅色）/
+ * `transparent`（深色）—— 深色下恰好没事，所以只有浅色暴露出来。
+ * 这个硬编码只能用 `::part()` 盖，CSS 变量进不去。
+ */
+t-chat-sender {
+  /* 这几个变量组件确实会读（实测有效）。
+     ⚠️ `--td-chat-sender-btn-bg` 组件**不读** —— 注入了也没反应。
+     发送键的颜色实际由 `--td-brand-color` 决定，见文件末尾的玻璃态覆盖。 */
   --td-chat-sender-bg: var(--td-bg-color-component) !important;
   --td-chat-sender-border-color: var(--td-component-stroke) !important;
   --td-chat-sender-text-color: var(--td-text-color-primary) !important;
   --td-chat-sender-placeholder-color: var(--td-text-color-placeholder) !important;
-  --td-chat-sender-btn-bg: var(--td-brand-color) !important;
-  --td-chat-sender-btn-color: var(--tc-on-brand) !important;
   width: 100% !important;
 }
 
-t-chat-sender::part(container),
-.t-chat-sender .t-chat-sender__container {
+/* 输入框本体：真正带底色、边框、圆角的是这一层（不是 `t-chat__input`） */t-chat-sender::part(t-chat__input__content) {
   background-color: var(--td-bg-color-component) !important;
   border-color: var(--td-component-stroke) !important;
   border-radius: 16px !important;
@@ -839,26 +2112,84 @@ t-chat-sender::part(container),
   box-shadow: var(--shadow-card) !important;
   transition:
     border-color var(--duration-base) var(--ease-tencent),
+    background-color var(--duration-base) var(--ease-tencent),
     box-shadow var(--duration-base) var(--ease-tencent) !important;
 }
 
-t-chat-sender::part(container):focus-within,
-.t-chat-sender .t-chat-sender__container:focus-within {
-  border-color: var(--td-brand-color) !important;
-  box-shadow: 0 0 0 3px var(--td-brand-color-light), var(--shadow-card) !important;
+/* A30（用户反馈）：点击输入框不再描边。
+ *
+ * 原先这里给 `:focus-within` 加了「边框转品牌色 + 3px 柔光」，于是每次
+ * 点进聊天框，整个输入区就被一圈深色光晕包住 —— 而输入框是页面里最常被
+ * 点的元素，这个提示出现的频率高到变成干扰。光标本身就是焦点指示，
+ * 这里只保留常态的边框与投影。 */
+t-chat-sender::part(t-chat__input__content):focus-within {
+  border-color: var(--td-component-stroke) !important;
+  box-shadow: var(--shadow-card) !important;
 }
 
-/* footer 插槽（模型/权限选择器）：与输入区保持呼吸感 */
-.t-chat-sender__footer,
-.t-chat-sender .t-chat-sender__footer {
-  min-height: 40px !important;
-}
-
-t-chat-sender [slot='footer-prefix'],
-.t-chat-sender .t-chat-sender__footer-prefix {
+/* footer-prefix 是 light DOM 的 slot 内容，后代选择器在这里有效。
+   （原来那条 `::part` 版 footer 高度规则已删：它从未生效过，
+   贸然让它生效会把 footer 从 32px 撑到 40px，属于与本轮无关的布局改动。） */
+t-chat-sender [slot='footer-prefix'] {
   display: flex !important;
   align-items: center !important;
   gap: var(--space-2) !important;
+}
+
+/* 输入区里的下拉（模型 / 权限 / 生图模型与尺寸）：**不描边**。
+ *
+ * A30（用户反馈）：点这三处时边框会转成品牌色（`--td-brand-color` 在本项目
+ * 是近黑 #1f1f1f），看起来就是「一点就多一圈黑框」。而点开下拉时鼠标必然
+ * 停在按钮上，所以那条 `:hover` 边框实际上是在每次点击时触发 —— 用户感知
+ * 到的就是「点击描边」，不是「悬停高亮」。
+ *
+ * 处理：边框恒为常态色，可点性改由**底色**表达（hover 略微加深）。
+ * 作用域锁在 footer-prefix 内 —— 设置页等处的 Select 仍保留边框高亮，
+ * 那里一行只有一个下拉，不存在「一点就黑一圈」的观感问题。 */
+/* A75：这条原来给壳铺了 --tc-hover-chrome，但内层 `.t-input` 也铺了一层，
+   两层叠起来是 0.12 —— 比自绘的模型触发器（0.06）深一倍，三颗芯片并排
+   一眼能看出深浅不一。底色现在只由内层一层承担（见 .opc-chip-select），
+   壳恒为透明；这条只负责把边框和投影钉死。 */
+t-chat-sender [slot='footer-prefix'] .t-select__wrap:hover,
+t-chat-sender [slot='footer-prefix'] .t-select__wrap.t-is-focused {
+  border-color: var(--td-component-stroke) !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* A35（用户反馈）：上一条只按 `.t-select__wrap` 兜，实测**不够**。
+ *
+ * TDesign 的 Select 触发器实际是 `.t-select-input > .t-input` 这一层在画边框，
+ * `.t-select__wrap` 只是外层壳。于是上面那条规则改的是壳（壳本来就没边框），
+ * 真正的 `.t-input:hover` 仍由第 1673 行的全局规则改成品牌色 —— 点开下拉时
+ * 鼠标必然停在触发器上，看到的就是「一点就黑一圈」。
+ *
+ * 这里把**每一层**都按常态色钉死：`.t-input`（边框实际所在）、`.t-select-input`
+ * （TDesign 加 t-is-focused 的地方）、以及内层 `<input>` 的浏览器焦点环。
+ * 可点性只由底色表达（hover 时 --tc-hover-chrome 轻微加深）。 */
+t-chat-sender [slot='footer-prefix'] .t-input,
+t-chat-sender [slot='footer-prefix'] .t-input:hover,
+t-chat-sender [slot='footer-prefix'] .t-input.t-is-focused,
+t-chat-sender [slot='footer-prefix'] .t-input:focus-within,
+t-chat-sender [slot='footer-prefix'] .t-select-input,
+t-chat-sender [slot='footer-prefix'] .t-select-input:hover,
+t-chat-sender [slot='footer-prefix'] .t-select-input.t-is-focused,
+t-chat-sender [slot='footer-prefix'] .t-select__wrap,
+t-chat-sender [slot='footer-prefix'] .t-select__wrap:hover,
+t-chat-sender [slot='footer-prefix'] .t-select__wrap.t-is-focused {
+  border-color: var(--td-component-stroke) !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* 内层真正的 `<input>`（filterable 的模型选择器会渲染一个）：
+ * 浏览器默认的 :focus-visible 焦点环画在它身上，也要一并去掉。
+ * 只针对输入类控件，`button:focus-visible` 那条全局规则不受影响 ——
+ * 键盘 Tab 到发送键、@ 成员 chip 时仍然有焦点环。 */
+t-chat-sender [slot='footer-prefix'] input:focus,
+t-chat-sender [slot='footer-prefix'] input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 /* ===== 聊天气泡（腾讯 IM 风格）===== */
@@ -899,46 +2230,301 @@ t-chat-sender [slot='footer-prefix'],
 }
 
 /* 思考过程折叠块：比正文再退一层的克制样式 */
+/* A35：思考块也去卡片化。
+ *
+ * 用户的原话是「AI 的执行过程不要用这种框」。思考块是执行过程的**第一段**，
+ * 早先它是一整块带底色的圆角卡片（比工具步骤还重），于是「已思考 2s」
+ * 和下面那串步骤一个像卡片、一个像列表，两种语言混在同一段过程里。
+ * 现在它和 `.tc-step` 用同一套语言：一行浅色小字 + 悬停浮现的淡底，
+ * 展开的正文是一块等宽明细（与 `.tc-step-detail` 同规格）。 */
 .tc-thinking {
-  background-color: var(--td-bg-color-component);
-  border: 1px solid var(--td-component-stroke);
-  border-radius: var(--td-radius-medium);
   color: var(--td-text-color-secondary);
-  transition: border-color var(--duration-fast) var(--ease-tencent);
-}
-
-.tc-thinking[open] {
-  border-color: var(--td-brand-color);
+  background-color: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .tc-thinking > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px 2px 4px;
+  margin-left: -4px;
+  border-radius: 6px;
   color: var(--td-text-color-placeholder);
-  font-size: var(--text-secondary);
+  font-size: var(--text-caption);
   line-height: var(--leading-normal);
+  transition: background-color var(--duration-fast) var(--ease-tencent);
 }
 
 .tc-thinking > summary:hover {
+  background-color: var(--tc-hover-chrome);
   color: var(--td-text-color-secondary);
 }
 
-t-chat-sender::part(textarea),
-.t-chat-sender textarea,
-.t-chat-sender .t-textarea__inner {
-  color: var(--td-text-color-primary) !important;
-  background: transparent !important;
+.tc-thinking > div {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background-color: color-mix(in srgb, var(--td-text-color-primary) 5%, transparent);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--td-text-color-secondary);
 }
 
-t-chat-sender::part(send-btn),
-.t-chat-sender .t-chat-sender__send-btn {
-  background-color: var(--td-brand-color) !important;
-  color: var(--tc-on-brand) !important;
-  border-radius: 50% !important;
+/* ── A33：答案全宽（去卡片化）────────────────────────────────────────
+ *
+ * 回答正文不再被气泡卡片包住，直接铺满消息列宽，
+ * 底部用一行图标承载复制 / 赞踩 / 重新生成 / 分享 / 分支。
+ *
+ * `.tc-bubble-assistant` 这个类名**保留**：它是「助手正文块」的语义锚点，
+ * 多个打靶脚本按它数消息条数；但视觉上不再是气泡 —— 底色、描边、圆角、
+ * 阴影全部撤掉。
+ *
+ * 用双类选择器而非 `!important`：与 `.tc-bubble-assistant` 特异性相同时
+ * 靠先后顺序也能赢，但打靶脚本里曾出现过「规则被追加到文件末尾」的情况，
+ * 这里显式提高特异性，避免将来又被单类规则盖回去。
+ */
+.tc-bubble-assistant.tc-answer {
+  background-color: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--td-text-color-primary);
+  /* A34：长代码行不再把整列撑宽 —— 列本身已有 min-w-0，
+     这里再把答案块钉在父宽度内，并允许超长串断行。 */
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
-t-chat-sender::part(send-btn):disabled,
-.t-chat-sender .t-chat-sender__send-btn:disabled {
-  background-color: var(--td-bg-color-component-disabled) !important;
-  color: var(--td-text-color-disabled) !important;
+/* 消息操作行：默认低对比，鼠标移上去才提亮。
+ *
+ * 常驻高对比会让每条回答底下挂一排图标，长会话里非常吵；但完全隐藏
+ * （hover 才出现）又会让用户根本不知道有这些能力 —— 折中成「看得见、
+ * 不抢戏」，hover 时提亮到正文级对比度。 */
+.tc-actions {
+  opacity: 0.5;
+  transition: opacity var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-actions:hover,
+.tc-actions:focus-within {
+  opacity: 1;
+}
+
+/* A55：用户消息操作行默认**完全隐藏**，只有鼠标移到那条用户消息上
+   （或键盘聚焦其中）时才淡入并可点。
+   悬停目标是外层 .tc-user-msg 整列（气泡 + 按钮行），不是气泡本身 ——
+   两者之间有 8px 间距，监听整列能让鼠标从气泡移向按钮的途中不闪断。
+   pointer-events 跟着一起关：隐藏状态不该挡住气泡上的文本选择。 */
+.tc-actions-user {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tc-user-msg:hover .tc-actions-user,
+.tc-user-msg:focus-within .tc-actions-user {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.tc-act-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--td-radius-small);
+  background: transparent;
+  color: var(--td-text-color-placeholder);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-tencent),
+    color var(--duration-fast) var(--ease-tencent),
+    transform var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-act-btn:hover {
+  background-color: var(--tc-hover-chrome);
+  color: var(--td-text-color-primary);
+}
+
+.tc-act-btn:active {
+  transform: scale(0.94);
+}
+
+/* 赞 / 踩的选中态。只在本会话内有效（组件内存），刷新即忘 */
+.tc-act-btn[data-active='true'] {
+  color: var(--td-brand-color);
+}
+
+/* 键盘可达性：图标按钮没有文字，必须给可见的焦点环 */
+.tc-act-btn:focus-visible {
+  outline: 2px solid var(--td-brand-color);
+  outline-offset: 1px;
+}
+
+/* 流式状态行的呼吸灯（A34）：实心核 + 向外扩散的环，同周期 1.8s。
+   比原来的「缩放脉冲 + 行尾三点」更克制：一个指示器只做一件事。 */
+@keyframes tc-breathe {
+  0%,
+  100% {
+    transform: scale(0.72);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+}
+
+@keyframes tc-ripple {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.55;
+  }
+  75%,
+  100% {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+}
+
+.tc-live-dot {
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+}
+
+.tc-live-core {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  animation: tc-breathe 1.8s var(--ease-tencent) infinite;
+}
+
+.tc-live-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  animation: tc-ripple 1.8s ease-out infinite;
+}
+
+/* 操作行里代码按钮前的细分隔线 */
+.tc-act-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 3px;
+  background-color: var(--td-component-stroke);
+  flex-shrink: 0;
+}
+
+/* 代码语言小字（ts · bash）：弱化到几乎只是注释 */
+.tc-code-langs {
+  margin-left: 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--td-text-color-placeholder);
+  white-space: nowrap;
+}
+
+/* 选区工具条（A34）：portal 到 body，fixed 定位 */
+.tc-sel-toolbar {
+  position: fixed;
+  z-index: 60;
+  transform: translate(-50%, -100%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 4px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background-color: #1f2328;
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.tc-sel-toolbar::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #1f2328;
+}
+
+/* 选区靠近窗口顶部时，工具条翻到下方，箭头方向也跟着翻 */
+.tc-sel-toolbar--below::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: #1f2328;
+}
+
+.tc-sel-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tc-sel-btn:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.tc-sel-sep {
+  width: 1px;
+  height: 14px;
+  background-color: rgba(255, 255, 255, 0.22);
+}
+
+/* 尊重系统的「减少动态效果」：呼吸灯停在一个静止的实心点 */
+@media (prefers-reduced-motion: reduce) {
+  .tc-live-core,
+  .tc-live-ring {
+    animation: none;
+  }
+
+  .tc-live-ring {
+    opacity: 0;
+  }
+}
+
+/* 输入区文字：`t-textarea` 自带一层 shadow root，`::part()` 不能跨两层，
+   所以原来那条 `::part(textarea)` 从来无效。实测 textarea 背景本来就是
+   transparent、文字色走 `--td-chat-sender-text-color`，这里不需要规则。 */
+
+/* ── A26：发送键跟着透明度降档 ────────────────────────────────────────
+ *
+ * 用户报的「发送按钮黑块（浅色）/ 白块（深色）」就是这颗 28×28 的圆。
+ *
+ * 它藏了两层 shadow：t-chat-sender → t-button → button[part=t-button]。
+ * `::part()` 不能跨两层，而 `--td-chat-sender-btn-bg` 组件又不读（实测
+ * 注入后按钮毫无变化）。唯一有效的闸门是 `--td-brand-color` —— 注入
+ * rgb(1,2,3) 后按钮确实变成了 rgb(1,2,3)。
+ *
+ * 所以这里覆盖品牌色本身，作用域锁在 t-chat-sender 内，页面别处的品牌色
+ * 不受影响。hover / active 必须一起给：不给的话 t=100 时鼠标移上去会从
+ * 0.72 突然跳到 1.0，一颗圆在玻璃上「啪」地变实。 */
+html[data-opc-glass='1'] t-chat-sender {
+  --td-brand-color: var(--tc-solid);
+  --td-brand-color-hover: var(--tc-solid-hover);
+  --td-brand-color-active: var(--tc-solid-active);
 }
 
 /* =====================================================================
@@ -970,6 +2556,9 @@ t-chat-sender::part(send-btn):disabled,
 .chat-markdown {
   color: var(--td-text-color-primary);
   line-height: 1.7;
+  /* A34：shadow 宿主也不能成为「撑宽整列」的源头 */
+  min-width: 0;
+  max-width: 100%;
   /* 代码底色：浅色下比气泡略深，深色下比气泡略更深，两个方向都拉开层次 */
   --md-code-bg: #f7f7f8;
   --md-code-border: rgba(0, 0, 0, 0.07);
@@ -999,8 +2588,12 @@ t-chat-sender::part(send-btn):disabled,
   border-radius: var(--td-radius-medium);
   padding: 12px 14px;
   margin: 12px 0;
+  max-width: 100%;
   overflow-x: auto;
 }
+
+/* A55：「代码自动换行」按钮已删，消息级 data-wrap 状态机一并移除。
+   这里不再保留 [data-wrap] 规则 —— 默认（块内横向滚动）即唯一行为。 */
 
 /* code：行内与块内共用。底色与代码块容器取同一值，
    于是「行内是浅色小片、块内填满容器」两种情况都成立且无接缝。 */
@@ -1075,4 +2668,431 @@ t-chat-sender::part(send-btn):disabled,
 
 .animate-fade-in {
   animation: fade-in-up var(--duration-slow) var(--ease-tencent) forwards;
+}
+
+/* ==========================================================================
+   A35-4：AI 执行过程 —— 去卡片化，改成一条步骤时间线
+   ==========================================================================
+
+   用户原话：「AI 的执行过程不要用这种框」。
+
+   改前的每一调用都是一个 `.tc-card`（浅底 + 圆角 + 边框），三次工具调用
+   就是三块并排的方块，视觉重量和「助手回答」一样重 —— 而它其实是**过程**，
+   回答才是结果。Claude Code / OpenCode / Hermes 这几家的终端与网页端一致地
+   一条竖线串起若干行，每行「圆点 + 图标 + 一句话 + 耗时」，
+   没有底色也没有边框，展开才看到等宽的明细块。
+
+   这里沿用那个形态，只用两种颜色表达状态（成功点绿、失败点红、运行中点
+   品牌色并呼吸）。竖线的两端各收一格（`:first-child` 从圆点下方开始，
+   `:last-child` 到圆点为止），避免线头从第一行上面冒出来、又在最后一行
+   下面拖一截。 */
+.tc-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.tc-step {
+  position: relative;
+  padding-left: 20px;
+  min-width: 0;
+}
+
+.tc-step::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: var(--td-component-stroke);
+}
+
+/* 首行从圆点下沿起、末行到圆点上沿止；只有一个步骤时整条线不画 */
+.tc-step:first-child::before {
+  top: 12px;
+}
+.tc-step:last-child::before {
+  bottom: calc(100% - 12px);
+}
+.tc-step:only-child::before {
+  display: none;
+}
+
+.tc-step-dot {
+  position: absolute;
+  left: 1px;
+  top: 9px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background-color: var(--td-text-color-placeholder);
+  transition: background-color var(--duration-base) var(--ease-tencent);
+}
+
+.tc-step.is-running .tc-step-dot {
+  background-color: var(--td-brand-color);
+  animation: tc-step-pulse 1.4s ease-in-out infinite;
+}
+.tc-step.is-done .tc-step-dot {
+  background-color: var(--td-success-color);
+}
+.tc-step.is-error .tc-step-dot {
+  background-color: var(--td-error-color);
+}
+
+@keyframes tc-step-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.72);
+  }
+}
+
+/* 单步的行头：透明底，悬停才浮现一层极淡的底 —— 它可点（展开明细），
+   但不需要常驻一个按钮的外形。 */
+.tc-step-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 6px 2px 4px;
+  margin-left: -4px;
+  border-radius: 6px;
+  transition: background-color var(--duration-fast) var(--ease-tencent);
+}
+.tc-step-head[data-clickable='1'] {
+  cursor: pointer;
+}
+.tc-step-head:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+/* 展开的明细：等宽、浅底、无边框。与上面那层「透明行头」形成两级，
+   而不是两块同等重量的卡片。 */
+.tc-step-detail {
+  margin: 3px 0 5px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background-color: color-mix(in srgb, var(--td-text-color-primary) 5%, transparent);
+  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 8rem;
+  overflow-y: auto;
+  color: var(--td-text-color-secondary);
+}
+
+/* 整组步骤的汇总行（「N 个步骤 · 2.4s」）——同样不加底，只做一行小字 */
+.tc-steps-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  /* A36：`align-self` 不能少。父级 `.tc-trace` 是纵向 flex，子项默认 stretch，
+     于是这行会**撑满整宽** —— 悬停时那层 --tc-hover-chrome 就变成一条横贯
+     消息列的灰带，像一条分割线而不是「这一行可以点」。
+     A35 时它的父级是普通块级容器，inline-flex 会自己收缩，所以没暴露。 */
+  align-self: flex-start;
+  padding: 2px 6px 2px 2px;
+  border-radius: 6px;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-tencent);
+}
+.tc-steps-bar:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+/* ==========================================================================
+   A35-6：滑动条的默认刻度 + 拖动时的实时数值气泡
+   ==========================================================================
+
+   刻度沿用透明度滑杆那套几何（滑块 14px、两端各留 7px），所以刻度容器
+   也是 `inset-inline: 7px`，刻度的 `left` 用百分比即可与滑块中心对齐。
+   气泡钉在滑块正上方，拖动时才出现（见 SettingsPage 的 RangeSlider）。 */
+.tc-range-ticks {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  bottom: 0;
+  height: 4px;
+  pointer-events: none;
+}
+
+.tc-range-tick {
+  position: absolute;
+  bottom: 0;
+  width: 2px;
+  height: 4px;
+  border-radius: 999px;
+  background-color: var(--td-text-color-placeholder);
+  transform: translateX(-50%);
+}
+
+.tc-range-bubble {
+  position: absolute;
+  bottom: 20px;
+  transform: translateX(-50%);
+  padding: 2px 7px;
+  border-radius: 7px;
+  background-color: var(--td-brand-color);
+  color: var(--tc-on-brand);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.28);
+}
+
+/* 气泡下方的小三角，指向滑块 */
+.tc-range-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid var(--td-brand-color);
+}
+
+/* ==========================================================================
+   A36：执行轨迹（Trace）—— 活动摘要 / diff 统计 / 嵌套思考 / 底部渐隐
+   ==========================================================================
+
+   参考形态（用户给的截图）：一行摘要说明「动了什么」，下面一条竖线串起
+   步骤，文件类步骤后面跟 `+109 -16`，思考节点缩进挂在对应步骤下面，
+   轨迹超出高度时底部淡出。
+
+   与 A35 的关系是**替换**而不是叠加：A35 已经把「卡片」改成「一行一步」，
+   这里补的是「一行读完就知道干了什么」—— 摘要、diff、嵌套。
+   A35 的 `.tc-step` / `.tc-step-dot` / `.tc-step-head` 全部复用，不另起一套。 */
+
+.tc-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* 摘要文字：一行放不下就省略，绝不让它把行高撑成两行 ——
+   收起状态下它就是整条轨迹的唯一出口，撑成两行会显得比正文还重。 */
+.tc-trace-summary {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-trace-count,
+.tc-trace-meta {
+  flex-shrink: 0;
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--td-text-color-placeholder);
+}
+
+/* 行头里的「动作词 + 目标」：动词固定，目标可截断。
+   目标用等宽字体 —— 文件名/路径里的 l/1/I、0/O 在比例字体下分不清。 */
+.tc-trace-verb {
+  flex-shrink: 0;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-trace-target {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--td-text-color-primary);
+}
+
+/* 状态/耗时靠右：中间的 diff 长度不定，用 margin-left:auto 比给目标加
+   flex-1 更稳 —— 后者会让「编辑 a.ts +109 -16」和「编辑 a.ts」两种行
+   的耗时列不对齐。 */
+.tc-trace-meta {
+  margin-left: auto;
+}
+
+/* diff 统计。增绿删红是代码 diff 的通用约定（与股票涨跌的红绿相反，
+   这里是代码不是行情，按代码来）。 */
+.tc-diff {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.tc-diff-add {
+  color: var(--td-success-color);
+}
+.tc-diff-del {
+  color: var(--td-error-color);
+}
+/* 没有 diff 数据时的 ±0：比增删更淡一档，表示「这里没有变化信息」，
+   而不是「确实改了 0 行」。 */
+.tc-diff-none {
+  color: var(--td-text-color-placeholder);
+  opacity: 0.75;
+}
+
+/* 轨迹滚动区。
+   为什么要限高：一条消息挂 30 个步骤时，不封顶就会把整个会话顶成
+   一屏全是过程、答案被挤到看不见。参考图也是同样处理。
+   渐隐遮罩只在真的溢出时挂（data-fade=1），短轨迹末尾不会莫名其妙发虚。 */
+.tc-trace-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin-top: 2px;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--td-component-stroke) transparent;
+}
+
+.tc-trace-scroll[data-fade='1'] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+}
+
+.tc-trace-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.tc-trace-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background-color: var(--td-component-stroke);
+}
+.tc-trace-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 嵌套思考节点的连接线。
+   不沿用 `.tc-step::before` 那条竖线：父步骤已经有自己的线和圆点，
+   再来一条同位置的线会重叠成一根更粗的线。这里用容器左边框，
+   天然从父级圆点下方起、到最后一个子节点止。 */
+.tc-trace-nest {
+  margin: 1px 0 4px;
+}
+
+.tc-trace-nested {
+  margin-left: 7px;
+  padding-left: 11px;
+  border-left: 1px solid var(--td-component-stroke);
+}
+
+/* 轨迹开头没有父级的思考节点：不画线（它不属于任何步骤） */
+.tc-trace-solo {
+  padding-left: 2px;
+}
+
+/* 嵌套里的「深度思考」再小一档：它比步骤更次要 */
+.tc-trace-nested .tc-thinking > summary {
+  font-size: 11px;
+}
+
+.tc-trace-faint {
+  color: var(--td-text-color-placeholder);
+}
+
+/* ── 后台任务胶囊 ─────────────────────────────────────────────────────
+   一颗胶囊，不是一条横幅：它描述的是「别处还在跑」，与当前这屏无关，
+   不该占据和消息同级的视觉重量。 */
+.tc-bg-tasks-wrap {
+  display: flex;
+  justify-content: flex-start;
+  padding-top: 2px;
+}
+
+.tc-bg-tasks {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px 4px 8px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 999px;
+  background-color: var(--td-bg-color-container);
+  color: var(--td-text-color-secondary);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-tencent),
+    color var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-bg-tasks:hover:not(:disabled) {
+  background-color: var(--tc-hover-chrome);
+  color: var(--td-text-color-primary);
+}
+
+.tc-bg-tasks:disabled {
+  cursor: default;
+}
+
+.tc-bg-tasks:focus-visible {
+  outline: 2px solid var(--td-brand-color);
+  outline-offset: 1px;
+}
+
+.tc-bg-tasks-go {
+  color: var(--td-brand-color);
+}
+
+/* ==========================================================================
+   A37：设置页的说明提示图标
+   ==========================================================================
+
+   用户要求「解释性小字收进提示图标内，保证页面干净整洁」。图标本身必须
+   足够小、足够淡 —— 它是「需要时才看」的东西，常驻高对比会变成新的噪音。
+   16px 的圆点按钮：hover 浮一层淡底表示可点，键盘聚焦有焦点环。 */
+.tc-hint-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background-color: transparent;
+  color: var(--td-text-color-placeholder);
+  cursor: help;
+  transition:
+    color var(--duration-fast) var(--ease-tencent),
+    background-color var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-hint-tip:hover {
+  background-color: var(--tc-hover-chrome);
+  color: var(--td-text-color-secondary);
+}
+
+/* 「当前不可用」这类需要被看见的说明：图标转警示色，否则用户不会去点它 */
+.tc-hint-tip[data-warn='1'] {
+  color: var(--td-warning-color);
+}
+
+.tc-hint-tip:focus-visible {
+  outline: 2px solid var(--td-brand-color);
+  outline-offset: 1px;
 }

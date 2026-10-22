@@ -27,7 +27,7 @@ import {
   canEnforce,
   describeEnforcementGap,
 } from '../server/agents/permissions.js';
-import { SCENARIOS, enforcementGap, restrictsDangerousTools } from '../src/scenarios.js';
+import { SCENARIOS, enforcementGap, restrictsDangerousTools, isModeGap, supportLimitation, PERMISSION_MODE_LABEL } from '../src/scenarios.js';
 import {
   categorizeTool,
   decideToolAccess,
@@ -117,25 +117,25 @@ const geminiMap: Array<[PermissionMode, string]> = [
   ['plan', 'plan'],
   ['acceptEdits', 'auto_edit'],
   ['bypassPermissions', 'yolo'],
-  // ⚠️ 注意这里不是 'default'：geminiApproval() 刻意把 default 也归到 plan（只读），
-  // 因为 `-p` 非交互模式无法应答审批提示。这是既有行为，本次不改（gemini 本机不可达，
-  // 改映射无法实测）。但矩阵必须如实反映这个退化，否则「工作场景 + gemini 改不了文件」
-  // 会被当成产品 bug 反复排查。断言见下方 D 段。
-  ['default', 'plan'],
+  // default → default（gemini 自己的默认档「逐次询问」）。
+  // 历史 bug：曾映射成 plan（只读），把「询问失败时的降级」和「只读模式」
+  // 混为一谈，「工作场景 + gemini 改不了文件」就是这么来的。
+  // gemini 0.63.0 --help 实测：default=prompt for approval，plan=read-only mode。
+  ['default', 'default'],
 ];
 for (const [mode, expected] of geminiMap) {
   const a = argsOf('gemini', mode);
   const i = a.indexOf('--approval-mode');
   eq(i >= 0 ? a[i + 1] : null, expected, `gemini ${mode} → --approval-mode ${expected}`);
 }
-// default 的退化必须被矩阵如实记录，而不是被当成「完整支持」
+// default 现在是忠实映射，矩阵必须把它算作「能强制」
 ok(
-  !permissionSupportFor('gemini').enforced.includes('default'),
-  'gemini 不把 default 算作「能强制」（它会退化为只读）'
+  permissionSupportFor('gemini').enforced.includes('default'),
+  'gemini 把 default 算作「能强制」（已按 gemini 语义忠实映射）'
 );
 ok(
-  !!permissionSupportFor('gemini').limitation,
-  'gemini 的 default 退化有 limitation 说明'
+  !(permissionSupportFor('gemini') as { deviates?: string[] }).deviates?.includes('default'),
+  'gemini 矩阵不再记录 default 退化'
 );
 
 // ============= D. 能力矩阵的合法性与「声称 = 实现」 =============
@@ -160,6 +160,24 @@ ok(permissionSupportFor('gemini').enforced.includes('plan'), 'gemini 声称支�
   eq(a[a.indexOf('--approval-mode') + 1], 'plan', 'gemini 声称与实现一致');
 }
 
+// claude 声称四档全强制 → buildArgs 必须真的产出对应 --permission-mode
+// （claude 2.1.291 --help 实测六值：acceptEdits/auto/bypassPermissions/manual/dontAsk/plan）
+const claudeMap: Array<[PermissionMode, string]> = [
+  ['plan', 'plan'],
+  ['acceptEdits', 'acceptEdits'],
+  ['bypassPermissions', 'bypassPermissions'],
+  ['default', 'manual'],
+];
+eq(permissionSupportFor('claude').enforced, ['default', 'acceptEdits', 'plan', 'bypassPermissions'], 'claude 声称四档全强制');
+for (const [mode, expected] of claudeMap) {
+  const a = argsOf('claude', mode);
+  const i = a.indexOf('--permission-mode');
+  eq(i >= 0 ? a[i + 1] : null, expected, `claude ${mode} → --permission-mode ${expected}`);
+}
+// 默认不传模式时也不能崩，且仍走 manual（fail-closed 方向）
+eq(argsOf('claude', undefined)[argsOf('claude', undefined).indexOf('--permission-mode') + 1], 'manual', 'claude 未传模式 → manual');
+ok(argsOf('claude', 'plan', { model: 'sonnet' }).includes('sonnet'), 'claude 带模型时仍有 --model');
+
 // workbuddy 走 SDK，没有命令行参数可查 —— 直接断言源码里确实把 permissionMode 传下去了
 {
   const sdkSrc = readFileSync(new URL('../server/agents/adapters/sdk.ts', import.meta.url), 'utf8');
@@ -178,9 +196,49 @@ for (const id of ['opencode', 'hermes']) {
   ok(!permissionSupportFor(id).enforced.includes('plan'), `${id} 不声称支持只读（实测无对应开关）`);
   ok(!!permissionSupportFor(id).limitation, `${id} 有 limitation 说明`);
 }
-eq(permissionSupportFor('claude').enforced, [], 'claude 不声称任何强制（二进制缺失，未实测）');
-ok(!!permissionSupportFor('claude').limitation, 'claude 有 limitation 说明');
+ok(!!permissionSupportFor('claude').toolWhitelist?.limitation, 'claude 的工具白名单有 limitation 说明');
 eq(permissionSupportFor('__nope__').enforced, [], '未知 Agent 安全兜底为不支持');
+
+// ---- A65：三个新 CLI 的「声称 = 实现」 ----
+// agy 声称四档全强制 → buildArgs 必须真的产出对应开关
+{
+  eq(
+    permissionSupportFor('antigravity').enforced,
+    ['default', 'acceptEdits', 'plan', 'bypassPermissions'],
+    'antigravity 声称四档全强制'
+  );
+  const plan = argsOf('antigravity', 'plan');
+  eq(plan[plan.indexOf('--mode') + 1], 'plan', 'antigravity plan → --mode plan');
+  const edit = argsOf('antigravity', 'acceptEdits');
+  eq(edit[edit.indexOf('--mode') + 1], 'accept-edits', 'antigravity acceptEdits → --mode accept-edits');
+  ok(argsOf('antigravity', 'bypassPermissions').includes('--dangerously-skip-permissions'), 'antigravity bypass → 跳过审批');
+  const dflt = argsOf('antigravity', 'default');
+  ok(
+    !dflt.includes('--mode') && !dflt.includes('--dangerously-skip-permissions'),
+    'antigravity default 不传任何权限开关（用它的 request-review 默认）'
+  );
+  // 正确性前提：不带 --add-dir 时 agy 会跑到 scratch 目录，工作区就形同虚设
+  const withCwd = argsOf('antigravity', undefined, { cwd: 'E:\\work\\proj' });
+  eq(withCwd[withCwd.indexOf('--add-dir') + 1], 'E:\\work\\proj', 'antigravity 把会话工作目录传成 --add-dir');
+}
+
+// pi 与 kimicli 明确「不声称」任何权限档位（pi 没有只读沙箱；kimi -p 与 --plan/--yolo 冲突）
+for (const id of ['pi', 'kimicli']) {
+  eq(permissionSupportFor(id).enforced, [], `${id} 不声称能强制任何权限档位`);
+  ok(!!permissionSupportFor(id).limitation, `${id} 有 limitation 说明`);
+}
+// 反证：kimi 在 -p 模式下绝不能带这些参数，否则 CLI 直接拒绝启动
+{
+  const forbidden = ['--plan', '--yolo', '--auto'];
+  for (const mode of ['plan', 'acceptEdits', 'bypassPermissions', 'default'] as const) {
+    const a = argsOf('kimicli', mode);
+    eq(
+      a.filter(x => forbidden.includes(x)),
+      [],
+      `kimicli ${mode} 不产出 ${forbidden.join('/')}（-p 与它们互斥）`
+    );
+  }
+}
 
 // ============= E. canEnforce =============
 section('E. canEnforce');
@@ -198,12 +256,10 @@ const gapOpencode = describeEnforcementGap('opencode', 'qa');
 ok(!!gapOpencode, 'opencode + 问答 → 有提示');
 ok(!!gapOpencode && gapOpencode.includes('只读'), '提示里点明「只读」', String(gapOpencode));
 const gapDev = describeEnforcementGap('opencode', 'dev');
-ok(!!gapDev, 'opencode + 开发 → 也有提示（acceptEdits 落不了地）');
-ok(
-  !!gapDev && !gapDev.includes('该场景承诺'),
-  '开发场景不说「承诺只读」（措辞要区分场景类型）',
-  String(gapDev)
-);
+// acceptEdits 落不了地**不提示**：opencode 的默认行为本来就是放行（能写文件、能执行），
+// 「开发」场景承诺的正是这两件事，承诺已被满足；只有 plan（只读）落不了地才是安全缺口。
+// （这条断言曾期望有提示，与 enforcementGap 的设计注释自相矛盾，是过期断言。）
+eq(gapDev, null, 'opencode + 开发 → 不提示（acceptEdits 默认行为已满足承诺，提示属噪音）');
 eq(describeEnforcementGap('codex', undefined), null, '没有场景时不提示');
 
 // ============= G. 只有一份判据（共享层） =============
@@ -342,9 +398,47 @@ section('I-4 矩阵与实现一致（工具白名单）');
 
 ok(permissionSupportFor('workbuddy').toolWhitelist?.enforced === true, 'workbuddy 声称能强制工具白名单');
 ok(permissionSupportFor('hermes').toolWhitelist?.enforced === true, 'hermes 声称能强制工具白名单');
-for (const id of ['codex', 'opencode', 'gemini', 'claude']) {
+ok(permissionSupportFor('claude').toolWhitelist?.enforced === true, 'claude 声称能强制工具白名单');
+for (const id of ['codex', 'opencode', 'gemini']) {
   eq(permissionSupportFor(id).toolWhitelist?.enforced, false, `${id} 不声称能强制工具白名单`);
   ok(!!permissionSupportFor(id).toolWhitelist?.limitation, `${id} 的工具白名单 limitation 非空`);
+}
+
+// claude 声称工具白名单 → buildArgs 必须真的产出 --allowedTools，
+// 且名单必须来自「工具名逐个在 claude.exe 里 grep 到」的那一张表
+{
+  const dev = argsOf('claude', 'acceptEdits', { allowedTools: ['file', 'shell', 'search'] });
+  const i = dev.indexOf('--allowedTools');
+  ok(i >= 0, 'claude 开发场景真的产出 --allowedTools', dev.join(' '));
+  if (i >= 0) {
+    // variadic：从 --allowedTools 之后一路取到参数末尾
+    const names = dev.slice(i + 1);
+    eq(
+      [...names].sort(),
+      ['Bash', 'Edit', 'Glob', 'Grep', 'NotebookEdit', 'Read', 'WebFetch', 'WebSearch', 'Write'],
+      'claude 白名单名单 = file + shell + search 三类映射'
+    );
+    ok(!names.includes('Task') && !names.includes('Skill'), 'claude 白名单不含可绕过白名单的工具（Task/Skill）');
+  }
+
+  const codeOnly = argsOf('claude', 'acceptEdits', { allowedTools: ['file'] });
+  const j = codeOnly.indexOf('--allowedTools');
+  eq(
+    j >= 0 ? codeOnly.slice(j + 1).sort() : null,
+    ['Edit', 'Glob', 'Grep', 'NotebookEdit', 'Read', 'Write'],
+    "claude ['file'] → 只放行文件类六件套"
+  );
+
+  // ['tools'] = 不限制（与 SDK includes('tools') 语义一致）→ 不产出 --allowedTools
+  ok(!argsOf('claude', 'default', { allowedTools: ['tools'] }).includes('--allowedTools'), "claude ['tools'] 不限制");
+  // 空名单 argv 表达不了 → 也不产出（保证由只读模式兜底，矩阵 limitation 已写明）
+  ok(!argsOf('claude', 'plan', { allowedTools: [] }).includes('--allowedTools'), 'claude 空白名单不产出 --allowedTools（argv 无法表达）');
+  // 未传 → 不产出（历史行为）
+  ok(!argsOf('claude', 'plan').includes('--allowedTools'), 'claude 未传白名单不产出 --allowedTools');
+  // variadic 必须在末尾，否则会吃掉后续参数
+  const withModel = argsOf('claude', 'acceptEdits', { model: 'sonnet', allowedTools: ['file'] });
+  ok(withModel.indexOf('--allowedTools') > withModel.indexOf('sonnet'), 'claude --allowedTools 放在 --model 之后（variadic 在末尾）');
+  eq(withModel.at(-1), 'NotebookEdit', 'claude --allowedTools 是最后一个参数组');
 }
 
 {
@@ -373,6 +467,69 @@ for (const s of SCENARIOS) {
   if (!rec) continue;
   const gap = enforcementGap(s, permissionSupportFor(rec));
   ok(gap === null, `${s.label}场景 + 推荐 Agent（${rec}）→ 无警告`, String(gap ?? ''));
+}
+
+// ============= J. isModeGap：会话中实时切换权限模式的判据 =============
+section('J. isModeGap（会话中实时切换权限模式用同一套判据）');
+
+// J-1 全强制 Agent（workbuddy/gemini/codex/claude）：四档都不算缺口
+for (const id of ['workbuddy', 'gemini', 'codex', 'claude']) {
+  for (const m of MODES) {
+    ok(!isModeGap(m, permissionSupportFor(id)), `${id} + ${m} → 不缺口（声称且能证明）`);
+  }
+}
+
+// J-2 只强制 default 的 Agent（opencode/hermes）：
+//   plan 落不了地 = 安全缺口，必须提示；
+//   acceptEdits / bypassPermissions 落不了地 = 默认行为本就放行，提示属噪音；
+//   default 是 enforced 里有的，不算缺口。
+for (const id of ['opencode', 'hermes']) {
+  ok(isModeGap('plan', permissionSupportFor(id)), `${id} + plan → 缺口（必须提示）`);
+  ok(!isModeGap('default', permissionSupportFor(id)), `${id} + default → 不缺口（enforced 含 default）`);
+  ok(!isModeGap('acceptEdits', permissionSupportFor(id)), `${id} + acceptEdits → 不缺口（默认行为已放行，提示属噪音）`);
+  ok(!isModeGap('bypassPermissions', permissionSupportFor(id)), `${id} + bypassPermissions → 不缺口（同上）`);
+}
+
+// J-3 未知 Agent / 未声明能力：只读仍然是安全缺口，其余不提示
+ok(isModeGap('plan', permissionSupportFor('__nope__')), '未知 Agent + plan → 缺口');
+ok(!isModeGap('default', permissionSupportFor('__nope__')), '未知 Agent + default → 不缺口');
+ok(isModeGap('plan', undefined), 'support 缺失 + plan → 缺口');
+ok(!isModeGap('acceptEdits', undefined), 'support 缺失 + acceptEdits → 不缺口');
+
+// J-4 与 enforcementGap 同源：tools 为空的场景（问答/写作），
+//     有没有提示完全由 isModeGap(scenario.permissionMode, support) 决定
+for (const id of ['workbuddy', 'gemini', 'codex', 'opencode', 'hermes', 'claude', '__nope__']) {
+  for (const sid of ['qa', 'write']) {
+    const s = SCENARIOS.find(x => x.id === sid)!;
+    const byMode = isModeGap(s.permissionMode, permissionSupportFor(id));
+    eq(enforcementGap(s, permissionSupportFor(id)) !== null, byMode, `${id} + ${sid}：enforcementGap 与 isModeGap 结论一致`);
+  }
+}
+
+// J-5 deviates 里登记的模式（声称支持但实际换了行为）= 功能性偏差，必须提示
+{
+  const fakeSupport = { enforced: ['default', 'plan'], deviates: ['plan'] } as const;
+  ok(isModeGap('plan', fakeSupport), 'deviates 登记的模式 → 缺口（功能性偏差也要提示）');
+  ok(!isModeGap('default', fakeSupport), '未登记退化的模式 → 不缺口');
+}
+
+// J-6 supportLimitation：有说明用说明，没有给人话兜底
+for (const id of ['workbuddy', 'gemini', 'codex', 'opencode', 'hermes', 'claude']) {
+  ok(!!supportLimitation(permissionSupportFor(id)), `${id} 的 limitation 非空`);
+}
+eq(supportLimitation(undefined), '该 Agent 未声明权限强制能力', 'support 缺失时的兜底文案');
+
+// J-7 提示文案引用的模式名，必须与 ChatInput 选择器里显示的是同一个词
+{
+  const labels = PERMISSION_MODE_LABEL;
+  ok(!!labels.plan && !!labels.default && !!labels.acceptEdits && !!labels.bypassPermissions, '四种模式都有中文名');
+  const chatInputSrc = readFileSync(new URL('../src/components/ChatInput.tsx', import.meta.url), 'utf8');
+  for (const m of MODES) {
+    ok(
+      chatInputSrc.includes(`label: '${labels[m]}'`),
+      `ChatInput 选择器显示「${labels[m]}」，与提示文案同词`
+    );
+  }
 }
 
 // ============= 结果 =============

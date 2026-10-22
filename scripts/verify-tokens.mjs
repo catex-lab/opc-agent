@@ -67,11 +67,7 @@ const sample = () => page.evaluate(() => {
   // 导航条底部两个原生按钮：preflight 关闭后若不重置，会保留 Chrome 原生灰底
   const navBtns = Array.from(document.querySelectorAll('nav button'));
   const themeBtn = navBtns[navBtns.length - 2];
-  // 未读角标：品牌色底 + 品牌底上的文字色。
-  // 只看 --tc-on-brand 变量不够 —— 早先这里写死 `text-white`，
-  // 浅色主题（黑底白字）看着没问题，深色主题品牌色反转为浅灰后
-  // 就变成「浅灰底 + 白字」，等于隐形。所以要量真实渲染的对比度。
-  const badge = Array.from(document.querySelectorAll('nav span')).find(s => s.className.includes('-right-0.5'));
+  // 未读角标已在 A19 随「导航图标不要角标」一同移除，不再断言对比度。
   const luminance = c => {
     const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => {
       v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
@@ -135,7 +131,6 @@ const sample = () => page.evaluate(() => {
   return {
     brand: v('--td-brand-color'),
     onBrand: v('--tc-on-brand'),
-    badgeContrast: contrastOf(badge),
     blueHits: [...new Set(blueHits)].slice(0, 8),
     blueCount: new Set(blueHits).size,
     // 扫了多少个节点。没有它，「界面没渲染出来」和「渲染了但没蓝」都是
@@ -190,21 +185,46 @@ const clickIf = async sel => {
     return false;
   }
 };
-const sweepSurface = async (name, marker) => {
+/**
+ * 采样一个界面「出来了没有」。
+ *
+ * 标志物有两种给法：
+ *   · `sel` 给了 → 用 `document.querySelector(sel)` 判断。**首选**，
+ *     因为页面文案会变，data-* 钩子不会。
+ *   · 只给 `marker` → 退回 `innerText.includes(marker)`。
+ *
+ * 为什么要有 `sel`：通讯录列表原本借用 Tab 文案「联系人」当标志物，
+ * A72 按用户要求把 Tab 改成「AGENT」之后，这三个字在通讯录页上**默认已经
+ * 不存在了**（「没有匹配的联系人」只在搜索时才出现，placeholder 不算 innerText），
+ * 断言当场失效。那次是 p50 漏跑本脚本才没当场发现 —— 已改为钩子，
+ * 以后改文案不再影响这条断言。
+ */
+const sweepSurface = async (name, marker, sel) => {
   const r = await sample();
   // 「界面出来了没有」用**内容**判断，不用节点数。
   // 一开始这里写的是 `nodes < 150 就算没渲染`，结果 150 这个数字是拍的 ——
   // 整个应用本来就只有 90~130 个节点，于是三个界面全被误判成空白页。
-  // 真正该问的是「这页的标志性文字在不在」。
-  const rendered = await page.evaluate(m => document.body.innerText.includes(m), marker);
+  // 真正该问的是「这页的标志性内容在不在」。
+  const rendered = sel
+    ? await page.evaluate(s => !!document.querySelector(s), sel)
+    : await page.evaluate(m => document.body.innerText.includes(m), marker);
   surfaces.push({ name, marker, rendered, count: r.blueCount, hits: r.blueHits, nodes: r.nodes });
 };
 
 await page.evaluate(() => document.documentElement.classList.remove('dark'));
 await page.waitForTimeout(400);
 if (await clickIf('button[title="通讯录"]')) {
-  await sweepSurface('通讯录列表', '在线');
-  if (await clickIf('button:has-text("WB")')) await sweepSurface('通讯录资料页', '详细资料');
+  // 标志物用 `data-contacts-list` 钩子，**不要用界面文案**。
+  // A37 之前这里的标志物是「在线」，它能命中纯属巧合：那句话来自右侧空态的
+  // 「本机共有 N 个 Agent 处于在线状态」，跟通讯录列表本身毫无关系。
+  // A37 按用户要求把那段小字删了，标志物当场失效 —— 断言报的是
+  // 「界面没出来」，读起来像布局崩了，实际只是探针借了一句不相干的文案。
+  // A72 把 Tab「联系人」改成「AGENT」又踩了同一类坑（文案变了），
+  // 所以这里改成钩子：列表容器 `data-contacts-list` 在空态/有内容时都在。
+  await sweepSurface('通讯录列表', '[data-contacts-list]', '[data-contacts-list]');
+  // 资料页的标志物用返回键（`data-detail-back`）而不是标题文字：
+  // A23 之后那页的「详细资料」标题已被去掉，只剩返回键与资料本身。
+  if (await clickIf('button[title^="查看 "]')) await sweepSurface('通讯录资料页', '基本信息');
 }
 await clickIf('button[title="聊天"]');
 if (await clickIf('button[title="设置"]')) await sweepSurface('设置页', '登录配置');
@@ -269,8 +289,7 @@ const checks = [
   // 这两件事的失败方式完全不同，各留一条。
   ['浅色 品牌底文字 = #ffffff', rgb(light.onBrand), '#ffffff'],
   ['深色 品牌底文字 = #171717', rgb(dark.onBrand), '#171717'],
-  ['浅色 未读角标对比度 ≥ 4.5', light.badgeContrast >= 4.5 ? '达标' : `仅 ${light.badgeContrast}`, '达标'],
-  ['深色 未读角标对比度 ≥ 4.5', dark.badgeContrast >= 4.5 ? '达标' : `仅 ${dark.badgeContrast}`, '达标'],
+  // A19 已移除导航图标角标，未读角标对比度不再断言
   // 遍历性断言：整棵 DOM 里不许出现任何蓝色系渲染色。
   ['浅色 全 DOM 无蓝色渲染色', light.blueCount === 0 ? '0 处' : `${light.blueCount} 处：${light.blueHits.join(' | ')}`, '0 处'],
   ['深色 全 DOM 无蓝色渲染色', dark.blueCount === 0 ? '0 处' : `${dark.blueCount} 处：${dark.blueHits.join(' | ')}`, '0 处'],

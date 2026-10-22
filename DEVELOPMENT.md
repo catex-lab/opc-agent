@@ -352,7 +352,6 @@ localStorage.setItem(STORAGE_KEY, JSON.stringify(agents));
 ```typescript
 export const APP_CONFIG = {
   name: '我的 AI 助手',           // 修改应用名称
-  nameInitial: 'A',              // 修改首字母
   description: '你的智能助理',    // 修改描述
   version: '1.0.0',
 };

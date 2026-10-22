@@ -1,35 +1,18 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import fs from 'fs';
+import { dataDirPath } from './paths.js';
 
-/**
- * 数据目录。
- *
- * 打包进 Electron 后，应用资源位于只读的 asar 里，不能再把数据库写在
- * 源码树旁边 —— 所以优先取 `OPC_DATA_DIR`（主进程会把它指向
- * `app.getPath('userData')`）。取不到时回落到「当前工作目录下的 data/」，
- * 开发态 `npm run dev` 的 cwd 就是仓库根目录，行为与改造前一致。
- *
- * 这里刻意**不用** `import.meta.url` / `__dirname`：打包时服务端会被
- * esbuild 打成 CJS，`import.meta` 在 CJS 输出里没有对应语义，
- * 而 `__dirname` 会随产物位置漂移（dist-electron/server 的上一级是
- * dist-electron，不是仓库根）。cwd + 环境变量是唯一稳定的选择。
- */
-const dataDir = process.env.OPC_DATA_DIR
-  ? path.resolve(process.env.OPC_DATA_DIR)
-  : path.join(process.cwd(), 'data');
+// 路径推导已拆到 `paths.ts`（无副作用），这里只做 re-export：
+// 既有 `import { dataDirPath } from './db.js'` 的调用点无需改动，
+// 而只想读路径的模块（模型目录缓存等）可以 import `paths.ts`，
+// 不会顺带把数据库打开。
+export { dataDirPath, imagesDir } from './paths.js';
+
+/** 本地别名：下面建库/建目录仍沿用原来的名字 */
+const dataDir = dataDirPath;
 
 const dbPath = path.join(dataDir, 'chat.db');
-
-/**
- * 生成图片的本地缓存目录（P4-4）。
- *
- * 放在数据库同级的 `images/` 下，随 `OPC_DATA_DIR` 一起走 —— 打包后
- * 就是 userData，卸载/迁移应用时和数据库一起搬，不会出现「库在、图没了」。
- * 由 db.ts 导出是为了让 HTTP 层不必再复制一遍这段路径推导逻辑
- * （它必须和 DB 用**同一个** dataDir，否则验证/打包态会错位）。
- */
-export const imagesDir = path.join(dataDir, 'images');
 
 // 确保数据目录存在
 if (!fs.existsSync(dataDir)) {
@@ -63,6 +46,9 @@ db.exec(`
     orchestration TEXT,
     -- 工作目录（场景/手动指定）。NULL = 用后端进程的 cwd
     cwd TEXT,
+    -- A62：推理/思考强度档位值（如 low / xhigh）。NULL = 不显式传，
+    -- 用 CLI 自己的默认。合法性由调用方按模型的 reasoning.levels 约束。
+    reasoning_effort TEXT,
     -- 场景模板 id（P4 场景包）
     scenario_id TEXT,
     -- 会话级系统提示词（场景注入），发送时优先于 Agent 自带
@@ -121,6 +107,8 @@ ensureColumn('sessions', 'agent_ids', 'agent_ids TEXT');
 ensureColumn('sessions', 'orchestration', 'orchestration TEXT');
 // P4：工作目录 + 场景绑定。老会话这三列不存在，补齐后为 NULL（= 未指定），语义正确。
 ensureColumn('sessions', 'cwd', 'cwd TEXT');
+// A62：思考强度档位。老会话为 NULL（= 用 CLI 默认），语义正确。
+ensureColumn('sessions', 'reasoning_effort', 'reasoning_effort TEXT');
 ensureColumn('sessions', 'scenario_id', 'scenario_id TEXT');
 ensureColumn('sessions', 'system_prompt', 'system_prompt TEXT');
 ensureColumn('sessions', 'pinned', 'pinned INTEGER NOT NULL DEFAULT 0');
@@ -128,6 +116,18 @@ ensureColumn('sessions', 'pinned', 'pinned INTEGER NOT NULL DEFAULT 0');
 ensureColumn('messages', 'author_agent_id', 'author_agent_id TEXT');
 // P4-4：生图消息的图片块。老消息为 NULL（纯文本），语义正确。
 ensureColumn('messages', 'images', 'images TEXT');
+// P6：成本统计三列。老消息为 NULL —— 前端按「无数据」不渲染，不会显示 0 秒/$0 冒充有数据。
+ensureColumn('messages', 'duration_ms', 'duration_ms INTEGER');
+ensureColumn('messages', 'cost', 'cost REAL');
+ensureColumn('messages', 'tokens', 'tokens INTEGER');
+/**
+ * 有序块序列（E2）。JSON 数组字符串，形如 [{"type":"thinking",...},{"type":"text",...}]。
+ *
+ * 为什么单独一列而不是继续拼进 content：content 只能表达「一段连续文本」，
+ * 而「思考 → 正文 → 工具 → 正文」这种交错顺序是它装不下的。老消息该列为
+ * NULL，读取侧用 legacyToBlocks() 从旧字段还原，不需要数据迁移。
+ */
+ensureColumn('messages', 'blocks', 'blocks TEXT');
 
 /** node:sqlite 的 changes 在部分版本返回 BigInt，统一转成 number */
 function toNumber(value: number | bigint): number {
@@ -173,6 +173,13 @@ export interface DbSession {
   orchestration: string | null;
   /** 工作目录。NULL = 用后端进程 cwd */
   cwd: string | null;
+  /**
+   * A62：推理/思考强度档位值（如 `low` / `xhigh`）。NULL = 不显式传参，
+   * 用 CLI 自己的默认（等价 config.toml 里那一行）。
+   *
+   * 存的是**档位值**不是档位名：换语言、官方改译名都不影响已存的数据。
+   */
+  reasoning_effort: string | null;
   /** 场景模板 id（P4） */
   scenario_id: string | null;
   /** 会话级系统提示词（场景注入） */
@@ -201,6 +208,17 @@ export interface DbMessage {
   tool_calls: string | null;
   /** 生图消息的图片块 JSON 数组字符串（P4-4）。纯文本消息为 NULL */
   images: string | null;
+  /** 这一轮回复的耗时（毫秒）。P6 成本统计；老消息为 NULL */
+  duration_ms: number | null;
+  /** 这一轮的费用（美元）。只有平台真给了账单价才有值 */
+  cost: number | null;
+  /** 这一轮消耗的 token 数。ACP 只有这个，没有费用 */
+  tokens: number | null;
+  /**
+   * 有序内容块（E2）。JSON 数组字符串；老消息为 NULL。
+   * 读取侧优先用它，为空再退回 content / tool_calls / images。
+   */
+  blocks: string | null;
 }
 
 /**
@@ -211,7 +229,24 @@ export interface DbMessage {
  * 一个可选列时会重演一遍。读取侧（`DbMessage`）仍保持严格，因为
  * `SELECT *` 出来的行里这些列一定存在。
  */
-export type DbMessageInput = Omit<DbMessage, 'images'> & { images?: string | null };
+/**
+ * 写入用的消息形态。
+ *
+ * `duration_ms` / `cost` / `tokens`（P6 成本统计）是**可选的**：用户消息
+ * 和早期消息没有用量数据，缺省即 NULL。让它们必传只会逼着每个调用点
+ * 写三个 null，把「没有数据」和「显式写 null」混为一谈。
+ */
+export type DbMessageInput = Omit<
+  DbMessage,
+  'images' | 'duration_ms' | 'cost' | 'tokens' | 'blocks'
+> & {
+  images?: string | null;
+  duration_ms?: number | null;
+  cost?: number | null;
+  tokens?: number | null;
+  /** 有序内容块 JSON（E2）。不传 = NULL，读取侧退回旧字段 */
+  blocks?: string | null;
+};
 
 // ============= 会话操作 =============
 
@@ -227,16 +262,39 @@ export function getSession(id: string): DbSession | undefined {
   return stmt.get(id) as unknown as DbSession | undefined;
 }
 
+/**
+ * A63：最近用过的目录（工作区面板的「最近目录」列表）。
+ *
+ * 口径：**用过才算**——只从 sessions.cwd 里取，按这些会话的最后活跃时间倒序。
+ * 不另建一张「最近目录表」：那样会出现「选过但从没在会话里用过」的幽灵条目，
+ * 两份数据还会各说各话。目录被所有会话放弃（cwd 清空）后自然消失。
+ *
+ * `MAX(updated_at)` 而不是 `ORDER BY updated_at`：同一个目录可能被多个会话
+ * 同时引用，GROUP BY 之后取它**最近一次被用到**的时间，才符合「最近」的语义。
+ */
+export function getRecentDirectories(limit = 8): string[] {
+  const stmt = db.prepare(`
+    SELECT cwd, MAX(updated_at) AS last_used
+    FROM sessions
+    WHERE cwd IS NOT NULL AND cwd != ''
+    GROUP BY cwd
+    ORDER BY last_used DESC
+    LIMIT ?
+  `);
+  const rows = stmt.all(limit) as unknown as Array<{ cwd: string }>;
+  return rows.map(r => r.cwd).filter(Boolean);
+}
+
 // 创建会话
 export function createSession(session: DbSession): DbSession {
   const stmt = db.prepare(`
     INSERT INTO sessions (
       id, title, model, agent_id, sdk_session_id,
       kind, agent_ids, orchestration,
-      cwd, scenario_id, system_prompt, pinned,
+      cwd, reasoning_effort, scenario_id, system_prompt, pinned,
       created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     bind(session.id),
@@ -248,6 +306,7 @@ export function createSession(session: DbSession): DbSession {
     bind(session.agent_ids),
     bind(session.orchestration),
     bind(session.cwd),
+    bind(session.reasoning_effort),
     bind(session.scenario_id),
     bind(session.system_prompt),
     bind(session.pinned ?? 0),
@@ -271,6 +330,7 @@ export function updateSession(
       | 'agent_ids'
       | 'orchestration'
       | 'cwd'
+      | 'reasoning_effort'
       | 'scenario_id'
       | 'system_prompt'
       | 'pinned'
@@ -312,6 +372,12 @@ export function updateSession(
     fields.push('cwd = ?');
     values.push(updates.cwd);
   }
+  // A62：与 cwd 同构 —— 传 null 是「清空档位回到 CLI 默认」，
+  // 不能和 undefined（这一项不更新）混为一个语义。
+  if (updates.reasoning_effort !== undefined) {
+    fields.push('reasoning_effort = ?');
+    values.push(updates.reasoning_effort);
+  }
   if (updates.scenario_id !== undefined) {
     fields.push('scenario_id = ?');
     values.push(updates.scenario_id);
@@ -343,6 +409,20 @@ export function deleteSession(id: string): boolean {
   return toNumber(result.changes) > 0;
 }
 
+/**
+ * 清空一个会话的所有消息，**保留会话本身**（P7「删除聊天记录」）。
+ *
+ * 与 `deleteSession` 的区别是意图：退出群聊/删除会话走 deleteSession
+ * （整条记录消失，列表里再也看不到）；删除聊天记录走这里 ——
+ * 群还在、成员还在、绑定场景还在，只是消息从头开始。
+ * 外键是 ON DELETE CASCADE，所以别用 deleteSession 的 SQL 顺手做这件事。
+ */
+export function deleteMessagesBySession(sessionId: string): number {
+  const stmt = db.prepare('DELETE FROM messages WHERE session_id = ?');
+  const result = stmt.run(bind(sessionId));
+  return toNumber(result.changes);
+}
+
 // ============= 消息操作 =============
 
 // 获取会话的所有消息
@@ -354,8 +434,8 @@ export function getMessagesBySession(sessionId: string): DbMessage[] {
 // 创建消息
 export function createMessage(message: DbMessageInput): DbMessage {
   const stmt = db.prepare(`
-    INSERT INTO messages (id, session_id, role, content, model, author_agent_id, created_at, tool_calls, images)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (id, session_id, role, content, model, author_agent_id, created_at, tool_calls, images, duration_ms, cost, tokens, blocks)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     bind(message.id),
@@ -366,20 +446,32 @@ export function createMessage(message: DbMessageInput): DbMessage {
     bind(message.author_agent_id),
     bind(message.created_at),
     bind(message.tool_calls),
-    bind(message.images)
+    bind(message.images),
+    bind(message.duration_ms),
+    bind(message.cost),
+    bind(message.tokens),
+    bind(message.blocks)
   );
 
   // 更新会话的 updated_at
   const updateStmt = db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
   updateStmt.run(bind(new Date().toISOString()), bind(message.session_id));
 
-  return { ...message, images: message.images ?? null };
+  // 返回值对齐 DbMessage：三个可选列没传就是 NULL，不是 undefined
+  return {
+    ...message,
+    images: message.images ?? null,
+    duration_ms: message.duration_ms ?? null,
+    cost: message.cost ?? null,
+    tokens: message.tokens ?? null,
+    blocks: message.blocks ?? null,
+  };
 }
 
 // 更新消息内容
 export function updateMessage(
   id: string,
-  updates: Partial<Pick<DbMessage, 'content' | 'tool_calls' | 'images'>>
+  updates: Partial<Pick<DbMessage, 'content' | 'tool_calls' | 'images' | 'blocks'>>
 ): boolean {
   const fields: string[] = [];
   const values: Array<string | null> = [];
@@ -395,6 +487,10 @@ export function updateMessage(
   if (updates.images !== undefined) {
     fields.push('images = ?');
     values.push(updates.images);
+  }
+  if (updates.blocks !== undefined) {
+    fields.push('blocks = ?');
+    values.push(updates.blocks);
   }
 
   if (fields.length === 0) return false;
@@ -416,8 +512,8 @@ export function deleteMessage(id: string): boolean {
 // 批量创建消息（用于保存对话）
 export function createMessages(messages: DbMessageInput[]): void {
   const stmt = db.prepare(`
-    INSERT INTO messages (id, session_id, role, content, model, author_agent_id, created_at, tool_calls, images)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (id, session_id, role, content, model, author_agent_id, created_at, tool_calls, images, duration_ms, cost, tokens, blocks)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   db.exec('BEGIN');
@@ -432,7 +528,11 @@ export function createMessages(messages: DbMessageInput[]): void {
         bind(msg.author_agent_id),
         bind(msg.created_at),
         bind(msg.tool_calls),
-        bind(msg.images)
+        bind(msg.images),
+        bind(msg.duration_ms),
+        bind(msg.cost),
+        bind(msg.tokens),
+        bind(msg.blocks)
       );
     }
     db.exec('COMMIT');

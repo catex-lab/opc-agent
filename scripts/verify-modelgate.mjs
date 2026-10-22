@@ -5,9 +5,10 @@
  * ACP Agent 自己管模型（models 为空、selectedModel 为空），于是明明在线
  * 却完全发不出消息。修复后按 `models.length > 0` 才要求必选。
  *
- * 三组断言：
+ * 四组断言：
  *   [1] 无模型列表（自管模型）→ 不渲染下拉、渲染说明徽标、输入框可编辑
- *   [2] 有模型列表           → 正常渲染下拉，不出现徽标
+ *   [2] 有模型列表           → 触发器显示选中模型
+ *   [2b] A73 浮层改版         → 标题栏 ⓘ / 行内 ✓ / 字标 / 角标 / 倍率右对齐 / 底部通栏
  *   [3] unreachable 状态      → 通讯录显示「网络不通」而不是「未接入」
  *
  * 依赖：先 npm run build（脚本托管 dist/）。运行：npm run verify:modelgate
@@ -48,9 +49,17 @@ const SESSIONS = [
   { id: 'g-wb', title: 'WorkBuddy', agent_id: 'workbuddy', kind: 'direct', created_at: new Date(Date.now() - 864e5).toISOString() },
 ];
 
+// A73： fixture 里补上角标 / 倍率 / provider 名 —— 新版浮层这三样都要渲染，
+// 一条都不带就验不出「行内 ✓ 与倍率右对齐」这些截图规格。
 const MODELS = [
-  { modelId: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', description: '均衡，日常首选' },
-  { modelId: 'claude-opus-4-1', name: 'Claude Opus 4.1', description: '最强推理' },
+  {
+    modelId: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', description: '均衡，日常首选',
+    providerName: 'Anthropic', tag: '付费', multiplier: '1.0x',
+  },
+  {
+    modelId: 'glm-5.3-flash-free', name: 'GLM-5.3 Flash', description: '免费档',
+    providerName: 'Z.AI', tag: '免费', multiplier: '0.34x',
+  },
 ];
 const MESSAGES = [
   { id: 'm1', role: 'user', content: '你好', created_at: new Date(Date.now() - 6e4).toISOString() },
@@ -139,8 +148,74 @@ await page.waitForTimeout(1400);
 {
   const badge = await page.locator('text=模型由 Agent 决定').count();
   check('不渲染说明徽标', badge === 0);
-  const selectText = await page.locator('text=Claude Sonnet 4.5').count();
-  check('模型下拉显示平台模型', selectText > 0);
+  // ⚠️ A73 起模型选择器不再是 TDesign `<Select>`，触发器是一颗自带
+  // `data-model-trigger` 的按钮，选中项是**文本节点**（不再是 input 的 value）。
+  // 原来这里读 `input.t-input__inner[placeholder="选择模型"]` 的 inputValue，
+  // 那个 input 已经不存在了。改成读按钮文本，语义不变：
+  // 「选中的模型名显示在触发器上」。
+  const trigger = page.locator('[data-model-trigger]');
+  check('模型触发器在场', (await trigger.count()) === 1);
+  const label = (await trigger.first().innerText().catch(() => '')).trim();
+  check('触发器显示平台模型', label === 'Claude Sonnet 4.5', `text=${JSON.stringify(label)}`);
+}
+
+// ── [2b] A73：浮层按截图改版后的四条规格 ──
+console.log('\n[2b] 模型浮层规格（标题栏 / 行内 ✓ / 底部通栏）');
+{
+  const trigger = page.locator('[data-model-trigger]').first();
+  await trigger.click();
+  await page.waitForTimeout(350);
+  const pop = page.locator('[data-model-popup]');
+  check('点触发器浮层出现', (await pop.count()) === 1);
+
+  // 规格 1：标题栏「内置模型」+ ⓘ
+  check('标题栏写「内置模型」', (await pop.getByText('内置模型', { exact: true }).count()) === 1);
+  check('标题栏有 ⓘ 说明按钮', (await pop.locator('[data-model-popup-info]').count()) === 1);
+
+  // 规格 2：每行 = 字标 + 名称 + 角标 + 右侧倍率
+  const rows = pop.locator('[role="option"]');
+  check('两行模型', (await rows.count()) === 2, `rows=${await rows.count()}`);
+  check('有免费角标', (await pop.getByText('免费', { exact: true }).count()) === 1);
+  check('有付费角标', (await pop.getByText('付费', { exact: true }).count()) === 1);
+  check('倍率按右对齐渲染', (await pop.getByText('0.34x', { exact: true }).count()) === 1);
+  // 字标：provider 名首字母。夹具里是 Anthropic / Z.AI → A / Z
+  const letters = await pop.locator('[role="option"] > span[aria-hidden]').allInnerTexts();
+  check('字标取 provider 首字母', letters.join('') === 'AZ', `letters=${JSON.stringify(letters)}`);
+
+  // 规格 3：选中行右侧 ✓ —— 用 data-model-row 而不是数 svg，
+  // 因为「有几条被选中」才是这条断言真正想守的东西
+  const selected = pop.locator('[data-model-row="1"]');
+  check('只有一行被选中', (await selected.count()) === 1);
+  check('选中行是 Claude Sonnet 4.5', (await selected.first().innerText()).includes('Claude Sonnet 4.5'));
+  check('选中行带 ✓ 图标', (await selected.first().locator('svg').count()) >= 1);
+  check('选中行标了 aria-selected', (await selected.first().getAttribute('aria-selected')) === 'true');
+
+  // 规格 4：底部通栏「添加模型」，且是钉在底边的（不在列表滚动区里）
+  const add = pop.locator('[data-model-popup-add]');
+  check('底部有「添加模型」通栏按钮', (await add.count()) === 1);
+  check('按钮文案是「添加模型」', (await add.innerText()).trim() === '添加模型');
+  const addBox = await add.boundingBox();
+  const listBox = await pop.locator('[data-model-popup-list]').boundingBox();
+  check(
+    '「添加模型」在列表下方（不跟着列表滚）',
+    !!addBox && !!listBox && addBox.y >= listBox.y + listBox.height - 1,
+    addBox && listBox ? `add.y=${Math.round(addBox.y)} list.bottom=${Math.round(listBox.y + listBox.height)}` : 'n/a'
+  );
+
+  // 交互：点第二行 → 选中切换、触发器文案跟着变、浮层收起
+  await rows.nth(1).click();
+  await page.waitForTimeout(250);
+  check('点选后浮层收起', (await pop.count()) === 0);
+  const after = (await trigger.innerText().catch(() => '')).trim();
+  check('触发器切成新选中的模型', after === 'GLM-5.3 Flash', `text=${JSON.stringify(after)}`);
+
+  // 键盘：Esc 能关（TDesign Select 自带的能力，换成自绘后不能丢）
+  await trigger.click();
+  await page.waitForTimeout(300);
+  check('再点能重新打开', (await pop.count()) === 1);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  check('Esc 能关掉浮层', (await pop.count()) === 0);
 }
 
 console.log('\n[3] unreachable 状态在资料页的呈现');

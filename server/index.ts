@@ -9,6 +9,7 @@ import path from "path";
 import fs from "fs";
 import * as db from "./db.js";
 import { registry } from "./agents/registry.js";
+import { findDef } from "./agents/definitions.js";
 import {
   getImageProvider,
   imageProvidersStatus,
@@ -18,12 +19,64 @@ import {
   type ImageSize,
 } from "./agents/adapters/image.js";
 import { cacheImage, imageFilePath } from "./image-store.js";
+import { validateDirectory } from "./workspaceDir.js";
+import {
+  loadAgentCredentials,
+  listCredentials,
+  saveCredential,
+  clearCredential,
+} from "./agent-credentials.js";
 import { runOrchestration, isInternalPhase, type TurnPhase } from "./orchestrator.js";
+import { createTurnRunner } from "./turn-runner.js";
+import { runWorkflow, WORKFLOW_TEMPLATE } from "./workflow.js";
+import { RunProjector } from "./agents/projector.js";
+import { publishRunEvent, runHub } from "./run-hub.js";
+
+// A38 记忆层（Hermes 式四层记忆）。注入发生在适配器拼 systemPrompt 时
+// （见 server/memory.ts 的 withMemoryContext），这里只暴露读写与检索。
+import {
+  bootMemory,
+  deleteSkill,
+  listSkills,
+  memoryStats,
+  readCoreMemory,
+  readSkill,
+  readUserProfile,
+  reindexMemory,
+  searchMemory,
+  writeCoreMemory,
+  writeSkill,
+  writeUserProfile,
+} from "./memory.js";
+// A40 权限门禁的自定义规则（JSON 配置，人可读可改）
+import {
+  BUILTIN_NOTE,
+  PERMISSION_RULES_PATH,
+  loadPermissionRules,
+  savePermissionRules,
+} from "./permission-rules.js";
+import { distillSkill } from "./skill-distill.js";
+import { textOfBlocks, toolCallsOfBlocks } from "../shared/blocks.js";
+import type { RunEvent } from "../shared/blocks.js";
 import {
   resolveModelForAgent,
+  setCatalogModelLookup,
   PLATFORM_DEFAULT_MODEL,
 } from "./model-routing.js";
+import { ensureCatalogLoaded, getCatalogSummary, getDefaultModelForAgent, invalidateCatalog, isCatalogModel, loadCatalog } from "./agents/modelCatalog.js";
+import { mapSdkModels } from "./agents/sdk-models.js";
+import { readDeclaredModels } from "./agents/wbProductConfig.js";
+import type { ModelOption } from "./agents/modelCatalog.js";
 import { getScenario } from "../shared/scenarios.js";
+
+/**
+ * 把应用内保存的 Agent 凭据注入进程环境。
+ *
+ * **必须在任何探测之前**（registry 的首次探测发生在启动后台任务里）：
+ * 否则冷启动那一轮会按「没有 Key」判成 needs-auth，用户得等 TTL 过期或
+ * 手动刷新才能看到真实状态。
+ */
+loadAgentCredentials();
 
 const app = express();
 
@@ -56,8 +109,10 @@ const PORT = process.env.PORT !== undefined ? Number(process.env.PORT) : 3000;
 // Middleware
 app.use(express.json());
 
-// 缓存可用模型列表
-let cachedModels: Array<{ modelId: string; name: string; description?: string }> = [];
+// 缓存可用模型列表（含 description / 免费付费角标，见 agents/sdk-models.ts）
+let cachedModels: ModelOption[] = [];
+/** SDK 自己声明的默认模型（`isDefault`），拿到之后优先于平台常量 */
+let sdkDefaultModel: string | undefined;
 // 平台默认模型：只对 SDK 类 Agent 有意义。模型路由规则见 model-routing.ts
 const defaultModel = PLATFORM_DEFAULT_MODEL;
 
@@ -197,6 +252,7 @@ app.post("/api/save-env-config", (req, res) => {
   
   // 清除模型缓存，以便重新获取
   cachedModels = [];
+  sdkDefaultModel = undefined;
   
   res.json({ 
     success: true, 
@@ -205,30 +261,100 @@ app.post("/api/save-env-config", (req, res) => {
   });
 });
 
+/**
+ * 取 WorkBuddy（SDK 类）的模型清单，带内存缓存。
+ *
+ * 抽成函数是为了「刷新模型清单」能复用同一条路径 —— 之前这段逻辑内联在
+ * GET 处理里，刷新入口就只能自己再写一份，两份迟早走偏。
+ *
+ * `force = true` 时忽略缓存重新问 SDK。返回的 `models` 可能是空数组
+ * （未登录 / SDK 不给清单），**兜底用的假数据只留在 GET 处理里** ——
+ * 让这个函数如实返回「没拿到」，调用方才知道该显示「未加载」还是「30 条」。
+ */
+async function loadSdkModels(force = false): Promise<{
+  models: ModelOption[];
+  defaultModel?: string;
+}> {
+  if (!force && cachedModels.length > 0) {
+    return { models: cachedModels, defaultModel: sdkDefaultModel ?? defaultModel };
+  }
+
+  console.log("[Models] Creating session to fetch available models...");
+  const session = await unstable_v2_createSession({
+    cwd: process.cwd()
+  });
+
+  let mapped: { models: ModelOption[]; defaultModel?: string } = { models: [] };
+  try {
+    // `getAvailableModelsRaw()` 在 SDK 的 d.ts 里没有声明（标了 experimental，
+    // 只有运行时实现），所以这里显式收窄类型，而不是 any 满天飞。
+    const rawSession = session as unknown as {
+      getAvailableModelsRaw(): Promise<unknown[]>;
+    };
+    const raw = await rawSession.getAvailableModelsRaw();
+    if (Array.isArray(raw) && raw.length > 0) {
+      // A64：SDK 的实时清单比官方产品配置旧，会把官方 cli agent 仍在用的模型漏掉
+      // （本机少 9 条，含档位阶梯最顶层的「极致」deep-model）。两边互补：
+      // 以 SDK 为主，只用官方配置补它没给的那些 —— 元数据也各取自己有的那份，
+      // 重叠 id 一律以 SDK 为准（它的倍率更新：fast-model 在配置里还是 x0.21）。
+      // 官方配置读不到就静默只用 SDK，绝不因此让菜单变空。
+      let merged: unknown[] = raw;
+      let filled = 0;
+      const declared = readDeclaredModels();
+      if (declared) {
+        const have = new Set(
+          raw.map(m => (m && typeof m === 'object' ? (m as { id?: unknown }).id : undefined))
+        );
+        const gap = declared.declared
+          .filter(id => !have.has(id))
+          .map(id => declared.byId.get(id))
+          .filter((m): m is NonNullable<typeof m> => !!m);
+        if (gap.length > 0) {
+          merged = [...raw, ...gap];
+          filled = gap.length;
+        }
+      }
+      mapped = mapSdkModels(merged);
+      console.log("[Models] raw 元数据:", raw.length, "条，其中免费",
+        mapped.models.filter(m => m.tag === '限时免费' || m.tag === '免费').length, "条",
+        filled > 0 ? `；按官方产品配置补齐 ${filled} 条（共 ${mapped.models.length}）` : "");
+    }
+  } catch (e) {
+    console.warn("[Models] getAvailableModelsRaw 不可用，退回 thin 列表：", (e as Error)?.message);
+  }
+
+  if (mapped.models.length === 0) {
+    const models = await session.getAvailableModels();
+    console.log("[Models] Got", models?.length ?? 0, "models (thin)");
+    if (models && Array.isArray(models)) {
+      mapped = { models: models.map(m => ({ modelId: m.modelId, name: m.name })) };
+    }
+  }
+
+  if (mapped.models.length > 0) {
+    cachedModels = mapped.models;
+    // SDK 自己声明了默认模型（isDefault，本机是 `default-model` / Auto）。
+    // 不用平台常量 `claude-sonnet-4` 冒充 —— 那个名字已经不在清单里了。
+    if (mapped.defaultModel) sdkDefaultModel = mapped.defaultModel;
+  }
+
+  return { models: cachedModels, defaultModel: sdkDefaultModel ?? defaultModel };
+}
+
 // 获取可用模型列表
+//
+// 用 `getAvailableModelsRaw()` 而不是 `getAvailableModels()`：后者只给
+// `{ modelId, name }`，把 credits（→ 免费/付费）、中文简介、上下文长度全丢了，
+// 模型菜单因此只剩名字（与 opencode 的 A57 是同一类问题）。
+// raw 拿不到时退回 thin，行为与改造前一致。
 app.get("/api/models", async (req, res) => {
   try {
-    if (cachedModels.length === 0) {
-      console.log("[Models] Creating session to fetch available models...");
-      
-      const session = await unstable_v2_createSession({ 
-        cwd: process.cwd()
-      });
-      
-      console.log("[Models] Session created, calling getAvailableModels()...");
-      const models = await session.getAvailableModels();
-      console.log("[Models] Got", models.length, "models");
-      
-      if (models && Array.isArray(models)) {
-        cachedModels = models;
-      }
-    }
-    
-    res.json({ 
-      models: cachedModels.length > 0 ? cachedModels : [
+    const { models } = await loadSdkModels();
+    res.json({
+      models: models.length > 0 ? models : [
         { modelId: "claude-sonnet-4", name: "Claude Sonnet 4" }
       ],
-      defaultModel 
+      defaultModel: sdkDefaultModel ?? defaultModel
     });
   } catch (error: any) {
     console.error("[Models] Error:", error);
@@ -237,7 +363,7 @@ app.get("/api/models", async (req, res) => {
         { modelId: "claude-sonnet-4", name: "Claude Sonnet 4" },
         { modelId: "claude-opus-4", name: "Claude Opus 4" }
       ],
-      defaultModel,
+      defaultModel: sdkDefaultModel ?? defaultModel,
       error: error?.message || String(error)
     });
   }
@@ -287,13 +413,153 @@ app.get("/api/agents/:agentId", async (req, res) => {
   }
 });
 
-// 某个 Agent 上报的可用模型（目前 ACP 类 Agent 会返回）
+// 某个 Agent 上报的可用模型（动态目录：CLI 枚举 + models.dev 元数据）
 app.get("/api/agents/:agentId/models", async (req, res) => {
   try {
-    const models = registry.modelsFor(req.params.agentId);
-    res.json({ models });
+    const agentId = req.params.agentId;
+    const models = await registry.modelsFor(agentId);
+    // 一并给出该 Agent 自己的默认模型：列表按 provider 分组后，第一条
+    // 不再等于「默认模型」（opencode 的默认是 zai/glm-4.7，而列表第一条
+    // 是 OpenCode Zen 的免费模型）。前端据此选初始值，不靠下标猜。
+    //
+    // 两级来源：定义表里写死的（opencode）优先，其次是 CLI **自己声明的**
+    // （codex 的 `~/.codex/config.toml`）。都没有就不给，前端退化成列表第一条。
+    const defaultModel =
+      findDef(agentId)?.defaultModel ?? (await getDefaultModelForAgent(agentId));
+    res.json({ models, defaultModel });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "获取模型列表失败" });
+  }
+});
+
+// ============= 模型清单（目录）状态与刷新 =============
+
+/**
+ * 当前模型清单的概况：每个 Agent 枚举到几条 + 上次枚举完成时间。
+ *
+ * **不触发任何 CLI 子进程**：只读内存里的目录状态。设置页一打开就跑一遍
+ * `qodercli`（7.5s）是不可接受的 —— 想真刷新是用户点按钮的动作。
+ */
+app.get("/api/model-catalog", async (req, res) => {
+  try {
+    // 首次访问时把目录带起来（启动预热通常已经完成，这里几乎瞬时返回）
+    await loadCatalog();
+    res.json({
+      ...getCatalogSummary(),
+      // WorkBuddy 走 SDK，不在 catalog 里。0 表示「还没取过」，不是「没有模型」
+      workbuddyCount: cachedModels.length,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "读取模型清单失败" });
+  }
+});
+
+/**
+ * 刷新模型清单（用户主动点）。
+ *
+ * 两套缓存都要作废，否则会刷新一半：
+ *   - `modelCatalog` 的目录（opencode / qoder / codex）→ `invalidateCatalog()`
+ *   - `cachedModels`（WorkBuddy 的 SDK 清单）→ 置空后重新问 SDK
+ *
+ * 会真的跑三个 CLI + 建一次 SDK 会话，实测 10~15s。前端必须给 loading，
+ * 别让用户以为点了没反应。
+ */
+app.post("/api/model-catalog/refresh", async (req, res) => {
+  const startedAt = Date.now();
+  try {
+    invalidateCatalog();
+    cachedModels = [];
+    sdkDefaultModel = undefined;
+
+    await loadCatalog(true);
+
+    // WorkBuddy 单独重取：它不在 catalog 里。失败不影响另外三个的结果，
+    // 如实回报错误，而不是把「没取到」显示成「0 个模型」。
+    let workbuddy: { count: number; error?: string } = { count: 0 };
+    try {
+      const sdk = await loadSdkModels(true);
+      workbuddy = { count: sdk.models.length };
+    } catch (e) {
+      workbuddy = { count: 0, error: (e as Error)?.message || String(e) };
+    }
+
+    const summary = getCatalogSummary();
+    const counts = Object.entries(summary.counts)
+      .map(([id, n]) => `${id}=${n}`)
+      .join(' ');
+    console.log(`[ModelCatalog] 用户手动刷新：${counts} workbuddy=${workbuddy.count}，耗时 ${Date.now() - startedAt}ms`);
+
+    res.json({
+      ...summary,
+      workbuddy,
+      tookMs: Date.now() - startedAt,
+    });
+  } catch (error: any) {
+    console.error("[ModelCatalog] 刷新失败:", error);
+    res.status(500).json({ error: error?.message || "刷新模型清单失败" });
+  }
+});
+
+// ============= Agent 凭据（应用内登录）=============
+
+/**
+ * 列出可在应用内配置凭据的 Agent。
+ *
+ * 只返回「声明了 credential 的」——没声明的（走 OAuth / 登录态文件的）
+ * 在这里列出来只会让用户填一个不生效的 Key。
+ */
+app.get("/api/agent-credentials", (req, res) => {
+  try {
+    res.json({ credentials: listCredentials() });
+  } catch (error: any) {
+    console.error("[Credentials] list error:", error);
+    res.status(500).json({ error: error?.message || "读取凭据失败" });
+  }
+});
+
+/**
+ * 保存凭据并**立刻重探该 Agent**。
+ *
+ * 不重探的话，用户填完 Key 界面上仍是「未登录」（探测结果有 5 分钟 TTL），
+ * 会以为没保存成功 —— 而这条路径最需要的就是即时反馈。
+ */
+app.post("/api/agent-credentials", async (req, res) => {
+  try {
+    const { agentId, key, baseUrl } = req.body ?? {};
+    if (typeof agentId !== 'string' || !agentId) {
+      return res.status(400).json({ error: "缺少 agentId" });
+    }
+    if (key !== undefined && typeof key !== 'string') {
+      return res.status(400).json({ error: "key 必须是字符串" });
+    }
+    if (baseUrl !== undefined && typeof baseUrl !== 'string') {
+      return res.status(400).json({ error: "baseUrl 必须是字符串" });
+    }
+
+    const credential = saveCredential(agentId, { key, baseUrl });
+    // 新 Key 可能让 `opencode models` 多出若干个 provider 的模型：
+    // 目录缓存必须跟着作废，否则用户填完 Key 还要等 24 小时才看见新模型。
+    invalidateCatalog();
+    const agent = await registry.probeOne(agentId, true);
+    res.json({ credential, agent });
+  } catch (error: any) {
+    console.error("[Credentials] save error:", error);
+    res.status(400).json({ error: error?.message || "保存凭据失败" });
+  }
+});
+
+// 清除某个 Agent 在应用内保存的凭据
+app.delete("/api/agent-credentials/:agentId", async (req, res) => {
+  try {
+    const credential = clearCredential(req.params.agentId);
+    if (!credential) return res.status(404).json({ error: "该 Agent 不支持应用内凭据" });
+    // 清掉 Key 后对应 provider 的模型会从 CLI 清单里消失，目录同样要重算
+    invalidateCatalog();
+    const agent = await registry.probeOne(req.params.agentId, true);
+    res.json({ credential, agent });
+  } catch (error: any) {
+    console.error("[Credentials] clear error:", error);
+    res.status(500).json({ error: error?.message || "清除凭据失败" });
   }
 });
 
@@ -329,12 +595,14 @@ app.get("/api/sessions/:sessionId", (req, res) => {
     
     const messages = db.getMessagesBySession(sessionId);
     
-    // 解析 tool_calls / images 的 JSON。
+    // 解析 tool_calls / images / blocks 的 JSON。
     // 坏值（历史遗留、手改过库）不能让整个会话打不开，所以逐条兜住。
     const parsedMessages = messages.map(msg => ({
       ...msg,
       tool_calls: parseJsonColumn(msg.tool_calls),
       images: parseJsonColumn(msg.images),
+      // 有序块序列（E2）。老消息为 NULL，前端会退回旧字段还原
+      blocks: parseJsonColumn(msg.blocks),
     }));
     
     res.json({ session, messages: parsedMessages });
@@ -356,10 +624,18 @@ app.post("/api/sessions", (req, res) => {
       orchestration = null,
       // P4：工作目录 + 场景绑定（均可选）
       cwd = null,
+      // A62：思考强度档位（可选）。只在该模型真有档位表时才由前端下发，
+      // 后端不校验合法性（见 SendContext.reasoningEffort 的说明）。
+      reasoningEffort = null,
       scenarioId = null,
       systemPrompt = null,
     } = req.body;
     const now = new Date().toISOString();
+
+    // A63：与 PATCH /api/sessions/:id 同一把尺子 —— 确定不存在的目录不落库。
+    if (typeof cwd === 'string' && cwd && validateDirectory(cwd) === 'not-found') {
+      return res.status(400).json({ error: `工作目录不存在：${cwd}` });
+    }
 
     // 群聊没有单一 Agent，模型按发起时的选择原样落库（成员各自的模型在调用时解析）
     const sessionModel = kind === 'group'
@@ -384,6 +660,7 @@ app.post("/api/sessions", (req, res) => {
       orchestration: kind === 'group' ? orchestration : null,
       // P4：工作目录与场景绑定随会话一起落库，刷新后仍在
       cwd: typeof cwd === 'string' && cwd ? cwd : null,
+      reasoning_effort: typeof reasoningEffort === 'string' && reasoningEffort ? reasoningEffort : null,
       scenario_id: typeof scenarioId === 'string' && scenarioId ? scenarioId : null,
       system_prompt: typeof systemPrompt === 'string' && systemPrompt ? systemPrompt : null,
       created_at: now,
@@ -397,11 +674,19 @@ app.post("/api/sessions", (req, res) => {
   }
 });
 
+/**
+ * A63：校验工作目录（cwd）是不是一个真能进去的目录。
+ *
+ * 实现在 `server/workspaceDir.ts`（拆开是为了让验证脚本能单测它 ——
+ * import 本文件会连带启动服务）。三种结局的语义见那里的注释：
+ * 只对**确定不存在**的值说不，查不明白的放过。
+ */
+
 // 更新会话
 app.patch("/api/sessions/:sessionId", (req, res) => {
   try {
     const { sessionId } = req.params;
-    const { title, model, orchestration, agentIds, cwd, scenarioId, systemPrompt, pinned } = req.body;
+    const { title, model, orchestration, agentIds, cwd, reasoningEffort, scenarioId, systemPrompt, pinned } = req.body;
 
     const updates: Parameters<typeof db.updateSession>[1] = { title, model };
     // 群聊头部可以随时改编排模式与成员，这里一并支持
@@ -412,7 +697,16 @@ app.patch("/api/sessions/:sessionId", (req, res) => {
       );
     }
     // P4：工作目录与场景绑定可随时改（空串表示清除 → 存 null）
-    if (typeof cwd === 'string') updates.cwd = cwd || null;
+    // A63：非空值先过目录校验，确定不存在的直接 400 —— 不把坏值写进库，
+    // 也不等用户发消息时才在 spawn ENOENT 里发现。
+    if (typeof cwd === 'string') {
+      if (cwd && validateDirectory(cwd) === 'not-found') {
+        return res.status(400).json({ error: `工作目录不存在：${cwd}` });
+      }
+      updates.cwd = cwd || null;
+    }
+    // A62：思考强度同理。null = 清空档位、回到 CLI 自己的默认
+    if (typeof reasoningEffort === 'string') updates.reasoning_effort = reasoningEffort || null;
     if (typeof scenarioId === 'string') updates.scenario_id = scenarioId || null;
     if (typeof systemPrompt === 'string') updates.system_prompt = systemPrompt || null;
     // 置顶开关（消息列表右键菜单）。只认布尔，避免 "false" 字符串被当成真
@@ -428,6 +722,26 @@ app.patch("/api/sessions/:sessionId", (req, res) => {
   } catch (error: any) {
     console.error("[Update Session] Error:", error);
     res.status(500).json({ error: error?.message || "更新会话失败" });
+  }
+});
+
+/**
+ * A63：最近用过的目录（工作区面板的「最近目录」）。
+ *
+ * 数据源就是 sessions.cwd 本身（见 db.getRecentDirectories 的口径注释）：
+ * 用过才算，不另建表、不记「选过没用过」的幽灵条目。目录被所有会话放弃后
+ * 自然从列表消失 —— 两份数据不可能各说各话。
+ *
+ * 这个端点**不校验目录是否还存在**：一个曾经用过、现在被删掉的目录出现在
+ * 最近列表里是有信息量的（用户大概想找回它），点了再由前端的校验给反馈。
+ */
+app.get("/api/recent-directories", (_req, res) => {
+  try {
+    const directories = db.getRecentDirectories();
+    res.json({ directories });
+  } catch (error: any) {
+    console.error("[Recent Directories] Error:", error);
+    res.status(500).json({ error: error?.message || "获取最近目录失败" });
   }
 });
 
@@ -449,6 +763,109 @@ app.delete("/api/sessions/:sessionId", (req, res) => {
 });
 
 // ============= 聊天 API =============
+
+/**
+ * 清空会话的聊天记录（P7 群设置「删除聊天记录」）。
+ *
+ * 与 DELETE /api/sessions/:id 的分工：那个是「退出群聊 / 删除会话」，
+ * 整条记录连同成员、场景绑定一起消失；这个只删消息，会话还在 ——
+ * 清完之后群里照样能说话，只是历史要从头开始。
+ * 返回删掉几条，让前端能说清「已删除 N 条记录」而不是干巴巴一句成功。
+ */
+app.delete("/api/sessions/:sessionId/messages", (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const session = db.getSession(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: "会话不存在" });
+    }
+    const deleted = db.deleteMessagesBySession(sessionId);
+    console.log(`[Sessions] 已清空 ${sessionId} 的聊天记录（${deleted} 条）`);
+    res.json({ success: true, deleted });
+  } catch (error: any) {
+    console.error("[Clear Messages] Error:", error);
+    res.status(500).json({ error: error?.message || "清空聊天记录失败" });
+  }
+});
+
+/**
+ * A33 分支：把「截至某条消息」的会话复制成一个新会话。
+
+ *
+ * 复制的是**会话元数据 + 截至该消息的全部消息**（含 blocks / tool_calls /
+ * images / 成本统计），在新会话 id 下重新落一遍。`sdk_session_id` 不复制：
+ * 各家 Agent 的会话令牌只在原进程里有效，带过去只会让新会话的第一个问题
+ * 被拒。这是「另起一炉重开一局」，不是「接着原来的上下文说」。
+ */
+app.post("/api/sessions/:sessionId/branch", (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { messageId } = req.body ?? {};
+
+    const session = db.getSession(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: "会话不存在" });
+    }
+
+    const all = db.getMessagesBySession(sessionId);
+    if (all.length === 0) {
+      return res.status(400).json({ error: "空会话无法分支" });
+    }
+
+    // 截至该消息（含它自己）。找不到 messageId 时退化为整段历史 ——
+    // 宁可按完整会话分支，也不返回 400 让用户白点一次。
+    const cut = messageId ? all.findIndex(m => m.id === messageId) : -1;
+    const copied = cut >= 0 ? all.slice(0, cut + 1) : all;
+
+    const newId = uuidv4();
+    const now = new Date().toISOString();
+    db.createSession({
+      id: newId,
+      title: `${session.title}（分支）`,
+      model: session.model,
+      agent_id: session.agent_id,
+      sdk_session_id: null,
+      kind: session.kind,
+      agent_ids: session.agent_ids,
+      orchestration: session.orchestration,
+      cwd: session.cwd,
+      // A62：分支要把档位一起带走 —— 同一份上下文才叫分支，
+      // 否则分支出来的会话静默回到 CLI 默认，用户以为设过
+      reasoning_effort: session.reasoning_effort,
+      scenario_id: session.scenario_id,
+      system_prompt: session.system_prompt,
+      pinned: 0,
+      created_at: now,
+      updated_at: now,
+    });
+
+    db.createMessages(
+      copied.map(m => ({
+        // 新 id：分支会话与原会话是两条独立的记录，
+        // 复制 id 会在同表里撞主键
+        id: uuidv4(),
+        session_id: newId,
+        role: m.role,
+        content: m.content,
+        model: m.model,
+        author_agent_id: m.author_agent_id,
+        created_at: m.created_at,
+        tool_calls: m.tool_calls,
+        images: m.images,
+        blocks: m.blocks,
+        duration_ms: m.duration_ms,
+        cost: m.cost,
+        tokens: m.tokens,
+      }))
+    );
+
+    console.log(`[Sessions] 分支 ${sessionId} → ${newId}（含 ${copied.length} 条消息）`);
+    res.json({ success: true, sessionId: newId, messageCount: copied.length });
+  } catch (error: any) {
+    console.error("[Branch Session] Error:", error);
+    res.status(500).json({ error: error?.message || "分支会话失败" });
+  }
+});
 
 // 权限响应 API
 // 权限请求可能来自任意 Agent（SDK 的 canUseTool、ACP 的 session/request_permission），
@@ -509,6 +926,16 @@ app.post("/api/chat", async (req, res) => {
     agentId = 'workbuddy',
     // P4：场景模板 id（可选）
     scenarioId,
+    // A62：思考强度档位（可选）。前端只在模型真有档位表时才发，
+    // 发 null / 不发的语义不同：null = 用户选了「CLI 默认」（要清掉旧值），
+    // undefined = 这一项不碰。
+    reasoningEffort,
+    // A33 重新生成：为 true 时 message 是「会话里最后一条 user 消息」的内容，
+    // 它已经在库里了 —— 这一轮不再重复落一条；同时把被顶掉的那条 assistant
+    // 回复删掉，否则刷新后会看到同一问两答。
+    regenerate = false,
+    // 被重新生成顶掉的那条 assistant 消息 id（regenerate 时必带）
+    replaceMessageId,
   } = req.body;
 
   console.log(`\n[Chat] ========== 新请求 ==========`);
@@ -524,6 +951,13 @@ app.post("/api/chat", async (req, res) => {
   const provider = registry.getProvider(agentId);
   if (!provider) {
     return res.status(404).json({ error: `未知的 Agent: ${agentId}` });
+  }
+
+  // A63：工作目录在**建会话 / 起流之前**就校验。确定不存在的直接 400，
+  // 报错说成「工作目录不存在」—— 而不是让用户等流式开始后看到一句
+  // 裸的 spawn ENOENT，那时候他早就忘了自己改过工作目录。
+  if (typeof cwd === 'string' && cwd && validateDirectory(cwd) === 'not-found') {
+    return res.status(400).json({ error: `工作目录不存在：${cwd}` });
   }
 
   // 获取或创建会话
@@ -556,6 +990,7 @@ app.post("/api/chat", async (req, res) => {
       orchestration: null,
       // P4：工作目录与场景绑定随首条消息落库（刷新后仍在）
       cwd: cwd || null,
+      reasoning_effort: reasoningEffort || null,
       scenario_id: scenarioId || null,
       system_prompt: systemPrompt || null,
       created_at: now,
@@ -568,6 +1003,10 @@ app.post("/api/chat", async (req, res) => {
     const patch: Parameters<typeof db.updateSession>[1] = {};
     if (!session.agent_id && agentId) patch.agent_id = agentId;
     if (!session.cwd && cwd) patch.cwd = cwd;
+    // 档位与 cwd 不同：它是**随时可改的会话设置**，不是「建会话时定死」。
+    // 所以只要前端显式带了值就覆盖（含 null = 回到 CLI 默认），
+    // 而不是 cwd 那种「只在为空时补」。
+    if (reasoningEffort !== undefined) patch.reasoning_effort = reasoningEffort || null;
     if (!session.scenario_id && scenarioId) patch.scenario_id = scenarioId;
     if (!session.system_prompt && systemPrompt) patch.system_prompt = systemPrompt;
     if (Object.keys(patch).length > 0) {
@@ -583,17 +1022,25 @@ app.post("/api/chat", async (req, res) => {
   const assistantMessageId = uuidv4();
 
   try {
-    db.createMessage({
-      id: userMessageId,
-      session_id: session.id,
-      role: 'user',
-      content: message,
-      model: null,
-      // 用户消息没有作者 Agent
-      author_agent_id: null,
-      created_at: now,
-      tool_calls: null,
-    });
+    // 重新生成不重复落 user 消息：那条提问已在库里，再写一条会让刷新后的
+    // 历史与界面不一致（界面只有一问，库里有两问）。
+    if (!regenerate) {
+      db.createMessage({
+        id: userMessageId,
+        session_id: session.id,
+        role: 'user',
+        content: message,
+        model: null,
+        // 用户消息没有作者 Agent
+        author_agent_id: null,
+        created_at: now,
+        tool_calls: null,
+      });
+    } else if (replaceMessageId) {
+      // 被顶掉的旧回复要真的删掉：只把新回复加在它后面，库里就会留下
+      // 同一问的两条答案，且前端刷新后还多出一条用户没见过的历史。
+      db.deleteMessage(replaceMessageId);
+    }
   } catch (dbError: any) {
     console.error(`[Chat] 保存用户消息失败:`, dbError);
     return res.status(500).json({ error: "保存消息失败", detail: dbError?.message });
@@ -611,41 +1058,89 @@ app.post("/api/chat", async (req, res) => {
   // 客户端真正断开 —— 实测会导致每次对话刚开始就被误判为「客户端断开」，
   // 子进程当场被杀、一个字都吐不出来。
   const ac = new AbortController();
+  /**
+   * 断线宽限（E5）。
+   *
+   * 以前客户端一断就立刻杀子进程 —— 于是「网络抖一下」等于「这次回答作废」。
+   * 现在留 20 秒：前端可以用 `GET /api/runs/:id/stream?after=N` 接回来，
+   * 期间事件一直进 runHub 的缓冲。宽限期内没人接才真的中止。
+   */
+  const REATTACH_GRACE_MS = 20_000;
   res.on('close', () => {
-    if (!res.writableEnded) {
-      console.log(`[Chat] 客户端断开，中止 ${agentId}`);
-      ac.abort();
-      registry.abort(agentId, session!.id);
-    }
+    if (res.writableEnded) return;
+    clientGone = true;
+    console.log(`[Chat] 客户端断开，${REATTACH_GRACE_MS / 1000}s 内可重连`);
+    const timer = setTimeout(() => {
+      if (runHub.subscriberCount(runId) > 0) return; // 已经有人接回去了
+      if (!ac.signal.aborted) {
+        console.log(`[Chat] 重连窗口结束，中止 ${agentId}`);
+        ac.abort();
+        registry.abort(agentId, session!.id);
+      }
+    }, REATTACH_GRACE_MS);
+    timer.unref?.();
   });
 
-  // 发送 init（携带消息 ID，前端据此挂载流式气泡）
-  res.write(`data: ${JSON.stringify({
-    type: "init",
+  /**
+   * 本轮的事件投影器（E1）。
+   *
+   * 从这里开始，前端收到的不再是「一堆扁平事件」，而是 block 生命周期：
+   *   block_open / block_delta / block_patch / block_close / run_end
+   * 顺序、思考位置、工具配对全部由它一处决定 —— 群聊与刷新还原共用同一套。
+   */
+  const runId = uuidv4();
+  /** 客户端是否已断开：断开后继续跑（等重连），但不再往死连接里写 */
+  let clientGone = false;
+  runHub.create(runId);
+  const projector = new RunProjector({
+    runId,
     sessionId: session.id,
-    userMessageId,
-    assistantMessageId,
-    model: selectedModel,
+    messageId: assistantMessageId,
     agentId,
-  })}\n\n`);
+    model: selectedModel,
+  });
 
-  let fullResponse = "";
-  let thinking = "";
-  const toolCalls: Array<{
-    id: string; name: string; input?: Record<string, unknown>;
-    status: string; result?: string; isError?: boolean;
-  }> = [];
+  /** 写一条 v2 事件：带 SSE id（断线重放按它续传） */
+  const writeEvent = (event: RunEvent) => {
+    if (!clientGone) {
+      try {
+        res.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`);
+      } catch {
+        clientGone = true;
+      }
+    }
+    publishRunEvent(event);
+  };
+  const writeEvents = (events: RunEvent[]) => {
+    for (const e of events) writeEvent(e);
+  };
+
+  // 先发 run_start：前端据此把流式气泡挂到真正的 messageId 上。
+  // 不能等 adapter 的 init —— 有的适配器要起进程几秒才吐第一行，
+  // 那几秒里界面会停在「发送中」且无法挂载任何块。
+  writeEvents(projector.push({ type: 'init', sessionId: session.id, model: selectedModel }));
+
   let newResumeToken: string | null = null;
-  // done 事件的载荷先攒着，等落库之后再发：客户端收到 done 常会立刻
+  // done 事件的载荷先攒着，等落库之后再发：客户端收到 run_end 常会立刻
   // 刷新会话，句子还没落库就会在这一瞬丢一条（与群聊 turn_done 同窗口）
-  let donePayload: { durationMs?: number; cost?: number } | null = null;
+  let donePayload: { durationMs?: number; cost?: number; tokens?: number } | null = null;
+  let hadError = false;
 
   const stream = registry.stream(agentId, {
     sessionId: session.id,
     prompt: message,
     systemPrompt,
-    cwd: cwd || process.cwd(),
+    // A63：生效顺序 请求体 > 会话里存的值 > 后端进程目录。
+    // 中间那一级是这轮补上的：前端每轮都会带 session.cwd，但万一哪个客户端
+    // （或重新生成一类的内部路径）没带，会话里 PATCH 过的工作目录仍然该生效，
+    // 而不是悄悄退回后端进程目录 —— 那正是「会话里改了工作区却不生效」的 bug。
+    cwd: cwd || session.cwd || process.cwd(),
     model: selectedModel,
+    // A62：档位值。老会话分支已经把本次请求 patch 进 session 了
+    // （`session = { ...session, ...patch }`），所以这里读 session 即最新值；
+    // 新会话分支则读请求体。`|| undefined` 把 '' → undefined，
+    // 免得给 CLI 传一个空串档位。
+    reasoningEffort: (session.reasoning_effort ?? undefined) || undefined,
     resumeToken,
     permissionMode: permissionMode || 'default',
     allowedTools: allowedToolsFor(scenarioId, session.scenario_id),
@@ -660,115 +1155,93 @@ app.post("/api/chat", async (req, res) => {
 
   try {
     for await (const ev of stream) {
-      switch (ev.type) {
-        case 'init':
-          if (ev.resumeToken && ev.resumeToken !== resumeToken) {
-            newResumeToken = ev.resumeToken;
-            db.updateSession(session.id, { sdk_session_id: ev.resumeToken });
-            console.log(`[Chat] 已保存续接令牌: ${ev.resumeToken}`);
-          }
-          break;
-
-        case 'text':
-          fullResponse += ev.content;
-          res.write(`data: ${JSON.stringify({ type: "text", content: ev.content })}\n\n`);
-          break;
-
-        case 'thinking':
-          thinking += ev.content;
-          res.write(`data: ${JSON.stringify({ type: "thinking", content: ev.content })}\n\n`);
-          break;
-
-        case 'tool': {
-          const toolCall = {
-            id: ev.id,
-            name: ev.name,
-            input: ev.input as Record<string, unknown> | undefined,
-            status: "running",
-          };
-          toolCalls.push(toolCall);
-          res.write(`data: ${JSON.stringify({
-            type: "tool",
-            id: toolCall.id,
-            name: toolCall.name,
-            input: toolCall.input,
-            status: toolCall.status,
-          })}\n\n`);
-          break;
-        }
-
-        case 'tool_result': {
-          const tool = toolCalls.find(t => t.id === ev.toolId) || toolCalls[toolCalls.length - 1];
-          if (tool) {
-            tool.status = ev.isError ? "error" : "completed";
-            tool.isError = ev.isError;
-            tool.result = ev.content;
-            res.write(`data: ${JSON.stringify({
-              type: "tool_result",
-              toolId: tool.id,
-              content: ev.content,
-              isError: ev.isError ?? false,
-            })}\n\n`);
-          }
-          break;
-        }
-
-        case 'permission_request':
-          res.write(`data: ${JSON.stringify({
-            type: "permission_request",
-            requestId: ev.requestId,
-            toolUseId: ev.toolUseId,
-            toolName: ev.toolName,
-            input: ev.input,
-            sessionId: session.id,
-            timestamp: Date.now(),
-          })}\n\n`);
-          break;
-
-        case 'error':
-          console.error(`[Chat] ${agentId} 报错: ${ev.message}`);
-          registry.recordError(agentId, ev.message);
-          res.write(`data: ${JSON.stringify({ type: "error", message: ev.message })}\n\n`);
-          break;
-
-        case 'done':
-          // 只记录载荷，发送挪到落库之后（见上方 donePayload 注释）
-          donePayload = { durationMs: ev.durationMs, cost: ev.cost };
-          break;
+      // 续接令牌要在投影之前处理：它属于会话状态，不是可渲染的块
+      if (ev.type === 'init' && ev.resumeToken && ev.resumeToken !== resumeToken) {
+        newResumeToken = ev.resumeToken;
+        db.updateSession(session.id, { sdk_session_id: ev.resumeToken });
+        console.log(`[Chat] 已保存续接令牌: ${ev.resumeToken}`);
       }
+
+      if (ev.type === 'done') {
+        donePayload = { durationMs: ev.durationMs, cost: ev.cost, tokens: ev.tokens };
+      }
+
+      if (ev.type === 'error') {
+        hadError = true;
+        console.error(`[Chat] ${agentId} 报错: ${ev.message}`);
+        registry.recordError(agentId, ev.message);
+      }
+
+      writeEvents(projector.push(ev));
     }
   } catch (error: any) {
+    hadError = true;
     console.error(`\n[Chat] ========== 错误 ==========`);
     console.error(`[Chat] Error Name:`, error?.name);
     console.error(`[Chat] Error Message:`, error?.message);
     console.error(`[Chat] Error Stack:`, error?.stack);
     registry.recordError(agentId, error?.message || String(error));
-    res.write(`data: ${JSON.stringify({ type: "error", message: error?.message || "处理请求时发生错误" })}\n\n`);
+    writeEvents(
+      projector.push({ type: 'error', message: error?.message || "处理请求时发生错误" })
+    );
   }
 
-  // 落库助手消息（含思考过程与工具调用）
+  // 收尾：关闭所有打开的块（文本/思考/工具），先于落库
+  const runStatus = ac.signal.aborted ? 'aborted' : hadError ? 'error' : 'ok';
+  const { closes, end } = projector.finish(runStatus, donePayload ?? undefined);
+  writeEvents(closes);
+
+  // 落库助手消息（E2：整条块序列一次写入，刷新后与流式中同一份数据）
   // 中止且一个字都没产出时不要落库：否则界面上会多出一个空气泡，
   // 刷新后也还在（用户只会看到一条没有内容的「回复」）。
-  const abortedEmpty = ac.signal.aborted && fullResponse.trim() === '' && toolCalls.length === 0;
+  const blocks = projector.blockList;
+  const abortedEmpty = ac.signal.aborted && blocks.length === 0;
   if (abortedEmpty) {
     console.log(`[Chat] ${agentId} 被中止且无产出，跳过落库`);
   } else try {
+    const toolCalls = toolCallsOfBlocks(blocks);
     db.createMessage({
       id: assistantMessageId,
       session_id: session.id,
       role: 'assistant',
-      content: fullResponse,
+      // content 仍是纯文本摘要（列表预览、搜索、老组件都靠它）
+      content: textOfBlocks(blocks),
       // 未指定模型时记 null（而不是把平台默认值写进去冒充它的模型）
       model: selectedModel ?? null,
       // 一对一里这个端点固定只服务一个 Agent，直接记下它；
       // 群聊时同一会话会有多个作者，由编排引擎逐个写入
       author_agent_id: agentId,
       created_at: new Date().toISOString(),
+      // tool_calls 保留：老版本前端/导出逻辑仍读它
       tool_calls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null,
+      // 真正驱动渲染的是这一列（顺序、思考位置、工具状态都在里面）
+      blocks: blocks.length > 0 ? JSON.stringify(blocks) : null,
+      // P6 成本统计：耗时/费用/token 跟着这条消息一起落库。
+      duration_ms: donePayload?.durationMs ?? null,
+      cost: donePayload?.cost ?? null,
+      tokens: donePayload?.tokens ?? null,
     });
 
+    // A39：技能自动沉淀。放在落库之后 —— 只有**真正留下来的**轨迹才值得学。
+    // 整段包 try：它只是聊天流程的副产品，任何一个异常都不该让这轮回复失败。
+    try {
+      const r = distillSkill({
+        prompt: message,
+        blocks,
+        durationMs: donePayload?.durationMs ?? null,
+        agentId,
+        aborted: ac.signal.aborted,
+        hadError,
+      });
+      if (r.status === 'created') console.log(`[Skill] 沉淀新技能：${r.name}`);
+      else if (r.status === 'reused') console.log(`[Skill] 命中已有技能：${r.name}（第 ${r.uses} 次）`);
+    } catch (e: any) {
+      console.error('[Skill] 沉淀失败（不影响聊天）:', e?.message ?? e);
+    }
+
     const messages = db.getMessagesBySession(session.id);
-    if (messages.length <= 2) {
+    // 重新生成不改标题：那条权重判据只对「新会话的第一轮」有意义
+    if (!regenerate && messages.length <= 2) {
       db.updateSession(session.id, {
         title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
         model: selectedModel,
@@ -778,21 +1251,204 @@ app.post("/api/chat", async (req, res) => {
     console.error(`[Chat] 保存助手消息失败:`, dbError);
   }
 
-  if (thinking) {
-    console.log(`[Chat] 思考过程 ${thinking.length} 字（未落库）`);
-  }
-
-  // 落库之后才发 done：客户端收到 done 可能立刻刷新会话
-  if (donePayload) {
-    res.write(`data: ${JSON.stringify({
-      type: "done",
-      duration: donePayload.durationMs,
-      cost: donePayload.cost,
-    })}\n\n`);
-  }
+  // 落库之后才发 run_end：客户端收到它可能立刻刷新会话
+  writeEvent(end);
 
   console.log(`[Chat] 请求完成 ✓ (${agentId})`);
   res.end();
+});
+
+/**
+ * 后台任务：还在跑、但用户可能已经离开的那些 run（A36）。
+ *
+ * 只读、无副作用。前端每 5 秒拉一次，用它在消息列表底部显示
+ * 「N 个后台任务运行中」——在此之前，切到别的会话之后，原来那轮
+ * 是死是活界面上完全看不出来。
+ *
+ * 注意路由顺序：这条必须写在 `/api/runs/:runId/stream` **之前**也没关系
+ * （路径段数不同，不会互相吞），但放在一起更便于对照阅读。
+ */
+/**
+ * 记忆总览：MEMORY / USER / skills 列表 + 预算统计。
+ */
+app.get("/api/memory", (_req, res) => {
+  try {
+    res.json({
+      core: readCoreMemory(),
+      user: readUserProfile(),
+      skills: listSkills().map(s => ({ name: s.name, title: s.title, tokens: s.tokens })),
+      stats: memoryStats(),
+    });
+  } catch (error: any) {
+    console.error("[Memory] read error:", error);
+    res.status(500).json({ error: error?.message || "读取记忆失败" });
+  }
+});
+
+/**
+ * 保存 MEMORY / USER。
+ *
+ * 超预算**照样保存**、只在注入时截断：在保存时就砍内容，
+ * 用户会在编辑框里静默丢掉刚写的后半段（Hermes 也是冻结快照语义）。
+ */
+app.put("/api/memory", (req, res) => {
+  try {
+    const { core, user } = req.body ?? {};
+    const out: Record<string, unknown> = {};
+    if (typeof core === "string") out.core = writeCoreMemory(core);
+    if (typeof user === "string") out.user = writeUserProfile(user);
+    res.json({ ok: true, ...out, stats: memoryStats() });
+  } catch (error: any) {
+    console.error("[Memory] write error:", error);
+    res.status(500).json({ error: error?.message || "保存记忆失败" });
+  }
+});
+
+/** 全文检索（FTS5）。查询词做语法转义，输入减号也不会炸。 */
+app.post("/api/memory/search", (req, res) => {
+  try {
+    const { query, limit } = req.body ?? {};
+    if (typeof query !== "string" || !query.trim()) {
+      res.status(400).json({ error: "query 不能为空" });
+      return;
+    }
+    res.json({ hits: searchMemory(query, Math.min(Number(limit) || 10, 50)) });
+  } catch (error: any) {
+    console.error("[Memory] search error:", error);
+    res.status(500).json({ error: error?.message || "检索失败" });
+  }
+});
+
+app.get("/api/memory/skills/:name", (req, res) => {
+  const skill = readSkill(req.params.name);
+  if (!skill) {
+    res.status(404).json({ error: "技能不存在" });
+    return;
+  }
+  res.json(skill);
+});
+
+app.put("/api/memory/skills/:name", (req, res) => {
+  const { body } = req.body ?? {};
+  if (typeof body !== "string") {
+    res.status(400).json({ error: "body 不能为空" });
+    return;
+  }
+  const r = writeSkill(req.params.name, body);
+  if ("error" in r) {
+    res.status(400).json({ error: r.error });
+    return;
+  }
+  res.json({ ok: true, name: r.name, stats: memoryStats() });
+});
+
+app.delete("/api/memory/skills/:name", (req, res) => {
+  if (!deleteSkill(req.params.name)) {
+    res.status(404).json({ error: "技能不存在" });
+    return;
+  }
+  res.json({ ok: true, stats: memoryStats() });
+});
+
+/** 手动重建索引（改坏了索引或外部动过 skills/ 时用）。 */
+app.post("/api/memory/reindex", (_req, res) => {
+  try {
+    res.json({ ok: true, ...reindexMemory(), stats: memoryStats() });
+  } catch (error: any) {
+    console.error("[Memory] reindex error:", error);
+    res.status(500).json({ error: error?.message || "重建索引失败" });
+  }
+});
+
+/** 权限规则读取（A40）。 */
+app.get("/api/permission-rules", (_req, res) => {
+  try {
+    res.json({ rules: loadPermissionRules(), note: BUILTIN_NOTE, path: PERMISSION_RULES_PATH });
+  } catch (error: any) {
+    console.error("[PermissionRules] read error:", error);
+    res.status(500).json({ error: error?.message || "读取权限规则失败" });
+  }
+});
+
+/** 权限规则保存。整份覆盖提交（规则量小，不必做增量）。 */
+app.put("/api/permission-rules", (req, res) => {
+  try {
+    const rules = savePermissionRules(req.body?.rules ?? []);
+    res.json({ ok: true, rules });
+  } catch (error: any) {
+    console.error("[PermissionRules] write error:", error);
+    res.status(500).json({ error: error?.message || "保存权限规则失败" });
+  }
+});
+
+app.get("/api/runs/active", (req, res) => {
+  const exclude = typeof req.query.exclude === "string" ? req.query.exclude : "";
+  const runs = runHub.activeRuns().filter(r => r.sessionId !== exclude);
+  res.json({ runs });
+});
+
+/**
+ * 断线重放的流端点（E5）。
+ *
+ * 前端在流中断后带着 `after=<最后收到的 seq>` 重新连上来：
+ *   - 缓冲里还有这段 → 补发缺的事件
+ *   - 已经滚出缓冲 → 先发 snapshot（当前全部块），再发缓冲里的增量
+ *   - run 已过期/不存在 → 404，前端退回「重新拉一次会话」
+ *
+ * 与 POST 的区别：这里只读，不触发任何 Agent 调用，也不会因为断开而中止运行。
+ */
+app.get("/api/runs/:runId/stream", (req, res) => {
+  const { runId } = req.params;
+  const after = Number(req.query.after) || 0;
+
+  const backlog = runHub.replay(runId, after);
+  if (!backlog) {
+    return res.status(404).json({ error: "该运行已结束或不存在" });
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  let closed = false;
+  const write = (ev: RunEvent) => {
+    if (closed || res.writableEnded) return;
+    try {
+      res.write(`id: ${ev.seq}\ndata: ${JSON.stringify(ev)}\n\n`);
+    } catch {
+      closed = true;
+    }
+  };
+
+  for (const ev of backlog) write(ev);
+
+  if (runHub.isFinished(runId)) {
+    res.end();
+    return;
+  }
+
+  let unsubscribe: (() => void) | null = null;
+  const cleanup = () => {
+    closed = true;
+    unsubscribe?.();
+    unsubscribe = null;
+  };
+
+  unsubscribe = runHub.subscribe(runId, ev => {
+    write(ev);
+    if (ev.type === 'run_end') {
+      cleanup();
+      if (!res.writableEnded) res.end();
+    }
+  });
+
+  // 订阅失败（run 在 replay 与 subscribe 之间被清理）：直接结束，前端会走 404 兜底
+  if (!unsubscribe) {
+    res.end();
+    return;
+  }
+
+  res.on('close', cleanup);
 });
 
 /**
@@ -817,10 +1473,17 @@ app.post("/api/group-chat", async (req, res) => {
     orchestration = 'dispatch',
     model,
     cwd,
+    // A62：思考强度档位。群聊的每个成员都可能是 CLI Agent，
+    // 这一档对它们同样成立（档位表不同，见 modelCatalog）
+    reasoningEffort,
     permissionMode,
     // P4：场景模板 id / 会话级系统提示词（可选）
     scenarioId,
     systemPrompt,
+    // 群名。用户可能在建群后、发第一条消息之前就改过群名 ——
+    // 那时会话还没落库（前端是本地空壳），改名只能攒着，随首条消息一起带上。
+    // 不带的话，落库时会用「首条消息前 30 字」把用户起的名字盖掉。
+    title,
   } = req.body;
 
   if (!message) {
@@ -848,7 +1511,10 @@ app.post("/api/group-chat", async (req, res) => {
     console.log(`[GroupChat] 创建群聊会话，成员 ${members.join(', ')}`);
     session = db.createSession({
       id: sessionId || uuidv4(),
-      title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
+      // 有用户起的群名就用它，否则退回首条消息的截断
+      title:
+        (typeof title === 'string' && title.trim()) ||
+        message.slice(0, 30) + (message.length > 30 ? '...' : ''),
       // 群聊没有单一模型：每个成员在调用时各自解析。'' = 未指定
       model: model || '',
       // 群聊没有单一归属 Agent
@@ -859,6 +1525,8 @@ app.post("/api/group-chat", async (req, res) => {
       orchestration,
       // P4：群聊同样可绑定工作目录/场景
       cwd: cwd || null,
+      // A62：群聊也存档位（turn-runner 会真的传给每个成员）
+      reasoning_effort: reasoningEffort || null,
       scenario_id: scenarioId || null,
       system_prompt: systemPrompt || null,
       created_at: now,
@@ -893,19 +1561,52 @@ app.post("/api/group-chat", async (req, res) => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
-  // 客户端断开 → 中止**所有**正在跑的成员（群聊可能同时有多个子进程）
-  const ac = new AbortController();
-  res.on('close', () => {
-    if (!res.writableEnded) {
-      console.log(`[GroupChat] 客户端断开，中止 ${members.length} 个成员`);
-      ac.abort();
-      for (const id of members) registry.abort(id, session!.id);
-    }
-  });
-
   const sse = (payload: Record<string, unknown>) => {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
   };
+
+  // 客户端断开 → 宽限 20 秒后中止**所有**正在跑的成员（群聊可能同时有多个子进程）。
+  // 宽限期内前端可以用各 run 的重放端点接回来（E5），期间事件不会丢。
+  const ac = new AbortController();
+  res.on('close', () => {
+    if (res.writableEnded) return;
+    console.log(`[GroupChat] 客户端断开，20s 内可重连`);
+    const timer = setTimeout(() => {
+      const reattached = [...turn.activeRuns].some(id => runHub.subscriberCount(id) > 0);
+      if (reattached || ac.signal.aborted) return;
+      console.log(`[GroupChat] 重连窗口结束，中止 ${members.length} 个成员`);
+      ac.abort();
+      for (const id of members) registry.abort(id, session!.id);
+    }, 20_000);
+    timer.unref?.();
+  });
+
+  /**
+   * 「让某个 Agent 就给定 prompt 发言」搬到了 server/turn-runner.ts（A41）：
+   * 动态工作流的 dispatch/broadcast/relay/debate 走的是同一份实现，
+   * 群聊路由只留下 SSE 与断开口。
+   */
+  const turn = createTurnRunner({
+    session,
+    model,
+    cwd,
+    reasoningEffort: reasoningEffort || session.reasoning_effort || undefined,
+    permissionMode,
+    scenarioId,
+    triggerPrompt: message,
+    signal: ac.signal,
+    emitBlocks: events => {
+      for (const e of events) {
+        try {
+          res.write(`id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`);
+        } catch {
+          // 客户端已断开：继续跑完并落库，事件仍在 runHub 里等重连
+        }
+      }
+    },
+    emitFrame: sse,
+  });
+  const runAgent = turn.runAgent;
 
   sse({
     type: 'group_init',
@@ -914,166 +1615,6 @@ app.post("/api/group-chat", async (req, res) => {
     members,
     userMessageId,
   });
-
-  /**
-   * 让某个 Agent 就给定 prompt 发言：转发它的流式事件（都带上 agentId）、
-   * 落库、并返回聚合正文供编排层使用。
-   */
-  const runAgent = async (
-    agentId: string,
-    prompt: string,
-    phase: TurnPhase,
-    round?: number
-  ): Promise<{ text: string; error?: string }> => {
-    const messageId = uuidv4();
-    // 内部阶段（如 dispatch 的 route）只服务于编排决策：不建气泡、不落库。
-    // 用户的可见叙述走 group_note，见 orchestrator.ts 的 INTERNAL_PHASES 注释。
-    const internal = isInternalPhase(phase);
-    if (!internal) sse({ type: 'turn_start', agentId, messageId, phase, round });
-
-    let text = '';
-    let thinking = '';
-    let errorMsg: string | undefined;
-    const toolCalls: Array<{
-      id: string; name: string; input?: Record<string, unknown>;
-      status: string; result?: string; isError?: boolean;
-    }> = [];
-
-    const stream = registry.stream(agentId, {
-      sessionId: session!.id,
-      prompt,
-      // 逐个成员解析模型：群聊里每个 Agent 的模型命名空间都不同，
-      // 统一塞一个全局值必然把其中一部分成员直接打挂
-      model: resolveModelForAgent(agentId, model || session!.model || undefined),
-      cwd: cwd || process.cwd(),
-      permissionMode: permissionMode || 'default',
-      // 群聊同样受场景白名单约束：一个成员能做什么，不因为进了群聊就放开
-      allowedTools: allowedToolsFor(scenarioId, session!.scenario_id),
-      signal: ac.signal,
-    });
-
-    if (!stream) {
-      errorMsg = `Agent ${agentId} 不可用`;
-      sse({ type: 'error', agentId, message: errorMsg });
-    } else {
-      try {
-        for await (const ev of stream) {
-          switch (ev.type) {
-            case 'text':
-              text += ev.content;
-              if (!internal) sse({ type: 'text', agentId, content: ev.content });
-              break;
-
-            case 'thinking':
-              thinking += ev.content;
-              if (!internal) sse({ type: 'thinking', agentId, content: ev.content });
-              break;
-
-            case 'tool': {
-              const toolCall = {
-                id: ev.id,
-                name: ev.name,
-                input: ev.input as Record<string, unknown> | undefined,
-                status: 'running',
-              };
-              toolCalls.push(toolCall);
-              if (!internal) {
-                sse({
-                  type: 'tool',
-                  agentId,
-                  id: toolCall.id,
-                  name: toolCall.name,
-                  input: toolCall.input,
-                  status: toolCall.status,
-                });
-              }
-              break;
-            }
-
-            case 'tool_result': {
-              const tool =
-                toolCalls.find(t => t.id === ev.toolId) || toolCalls[toolCalls.length - 1];
-              if (tool) {
-                tool.status = ev.isError ? 'error' : 'completed';
-                tool.isError = ev.isError;
-                tool.result = ev.content;
-                if (!internal) {
-                  sse({
-                    type: 'tool_result',
-                    agentId,
-                    toolId: tool.id,
-                    content: ev.content,
-                    isError: ev.isError ?? false,
-                  });
-                }
-              }
-              break;
-            }
-
-            case 'permission_request':
-              sse({
-                type: 'permission_request',
-                agentId,
-                requestId: ev.requestId,
-                toolUseId: ev.toolUseId,
-                toolName: ev.toolName,
-                input: ev.input,
-                sessionId: session!.id,
-                timestamp: Date.now(),
-              });
-              break;
-
-            case 'error':
-              errorMsg = ev.message;
-              console.error(`[GroupChat] ${agentId} 报错: ${ev.message}`);
-              registry.recordError(agentId, ev.message);
-              sse({ type: 'error', agentId, message: ev.message });
-              break;
-
-            // 群聊不做上下文续接，init 里的 resumeToken 有意忽略（理由见 orchestrator.ts）
-            case 'init':
-            case 'done':
-              break;
-          }
-        }
-      } catch (err: any) {
-        errorMsg = err?.message || String(err);
-        console.error(`[GroupChat] ${agentId} 异常:`, errorMsg);
-        sse({ type: 'error', agentId, message: errorMsg });
-      }
-    }
-
-    // 先落库、再通报 turn_done：客户端一收到 turn_done 就可能去刷新会话，
-    // 顺序反了会在那一瞬丢掉这一棒（探针实测踩过这个窗口）。
-    // 内部阶段的原文不落库：刷新后用户不该看到一句没头没尾的 `ROUTE: xxx`
-    if (internal) {
-      console.log(`[GroupChat] ${agentId} 内部阶段 ${phase} 输出 ${text.length} 字（未落库、未推送）`);
-    } else if (ac.signal.aborted && text.trim() === '' && toolCalls.length === 0) {
-      // 客户端断开导致这一棒一个字都没产出：不落库，否则是个空气泡
-      console.log(`[GroupChat] ${agentId} 被中止且无产出，跳过落库`);
-    } else try {
-      db.createMessage({
-        id: messageId,
-        session_id: session!.id,
-        role: 'assistant',
-        content: text,
-        model: model || session!.model,
-        author_agent_id: agentId,
-        created_at: new Date().toISOString(),
-        tool_calls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null,
-      });
-    } catch (dbError: any) {
-      console.error(`[GroupChat] 保存 ${agentId} 的消息失败:`, dbError);
-    }
-
-    if (!internal) sse({ type: 'turn_done', agentId, messageId });
-
-    if (thinking) {
-      console.log(`[GroupChat] ${agentId} 思考过程 ${thinking.length} 字（未落库）`);
-    }
-
-    return { text, error: errorMsg };
-  };
 
   try {
     await runOrchestration(
@@ -1094,6 +1635,146 @@ app.post("/api/group-chat", async (req, res) => {
 
   sse({ type: 'done' });
   console.log(`[GroupChat] 请求完成 ✓ (${orchestration})`);
+  res.end();
+});
+
+/**
+ * 工作流示例脚本（给设置/编辑器里的「填入示例」用）。
+ * 单独一个端点而不是写死在前端：示例要和服务端原语的真实签名一起演进。
+ */
+app.get("/api/workflow/template", (_req, res) => {
+  res.json({ template: WORKFLOW_TEMPLATE });
+});
+
+/**
+ * 动态工作流端点（A41）。
+ *
+ * 与 /api/group-chat 的分工：那个端点把用户的一句话交给**固定五种编排模式**之一；
+ * 这个端点把一段用户/主 agent 写的脚本（TypeScript）在沙箱里跑起来，
+ * 脚本自己决定怎么组合 assign / broadcast / relay / debate。
+ *
+ * 复用的是同一套「一棒发言」（server/turn-runner.ts），所以脚本里每一次
+ * 工具调用都会以正常的 Agent 气泡出现在会话里，断线重放、落库、A39 沉淀
+ * 全部照旧 —— 工作流不是另一条暗道。
+ *
+ * 协议：不发明新帧。`ctx.note()` → group_note；最终结论 → group_note；
+ * 失败 → error；结束 → done。前端零改动即可显示。
+ */
+app.post("/api/workflow/run", async (req, res) => {
+  const {
+    sessionId,
+    source,
+    agentIds = [],
+    model,
+    cwd,
+    // A62：同群聊 —— 工作流的每一棒都真的把档位传给对应成员
+    reasoningEffort,
+    permissionMode,
+    scenarioId,
+    systemPrompt,
+    title,
+  } = req.body ?? {};
+
+  const members: string[] = Array.isArray(agentIds)
+    ? agentIds.filter((v: unknown): v is string => typeof v === 'string')
+    : [];
+
+  if (!sessionId) {
+    return res.status(400).json({ error: "工作流必须挂在既有群会话上（缺 sessionId）" });
+  }
+  if (members.length === 0) {
+    return res.status(400).json({ error: "工作流至少需要一个成员" });
+  }
+  if (typeof source !== 'string' || !source.trim()) {
+    return res.status(400).json({ error: "工作流脚本不能为空" });
+  }
+
+  const session = db.getSession(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: "会话不存在，请先建群再跑工作流" });
+  }
+
+  await registry.ensureProbed(members);
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  const sse = (payload: Record<string, unknown>) => {
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  const ac = new AbortController();
+  res.on('close', () => {
+    if (res.writableEnded) return;
+    const timer = setTimeout(() => {
+      if (ac.signal.aborted) return;
+      console.log('[Workflow] 重连窗口结束，中止');
+      ac.abort();
+      for (const id of members) registry.abort(id, session.id);
+    }, 20_000);
+    timer.unref?.();
+  });
+
+  // 触发词写明了这是工作流：A39 沉淀时能区分「一句话」和「一整段流程」
+  const triggerPrompt = `[工作流] ${String(source).slice(0, 200)}`;
+
+  const turn = createTurnRunner({
+    session,
+    model,
+    cwd,
+    reasoningEffort: reasoningEffort || session.reasoning_effort || undefined,
+    permissionMode,
+    scenarioId,
+    triggerPrompt,
+    signal: ac.signal,
+    emitBlocks: events => {
+      for (const e of events) {
+        try {
+          res.write(`id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`);
+        } catch {
+          // 断开也跑完：事件在 runHub 里等重连
+        }
+      }
+    },
+    emitFrame: sse,
+  });
+
+  sse({ type: 'group_init', sessionId: session.id, orchestration: 'workflow', members, userMessageId: null });
+  sse({ type: 'group_note', text: '工作流开始执行' });
+
+  try {
+    const outcome = await runWorkflow(source, {
+      runAgent: turn.runAgent,
+      members,
+      memorySearch: (query, limit) =>
+        searchMemory(query, limit).map(h => ({ key: h.key, title: h.title, snippet: h.snippet })),
+      note: text => sse({ type: 'group_note', text }),
+    });
+
+    if (outcome.ok) {
+      const brief = outcome.steps.map(s => `${s.name}(${s.args})`).slice(0, 8).join(' → ') || '（没有调用任何原语）';
+      const summary = [
+        `工作流完成，用时 ${(outcome.durationMs / 1000).toFixed(1)}s`,
+        `调用链：${brief}`,
+        outcome.output !== null && outcome.output !== undefined
+          ? `返回值：${JSON.stringify(outcome.output).slice(0, 300)}`
+          : '',
+        outcome.logs.length ? `日志：${outcome.logs.slice(0, 5).join('；')}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      sse({ type: 'group_note', text: summary });
+    } else {
+      sse({ type: 'error', message: outcome.error ?? '工作流失败' });
+    }
+  } catch (err: any) {
+    console.error('[Workflow] 运行失败:', err);
+    sse({ type: 'error', message: err?.message || '工作流运行失败' });
+  }
+
+  sse({ type: 'done' });
+  console.log('[Workflow] 请求完成 ✓');
   res.end();
 });
 
@@ -1160,6 +1841,9 @@ app.post("/api/image", async (req, res) => {
     cwd,
     scenarioId,
     systemPrompt,
+    // A33 重新生成（与 /api/chat 同一套语义）
+    regenerate = false,
+    replaceMessageId,
   } = req.body;
 
   const text = typeof prompt === 'string' ? prompt.trim() : '';
@@ -1206,6 +1890,9 @@ app.post("/api/image", async (req, res) => {
       agent_ids: null,
       orchestration: null,
       cwd: cwd || null,
+      // A62：生图 provider 不是 CLI，没有推理档位这个东西 ——
+      // 存 null 而不是存一个「看起来设过」的值
+      reasoning_effort: null,
       scenario_id: scenarioId || null,
       system_prompt: systemPrompt || null,
       created_at: now,
@@ -1228,16 +1915,22 @@ app.post("/api/image", async (req, res) => {
   const assistantMessageId = uuidv4();
 
   try {
-    db.createMessage({
-      id: userMessageId,
-      session_id: session.id,
-      role: 'user',
-      content: text,
-      model: null,
-      author_agent_id: null,
-      created_at: now,
-      tool_calls: null,
-    });
+    // 重新生成（A33）与 /api/chat 同一套口径：不重复落 user 消息，
+    // 并把被顶掉的那条旧图删掉
+    if (!regenerate) {
+      db.createMessage({
+        id: userMessageId,
+        session_id: session.id,
+        role: 'user',
+        content: text,
+        model: null,
+        author_agent_id: null,
+        created_at: now,
+        tool_calls: null,
+      });
+    } else if (replaceMessageId) {
+      db.deleteMessage(replaceMessageId);
+    }
   } catch (dbError: any) {
     console.error(`[Image] 保存用户消息失败:`, dbError);
     return res.status(500).json({ error: "保存消息失败", detail: dbError?.message });
@@ -1350,7 +2043,28 @@ if (fs.existsSync(path.join(webDir, 'index.html'))) {
 }
 
 // 启动服务器
-const server = app.listen(PORT, () => {
+//
+// ⚠️ **必须绑回环地址**，不能只写 `app.listen(PORT)`。
+// 不传 host 时 Node 绑的是 `0.0.0.0`（所有网卡），Windows 防火墙会因此
+// 每次都弹「是否允许公用/专用网络访问此应用」—— 每换一个打包目录启动就弹一次。
+// 这个应用是纯本地的（前端由本进程托管，或开发态走 Vite 代理），
+// 没有任何理由监听外网卡；绑 `127.0.0.1` 之后弹窗不再出现，
+// 顺带把「同局域网内别的机器能访问你的会话接口」这个面也收掉了。
+// 前端加载地址本来就是 `http://127.0.0.1:<port>`（见 electron/main.ts），
+// vite 的 proxy target 也已同步改成 `127.0.0.1`。
+const HOST = process.env.OPC_HOST || '127.0.0.1';
+// A38：索引自愈。文件是唯一事实来源，索引随时可重建，失败不阻断启动。
+bootMemory();
+// A40：权限规则预热。门禁每次工具调用都读内存缓存，这里负责先填上。
+loadPermissionRules();
+// A57：模型目录。
+//  1) 把「动态目录」注册进模型路由 —— 否则用户从菜单里选的
+//     `opencode/glm-5.3-flash-free` 不在静态白名单里，会被静默换成默认模型；
+//  2) 后台预热一次（CLI 枚举约 2 秒），让第一次打开模型菜单不必等。
+setCatalogModelLookup(isCatalogModel);
+ensureCatalogLoaded();
+
+const server = app.listen(PORT, HOST, () => {
   const addr = server.address();
   const actualPort = typeof addr === 'object' && addr ? addr.port : PORT;
   console.log(`
@@ -1358,7 +2072,7 @@ const server = app.listen(PORT, () => {
 ║                                            ║
 ║     ◉ API 服务器已启动                      ║
 ║                                            ║
-║     地址: http://localhost:${actualPort}            ║
+║     地址: http://${HOST}:${actualPort}            ║
 ║     数据库: SQLite (${process.env.OPC_DATA_DIR ? 'userData' : 'data'}/chat.db)          ║
 ║                                            ║
 ╚════════════════════════════════════════════╝

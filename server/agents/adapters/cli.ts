@@ -146,29 +146,33 @@ export class CliAdapter implements AgentProvider {
 
     const { version, raw } = await probeVersion(binPath);
 
-    // 后端可达性检查：放在凭据检查**之前**。
+    // 凭据启发式检查：只做低成本判断，不发起真实调用
+    // （提前到可达性检查之前：两条信息要在同一条 message 里一起给出，
+    //   否则用户只看到「网络不通」，填完 Key 才发现还有另一道门）
+    const auth = this.checkAuth();
+
+    // 后端可达性检查：放在凭据判定**之前**给出结论。
     //
     // 网络不通是比「没登录」更前置的阻塞 —— 一个凭据齐全、版本正常的
     // Agent 也可能一次都调不通（codex 就是活例：auth.json 有效、
     // 版本 0.161.0 探测通过，但唯一后端 chatgpt.com 被代理 502 拒绝）。
     // 先判网络，用户才不会拿着「未登录」的提示去反复登录一个永远连不上的服务。
     if (this.def.backendHosts?.length) {
-      const blocked = await allHostsUnreachable(this.def.backendHosts);
+      const blocked = await allHostsUnreachable(this.effectiveBackendHosts());
       if (blocked) {
+        // 缺凭据时把两件事一起说清：这个 Agent 现在有**两道**门要过。
+        const authPart = auth.ok ? '' : ` 另外：${auth.hint}`;
         this.status = {
           availability: 'unreachable',
           installed: true,
           binaryPath: binPath,
           version,
-          message: `后端网络不可达：${blocked.join('、')}（本机与代理均连不上）。该 Agent 无法发起调用，请检查网络或代理设置。`,
+          message: `后端网络不可达：${blocked.join('、')}（本机与代理均连不上）。该 Agent 无法发起调用，请检查网络或代理设置。${authPart}`,
           probedAt: now,
         };
         return this.status;
       }
     }
-
-    // 凭据启发式检查：只做低成本判断，不发起真实调用
-    const auth = this.checkAuth();
 
     let availability: AgentStatus['availability'] = 'ready';
     let message: string | undefined;
@@ -223,10 +227,40 @@ export class CliAdapter implements AgentProvider {
 
     // 没配任何可检测的凭据：不算失败（有些 CLI 用系统钥匙串，检测不到），
     // 但把提示挂上去，第一次调用失败时前端能显示原因。
+    //
+    // A30：声明了 `credential` 的 Agent 直接把「去哪儿填」写进提示 ——
+    // 之前这里只重复 installHint（「设置 GEMINI_API_KEY」），而打包版用户
+    // 根本没有「设置环境变量」这个动作可用，等于告诉他一条走不通的路。
+    const hint = d.credential
+      ? `未配置凭据：请在「设置 → 登录配置 → Agent API Key」填入 ${d.credential.keyEnv.join(' 或 ')}（也支持环境变量）`
+      : d.descriptor.installHint || '未检测到登录凭据，首次调用可能需要先登录';
+
     return {
       ok: !d.authEnvs?.length && !d.authFiles?.length,
-      hint: d.descriptor.installHint || '未检测到登录凭据，首次调用可能需要先登录',
+      hint,
     };
+  }
+
+  /**
+   * 实际用于可达性检查的后端主机。
+   *
+   * 声明了 `backendHostOverrideEnv` 且该变量有值时，按**它**判可达性：
+   * 那是用户自己指定的接入地址（例如 Gemini 兼容网关）。官方端点被网络层
+   * 阻断，并不代表用户配的这条链路也不通 —— 拿官方主机去判，会让「填了网关
+   * 却仍显示不可达」成为必然。
+   */
+  private effectiveBackendHosts(): string[] {
+    const envName = this.def.backendHostOverrideEnv;
+    const raw = envName ? (process.env[envName] ?? '').trim() : '';
+    if (raw) {
+      try {
+        const host = new URL(raw).host;
+        if (host) return [host];
+      } catch {
+        // 非法 URL：退回官方主机（宁可判不通，也不因为一个坏地址而报「就绪」）
+      }
+    }
+    return this.def.backendHosts ?? [];
   }
 
   // ============= 调用 =============
@@ -298,7 +332,18 @@ export class CliAdapter implements AgentProvider {
 
     let stderrBuf = '';
     let lineBuf = '';
+    /** 'json-object' 模式的 stdout 累积区（进程结束时整体解析） */
+    let jsonBuf = '';
     let sawText = false;
+    /** 是否已经由行映射给出过 error 事件（避免再补一条「没有任何输出」的废话） */
+    let sawError = false;
+    /** 适配器是否已自行给出 done（带用量）；给了就不再由 close 兜底重复发 */
+    let sawDone = false;
+    /** 中途上报的用量（每步一次的那种），收尾时并进 done */
+    let lastUsage: { cost?: number; tokens?: number } = {};
+
+    // 有状态的映射器（每个会话一份，避免并发串味）；没有就用无状态的 mapLine
+    const mapLine = this.spec.createMapper?.() ?? this.spec.mapLine;
 
     // ---- 输出解析 ----
 
@@ -324,10 +369,21 @@ export class CliAdapter implements AgentProvider {
       if (token) {
         queue.push({ type: 'init', sessionId: ctx.sessionId, resumeToken: token });
       }
-      const ev = this.spec.mapLine?.(obj);
-      if (!ev) return;
-      if (ev.type === 'text') sawText = true;
-      queue.push(ev);
+      const mapped = mapLine?.(obj);
+      if (!mapped) return;
+      // 一行可能拆成多个事件（如「工具开始 + 工具结果」）
+      for (const ev of Array.isArray(mapped) ? mapped : [mapped]) {
+        if (ev.type === 'usage') {
+          // 用量不是可渲染事件：攒起来，收尾时并进 done
+          if (typeof ev.cost === 'number') lastUsage.cost = ev.cost;
+          if (typeof ev.tokens === 'number') lastUsage.tokens = ev.tokens;
+          continue;
+        }
+        if (ev.type === 'text') sawText = true;
+        if (ev.type === 'error') sawError = true;
+        if (ev.type === 'done') sawDone = true;
+        queue.push(ev);
+      }
     };
 
     // setEncoding 使用 StringDecoder，能正确处理被切断的多字节 UTF-8
@@ -340,6 +396,10 @@ export class CliAdapter implements AgentProvider {
         const lines = lineBuf.split(/\r?\n/);
         lineBuf = lines.pop() ?? '';   // 最后一段可能是半行，留着
         for (const line of lines) handleJsonLine(line);
+      } else if (this.spec.parse === 'json-object') {
+        // 只累积不解析：整体是不是合法 JSON 要等进程结束才知道
+        // （半截 JSON 逐行 parse 必然失败，然后按纯文本显示出来 —— 那就全毁了）
+        jsonBuf += stripAnsi(chunk);
       } else {
         handleText(chunk);
       }
@@ -369,6 +429,8 @@ export class CliAdapter implements AgentProvider {
 
       // 冲刷 jsonl 残留
       if (this.spec.parse === 'jsonl' && lineBuf.trim()) handleJsonLine(lineBuf);
+      // json-object：把整个累积区当一个 JSON 走同一条管线（续接令牌 / 映射 / 用量）
+      if (this.spec.parse === 'json-object' && jsonBuf.trim()) handleJsonLine(jsonBuf);
 
       const elapsed = Date.now() - started;
 
@@ -388,9 +450,15 @@ export class CliAdapter implements AgentProvider {
         return;
       }
       if (killed === 'fatal') {
+        // 同样的判死路径有两种原因，文案不能混：
+        //   - 登录态缺失（agy 未登录时会打印授权 URL 然后干等 60 秒）
+        //   - 真正的不可恢复错误（kimi 的 No model configured、codex 的重连）
+        const isAuth = AUTH_HINT_RE.test(stderrBuf);
         queue.push({
           type: 'error',
-          message: `${this.descriptor.name} 遇到不可恢复的错误，已终止：\n${fatalDetail || '未提供详细信息'}`,
+          message: isAuth
+            ? `需要先登录 ${this.descriptor.name}：\n${fatalDetail || '未提供详细信息'}`
+            : `${this.descriptor.name} 遇到不可恢复的错误，已终止：\n${fatalDetail || '未提供详细信息'}`,
         });
         queue.push({ type: 'done', durationMs: elapsed });
         queue.close();
@@ -406,9 +474,11 @@ export class CliAdapter implements AgentProvider {
             ? `需要先登录 ${this.descriptor.name}：${tail || '未提供详细信息'}`
             : `${this.descriptor.name} 退出码 ${code}${tail ? `：\n${tail}` : ''}`,
         });
-      } else if (!sawText) {
+      } else if (!sawText && !sawError) {
         // 一个字都没输出 —— 明确告诉用户，而不是静默成功。
         // stderr 里往往有真正的原因（网络失败、需要初始化等），一并带出来。
+        // ⚠️ 已经给过 error 的不要再来一条：pi 的请求级失败就是这样，
+        //    真实原因在 JSON 流里，再补一句「没有任何输出」只会把真因盖住。
         const tail = stderrBuf.trim().split(/\r?\n/).slice(-6).join('\n');
         queue.push({
           type: 'error',
@@ -418,7 +488,11 @@ export class CliAdapter implements AgentProvider {
         });
       }
 
-      queue.push({ type: 'done', durationMs: elapsed });
+      // 适配器自己发过 done（带 token 用量）就不再补：重复的 done 会让
+      // 投影器收到两次终局，用量也可能被后一个空载荷覆盖掉
+      if (!sawDone) {
+        queue.push({ type: 'done', durationMs: elapsed, ...lastUsage });
+      }
       queue.close();
     });
 

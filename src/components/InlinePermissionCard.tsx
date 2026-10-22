@@ -66,11 +66,34 @@ const getMainInfo = (toolName: string, input: Record<string, unknown>): string =
   return '';
 };
 
+// 门禁分级（A40）。safe 不显示徽标；risky/dangerous 由服务端判定后带下来。
+// 注意：risk 缺失不等于 safe —— 说明这条请求没经过门禁（CLI/ACP 适配器），
+// 此时退回按工具名猜，并且要在气泡上写清楚「未经服务端门禁判定」。
+const RISK_BADGE: Record<'risky' | 'dangerous', { text: string; bg: string; fg: string }> = {
+  risky: {
+    text: '需确认',
+    bg: 'var(--td-warning-color-1)',
+    fg: 'var(--td-warning-color)',
+  },
+  dangerous: {
+    text: '高危',
+    bg: 'var(--td-error-color-2)',
+    fg: 'var(--td-error-color)',
+  },
+};
+
 export function InlinePermissionCard({ request, onAllow, onDeny }: InlinePermissionCardProps) {
   const toolConfig = getToolConfig(request.toolName);
   const mainInfo = getMainInfo(request.toolName, request.input);
-  const isDangerous = request.toolName === 'Bash' || request.toolName === 'Delete' || request.toolName === 'DeleteFile';
-  
+  // 老口径只按工具名猜；门禁给了结论就以门禁为准
+  const nameLooksDangerous = request.toolName === 'Bash' || request.toolName === 'Delete' || request.toolName === 'DeleteFile';
+  const gateVerdict = request.risk === 'risky' || request.risk === 'dangerous' ? RISK_BADGE[request.risk] : null;
+  const badge = gateVerdict
+    ? { ...gateVerdict, note: request.rule }
+    : request.risk === undefined && nameLooksDangerous
+      ? { text: '⚠️ 危险操作', bg: 'var(--td-error-color-2)', fg: 'var(--td-error-color)', note: '未经服务端门禁判定，按工具名称提示' }
+      : null;
+  const reason = request.rule && gateVerdict ? `命中规则：${request.rule}` : null;
   return (
     <div className="animate-fade-in flex items-center gap-3 flex-wrap py-2">
       {/* 工具图标和标签 */}
@@ -99,16 +122,22 @@ export function InlinePermissionCard({ request, onAllow, onDeny }: InlinePermiss
         </code>
       )}
       
-      {/* 危险操作警告标记 */}
-      {isDangerous && (
-        <span 
+      {/* 门禁分级徽标 + 命中规则 */}
+      {badge && (
+        <span
           className="text-xs px-2 py-0.5 rounded"
-          style={{ 
-            backgroundColor: 'var(--td-error-color-2)',
-            color: 'var(--td-error-color)'
+          title={badge.note}
+          style={{
+            backgroundColor: badge.bg,
+            color: badge.fg,
           }}
         >
-          ⚠️ 危险操作
+          {badge.text}
+        </span>
+      )}
+      {reason && (
+        <span className="text-xs" style={{ color: 'var(--td-text-color-secondary)' }}>
+          {reason}
         </span>
       )}
       

@@ -152,6 +152,48 @@ async function main() {
     'getAllSessions 返回三列'
   );
 
+  // —— 7. blocks 列：整条块序列的落库与读回（E2） ——
+  {
+    const blocks = [
+      { id: 'b1', type: 'thinking', text: '想一想', state: 'done', format: 'raw', startedAt: 1, endedAt: 2 },
+      { id: 'b2', type: 'text', text: '答案', state: 'done' },
+      { id: 'b3', type: 'tool', toolId: 't1', name: 'Bash', input: { command: 'ls' }, output: 'ok', status: 'completed', startedAt: 3, endedAt: 4 },
+      { id: 'b4', type: 'text', text: '补充', state: 'done' },
+    ];
+
+    db.createMessage({
+      id: 'msg-blocks',
+      session_id: 'new-1',
+      role: 'assistant',
+      content: '答案补充',
+      model: 'm',
+      author_agent_id: 'codex',
+      created_at: new Date().toISOString(),
+      tool_calls: null,
+      blocks: JSON.stringify(blocks),
+    });
+
+    const got = db.getMessagesBySession('new-1').find(m => m.id === 'msg-blocks');
+    ok(!!got, 'blocks：消息已写入');
+    const parsed = got?.blocks ? JSON.parse(got.blocks) : null;
+    eq(parsed?.map((b: any) => b.type), ['thinking', 'text', 'tool', 'text'], 'blocks：顺序原样读回');
+    eq(parsed?.[2]?.output, 'ok', 'blocks：工具结果保留');
+
+    // 老消息（没写 blocks）读出为 NULL —— 读取侧据此退回旧字段
+    db.createMessage({
+      id: 'msg-legacy',
+      session_id: 'new-1',
+      role: 'assistant',
+      content: '老消息',
+      model: 'm',
+      author_agent_id: null,
+      created_at: new Date().toISOString(),
+      tool_calls: null,
+    });
+    const legacy = db.getMessagesBySession('new-1').find(m => m.id === 'msg-legacy');
+    eq(legacy?.blocks ?? null, null, 'blocks：老消息读出 NULL');
+  }
+
   // 收尾：尽力删除临时目录（连接仍打开，Windows 上可能删不掉，忽略即可）
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -35,6 +35,21 @@ import { ChevronLeft } from 'lucide-react';
  * - **底边线**：一律 1px `--td-component-stroke`，除非显式 `divider={false}`。
  * - **水平内边距**：主区 `px-6`，窄栏 `px-4`；窄屏（<640px）主区降到 `px-4`。
  *
+ * ## 例外：通讯录不用本组件
+ *
+ * 通讯录（ContactsPanel）按 QQ 通讯录的版式做：顶部是「搜索胶囊 + Tab」，
+ * 没有标题行，所以不复用本组件。消息列表、会话头部（compact）、资料页在用。
+ *
+ * ## 紧凑变体（compact）
+ *
+ * 会话头部（一对一 / 群聊）用 `compact`：单行、`py-2.5`、总高约 52px，
+ * 且不渲染副标题行。理由：聊天区要的是「上面别再压一道 88px 的横条」——
+ * 头部的职能只是「现在在跟谁说话 + 状态 + 更多操作」，一行就够，
+ * 省下的 36px 全给消息列表。列表栏 / 资料页仍用标准 88px。
+ *
+ * ⚠️ compact 的头**不要传 subtitle**（会被忽略）—— 副标题是双行结构的一半，
+ *    单行头部里没有它的位置。
+ *
  * 层级只用语义令牌表达，不要在调用处传 `text-[15px]` 这类任意值。
  */
 export interface PanelHeaderProps {
@@ -60,6 +75,21 @@ export interface PanelHeaderProps {
   children?: ReactNode;
   /** 主区（17px / px-6）还是窄栏（16px / px-4） */
   level?: 'page' | 'column';
+  /**
+   * 紧凑变体：单行、约 52px 高、不渲染副标题。会话头部专用，见文件头注释。
+   */
+  compact?: boolean;
+  /**
+   * 标题栏底色。
+   *
+   * - `chrome`（默认）：框架面。列表栏 / 资料页用，与左侧导航连成一条外框。
+   * - `content`：内容面。会话头部用 —— 聊天区上下连成一片白，头部不再像
+   *   一块压在消息上的横条（QQ 的会话头部也是跟消息区同色）。
+   *
+   * 之所以做成开关而不是让调用方自己传 style：底色属于「标题栏规范」，
+   * 一旦允许外部覆盖，四处标题栏迟早又各写各的。
+   */
+  surface?: 'chrome' | 'content';
   /** 是否显示底边线，默认 true */
   divider?: boolean;
   /**
@@ -69,6 +99,16 @@ export interface PanelHeaderProps {
   onBack?: () => void;
   /** 返回键的无障碍文案 */
   backLabel?: string;
+  /**
+   * 右侧操作区的垂直对齐。
+   *
+   * - `center`（默认）：在整条标题栏里居中。单行头部（compact）用它，
+   *   那里标题本身也是居中的，两者同轴。
+   * - `title`：与标题行对齐。**双行结构里必须用它** —— 标题块是 44px、
+   *   标题贴在块顶，而 84px 的整栏居中会把按钮压到标题下方约 10px，
+   *   并排看就是「关闭键挂得太低」（设置页 2026-10-20 用户反馈）。
+   */
+  actionsAlign?: 'center' | 'title';
   className?: string;
 }
 
@@ -80,9 +120,12 @@ export function PanelHeader({
   actions,
   children,
   level = 'page',
+  compact = false,
+  surface = 'chrome',
   divider = true,
   onBack,
   backLabel = '返回',
+  actionsAlign = 'center',
   className = '',
 }: PanelHeaderProps) {
   const isPage = level === 'page';
@@ -93,17 +136,22 @@ export function PanelHeader({
     <header
       className={`flex shrink-0 flex-col justify-center ${className}`}
       style={{
-        minHeight: 'var(--panel-header-height)',
+        // compact（会话头部）压到 52px：聊天区少一道横条，消息列表多 36px。
+        // 其余位置保持统一高度，两栏并排时标题与分隔线才对得齐。
+        // 52 是 `--tc-header-height`：群设置面板要从这条底边往下铺、
+        // 群成员栏的栏头也用它，三处必须同值。
+        minHeight: compact ? 'var(--tc-header-height)' : 'var(--panel-header-height)',
         // 标题栏属于「框架」：与导航条、列表栏同一个令牌。
         // 三处共用一个值，才谈得上「标题栏色调与左侧栏一致」——
         // 靠「三处都记得写同一个令牌」是靠不住的。
-        backgroundColor: 'var(--tc-surface-chrome)',
-        ...(divider ? { borderBottom: '1px solid var(--td-component-stroke)' } : {}),
+        backgroundColor:
+          surface === 'content' ? 'var(--tc-surface-content)' : 'var(--tc-surface-chrome)',
+        ...(divider ? { borderBottom: '1px solid var(--tc-divider)' } : {}),
       }}
     >
       <div
         className={`flex items-center gap-3 ${
-          isPage ? 'px-4 py-5 sm:px-6' : 'px-4 py-5'
+          compact ? 'px-4 py-2.5 sm:px-6' : isPage ? 'px-4 py-5 sm:px-6' : 'px-4 py-5'
         }`}
       >
         {onBack && (
@@ -120,10 +168,19 @@ export function PanelHeader({
 
         {leading}
 
-        <div className="flex min-w-0 flex-1 flex-col" style={{ minHeight: 44 }}>
+        <div
+          className="flex min-w-0 flex-1 flex-col"
+          // compact 是单行结构，没有副标题来占位，块高不锁 44px
+          style={compact ? undefined : { minHeight: 44 }}
+        >
           <div className="flex items-center gap-2">
             <TitleTag
-              className={`truncate font-semibold ${isPage ? 'text-page' : 'text-title-lg'}`}
+              // compact（会话头部）固定 16px：QQ 的会话名就是这个量级。
+              // 用 text-page（17px）在 52px 单行里会显得头重脚轻，
+              // 而且和下面的消息正文只差 3px，层级拉不开。
+              className={`truncate font-semibold ${
+                compact || !isPage ? 'text-title-lg' : 'text-page'
+              }`}
               style={{ color: 'var(--td-text-color-primary)' }}
             >
               {title}
@@ -142,8 +199,9 @@ export function PanelHeader({
            *
            * ⚠️ 不要改成 justify-center —— 单行标题会被居中，比带副标题的
            * 标题低 10px，两栏并排立刻错位。
+           * ⚠️ compact（单行会话头部）不渲染副标题：那一行位置整个不存在。
            */}
-          {subtitle != null && (
+          {!compact && subtitle != null && (
             <p
               className="mt-0.5 truncate text-secondary"
               style={{ color: 'var(--td-text-color-secondary)' }}
@@ -153,7 +211,16 @@ export function PanelHeader({
           )}
         </div>
 
-        {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+        {actions && (
+          <div
+            className="flex shrink-0 items-center gap-2"
+            // `alignSelf: flex-start` 覆盖父级 items-center：让操作区贴住标题行
+            // 顶部。`-1px` 是标题 17px/1.5 行高的光学中心与 28px 按钮中心的差。
+            style={actionsAlign === 'title' ? { alignSelf: 'flex-start', marginTop: -1 } : undefined}
+          >
+            {actions}
+          </div>
+        )}
       </div>
 
       {children}
