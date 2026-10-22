@@ -31,6 +31,7 @@ import { ContactsPanel } from './components/ContactsPanel';
 import { SidebarResizer } from './components/SidebarResizer';
 import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { ChatHeader } from './components/ChatHeader';
+import { WorkspacePanel } from './components/WorkspacePanel';
 import { SettingsPage } from './components/SettingsPage';
 import type { Message } from './types';
 
@@ -76,6 +77,35 @@ function AppContent() {
    * 会退到上一个 Agent 的资料页，而不是离开通讯录。
    */
   const [detailAgentId, setDetailAgentId] = useState<string | null>(null);
+
+  /**
+   * A77：右侧工作区文件面板是否展开。
+   *
+   * 持久化到 localStorage：它是**布局偏好**，不是会话状态。用户收起它
+   * 通常是「这块屏幕不够宽」，下次开应用不该又自己弹回来。
+   *
+   * 读的时候包 try：隐私模式 / 禁用存储时 localStorage 会抛，而这是
+   * 首屏渲染路径上的一次读取 —— 为它崩掉整个应用不值得。
+   */
+  const [workspaceOpen, setWorkspaceOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('opc.workspace-open') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleWorkspace = useCallback(() => {
+    setWorkspaceOpen(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('opc.workspace-open', next ? '1' : '0');
+      } catch {
+        /* 写不进去只影响下次启动的默认值，本次行为不受影响 */
+      }
+      return next;
+    });
+  }, []);
 
   // Hooks
   const { preference, setPreference } = useTheme();
@@ -709,6 +739,19 @@ function AppContent() {
   const showContent = !!detailAgent || !!currentSession;
   const showColumn = !compact || !showContent;
 
+  /**
+   * A77：工作区面板什么时候真的渲染。
+   *
+   * 三个条件缺一不可：
+   *   - 用户把它展开着（偏好）；
+   *   - 不是窄屏单栏模式 —— 300px 的面板会把聊天区挤成一条缝；
+   *   - 是**一对一**会话。群聊成员各有各的 cwd，一个面板只能指向其中
+   *     某一个，那等于谎报一个不存在的「共同工作目录」——与 A63 不在
+   *     群聊头部放工作区徽标是同一条理由。
+   */
+  const showWorkspace =
+    workspaceOpen && !compact && !!currentSession && currentSession.kind !== 'group';
+
   /** 单栏模式的返回：回到列表（清掉会话与资料页） */
   const handleBackToList = useCallback(() => {
     setDetailAgentId(null);
@@ -809,37 +852,46 @@ function AppContent() {
                     onOpenCredential={handleOpenCredential}
                   />
                 ) : currentSession ? (
-                  <>
-                    {/*
-                      群聊用自己的头部（成员堆叠 + 编排模式），由 ChatPage 内部渲染；
-                      一对一才用 ChatHeader。两套头部都基于同一个 PanelHeader，
-                      规格统一，差别只在往槽位里填什么。
-                    */}
-                    {currentSession.kind !== 'group' && (
-                      <ChatHeader
-                        agent={currentAgent}
-                        fallbackTitle={currentSession.title || '新对话'}
-                        isLoading={isLoading}
-                        scenario={currentScenario}
-                        // A63：工作区徽标（方案二）。群聊有自己的头部，
-                        // 那里不放工作区 —— 群成员各有各的 cwd，单个徽标
-                        // 会谎报一个不存在的「共同工作目录」。
-                        cwd={currentSession.cwd}
-                        onCwdChange={cwd => void setSessionCwd(currentSession.id, cwd)}
-                        onDelete={() => handleDeleteSession(currentSession.id)}
-                        onBack={compact ? handleBackToList : undefined}
-                      />
-                    )}
-                    <Suspense
-                      fallback={
-                        <div
-                          className="flex flex-1 items-center justify-center text-body"
-                          style={{ color: 'var(--td-text-color-placeholder)' }}
-                        >
-                          正在加载会话…
-                        </div>
-                      }
-                    >
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-row">
+                    {/* 聊天列。单独套一层而不是让 header/ChatPage 直接当 main 的子节点：
+                        右侧工作区面板要作为**兄弟列**并排，横向容器必须在这一层。
+                        min-w-0 不可省 —— 长标题/长行文本会把 flex 子项顶宽，
+                        聊天列不会收缩，面板会被挤出视口。 */}
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                      {/*
+                        群聊用自己的头部（成员堆叠 + 编排模式），由 ChatPage 内部渲染；
+                        一对一才用 ChatHeader。两套头部都基于同一个 PanelHeader，
+                        规格统一，差别只在往槽位里填什么。
+                      */}
+                      {currentSession.kind !== 'group' && (
+                        <ChatHeader
+                          agent={currentAgent}
+                          fallbackTitle={currentSession.title || '新对话'}
+                          isLoading={isLoading}
+                          scenario={currentScenario}
+                          // A63：工作区徽标（方案二）。群聊有自己的头部，
+                          // 那里不放工作区 —— 群成员各有各的 cwd，单个徽标
+                          // 会谎报一个不存在的「共同工作目录」。
+                          cwd={currentSession.cwd}
+                          onCwdChange={cwd => void setSessionCwd(currentSession.id, cwd)}
+                          // A77：工作区面板开关。只在宽屏给（窄屏下面板不渲染，
+                          // 给一个点了没反应的按钮就是假控件）。
+                          workspaceOpen={workspaceOpen}
+                          onToggleWorkspace={compact ? undefined : toggleWorkspace}
+                          onDelete={() => handleDeleteSession(currentSession.id)}
+                          onBack={compact ? handleBackToList : undefined}
+                        />
+                      )}
+                      <Suspense
+                        fallback={
+                          <div
+                            className="flex flex-1 items-center justify-center text-body"
+                            style={{ color: 'var(--td-text-color-placeholder)' }}
+                          >
+                            正在加载会话…
+                          </div>
+                        }
+                      >
                       <ChatPage
                         currentSession={currentSession}
                         currentSessionId={currentSessionId}
@@ -878,7 +930,17 @@ function AppContent() {
                         onBranch={!(currentSession?.kind === 'group') ? handleBranch : undefined}
                       />
                     </Suspense>
-                  </>
+                    </div>
+
+                    {/* A77：工作区面板（右侧兄弟列）。 */}
+                    {showWorkspace && (
+                      <WorkspacePanel
+                        sessionId={currentSession.id}
+                        cwd={currentSession.cwd}
+                        onClose={toggleWorkspace}
+                      />
+                    )}
+                  </div>
                 ) : (
                   <EmptyState onGoContacts={() => setNav('contacts')} nav={nav} />
                 )}

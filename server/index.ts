@@ -20,6 +20,7 @@ import {
 } from "./agents/adapters/image.js";
 import { cacheImage, imageFilePath } from "./image-store.js";
 import { validateDirectory } from "./workspaceDir.js";
+import { FS_ERROR_TEXT, listDir, type FsErrorCode } from "./fs.js";
 import {
   loadAgentCredentials,
   listCredentials,
@@ -742,6 +743,63 @@ app.get("/api/recent-directories", (_req, res) => {
   } catch (error: any) {
     console.error("[Recent Directories] Error:", error);
     res.status(500).json({ error: error?.message || "获取最近目录失败" });
+  }
+});
+
+/**
+ * A77：工作区文件面板 —— 列出会话工作目录下的某一层。
+ *
+ * ## 为什么不接受「传一个绝对路径进来」
+ *
+ * 路径的根必须由**服务端**从 `session.cwd` 取，前端只能传相对路径。
+ * 让前端传绝对路径，等于把「能看哪里」的决定权交给被约束方 —— 那正是
+ * `shared/scenarios.ts` 里「谁约束谁」那条注释在防的事。
+ *
+ * ## 为什么没有 cwd 时是 409 而不是退回进程目录
+ *
+ * 退回 `process.cwd()` 会把应用自己的安装目录（打包态是 resources 里）
+ * 当成用户的项目展示出来，看起来像「你的项目只有一堆 asar」。宁可明确
+ * 说「这个会话还没绑工作目录」，也不给一个错误的根。
+ */
+const FS_STATUS: Record<FsErrorCode, number> = {
+  "no-root": 404,
+  "not-found": 404,
+  "not-dir": 400,
+  escape: 403,
+  denied: 403,
+};
+
+app.get("/api/fs/list", (req, res) => {
+  try {
+    const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : "";
+    const rel = typeof req.query.path === "string" ? req.query.path : "";
+    if (!sessionId) {
+      return res.status(400).json({ error: "缺少 sessionId" });
+    }
+
+    const session = db.getSession(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: "会话不存在" });
+    }
+    if (!session.cwd) {
+      return res.status(409).json({
+        error: "该会话未绑定工作目录",
+        code: "no-cwd",
+      });
+    }
+
+    const result = listDir(session.cwd, rel);
+    if ("error" in result) {
+      return res.status(FS_STATUS[result.error]).json({
+        error: FS_ERROR_TEXT[result.error],
+        code: result.error,
+      });
+    }
+
+    res.json(result);
+  } catch (error: any) {
+    console.error("[Fs List] Error:", error);
+    res.status(500).json({ error: error?.message || "读取目录失败" });
   }
 });
 

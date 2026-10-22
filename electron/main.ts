@@ -19,7 +19,7 @@
 
 import { app, BrowserWindow, screen, shell, nativeTheme, ipcMain, dialog } from 'electron';
 import { once } from 'node:events';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import { server } from '../server/index.js';
 import { registry } from '../server/agents/registry.js';
 
@@ -300,6 +300,24 @@ function registerIpc() {
   ipcMain.handle('opc:reveal-in-folder', (_e, p: unknown) => {
     if (typeof p !== 'string' || !p) return false;
     return shell.showItemInFolder(p);
+  });
+
+  // A77：工作区文件面板 —— 用系统默认程序打开一个文件。
+  //
+  // 只接受**绝对路径**：面板里的绝对路径由服务端从 session.cwd 算出来，
+  // 前端不参与拼路径。收下相对路径再按进程 cwd 解析，打开的很可能是
+  // 应用自己的安装目录里的文件，而用户以为打开了项目里的那个。
+  //
+  // 返回空串 = 成功，返回字符串 = 失败原因（Electron 的约定）。
+  // 前端据此显示一句人话，而不是「点了没反应」。
+  ipcMain.handle('opc:open-path', async (_e, p: unknown) => {
+    if (typeof p !== 'string' || !p) return '路径为空';
+    if (!isAbsolute(p)) return '只接受绝对路径';
+    try {
+      return await shell.openPath(p);
+    } catch (e) {
+      return e instanceof Error ? e.message : '打开失败';
+    }
   });
 }
 

@@ -74,7 +74,47 @@ const SESSIONS = [
   { id: 's2', title: 'Claude Code', agent_id: 'claude', model: 'claude-opus-4-1', created_at: new Date(Date.now() - 864e5).toISOString() },
   { id: 's3', title: 'Gemini CLI', agent_id: 'gemini', model: 'gemini-2.5-pro', created_at: new Date(Date.now() - 3 * 864e5).toISOString() },
   { id: 's4', title: 'Cursor Agent', agent_id: 'cursor', model: 'claude-sonnet-4-5', created_at: new Date(Date.now() - 5 * 864e5).toISOString() },
+  // s5 绑了工作目录：工作区文件面板只在有 cwd 的会话上才渲染（A77），
+  // 它单独一条，免得改动 s1 把 A/B 两组既有截图的面貌一起改掉。
+  { id: 's5', title: 'opc-agent', agent_id: 'workbuddy', model: 'claude-sonnet-4-5', kind: 'direct', cwd: 'C:\\ws\\opc-agent', created_at: new Date(Date.now() - 3e5).toISOString() },
 ];
+
+// ── 夹具：工作区文件面板（A77）──────────────────────────────────────────
+// 形态与 server/fs.ts 的 FsListResult 一致：abs 是绝对路径（供 openPath），
+// 目录不带 size。真实后端由它算出，这里只喂静态数据。
+const FS_ROOT = {
+  root: 'C:\\ws\\opc-agent',
+  path: '',
+  truncated: false,
+  entries: [
+    { name: '.git', path: '.git', abs: 'C:\\ws\\opc-agent\\.git', type: 'dir' },
+    { name: 'dist', path: 'dist', abs: 'C:\\ws\\opc-agent\\dist', type: 'dir' },
+    { name: 'node_modules', path: 'node_modules', abs: 'C:\\ws\\opc-agent\\node_modules', type: 'dir' },
+    { name: 'scripts', path: 'scripts', abs: 'C:\\ws\\opc-agent\\scripts', type: 'dir' },
+    { name: 'server', path: 'server', abs: 'C:\\ws\\opc-agent\\server', type: 'dir' },
+    { name: 'src', path: 'src', abs: 'C:\\ws\\opc-agent\\src', type: 'dir' },
+    { name: '.gitignore', path: '.gitignore', abs: 'C:\\ws\\opc-agent\\.gitignore', type: 'file', size: 214, mtime: new Date().toISOString() },
+    { name: 'package.json', path: 'package.json', abs: 'C:\\ws\\opc-agent\\package.json', type: 'file', size: 5482, mtime: new Date().toISOString() },
+    { name: 'README.md', path: 'README.md', abs: 'C:\\ws\\opc-agent\\README.md', type: 'file', size: 1024, mtime: new Date().toISOString() },
+  ],
+};
+
+const FS_SRC = {
+  root: FS_ROOT.root,
+  path: 'src',
+  truncated: false,
+  entries: [
+    { name: 'assets', path: 'src/assets', abs: 'C:\\ws\\opc-agent\\src\\assets', type: 'dir' },
+    { name: 'components', path: 'src/components', abs: 'C:\\ws\\opc-agent\\src\\components', type: 'dir' },
+    { name: 'hooks', path: 'src/hooks', abs: 'C:\\ws\\opc-agent\\src\\hooks', type: 'dir' },
+    { name: 'pages', path: 'src/pages', abs: 'C:\\ws\\opc-agent\\src\\pages', type: 'dir' },
+    { name: 'App.tsx', path: 'src/App.tsx', abs: 'C:\\ws\\opc-agent\\src\\App.tsx', type: 'file', size: 42800, mtime: new Date().toISOString() },
+    { name: 'index.css', path: 'src/index.css', abs: 'C:\\ws\\opc-agent\\src\\index.css', type: 'file', size: 61234, mtime: new Date().toISOString() },
+    { name: 'main.tsx', path: 'src/main.tsx', abs: 'C:\\ws\\opc-agent\\src\\main.tsx', type: 'file', size: 2100, mtime: new Date().toISOString() },
+  ],
+};
+
+const FS_PAGES = { src: FS_SRC };
 
 // ── 夹具：会话消息（DB 形态，字段名与后端落库一致）──────────────────────
 const MESSAGES = [
@@ -216,8 +256,16 @@ await ctx.route('**/api/**', async route => {
   if (/\/api\/agents(\?|$)/.test(url)) return json({ agents: AGENTS });
   if (/\/api\/models/.test(url)) return json({ models: MODELS });
   if (/\/api\/sessions\/[^/]+$/.test(url)) {
-    // 会话详情：后端返回 { messages: [...] }，字段名为 snake_case
-    return json({ session: SESSIONS[0], messages: MESSAGES });
+    // 会话详情：后端返回 { messages: [...] }，字段名为 snake_case。
+    // 按 id 取 —— 早先写死 SESSIONS[0]，于是 /chat/sN 永远返回第一条，
+    // 想给某条会话配特殊字段（如工作目录）时根本进不去。
+    const id = url.split('/').pop().split('?')[0];
+    const s = SESSIONS.find(x => x.id === id) || SESSIONS[0];
+    return json({ session: s, messages: MESSAGES });
+  }
+  if (/\/api\/fs\/list/.test(url)) {
+    const rel = new URL(url).searchParams.get('path') || '';
+    return json(FS_PAGES[rel] || FS_ROOT);
   }
   if (/\/api\/sessions/.test(url)) return json({ sessions: SESSIONS });
   return json({});
@@ -353,6 +401,65 @@ try {
 } catch (e) {
   currentStream = STREAM_EVENTS;
   console.log('  ⚠️ 兜底用例异常：' + String(e).slice(0, 160));
+}
+
+// ── D. 工作区文件面板（A77）────────────────────────────────────────────
+console.log('\n[D] 工作区文件面板');
+// 面板的展开状态存在 localStorage（它是布局偏好，不是会话状态）。
+// 这里显式置 1 —— 不置的话面板默认收起，D 组就什么也截不到。
+await page.addInitScript(() => {
+  try {
+    localStorage.setItem('opc.workspace-open', '1');
+  } catch {
+    /* 隐私模式下写不进去：那条用例会失败，本身也是要暴露的信息 */
+  }
+});
+
+const errsBeforeD = errors.length;
+await go('/chat/s5');
+
+const panel = page.locator('[aria-label="工作区文件"]');
+try {
+  await panel.waitFor({ state: 'attached', timeout: 4000 });
+  console.log('  ✓ 面板已渲染');
+} catch {
+  console.log('  ❌ 工作区面板没有渲染（会话有 cwd 且开关为开，应当出现）');
+}
+
+if (await panel.count()) {
+  // 标题栏状态：徽标里应当出现目录名与「只读」标记
+  const readonly = await panel.locator('text=只读').count();
+  console.log(readonly ? '  ✓ 标注了「只读」' : '  ❌ 缺少「只读」标注');
+
+  // 目录在前、文件在后；隐藏文件（.git / .gitignore）不藏
+  for (const name of ['node_modules', 'package.json', '.gitignore']) {
+    const found = await panel.locator(`text=${name}`).count();
+    console.log(found ? `  ✓ 条目 ${name}` : `  ❌ 缺少条目 ${name}`);
+  }
+
+  // 进入子目录：面包屑与列表都要跟着变
+  await panel.locator('button', { hasText: 'src' }).first().click();
+  await page.waitForTimeout(600);
+  const inSrc = await panel.locator('text=components').count();
+  console.log(inSrc ? '  ✓ 进入 src 子目录成功' : '  ❌ 进入 src 子目录失败');
+
+  // 面包屑回根目录：点根目录那段，列表应当回到根（这才证明面包屑是可点的，
+  // 而不是一段只能看的文字）
+  await panel.locator('button', { hasText: 'opc-agent' }).first().click();
+  await page.waitForTimeout(600);
+  const backRoot = await panel.locator('text=node_modules').count();
+  console.log(backRoot ? '  ✓ 面包屑可点（回到根目录）' : '  ❌ 面包屑点击无效');
+
+  // 点文件：浏览器开发态没有 window.opc，应当落到「说明白」而不是静默失败
+  await panel.locator('button', { hasText: 'package.json' }).first().click();
+  await page.waitForTimeout(600);
+  const notice = await panel.locator('text=浏览器开发态').count();
+  console.log(notice ? '  ✓ 无原生能力时给出说明' : '  ⚠️ 未出现兜底提示（剪贴板可能可用，路径已复制）');
+
+  await shot('light-workspace');
+
+  await go('/chat/s5', { dark: true });
+  if (await page.locator('[aria-label="工作区文件"]').count()) await shot('dark-workspace');
 }
 
 // ── 汇总 ────────────────────────────────────────────────────────────────

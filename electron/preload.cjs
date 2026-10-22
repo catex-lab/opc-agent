@@ -96,6 +96,20 @@ contextBridge.exposeInMainWorld('opc', {
     ipcRenderer.invoke('opc:reveal-in-folder', path);
   },
 
+  /**
+   * A77：工作区文件面板 —— 用系统默认程序打开一个文件。
+   *
+   * 与 revealInFolder 的区别：那个是「在资源管理器里露出位置」，
+   * 这个是「直接把文件打开」。文件面板点一下要的是后者。
+   *
+   * @param {string} path 文件绝对路径（由服务端从 session.cwd 算出）
+   * @returns {Promise<string>} 空串 = 成功；否则是失败原因，前端显示给人看
+   */
+  openPath(path) {
+    if (typeof path !== 'string' || !path) return Promise.resolve('路径为空');
+    return ipcRenderer.invoke('opc:open-path', path);
+  },
+
   windowControl: {
     /** @param {'minimize'|'maximize'|'close'} action */
     send(action) {

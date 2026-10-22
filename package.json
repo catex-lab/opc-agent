@@ -24,6 +24,7 @@
     "verify:model-catalog": "tsx scripts/verify-model-catalog.ts",
     "verify:wb-config": "tsx scripts/verify-wb-product-config.ts",
     "verify:workspace": "tsx scripts/verify-workspace.ts",
+    "verify:a77-fs": "tsx scripts/verify-a77-fs.ts",
     "sync:opencode-catalog": "node scripts/sync-opencode-catalog.mjs",
     "verify:modelgate": "node scripts/verify-modelgate.mjs",
     "verify:groupchat": "node scripts/verify-groupchat.mjs",

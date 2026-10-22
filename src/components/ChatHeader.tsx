@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MoreHorizontal } from 'lucide-react';
+import { MoreHorizontal, PanelRight } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
 import { AgentDetailModal } from './AgentDetailModal';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -20,6 +20,10 @@ interface ChatHeaderProps {
   cwd?: string;
   /** A63：换工作目录。'' = 清空回默认。不传则栏头不渲染工作区徽标 */
   onCwdChange?: (cwd: string) => void;
+  /** A77：工作区文件面板是否展开 */
+  workspaceOpen?: boolean;
+  /** A77：展开 / 收起工作区文件面板。不传则不渲染开关（窄屏单栏模式） */
+  onToggleWorkspace?: () => void;
   onDelete: () => void;
   /** 单栏（窄屏）模式下返回列表；宽屏不传 */
   onBack?: () => void;
@@ -58,6 +62,8 @@ export function ChatHeader({
   scenario,
   cwd,
   onCwdChange,
+  workspaceOpen,
+  onToggleWorkspace,
   onDelete,
   onBack,
 }: ChatHeaderProps) {
@@ -132,6 +138,26 @@ export function ChatHeader({
       }
       actions={
         <>
+          {/* A77：工作区开关。放在工作区徽标**之前** —— 徽标说的是「在哪儿」，
+              开关说的是「看不看」，先有位置再有视图。 */}
+          {onToggleWorkspace && (
+            <button
+              type="button"
+              onClick={onToggleWorkspace}
+              aria-pressed={!!workspaceOpen}
+              title={workspaceOpen ? '收起工作区' : '展开工作区'}
+              aria-label={workspaceOpen ? '收起工作区' : '展开工作区'}
+              className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-[var(--tc-hover-chrome)]"
+              style={{
+                backgroundColor: workspaceOpen ? 'var(--tc-active-chrome)' : 'transparent',
+                color: workspaceOpen
+                  ? 'var(--td-text-color-primary)'
+                  : 'var(--td-text-color-secondary)',
+              }}
+            >
+              <PanelRight size={16} />
+            </button>
+          )}
           {/* A63：工作区徽标。放在「⋯」之前 —— 它表达的是「当前在哪儿干活」，
               是随时要看的状态；删除是低频操作，继续躲在 ⋯ 里。 */}
           {onCwdChange && <WorkspaceBadge cwd={cwd} onChange={onCwdChange} />}
