@@ -28,6 +28,14 @@ export interface BrowserNavState {
   loading: boolean;
 }
 
+/** P3：人机同屏状态（远程调试端口）。只回答「开着没有」，不给 ws 端点。 */
+export interface CdpInfo {
+  enabled: boolean;
+  port: number | null;
+  hasTarget: boolean;
+  targetUrl: string;
+}
+
 interface OpcBridge {
   browserRect?(rect: { x: number; y: number; width: number; height: number }): void;
   browserVisible?(visible: boolean): void;
@@ -38,6 +46,7 @@ interface OpcBridge {
   browserDevtools?(): Promise<void>;
   browserState?(): Promise<BrowserNavState>;
   onBrowserState?(cb: (state: BrowserNavState) => void): () => void;
+  cdpInfo?(): Promise<CdpInfo>;
 }
 
 function bridge(): OpcBridge | undefined {
@@ -133,5 +142,16 @@ export function subscribeNavState(cb: (state: BrowserNavState) => void): () => v
     return fn(cb) ?? (() => {});
   } catch {
     return () => {};
+  }
+}
+
+/** P3：人机同屏状态。非桌面端返回 null（那里根本没有视图可附着）。 */
+export async function getCdpInfo(): Promise<CdpInfo | null> {
+  const fn = bridge()?.cdpInfo;
+  if (!fn) return null;
+  try {
+    return (await fn()) ?? null;
+  } catch {
+    return null;
   }
 }

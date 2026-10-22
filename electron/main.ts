@@ -23,6 +23,13 @@ import { join, isAbsolute } from 'node:path';
 import { server } from '../server/index.js';
 import { registry } from '../server/agents/registry.js';
 import { browserPanel, runBrowserSmoke } from './browser-view.js';
+import {
+  enableCdp,
+  initCdpEndpoint,
+  refreshCdpDescriptor,
+  setCdpAppUrls,
+  currentCdpDescriptor,
+} from './cdp.js';
 
 /**
  * 软件渲染逃生开关。
@@ -44,6 +51,16 @@ if (process.env.OPC_SAFE_GRAPHICS === '1') {
   app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity');
   console.log('[Main] OPC_SAFE_GRAPHICS=1 —— 已切换到软件渲染');
 }
+
+/**
+ * P3：人机同屏 —— 开放远程调试端口，让 Agent 能 `connectOverCDP` 附着到
+ * **同一个**预览视图上（见 cdp.ts 的方案说明与代价）。
+ *
+ * 必须与上面的 GPU 开关一样在模块顶部同步调用：Chromium 初始化之后
+ * `appendSwitch` 就不再生效了。端口本身由 Chromium 随机分配（`=0`），
+ * 真正的端点在 ready 之后从 `DevToolsActivePort` 读回。
+ */
+enableCdp();
 
 /** 开发态由 Vite 提供前端；打包态为空字符串，走进程内托管的 dist */
 const DEV_URL = process.env.OPC_DEV_SERVER_URL || '';
@@ -354,6 +371,18 @@ function registerIpc() {
   ipcMain.handle('opc:browser-reload', () => browserPanel.reload());
   ipcMain.handle('opc:browser-devtools', () => browserPanel.openDevTools());
   ipcMain.handle('opc:browser-state', () => browserPanel.getState());
+
+  // P3：人机同屏状态。给界面底部那一行状态条用 —— 「Agent 能不能连上」
+  // 必须让用户看见，而不是一个只在文档里存在的约定。
+  ipcMain.handle('opc:cdp-info', () => {
+    const d = currentCdpDescriptor();
+    return {
+      enabled: d.enabled,
+      port: d.port,
+      hasTarget: !!d.target,
+      targetUrl: d.target?.url ?? '',
+    };
+  });
 }
 
 async function createWindow() {
@@ -456,6 +485,15 @@ async function createWindow() {
   // （browserPanel.attach 里挂了 closed 监听）—— 它是一个持有登录态与
   // 网络能力的活对象，不能比窗口活得久。
   browserPanel.attach(mainWindow);
+
+  // P3：解析出 Chromium 实际选中的调试端口，并把应用自己的窗口 URL 记下来
+  // —— 后者用于把「主窗口」从 CDP target 里排除掉，只把预览视图交给 Agent。
+  // 读不到（OPC_CDP=0 或文件没生成）也不影响面板：只是 Agent 连不上。
+  //
+  // 刻意不 await：这一步最坏要重试 5s（DevToolsActivePort 迟迟不出现），
+  // 而窗口该立刻显示。让它自己在后台收敛，描述符落地后 Agent 自然能发现。
+  setCdpAppUrls([url]);
+  void initCdpEndpoint().then(() => refreshCdpDescriptor(''));
 
   // 外链交给系统浏览器，不在应用内开新窗口
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {

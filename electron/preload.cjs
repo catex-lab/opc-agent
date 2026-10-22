@@ -164,6 +164,17 @@ contextBridge.exposeInMainWorld('opc', {
     return () => ipcRenderer.removeListener('opc:browser-state', handler);
   },
 
+  /**
+   * P3：人机同屏状态（远程调试端口开着没有、预览视图的 target 认出来没有）。
+   *
+   * 只暴露「开着没有 / 端口 / 认没认出来」，**不给 ws 端点**：端点是要交给
+   * Agent 的东西（走 data/cdp.json 与 OPC_CDP_TARGET 环境变量），页面上显示
+   * 一个ws:// 字符串对用户没有任何可操作性，只会诱发「复制了能干什么」的误解。
+   */
+  cdpInfo() {
+    return ipcRenderer.invoke('opc:cdp-info');
+  },
+
   windowControl: {
     /** @param {'minimize'|'maximize'|'close'} action */
     send(action) {

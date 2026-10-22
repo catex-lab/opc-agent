@@ -456,6 +456,25 @@ if (await panel.count()) {
   const notice = await panel.locator('text=浏览器开发态').count();
   console.log(notice ? '  ✓ 无原生能力时给出说明' : '  ⚠️ 未出现兜底提示（剪贴板可能可用，路径已复制）');
 
+  // P3-c：标签选择要记住。这里能在普通 Chrome 里验：点「浏览器」→ localStorage
+  // 落盘 → 整页刷新 → 还停在浏览器标签。刷渲染进程不等于重启应用（那个要 Electron），
+  // 但持久化这条链路本身是同一段代码，值得在这里抓住。
+  await panel.getByRole('tab', { name: '浏览器' }).click();
+  await page.waitForTimeout(300);
+  const tabSaved = await page.evaluate(() => localStorage.getItem('opc.workspace-tab'));
+  console.log(tabSaved === 'browser' ? '  ✓ 标签选择已持久化' : `  ❌ 标签选择没落盘（${tabSaved}）`);
+  await page.reload();
+  await panel.waitFor({ state: 'attached', timeout: 4000 });
+  await page.waitForTimeout(500);
+  const tabRestored = await panel.getByRole('tab', { name: '浏览器' }).getAttribute('aria-selected');
+  console.log(tabRestored === 'true' ? '  ✓ 刷新后仍停在浏览器标签' : '  ❌ 刷新后标签丢了');
+  // 浏览器标签在非桌面端要给说明，不能摆假地址栏
+  const noBridge = await panel.locator('text=浏览器预览只在桌面端可用').count();
+  console.log(noBridge ? '  ✓ 无原生能力时给出说明' : '  ❌ 浏览器标签没有降级说明');
+  // 回到文件标签，别把浏览器标签留给后面的深色截图
+  await panel.getByRole('tab', { name: '文件' }).click();
+  await page.waitForTimeout(300);
+
   await shot('light-workspace');
 
   await go('/chat/s5', { dark: true });

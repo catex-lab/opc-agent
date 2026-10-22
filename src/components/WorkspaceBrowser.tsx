@@ -7,6 +7,7 @@ import {
   RotateCw,
 } from 'lucide-react';
 import {
+  getCdpInfo,
   getNavState,
   goBack,
   goForward,
@@ -18,6 +19,7 @@ import {
   setBrowserVisible,
   subscribeNavState,
   type BrowserNavState,
+  type CdpInfo,
 } from '../browserPanel';
 import { isOverlayVisible, subscribeOverlay } from '../overlayGuard';
 
@@ -42,6 +44,16 @@ import { isOverlayVisible, subscribeOverlay } from '../overlayGuard';
  *
  * 见 `overlayGuard.ts`：任何浮层可见时把视图藏起来。预览闪一下不见，
  * 比「菜单被网页盖住、用户以为点了没反应」好得多。
+ *
+ * ## 刷新 / 重启之后URL 去哪了
+ *
+ * 分两种情况，处理方式不同：
+ *   · **渲染进程刷新**（F5 / 视图热更新）：视图是主进程的对象，根本没被
+ *     重建，URL 还在。所以首屏只要 `getNavState()` 拉一次就恢复了。
+ *   · **应用重启**：视图重新建出来，是空的 about:blank。这时候才需要
+ *     localStorage 里那份「上次的 URL」兜底 —— 否则每次开应用都看到一张白板。
+ * 只有在主进程确实没有 URL 时才去读兜底，避免把用户已经手动清空的状态
+ * 又给加载回来。
  */
 
 const EMPTY: BrowserNavState = {
@@ -52,23 +64,77 @@ const EMPTY: BrowserNavState = {
   loading: false,
 };
 
+/** 上次预览的 URL。布局/会话偏好，不是业务数据 —— 所以放 localStorage。 */
+const LAST_URL_KEY = 'opc.workspace-last-url';
+
+/** 只收 http/https：localStorage 是可以被别的脚本改的，恢复时不能当信任输入。 */
+function isRestorableUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function readLastUrl(): string | null {
+  try {
+    const saved = localStorage.getItem(LAST_URL_KEY);
+    return saved && isRestorableUrl(saved) ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLastUrl(url: string): void {
+  try {
+    localStorage.setItem(LAST_URL_KEY, url);
+  } catch {
+    /* 隐私模式：写不进去只影响下次启动的兜底 */
+  }
+}
+
 export function WorkspaceBrowser() {
   const available = hasBrowserView();
   const [nav, setNav] = useState<BrowserNavState>(EMPTY);
   const [input, setInput] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [cdp, setCdp] = useState<CdpInfo | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
 
   // 导航状态由主进程推送（URL / 标题 / 前进后退 / 加载中）
   useEffect(() => subscribeNavState(setNav), []);
 
+  // P3：人机同屏状态。只拉一次 —— 端口是启动时定下的，运行期不变
+  useEffect(() => {
+    void getCdpInfo().then(setCdp);
+  }, []);
+
   // 首屏拉一次：推送只覆盖「订阅之后」的变化
   useEffect(() => {
+    let cancelled = false;
     void getNavState().then(state => {
+      if (cancelled) return;
       if (state) setNav(state);
+      const current = state?.url ?? '';
+      if (current && current !== 'about:blank') {
+        saveLastUrl(current);
+        return;
+      }
+      // 主进程那边是空的：应用刚启动（或视图刚重建），用上次的 URL 兜底
+      const saved = readLastUrl();
+      if (saved) void loadUrl(saved);
     });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // URL 变了就记下来：下次启动靠它恢复
+  useEffect(() => {
+    if (nav.url && nav.url !== 'about:blank') saveLastUrl(nav.url);
+  }, [nav.url]);
 
   // 地址栏跟随真实 URL，但用户正在输入时不抢
   useEffect(() => {
@@ -256,7 +322,26 @@ export function WorkspaceBrowser() {
           style={{ backgroundColor: nav.loading ? '#EF9F27' : '#1D9E75' }}
         />
         <span className="truncate">{nav.title || nav.url || '未加载'}</span>
-        <span className="ml-auto shrink-0">本地预览</span>
+        {/*
+          P3：人机同屏状态。这一行必须让用户看见 —— 「Agent 能不能连上这个面板」
+          不该是只存在于文档里的约定。不给 ws 端点：那对用户没有可操作性，
+          而且端点本来是该交给 Agent 的东西（data/cdp.json / OPC_CDP_TARGET）。
+        */}
+        {cdp && (
+          <span
+            className="ml-auto shrink-0"
+            title={
+              cdp.enabled
+                ? cdp.hasTarget
+                  ? '远程调试端口已开放：Agent 可用 connectOverCDP 附着到同一个页面'
+                  : '端口已开放，但还没认出不预览视图的 target（页面加载后即可）'
+                : '远程调试端口已关闭（OPC_CDP=0）：Agent 连不上这个面板'
+            }
+          >
+            {cdp.enabled ? `CDP :${cdp.port}` : 'CDP 关'}
+          </span>
+        )}
+        <span className={cdp ? 'shrink-0' : 'ml-auto shrink-0'}>本地预览</span>
       </div>
     </div>
   );

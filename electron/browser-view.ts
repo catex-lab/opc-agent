@@ -37,6 +37,7 @@ import { BrowserWindow, WebContentsView, app, session, shell } from 'electron';
 import type { Rectangle } from 'electron';
 import { createServer } from 'node:http';
 import { writeFileSync } from 'node:fs';
+import { refreshCdpDescriptor } from './cdp.js';
 
 /** 预览视图的 session 分区名。改名字等于丢掉用户已存的站点登录态。 */
 export const BROWSER_PARTITION = 'persist:browser';
@@ -136,8 +137,15 @@ export class BrowserPanel {
     });
 
     const push = () => this.pushState();
-    wc.on('did-navigate', push);
-    wc.on('did-navigate-in-page', push);
+    wc.on('did-navigate', () => {
+      push();
+      // P3：导航换了 target 的 URL，Agent 手里的 ws 端点要跟着更新
+      void refreshCdpDescriptor(wc.getURL());
+    });
+    wc.on('did-navigate-in-page', () => {
+      push();
+      void refreshCdpDescriptor(wc.getURL());
+    });
     wc.on('did-start-loading', push);
     wc.on('did-stop-loading', push);
     wc.on('page-title-updated', push);
@@ -150,6 +158,9 @@ export class BrowserPanel {
     this.win.contentView.addChildView(view);
     // 新建出来的视图默认是可见的（但 bounds 是 0），必须先藏起来等 bounds
     view.setVisible(false);
+    // P3：视图一建出来就把它的 target 解析给 Agent —— 这时还是 about:blank，
+    // 靠「排除应用自己的窗口」认；导航之后 did-navigate 会再刷一次。
+    void refreshCdpDescriptor(view.webContents.getURL());
     return view;
   }
 

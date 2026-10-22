@@ -20,6 +20,7 @@ import {
 } from "./agents/adapters/image.js";
 import { cacheImage, imageFilePath } from "./image-store.js";
 import { validateDirectory } from "./workspaceDir.js";
+import { dataDirPath } from "./paths.js";
 import { FS_ERROR_TEXT, listDir, type FsErrorCode } from "./fs.js";
 import {
   loadAgentCredentials,
@@ -801,6 +802,52 @@ app.get("/api/fs/list", (req, res) => {
     console.error("[Fs List] Error:", error);
     res.status(500).json({ error: error?.message || "读取目录失败" });
   }
+});
+
+/**
+ * P3：人机同屏 —— 远程调试端点查询。
+ *
+ * ## 为什么走「读文件」而不是 import electron
+ *
+ * 这个服务在浏览器开发态跑在纯 Node 里（`npm run dev` 的 server），
+ * import electron 会直接炸。而端点信息本来就必须落地成文件 —— Agent 是
+ * 外部 CLI 子进程，看不见主进程的内存，只能从文件或环境变量里发现它。
+ * 所以两边共用同一份 `data/cdp.json`，没有第二处真相。
+ *
+ * ## 为什么不返回 ws 端点给任意调用方
+ *
+ * 只绑回环 + 端口随机，已经把暴露面收得很小；但既然要开一个 HTTP 查询口，
+ * 就把「够用」和「全部」分开：这里给 enabled / port / targetUrl，
+ * 完整 ws 端点仍然只从 `data/cdp.json` 与 `OPC_CDP_TARGET` 环境变量取
+ * —— 后两者是给 Agent 的，本来就要能驱动页面。
+ */
+app.get("/api/browser/cdp", (_req, res) => {
+  const file = path.join(dataDirPath, "cdp.json");
+  let descriptor: Record<string, unknown> | null = null;
+  try {
+    descriptor = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    descriptor = null;
+  }
+  if (!descriptor) {
+    return res.json({
+      enabled: false,
+      port: null,
+      hasTarget: false,
+      targetUrl: "",
+      // 应用没跑在 Electron 里（浏览器开发态）或还没写过描述符
+      reason: "descriptor-missing",
+    });
+  }
+  res.json({
+    enabled: descriptor.enabled === true,
+    port: typeof descriptor.port === "number" ? descriptor.port : null,
+    hasTarget: !!descriptor.target,
+    targetUrl:
+      typeof descriptor.target === "object" && descriptor.target
+        ? String((descriptor.target as { url?: unknown }).url ?? "")
+        : "",
+  });
 });
 
 // 删除会话

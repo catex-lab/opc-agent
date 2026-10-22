@@ -61,6 +61,9 @@ function basename(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
+/** 上次停在哪个标签。布局偏好，不是会话状态 —— 所以放 localStorage。 */
+const TAB_KEY = 'opc.workspace-tab';
+
 function formatSize(bytes: number | undefined): string {
   if (typeof bytes !== 'number') return '';
   if (bytes < 1024) return `${bytes} B`;
@@ -74,8 +77,17 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
   /**
    * 当前标签。只有两个 —— **没有「终端」**：它还没做，摆一个点不动的标签
    * 就是假控件（本项目反复在防的那件事）。
+   *
+   * 记住上次停在哪个标签：用户常常是「开着浏览器标签干活，中途去文件树
+   * 看一眼路径」，回来不该又回到文件标签 —— 那一下跳转比多一次点击更烦。
    */
-  const [tab, setTab] = useState<'files' | 'browser'>('files');
+  const [tab, setTab] = useState<'files' | 'browser'>(() => {
+    try {
+      return localStorage.getItem(TAB_KEY) === 'browser' ? 'browser' : 'files';
+    } catch {
+      return 'files';
+    }
+  });
   const [data, setData] = useState<FsListResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -88,6 +100,15 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
   useEffect(() => {
     setRel('');
   }, [sessionId]);
+
+  // 标签选择落盘：读写都包 try（隐私模式下写不进去只影响下次默认值）
+  useEffect(() => {
+    try {
+      localStorage.setItem(TAB_KEY, tab);
+    } catch {
+      /* 见上 */
+    }
+  }, [tab]);
 
   const load = useCallback(
     async (target: string) => {
