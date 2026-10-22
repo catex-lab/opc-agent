@@ -68,7 +68,8 @@
     "verify:a42": "tsx scripts/verify-a42.ts",
     "verify:a75": "node scripts/verify-a75.mjs",
     "verify:qoder-sdk": "tsx scripts/verify-qoder-sdk.ts",
-    "verify:a78-browser": "tsx scripts/verify-a78-browser.ts"
+    "verify:a78-browser": "tsx scripts/verify-a78-browser.ts",
+    "capture:browser-panel": "node scripts/capture-browser-panel.mjs"
   },
   "dependencies": {
     "@qoder-ai/qoder-agent-sdk": "^1.0.55",
