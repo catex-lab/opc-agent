@@ -54,9 +54,34 @@ asarUnpack:
   # SDK 用 `path.resolve(__dirname, '../../cli/bin/codebuddy')` 定位自带的 CLI。
   # asar 归档内的文件无法作为子进程执行，必须解包到 app.asar.unpacked/ 下。
   - node_modules/@tencent-ai/agent-sdk/**
+  # node-pty（PTY 终端）同理，而且更严格：`.node` 是原生模块，**留在 asar 里
+  # 根本加载不了**；它还要 spawn `winpty-agent.exe`、加载 `conpty.dll` /
+  # `OpenConsole.exe` —— 全都要能当真实文件访问。
+  #
+  # 用的是包里自带的 `prebuilds/win32-x64/*.node`（N-API，ABI 稳定，Electron
+  # 直接能加载，已实测），所以**不需要**原生重建，nodeGypRebuild 保持 false。
+  - node_modules/node-pty/**
 
-# 本项目没有任何原生模块（SQLite 用的是 Electron 内置的 node:sqlite），
-# 所以显式关掉重建，避免 electron-builder 徒劳地去找编译工具链。
+# 本项目唯一的原生模块是 node-pty，而它走 N-API 预编译件（见上），
+# 所以保持关掉重建：开了只会让 @electron/rebuild 在本机撞上 Spectre 库缺失
+# （node-pty 的 binding.gyp 要求它，见 patches/node-pty+1.1.0.patch）。
+#
+# ⚠️ 2026-10-23 实测修正：**`nodeGypRebuild: false` 根本拦不住重建**。
+# node-pty 一进 `dependencies`，electron-builder 就走 `npmRebuild`（默认 true）
+# → `@electron/rebuild` → node-gyp，然后撞 MSB8040：
+#   error MSB8040: 此项目需要缓解了 Spectre 漏洞的库
+#   [.../node_modules/node-pty/build/deps/winpty/src/winpty-agent.vcxproj]
+#   [.../node_modules/node-pty/build/deps/winpty/src/winpty.vcxproj]
+# 注意报错来自 **winpty 自己的 vcxproj**，不是 node-pty 的 binding.gyp ——
+# 也就是说 `patches/node-pty+1.1.0.patch` 单独并不足以让重建通过（它只补了
+# binding.gyp 那一处 SpectreMitigation）。真正把重建挡掉的是下面这一行。
+#
+# 三行一起读：`npmRebuild: false` 是总闸；`nodeGypRebuild: false` 是 node-gyp
+# 自己的开关（万一日后有人手动跑 electron-builder node-gyp-rebuild）；
+# `buildDependenciesFromSource: false` 是不从源码编依赖。
+# 预编译件走 N-API，Electron 44 直接加载（实测 34/34 冒烟证明过），
+# 所以这三行关掉的东西一样都不需要。
+npmRebuild: false
 nodeGypRebuild: false
 buildDependenciesFromSource: false
 

@@ -176,7 +176,7 @@ contextBridge.exposeInMainWorld('opc', {
   },
 
   /**
-   * P4：终端（管道版）。
+   * P4：终端（PTY 优先，管道版兜底）。
    *
    * `terminalStart` 只接受绝对路径，且由主进程校验目录真的存在 ——
    * 前端传什么就信什么，等于把「能在哪执行命令」交给被约束方。
@@ -186,9 +186,19 @@ contextBridge.exposeInMainWorld('opc', {
     return ipcRenderer.invoke('opc:terminal-start', cwd);
   },
 
-  terminalInput(line) {
-    if (typeof line !== 'string') return;
-    ipcRenderer.send('opc:terminal-input', line);
+  /**
+   * 输入。PTY 模式下传**原始键流**（xterm 的 onData 原样转过来，含方向键
+   * 转义与 `\r`）；管道版模式下传一整行命令文本。主进程按当前通道分派。
+   */
+  terminalInput(data) {
+    if (typeof data !== 'string') return;
+    ipcRenderer.send('opc:terminal-input', data);
+  },
+
+  /** 改尺寸（PTY 重排屏幕用）。返回最新状态，省得渲染进程再查一次。 */
+  terminalResize(cols, rows) {
+    if (typeof cols !== 'number' || typeof rows !== 'number') return Promise.resolve(null);
+    return ipcRenderer.invoke('opc:terminal-resize', { cols, rows });
   },
 
   terminalKill() {

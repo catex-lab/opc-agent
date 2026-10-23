@@ -385,7 +385,7 @@ function registerIpc() {
     };
   });
 
-  /* ── P4：终端（管道版） ─────────────────────────────────────────────
+  /* ── P4：终端（PTY 优先，管道版兜底） ─────────────────────────────────
    *
    * 与浏览器视图同一套口径：渲染进程只能「请求」，不能「操作」。shell 由
    * 主进程创建，cwd 由主进程校验，生命周期由主进程收尾。
@@ -395,9 +395,23 @@ function registerIpc() {
     return terminal.start(cwd);
   });
 
-  ipcMain.on('opc:terminal-input', (_e, line: unknown) => {
-    if (typeof line !== 'string') return;
-    terminal.write(line);
+  /**
+   * 输入。PTY 模式下这是**原始键流**（含转义序列与 `\r`），管道版模式下
+   * 是一整行命令文本 —— 由 `terminal.write()` 按当前通道分派。
+   */
+  ipcMain.on('opc:terminal-input', (_e, data: unknown) => {
+    if (typeof data !== 'string') return;
+    terminal.write(data);
+  });
+
+  /** 改尺寸。PTY 需要它来重排屏幕（vim 的状态栏、top 的表格都靠这个）。 */
+  ipcMain.handle('opc:terminal-resize', (_e, size: unknown) => {
+    if (!size || typeof size !== 'object') return terminal.getState();
+    const { cols, rows } = size as { cols?: unknown; rows?: unknown };
+    if (typeof cols === 'number' && typeof rows === 'number') {
+      terminal.resize(cols, rows);
+    }
+    return terminal.getState();
   });
 
   ipcMain.handle('opc:terminal-kill', () => terminal.kill());

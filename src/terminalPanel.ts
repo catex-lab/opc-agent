@@ -1,9 +1,16 @@
 /**
- * P4：终端（管道版）的前端共享件。
+ * P4：终端的前端共享件。
  *
  * 与 `browserPanel.ts` / `workspace.ts` 同一个理由：这颗桥会被多个组件用，
  * 各写一份 `window.opc?.terminalStart(...)` 就会出现多份签名，改一次 preload
  * 要同步改多处，漏一处就是「打包态点了没反应」—— 而那在浏览器开发态看不出来。
+ *
+ * ## 两个通道
+ *
+ * `state.pty` 为 true 时是 PTY 通道：输入走 `sendKeys()`（**原始键流**，
+ * xterm 的 onData 原样转过来），输出是 ANSI 转义流，要交给 xterm.js 渲染。
+ * 为 false 时是管道版兜底：输入走 `sendLine()`（一整行命令），输出是纯文本，
+ * 用 `<pre>` 显示。**界面按这个字段说话**，不靠「我记得这版有没有 PTY」。
  *
  * ## 浏览器开发态
  *
@@ -16,8 +23,12 @@ export interface TerminalState {
   cwd: string | null;
   shell: string;
   exitCode: number | null;
-  /** 恒为 false：这一版没有 PTY，交互式程序不可用 */
-  pty: false;
+  /** 当前是不是 PTY 通道。true → 交互式程序（vim/top/REPL）可用 */
+  pty: boolean;
+  /** 当前列数（PTY 才有意义） */
+  cols: number;
+  /** 当前行数 */
+  rows: number;
 }
 
 export interface TerminalStartResult {
@@ -27,7 +38,8 @@ export interface TerminalStartResult {
 
 interface OpcBridge {
   terminalStart?(cwd: string): Promise<TerminalStartResult>;
-  terminalInput?(line: string): void;
+  terminalInput?(data: string): void;
+  terminalResize?(cols: number, rows: number): Promise<TerminalState | null>;
   terminalKill?(): Promise<void>;
   terminalState?(): Promise<TerminalState>;
   terminalOutput?(): Promise<string>;
@@ -55,11 +67,30 @@ export async function startTerminal(cwd: string): Promise<TerminalStartResult> {
   }
 }
 
+/** PTY 通道：送原始键流（含转义序列与 `\r`）。 */
+export function sendKeys(data: string): void {
+  try {
+    bridge()?.terminalInput?.(data);
+  } catch {
+    /* shell 刚退出：主进程自己会判，这里不重复报错 */
+  }
+}
+
+/** 管道版通道：送一整行命令（主进程补 `\r\n`）。 */
 export function sendLine(line: string): void {
   try {
     bridge()?.terminalInput?.(line);
   } catch {
     /* shell 刚退出：主进程自己会判，这里不重复报错 */
+  }
+}
+
+/** 上报终端尺寸（PTY 重排屏幕用）。 */
+export async function resizeTerminal(cols: number, rows: number): Promise<void> {
+  try {
+    await bridge()?.terminalResize?.(cols, rows);
+  } catch {
+    /* shell 退了就白 resize 一次，无所谓 */
   }
 }
 
@@ -103,7 +134,7 @@ export function subscribeTerminalData(cb: (chunk: string) => void): () => void {
   }
 }
 
-/** 订阅状态变化（跑着没有 / 退出码）。 */
+/** 订阅状态变化（跑着没有 / 退出码 / 是不是 PTY）。 */
 export function subscribeTerminalState(cb: (state: TerminalState) => void): () => void {
   const fn = bridge()?.onTerminalState;
   if (!fn) return () => {};

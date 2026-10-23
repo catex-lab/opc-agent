@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
 import { WorkspaceBrowser } from './WorkspaceBrowser';
+import { WorkspaceResizer } from './WorkspaceResizer';
 import { WorkspaceTerminal } from './WorkspaceTerminal';
 
 /**
@@ -189,14 +190,20 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
 
   return (
     <aside
-      className="flex min-h-0 shrink-0 flex-col"
+      // relative：宽度手柄要绝对定位在左边缘上（见 WorkspaceResizer）
+      className="relative flex min-h-0 shrink-0 flex-col"
       style={{
-        width: 300,
+        // 宽度走 CSS 变量：拖动时每帧改变量不触发 React 重渲染（文件树、
+        // WebContentsView 宿主都在这棵树里）。没拖过时退回 300px 设计值。
+        width: 'var(--tc-workspace-width, 300px)',
         borderLeft: '1px solid var(--tc-split)',
         backgroundColor: 'var(--tc-surface-content)',
       }}
       aria-label="工作区文件"
     >
+      {/* A82：宽度拖拽手柄。绝对定位且往左探出 2px，不占布局宽度 —— 与
+          左侧 SidebarResizer 同一条理由（占位会让面板和聊天区多一条缝）。 */}
+      <WorkspaceResizer />
       <PanelHeader
         compact
         level="column"
@@ -409,6 +416,9 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
                   >
                     <button
                       type="button"
+                      // A82（用户确认）：单击就打开/进入。桌面文件管理器（资源管理器 /
+                      // Finder）都是单击，双击那一套是网页链接的习惯 —— 这里是文件树，
+                      // 照桌面来。**不要改成 onDoubleClick**：改之前先看这条注释。
                       onClick={() => (isDir ? setRel(entry.path) : void openFile(entry))}
                       title={isDir ? entry.name : `用系统程序打开：${entry.abs}`}
                       className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-[5px] text-left"

@@ -138,8 +138,15 @@ export function ChatHeader({
       }
       actions={
         <>
-          {/* A77：工作区开关。放在工作区徽标**之前** —— 徽标说的是「在哪儿」，
-              开关说的是「看不看」，先有位置再有视图。 */}
+          {/* A63：工作区徽标。最左 —— 它表达的是「当前在哪儿干活」，
+              是随时要看的状态；删除是低频操作，继续躲在 ⋯ 里。 */}
+          {onCwdChange && <WorkspaceBadge cwd={cwd} onChange={onCwdChange} />}
+          {/* A82（用户要求）：工作区开关紧贴「⋯」的**左侧**。
+
+              原先它在整行最左边，和 ⋯ 之间隔着工作区徽标 —— 两个都是
+              28px 的图标按钮，却被一条文字徽标隔开，看着像两组无关的控件。
+              现在右侧这一组是「面板开关 + 更多」，内容状态徽标在它们左边：
+              同一类的东西挨着，人才不用在脑子里给它们分组。 */}
           {onToggleWorkspace && (
             <button
               type="button"
@@ -158,9 +165,6 @@ export function ChatHeader({
               <PanelRight size={16} />
             </button>
           )}
-          {/* A63：工作区徽标。放在「⋯」之前 —— 它表达的是「当前在哪儿干活」，
-              是随时要看的状态；删除是低频操作，继续躲在 ⋯ 里。 */}
-          {onCwdChange && <WorkspaceBadge cwd={cwd} onChange={onCwdChange} />}
           <details ref={moreRef} className="relative" data-chat-more>
           <summary
             className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg transition-colors"

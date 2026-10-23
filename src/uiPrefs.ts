@@ -241,6 +241,50 @@ export function saveSidebarWidth(width: number) {
   return w;
 }
 
+/* ── 右侧工作区面板宽度（A82）──────────────────────────────────
+ *
+ * 与左侧二栏宽度的区别只有一件事：**方向反的**。面板在右边，所以往左拖是变宽
+ * （`next = start - dx`），左侧栏是往右拖变宽（`next = start + dx`）。
+ * 数值区间反过来推导：下限 240 再窄，文件树的行高加上「工作区 / 目录名 /
+ * 标签 / 关闭」这一行就折行了；上限 560 是宽屏上还不至于把消息区挤到
+ * 难以阅读的程度（1280 宽的窗口去掉二栏 264 后只剩 456）。
+ */
+export const WORKSPACE_MIN = 240;
+export const WORKSPACE_MAX = 560;
+export const WORKSPACE_DEFAULT = 300;
+
+const WORKSPACE_KEY = 'opc.workspace-width';
+
+export function readWorkspaceWidth(): number | null {
+  const raw = localStorage.getItem(WORKSPACE_KEY);
+  if (raw === null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  return clamp(n, WORKSPACE_MIN, WORKSPACE_MAX);
+}
+
+export function applyWorkspaceWidth(width: number) {
+  document.documentElement.style.setProperty(
+    '--tc-workspace-width',
+    `${Math.round(clamp(width, WORKSPACE_MIN, WORKSPACE_MAX))}px`
+  );
+}
+
+export function saveWorkspaceWidth(width: number) {
+  const w = Math.round(clamp(width, WORKSPACE_MIN, WORKSPACE_MAX));
+  localStorage.setItem(WORKSPACE_KEY, String(w));
+  applyWorkspaceWidth(w);
+  return w;
+}
+
+/** 当前生效的工作区面板宽度（px）。手柄读它当拖动起点。 */
+export function currentWorkspaceWidth(): number {
+  const inline = document.documentElement.style.getPropertyValue('--tc-workspace-width');
+  const fromInline = parseFloat(inline);
+  if (Number.isFinite(fromInline) && fromInline > 0) return fromInline;
+  return WORKSPACE_DEFAULT;
+}
+
 /**
  * 启动时一次性就位（main.tsx 在首帧前调用）
  */
@@ -248,6 +292,8 @@ export function applyUiPrefs() {
   applyTransparency(readTransparency());
   const w = readSidebarWidth();
   if (w !== null) applySidebarWidth(w);
+  const ws = readWorkspaceWidth();
+  if (ws !== null) applyWorkspaceWidth(ws);
   applyGlow(readGlow());
 }
 

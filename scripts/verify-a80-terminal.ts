@@ -43,14 +43,12 @@ const SLEEP = (ms: number) => new Promise(r => setTimeout(r, ms));
 function checkContracts() {
   const term = read('electron/terminal.ts');
 
-  // 管道版：不许悄悄引入原生 PTY 依赖。引了就得重新评估打包链
-  // （node-pty 在 Windows 上要生成工具 + 跟 Electron ABI 重编）。
-  // 只匹配 import/require 写法：注释里提到 node-pty 是在解释**为什么**不引，
-  // 把注释算进去会得到永假（A78 的 preload 断言踩过同一个坑）。
-  ok(
-    !/from ['"]node-pty['"]|require\(['"]node-pty['"]\)/.test(term),
-    '契约：没有引入 node-pty（这一版是管道版）'
-  );
+  // 管道版：node-pty 在 A82 已经引入（PTY 优先），所以「没有 node-pty」
+  // 这条断言反了。现在要守的是**降级通道本身没被丢掉**，且有一个能稳定
+  // 走到它的开关 —— 否则这条分支只在「.node 坏了」时才被执行，
+  // 等于永远没有测试覆盖（见 terminal.ts 里 ptyDisabledByEnv 的注释）。
+  ok(/startPipe/.test(term), '契约：管道版通道还在（PTY 加载失败时的退路）');
+  ok(/OPC_TERMINAL_NO_PTY/.test(term), '契约：有强制走管道版的开关（否则这条分支永远测不到）');
   ok(/spawn\(/.test(term), '契约：用 child_process.spawn 起 shell');
   ok(/stdio:\s*\['pipe', 'pipe', 'pipe'\]/.test(term), '契约：三个流全是管道（没有 PTY）');
   ok(/windowsHide:\s*true/.test(term), '契约：Windows 上不弹控制台窗口');
@@ -137,6 +135,9 @@ async function runSmoke() {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     OPC_SAFE_GRAPHICS: '1',
+    // A82：PTY 成了默认通道，管道版只剩「加载失败」这一条路能到 ——
+    // 而那条路最难复现。所以这里显式关掉 PTY，让这套管道版断言真的跑起来。
+    OPC_TERMINAL_NO_PTY: '1',
     OPC_USER_DATA_DIR: dataDir,
     OPC_DATA_DIR: dataDir,
     PORT: '0',
@@ -153,6 +154,10 @@ async function runSmoke() {
     delete env[key];
   }
 
+  // 两个构建都要：`electron .` 跑的是 dist-electron/ 产物（不是 TS 源码），
+  // 而窗口加载的 http://127.0.0.1:PORT 前端来自 vite 的 dist/。
+  // 少跑 build:electron 的后果是「改了主进程代码，冒烟还在测旧包」——
+  // 这个坑在 a79 踩过一次，a80 首发版又漏了。
   const build = spawnSync('npm', ['run', '-s', 'build'], {
     cwd: root,
     stdio: 'ignore',
@@ -160,6 +165,15 @@ async function runSmoke() {
   });
   if (build.status !== 0) {
     ok(false, '冒烟：build 失败', `exit=${build.status}`);
+    return;
+  }
+  const buildElectron = spawnSync('npm', ['run', '-s', 'build:electron'], {
+    cwd: root,
+    stdio: 'ignore',
+    shell: true,
+  });
+  if (buildElectron.status !== 0) {
+    ok(false, '冒烟：build:electron 失败', `exit=${buildElectron.status}`);
     return;
   }
 
@@ -263,6 +277,19 @@ async function runSmoke() {
       { timeout: 20_000 }
     );
     ok(true, '冒烟：命令输出到达界面');
+
+    // 双重回显回归：管道下的 cmd.exe **自己会回显 stdin**（实测，还会打提示符），
+    // 渲染进程为了 bash 那边又回显一遍，用户就看到每条命令打两次。
+    // `pickShell()` 给 cmd 传 `/q` 关掉它那边；这里守住不再复发。
+    // 判据：自回显是 `<cwd>> echo X`（有空格），cmd 的回显是 `<cwd>>echo X`（无空格）。
+    const echoText = await outputText();
+    if (/cmd\.exe/.test(echoText)) {
+      ok(
+        !new RegExp(`>echo ${PROBE}`).test(echoText),
+        '冒烟：cmd 没有二次回显（/q 生效）',
+        echoText.split('\n').filter(l => l.includes('echo')).join(' ⏎ ').slice(0, 200)
+      );
+    }
 
     // ③ cd 之后还认不认 —— 这一步是「同一个 shell 会话」的证据
     await input.fill('cd sub');
