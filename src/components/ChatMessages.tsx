@@ -8,8 +8,10 @@ import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks } from '../
 import { AgentTrace } from './AgentTrace';
 import { BackgroundTasksPill } from './BackgroundTasksPill';
 import { useBackgroundTasks } from '../hooks/useBackgroundTasks';
-import { formatHandledDuration, lingeringToolBlocks } from '../../shared/trace';
+import { formatHandledDuration, hasFileEdits, lingeringToolBlocks } from '../../shared/trace';
 import { InlinePermissionCard } from './InlinePermissionCard';
+import { VerifyPanel } from './VerifyPanel';
+import { useVerifications } from '../hooks/useVerifications';
 import { installCherryCodeIconFix } from './cherryCodeIcon';
 import { AgentAvatar } from './AgentAvatar';
 import { ImageBubble } from './ImageBubble';
@@ -885,6 +887,11 @@ interface ChatMessagesProps {
   onOpenSession?: (sessionId: string) => void;
   /** 当前会话 id：后台任务轮询要把它排除掉（眼前这一轮不算「后台」） */
   currentSessionId?: string | null;
+  /**
+   * 会话绑定的工作目录（A97）。验证面板据此探测「这个项目能跑哪些检查」；
+   * 不传时面板只显示「会话未绑定工作目录」，不会给出一个跑不了的按钮。
+   */
+  sessionCwd?: string;
 }
 
 export function ChatMessages({
@@ -906,9 +913,12 @@ export function ChatMessages({
   onEditMessage,
   onOpenSession,
   currentSessionId,
+  sessionCwd,
 }: ChatMessagesProps) {
   /** 消息区根节点：选区工具条用它判断「选区是不是在这片消息里」 */
   const rootRef = useRef<HTMLDivElement>(null);
+  /** A97：验证结果（按会话取一次，前端按 message_id 分组） */
+  const { rows: verifications, refresh: refreshVerifications } = useVerifications(currentSessionId);
   /**
    * A56：Cherry 代码块「复制」按钮的字体图标换成内联 SVG。
    * 按钮在 shadow DOM 里且 hover 时才创建，安装后由模块内部的
@@ -1437,6 +1447,25 @@ export function ChatMessages({
                 imageMode={imageMode}
               />
             )}
+
+            {/* A97：验证状态条。只在这条回答**真的改过文件**时出现 ——
+                纯问答不需要「跑测试」入口。未验证也照样显示（它是显式状态），
+                不能因为没数据就整块消失，否则用户会默认「应该没问题」，
+                而这正是「Agent 说完成就算完成」那个洞。 */}
+            {message.role === 'assistant' &&
+              !message.isStreaming &&
+              !message.error &&
+              !!message.id &&
+              !!currentSessionId &&
+              hasFileEdits(toBlocks(message)) && (
+                <VerifyPanel
+                  sessionId={currentSessionId}
+                  messageId={message.id}
+                  cwd={sessionCwd}
+                  rows={verifications.filter(v => v.message_id === message.id)}
+                  onUpdated={refreshVerifications}
+                />
+              )}
 
             {/* P6 成本统计：耗时 / 费用 / token 一行小字，跟在气泡下面。
                 没有用量数据时 formatUsage 返回 null，整行不渲染 ——

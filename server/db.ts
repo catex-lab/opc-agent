@@ -77,6 +77,35 @@ db.exec(`
 
   -- 为会话 ID 创建索引
   CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+
+  -- 验证结果（A97）：一次命令执行 = 一行。
+  --
+  -- 为什么单独一张表而不是塞进 messages.blocks：验证是**事后**发生的
+  -- （Agent 说完话之后用户才点「跑测试」），而 blocks 是流式过程中由
+  -- Agent 事件投影出来的。混在一起会让「这条消息是不是还在流」的判断
+  -- 变得含糊，也会让 blocks 的迁移逻辑多一种半结构化形态。
+  --
+  -- message_id 可以为 NULL —— 那是「针对整个会话」的验证（比如用户想
+  -- 手动确认当前工作区还能不能编译），不挂在某条回答下面。
+  CREATE TABLE IF NOT EXISTS verifications (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    message_id TEXT,
+    command_id TEXT NOT NULL,
+    command TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    label TEXT,
+    -- pass | fail | timeout | error
+    status TEXT NOT NULL,
+    exit_code INTEGER,
+    duration_ms INTEGER,
+    output TEXT,
+    output_truncated INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_verifications_session
+    ON verifications(session_id, created_at);
 `);
 
 /**
@@ -546,6 +575,74 @@ export function createMessages(messages: DbMessageInput[]): void {
 export function clearAllData(): void {
   db.exec('DELETE FROM messages');
   db.exec('DELETE FROM sessions');
+}
+
+// ============= 验证结果（A97）=============
+
+export interface DbVerification {
+  id: string;
+  session_id: string;
+  /** 挂在哪条回答下面；NULL = 会话级验证 */
+  message_id: string | null;
+  command_id: string;
+  command: string;
+  kind: string;
+  label: string | null;
+  /** pass | fail | timeout | error */
+  status: string;
+  exit_code: number | null;
+  duration_ms: number | null;
+  output: string | null;
+  output_truncated: number;
+  created_at: string;
+}
+
+/**
+ * 写入一条验证结果。
+ *
+ * 同一 (session, message, command) 的旧结果会被**覆盖**而不是追加：
+ * 用户改完代码重跑测试时，看到应该是「当前这次的结果」，而不是一串
+ * 历史记录按时间排下来 —— 那样反而要自己判断哪条才是最新的。
+ */
+export function createVerification(v: DbVerification): DbVerification {
+  db.prepare(
+    'DELETE FROM verifications WHERE session_id = ? AND command_id = ? AND message_id IS ?'
+  ).run(bind(v.session_id), bind(v.command_id), bind(v.message_id ?? null));
+
+  db.prepare(`
+    INSERT INTO verifications (
+      id, session_id, message_id, command_id, command, kind, label,
+      status, exit_code, duration_ms, output, output_truncated, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    bind(v.id),
+    bind(v.session_id),
+    bind(v.message_id ?? null),
+    bind(v.command_id),
+    bind(v.command),
+    bind(v.kind),
+    bind(v.label),
+    bind(v.status),
+    bind(v.exit_code),
+    bind(v.duration_ms),
+    bind(v.output),
+    bind(v.output_truncated),
+    bind(v.created_at)
+  );
+
+  return v;
+}
+
+/** 一个会话下的全部验证结果（按时间升序，前端自行按消息分组） */
+export function getVerificationsBySession(sessionId: string): DbVerification[] {
+  return db
+    .prepare('SELECT * FROM verifications WHERE session_id = ? ORDER BY created_at ASC')
+    .all(bind(sessionId)) as unknown as DbVerification[];
+}
+
+/** 删掉某条消息的验证结果（消息被删/重生成时用） */
+export function deleteVerificationsByMessage(messageId: string): void {
+  db.prepare('DELETE FROM verifications WHERE message_id = ?').run(bind(messageId));
 }
 
 export default db;

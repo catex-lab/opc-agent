@@ -216,6 +216,26 @@ function isFileTool(name: string): boolean {
   );
 }
 
+/**
+ * 这条回答有没有**改动过文件**（A97）。
+ *
+ * 只认「写」类工具，不认 read / delete —— 用户要的是「这轮改动能不能跑」，
+ * 读过文件不代表动了代码，给它挂一个「未验证」反而会制造噪音。
+ */
+export function hasFileEdits(blocks: readonly Block[] | undefined | null): boolean {
+  if (!blocks) return false;
+  const WRITE_TOOLS = new Set([
+    'write',
+    'writefile',
+    'create_file',
+    'edit',
+    'editfile',
+    'multiedit',
+    'str_replace_editor',
+  ]);
+  return blocks.some(b => b.type === 'tool' && WRITE_TOOLS.has(lower(b.name)));
+}
+
 // ============= 块 → 轨迹 =============
 
 function statusOf(b: ToolBlock): TraceStatus {

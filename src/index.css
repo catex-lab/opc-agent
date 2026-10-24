@@ -3619,6 +3619,183 @@ html[data-opc-glass='1'] t-chat-sender {
   background: var(--tc-surface-rail, transparent);
 }
 
+/* ── 验证状态条（A97）────────────────────────────────────────────
+   挂在每条改过文件的消息底部。四种状态各一个颜色，且**未验证也要显示** ——
+   整块消失会让用户默认「应该没问题」，而那正是这个功能要防的误判。 */
+.tc-verify {
+  margin-top: 2px;
+}
+.tc-verify-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.tc-verify-bar:hover .tc-verify-title {
+  text-decoration: underline;
+}
+.tc-verify-title {
+  flex-shrink: 0;
+  font-weight: 500;
+}
+.tc-verify-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--td-text-color-placeholder);
+}
+.tc-verify-chev {
+  flex-shrink: 0;
+  color: var(--td-text-color-placeholder);
+}
+.tc-verify-body {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--tc-hairline);
+  border-radius: 8px;
+  background: var(--tc-surface-rail, transparent);
+  font-size: 12px;
+}
+.tc-verify-note {
+  color: var(--td-text-color-secondary);
+  line-height: 1.65;
+}
+.tc-verify-note.is-error {
+  color: var(--td-error-color);
+}
+.tc-verify-notes {
+  color: var(--td-text-color-placeholder);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.tc-verify-cmds {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.tc-verify-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.tc-verify-cmd-label {
+  color: var(--td-text-color-primary);
+}
+.tc-verify-cmd-code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+}
+.tc-verify-cmd-tag {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--td-text-color-placeholder);
+  background: color-mix(in srgb, var(--td-text-color-primary) 6%, transparent);
+}
+.tc-verify-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 9px;
+}
+.tc-verify-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid var(--tc-hairline);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--td-text-color-primary);
+  cursor: pointer;
+}
+.tc-verify-btn.is-primary {
+  border-color: var(--td-brand-color);
+  color: var(--td-brand-color);
+}
+.tc-verify-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tc-verify-running {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  color: var(--td-text-color-secondary);
+}
+.tc-verify-tail,
+.tc-verify-output {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid var(--tc-hairline);
+  border-radius: 6px;
+  background: var(--tc-surface-content);
+  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--td-text-color-secondary);
+}
+.tc-verify-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.tc-verify-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tc-verify-result-label {
+  color: var(--td-text-color-primary);
+}
+.tc-verify-result-status {
+  font-weight: 500;
+}
+.tc-verify-result[data-verify-result='pass'] .tc-verify-result-status {
+  color: var(--td-success-color);
+}
+.tc-verify-result[data-verify-result='fail'] .tc-verify-result-status,
+.tc-verify-result[data-verify-result='timeout'] .tc-verify-result-status,
+.tc-verify-result[data-verify-result='error'] .tc-verify-result-status {
+  color: var(--td-error-color);
+}
+.tc-verify-result-code,
+.tc-verify-result-dur {
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+}
+
+@keyframes tc-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* 轨迹滚动区。
    为什么要限高：一条消息挂 30 个步骤时，不封顶就会把整个会话顶成
    一屏全是过程、答案被挤到看不见。参考图也是同样处理。
