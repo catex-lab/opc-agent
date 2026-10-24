@@ -82,7 +82,8 @@
     "verify:a85": "node scripts/verify-a85.mjs",
     "verify:a86": "tsx scripts/verify-a86-workspace.ts",
     "verify:a96": "tsx scripts/verify-a96-diff.ts && node scripts/verify-a96.mjs",
-    "verify:a97": "tsx scripts/verify-a97-verify.ts && node scripts/verify-a97.mjs && tsx scripts/verify-a97-e2e.ts"
+    "verify:a97": "tsx scripts/verify-a97-verify.ts && node scripts/verify-a97.mjs && tsx scripts/verify-a97-e2e.ts",
+    "verify:a98": "tsx scripts/verify-a98-key.ts && tsx scripts/verify-a98-db.ts && node scripts/verify-a98.mjs && tsx scripts/verify-a98-e2e.ts"
   },
   "dependencies": {
     "@qoder-ai/qoder-agent-sdk": "^1.0.55",

@@ -31,11 +31,85 @@ import fs from 'node:fs';
 import path from 'node:path';
 import db from './db';
 import { dataDirPath } from './db';
+import { projectKey } from './project-key.js';
 
 export const MEMORY_DIR = path.join(dataDirPath, 'memory');
 export const CORE_MEMORY_PATH = path.join(MEMORY_DIR, 'MEMORY.md');
 export const USER_PROFILE_PATH = path.join(MEMORY_DIR, 'USER.md');
 export const SKILLS_DIR = path.join(MEMORY_DIR, 'skills');
+
+/**
+ * A98：项目记忆的根目录。每个项目一个子目录，目录名是 `projectKey(cwd)`。
+ *
+ * ## 分层口径（这轮改动的核心）
+ *
+ * | 层 | 位置 | 是否随项目变 |
+ * |---|---|---|
+ * | 核心记忆 MEMORY.md | 全局一份 + 每个项目一份 | 是（两层都注入） |
+ * | 用户画像 USER.md | **只有全局一份** | 否 |
+ * | 技能 skills/ | 全局一份 + 每个项目一份 | 是 |
+ *
+ * 用户画像刻意**不分区**：它描述的是「这个人」（语言偏好、沟通习惯、
+ * 通用禁忌），不随仓库变化。给每个项目复制一份画像，只会让用户在
+ * 三个项目里维护三份互相矛盾的自我描述。
+ *
+ * ## 为什么项目记忆是「按需创建」
+ *
+ * 全局 MEMORY.md 在 ensureDirs 里就写好模板了；项目记忆不一样 ——
+ * 读的时候**不创建**文件，只有真正写入时才建目录。否则用户每打开一个
+ * 新项目就会多出一个空模板文件，注入时还要为它浪费一段「本项目暂无
+ * 记忆」的废话。
+ */
+export const PROJECTS_DIR = path.join(MEMORY_DIR, 'projects');
+
+/** 一个项目的记忆目录三件套。`key` 同时用作 FTS 的 scope 值。 */
+export interface ProjectScope {
+  key: string;
+  dir: string;
+  corePath: string;
+  skillsDir: string;
+}
+
+/**
+ * 把 cwd 解析成项目记忆作用域。空 cwd / 无法归一化的路径 → null（= 全局层）。
+ *
+ * 注意这里**不碰文件系统**：即使目录还不存在也照样返回路径，
+ * 由调用方决定是读（不存在就当作空）还是写（写时创建）。
+ */
+export function projectScope(cwd: string | null | undefined): ProjectScope | null {
+  const raw = typeof cwd === 'string' ? cwd.trim() : '';
+  if (!raw) return null;
+  const key = projectKey(raw);
+  if (!key) return null;
+  const dir = path.join(PROJECTS_DIR, key);
+  return {
+    key,
+    dir,
+    corePath: path.join(dir, 'MEMORY.md'),
+    skillsDir: path.join(dir, 'skills'),
+  };
+}
+
+/** 列出磁盘上所有已存在的项目记忆目录（用于重建索引） */
+export function listProjectScopes(): ProjectScope[] {
+  try {
+    if (!fs.existsSync(PROJECTS_DIR)) return [];
+    return fs
+      .readdirSync(PROJECTS_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => {
+        const dir = path.join(PROJECTS_DIR, d.name);
+        return {
+          key: d.name,
+          dir,
+          corePath: path.join(dir, 'MEMORY.md'),
+          skillsDir: path.join(dir, 'skills'),
+        };
+      });
+  } catch {
+    return [];
+  }
+}
 
 /** L1 预算（token）。Hermes 也是 800，超过就说明把「日记」写进核心记忆了。 */
 export const CORE_MEMORY_BUDGET = 800;
@@ -108,15 +182,20 @@ function ensureSchema(): void {
   //   3 title_grams 切碎    —— 让标题里的中文可被检索
   //   4 body     切碎       —— 检索用
   //   5 raw      原文       —— snippet() 取第 6 列，摘要才是人话
+  //   6 scope    作用域     —— '' = 全局；项目键 = 某个项目（A98）
   // 见 cjkGrams 的注释：unicode61 不索引表意文字，所以中文必须切碎了才存在。
+  //
+  // ⚠️ scope 必须加在**最后一列**：`snippet(FTS_TABLE, 5, ...)` 按列下标
+  // 取 raw，插在中间会让摘要变成一串切碎的字。
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS ${FTS_TABLE}
-    USING fts5(kind, key, title, title_grams, body, raw, tokenize='unicode61');
+    USING fts5(kind, key, title, title_grams, body, raw, scope, tokenize='unicode61');
   `);
   // A38 内部结构从 4 列改成 6 列时留下的旧表：直接重建。
+  // A98 又加了 scope（6 → 7），同样重建。
   // 记忆文件是唯一事实来源，索引随时可再生，所以这里可以放心删。
   const cols = db.prepare(`PRAGMA table_info(${FTS_TABLE})`).all() as unknown as Array<{ name: string }>;
-  if (cols.length && cols.length !== 6) {
+  if (cols.length && cols.length !== 7) {
     db.exec(`DROP TABLE ${FTS_TABLE}`);
     ensureSchema();
   }
@@ -124,15 +203,36 @@ function ensureSchema(): void {
 
 /**
  * 把一份文档写进全文索引。同 key 先删后插，保证「一次写入一条」。
+ *
+ * `scope` 为空串表示全局；项目文档传项目键。key 本身也必须带作用域前缀
+ * （见 `coreKey` / `skillKey`），因为「同 key 先删后插」是按 key 匹配的 ——
+ * 两个项目都叫 `core` 的话，后写的会删掉先写的。
  */
-export function indexMemory(kind: string, key: string, title: string, body: string): void {
+export function indexMemory(
+  kind: string,
+  key: string,
+  title: string,
+  body: string,
+  scope = ''
+): void {
   ensureSchema();
   db.prepare(`DELETE FROM ${FTS_TABLE} WHERE key = ?`).run(key);
   // 原文进 title / raw（给人看），切碎版进 title_grams / body（给检索）。
   db.prepare(
-    `INSERT INTO ${FTS_TABLE} (kind, key, title, title_grams, body, raw)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(kind, key, title, cjkGrams(title), cjkGrams(body), body);
+    `INSERT INTO ${FTS_TABLE} (kind, key, title, title_grams, body, raw, scope)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(kind, key, title, cjkGrams(title), cjkGrams(body), body, scope);
+}
+
+/** 索引键：全局保持历史写法不变，项目加 `p:<key>:` 前缀 */
+function coreKey(scope: ProjectScope | null): string {
+  return scope ? `p:${scope.key}:core` : 'core:MEMORY.md';
+}
+function userKey(): string {
+  return 'user:USER.md';
+}
+function skillKey(name: string, scope: ProjectScope | null): string {
+  return scope ? `p:${scope.key}:skill:${name}` : `skill:${name}`;
 }
 
 export function deleteMemory(key: string): number {
@@ -146,14 +246,20 @@ export interface MemoryHit {
   kind: string;
   title: string;
   snippet: string;
+  /** '' = 全局；项目键 = 某个项目的记忆。前端据此打标签 */
+  scope: string;
 }
 
 /**
  * 全文检索。查询词先做 FTS5 语法转义，再按「OR」拼接 ——
  * 直接透传用户输入会让 `"` / `-` / `NEAR` 变成语法错误，
  * 检索框输入一个减号就白屏（这是 FTS5 的经典坑）。
+ *
+ * 传 `cwd` 时，结果 = 全局文档 + 该项目的文档；**不传则只搜全局**。
+ * 这个默认值是刻意的：设置页的检索框没有「当前项目」的概念，
+ * 让它把别人的项目记忆也搜出来会让人以为记忆串了。
  */
-export function searchMemory(query: string, limit = 10): MemoryHit[] {
+export function searchMemory(query: string, limit = 10, cwd?: string | null): MemoryHit[] {
   ensureSchema();
   const terms = String(query)
     .split(/\s+/)
@@ -172,39 +278,78 @@ export function searchMemory(query: string, limit = 10): MemoryHit[] {
   // 「类型不充分重叠」拒绝）。snippet 的长度由 FTS5 的第 6 个参数控制。
   // snippet 取第 6 列（raw，原文），不是切碎列 ——
   // 否则摘要会是一串「…周… …报…」，人读不了。
+  const scope = projectScope(cwd);
+  const where = scope
+    ? `${FTS_TABLE} MATCH ? AND (scope = '' OR scope = ?)`
+    : `${FTS_TABLE} MATCH ? AND scope = ''`;
+  const params: Array<string | number> = scope ? [match, scope.key, limit] : [match, limit];
   const rows = db
     .prepare(
-      `SELECT key, kind, title, snippet(${FTS_TABLE}, 5, '…', '…', '…', 14) AS snippet
-       FROM ${FTS_TABLE} WHERE ${FTS_TABLE} MATCH ? ORDER BY rank LIMIT ?`
+      `SELECT key, kind, title, scope, snippet(${FTS_TABLE}, 5, '…', '…', '…', 14) AS snippet
+       FROM ${FTS_TABLE} WHERE ${where} ORDER BY rank LIMIT ?`
     )
-    .all(match, limit) as unknown as MemoryHit[];
+    .all(...params) as unknown as MemoryHit[];
   return rows;
 }
 
-/** 全量重建索引（MEMORY / USER / skills/*.md → FTS5）。启动时与保存后调用。 */
-export function reindexMemory(): { core: number; user: number; skills: number } {
+/** 全量重建索引（全局 + 所有项目）。启动时与保存后调用。 */
+export function reindexMemory(): { core: number; user: number; skills: number; projects: number } {
   ensureDirs();
   // ⚠️ 必须先建表再全删：全新环境里 memory_fts 还不存在，
   // 而 `DELETE FROM` 不像 CREATE VIRTUAL TABLE 有 IF NOT EXISTS 兜底。
   ensureSchema();
   db.prepare(`DELETE FROM ${FTS_TABLE}`).run();
+
+  // ── 全局层 ──
   let skills = 0;
-  for (const f of listSkills()) {
-    indexMemory('skill', `skill:${f.name}`, f.name, f.body);
+  for (const f of readSkillsFrom(SKILLS_DIR, 'global')) {
+    indexMemory('skill', skillKey(f.name, null), f.name, f.body);
     skills += 1;
   }
-  indexMemory('core', 'core:MEMORY.md', '核心记忆', readCoreMemory());
-  indexMemory('user', 'user:USER.md', '用户画像', readUserProfile());
-  return { core: 1, user: 1, skills };
+  indexMemory('core', coreKey(null), '核心记忆', readCoreMemory());
+  indexMemory('user', userKey(), '用户画像', readUserProfile());
+
+  // ── 项目层 ──
+  // 只遍历磁盘上**真实存在**的项目目录：项目行删了但记忆文件还在的情况
+  // 也会被索引到，这是对的 —— 记忆文件是事实来源，索引跟着文件走。
+  let projects = 0;
+  for (const scope of listProjectScopes()) {
+    const body = fs.existsSync(scope.corePath) ? fs.readFileSync(scope.corePath, 'utf8') : '';
+    if (body.trim()) {
+      indexMemory('core', coreKey(scope), `项目记忆 · ${scope.key}`, body, scope.key);
+      projects += 1;
+    }
+    for (const f of readSkillsFrom(scope.skillsDir, 'project')) {
+      indexMemory('skill', skillKey(f.name, scope), f.name, f.body, scope.key);
+      skills += 1;
+    }
+  }
+
+  return { core: 1, user: 1, skills, projects };
 }
 
 // ── L1 / L2 / L3 读写 ─────────────────────────────────────────────────────
 
-export function readCoreMemory(): string {
+/**
+ * 读核心记忆。传 `cwd` 读该项目的记忆，不传读全局层。
+ *
+ * 项目记忆**不存在时返回空串**，而不是创建一份模板 —— 见 PROJECTS_DIR
+ * 的注释：读操作不该在磁盘上留下痕迹，否则每打开一个项目就多一个空文件。
+ */
+export function readCoreMemory(cwd?: string | null): string {
+  const scope = projectScope(cwd);
+  if (scope) {
+    try {
+      return fs.readFileSync(scope.corePath, 'utf8');
+    } catch {
+      return '';
+    }
+  }
   ensureDirs();
   return fs.readFileSync(CORE_MEMORY_PATH, 'utf8');
 }
 
+/** 用户画像只有全局一份：它描述「这个人」，不随仓库变。 */
 export function readUserProfile(): string {
   ensureDirs();
   return fs.readFileSync(USER_PROFILE_PATH, 'utf8');
@@ -218,25 +363,44 @@ interface WriteResult {
   overBudget: boolean;
 }
 
-function writeFile(path: string, text: string, budget: number): WriteResult {
-  ensureDirs();
+function writeFile(target: string, text: string, budget: number): WriteResult {
   const tokens = estimateTokens(text);
   // 注意：**超预算也照样写盘**。截断只发生在「注入」那一刻 ——
   // 在保存时就砍内容，用户会在编辑框里丢失自己刚写的后半段，
   // 而这种丢失是静默的（Hermes 也是「冻结快照注入」而非保存时截断）。
-  fs.writeFileSync(path, text, 'utf8');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, text, 'utf8');
   return { ok: true, tokens, budget, overBudget: tokens > budget };
 }
 
-export function writeCoreMemory(text: string): WriteResult {
+/**
+ * 写核心记忆。传 `cwd` 写项目层（目录按需创建），不传写全局层。
+ *
+ * 项目层与全局层共用同一个预算常量：项目记忆是该项目的「必须知道的事」，
+ * 和全局记忆是同一性质的内容，只是作用域更窄，没有理由给更大的额度。
+ */
+export function writeCoreMemory(text: string, cwd?: string | null): WriteResult {
+  const scope = projectScope(cwd);
+  if (scope) {
+    const r = writeFile(scope.corePath, text, CORE_MEMORY_BUDGET);
+    // 空内容不建索引：否则检索会命中一条「空记忆」，点开什么都没有
+    if (text.trim()) {
+      indexMemory('core', coreKey(scope), `项目记忆 · ${scope.key}`, text, scope.key);
+    } else {
+      deleteMemory(coreKey(scope));
+    }
+    return r;
+  }
+  ensureDirs();
   const r = writeFile(CORE_MEMORY_PATH, text, CORE_MEMORY_BUDGET);
-  indexMemory('core', 'core:MEMORY.md', '核心记忆', readCoreMemory());
+  indexMemory('core', coreKey(null), '核心记忆', readCoreMemory());
   return r;
 }
 
 export function writeUserProfile(text: string): WriteResult {
+  ensureDirs();
   const r = writeFile(USER_PROFILE_PATH, text, USER_PROFILE_BUDGET);
-  indexMemory('user', 'user:USER.md', '用户画像', readUserProfile());
+  indexMemory('user', userKey(), '用户画像', readUserProfile());
   return r;
 }
 
@@ -245,51 +409,89 @@ export interface SkillFile {
   title: string;
   body: string;
   tokens: number;
+  /** A98：技能属于全局还是某个项目。同名技能可以两层各有一份。 */
+  scope?: 'global' | 'project';
 }
 
-export function listSkills(): SkillFile[] {
+function readSkillsFrom(dir: string, scope: 'global' | 'project'): SkillFile[] {
+  try {
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter(f => f.endsWith('.md'))
+      .map(f => {
+        const body = fs.readFileSync(path.join(dir, f), 'utf8');
+        return {
+          name: f.replace(/\.md$/, ''),
+          title: firstHeading(body) || f,
+          body,
+          tokens: estimateTokens(body),
+          scope,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 列技能。传 `cwd` 时返回「全局 + 该项目」两份并带 `scope` 标记；
+ * 不传则只有全局。同名时**项目层的排在前面** —— 用户在当前项目里
+ * 看到的第一条应该是这个项目自己的约定。
+ */
+export function listSkills(cwd?: string | null): SkillFile[] {
   ensureDirs();
-  return fs
-    .readdirSync(SKILLS_DIR)
-    .filter(f => f.endsWith('.md'))
-    .map(f => {
-      const body = fs.readFileSync(path.join(SKILLS_DIR, f), 'utf8');
-      return {
-        name: f.replace(/\.md$/, ''),
-        title: firstHeading(body) || f,
-        body,
-        tokens: estimateTokens(body),
-      };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const global = readSkillsFrom(SKILLS_DIR, 'global');
+  const scope = projectScope(cwd);
+  if (!scope) return global.sort((a, b) => a.name.localeCompare(b.name));
+  const project = readSkillsFrom(scope.skillsDir, 'project');
+  const projectNames = new Set(project.map(s => s.name));
+  // 项目层优先，且全局里被项目覆盖的同名项不再重复出现
+  return [...project.sort((a, b) => a.name.localeCompare(b.name)), ...global.filter(g => !projectNames.has(g.name)).sort((a, b) => a.name.localeCompare(b.name))];
 }
 
-export function readSkill(name: string): SkillFile | null {
-  const safe = path.basename(name).replace(/\.md$/, '') + '.md';
-  const p = path.join(SKILLS_DIR, safe);
-  if (!fs.existsSync(p)) return null;
-  const body = fs.readFileSync(p, 'utf8');
-  return { name: path.basename(safe, '.md'), title: firstHeading(body), body, tokens: estimateTokens(body) };
+/** 读技能：先找项目层，再找全局层（项目层覆盖全局） */
+export function readSkill(name: string, cwd?: string | null): SkillFile | null {
+  const safe = path.basename(String(name)).replace(/\.md$/, '') + '.md';
+  const clean = path.basename(safe, '.md');
+  const scope = projectScope(cwd);
+  const dirs: Array<[string, 'global' | 'project']> = scope
+    ? [[scope.skillsDir, 'project'], [SKILLS_DIR, 'global']]
+    : [[SKILLS_DIR, 'global']];
+  for (const [dir, s] of dirs) {
+    const p = path.join(dir, safe);
+    if (!fs.existsSync(p)) continue;
+    const body = fs.readFileSync(p, 'utf8');
+    return { name: clean, title: firstHeading(body), body, tokens: estimateTokens(body), scope: s };
+  }
+  return null;
 }
 
 /** 写技能文件。名字做 basename + 白名单过滤，挡掉 `../../etc/passwd`。 */
-export function writeSkill(name: string, body: string): { ok: boolean; name: string } | { error: string } {
+export function writeSkill(
+  name: string,
+  body: string,
+  cwd?: string | null
+): { ok: boolean; name: string } | { error: string } {
   const clean = String(name).trim().replace(/\.md$/, '');
   if (!/^[\p{L}\p{N}_-]{1,64}$/u.test(clean)) {
     return { error: '技能名只能用字母/数字/下划线/连字符，最多 64 字符' };
   }
-  ensureDirs();
-  fs.writeFileSync(path.join(SKILLS_DIR, `${clean}.md`), body, 'utf8');
-  indexMemory('skill', `skill:${clean}`, firstHeading(body) || clean, body);
+  const scope = projectScope(cwd);
+  const dir = scope ? scope.skillsDir : SKILLS_DIR;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${clean}.md`), body, 'utf8');
+  indexMemory('skill', skillKey(clean, scope), firstHeading(body) || clean, body, scope?.key ?? '');
   return { ok: true, name: clean };
 }
 
-export function deleteSkill(name: string): boolean {
+export function deleteSkill(name: string, cwd?: string | null): boolean {
   const clean = path.basename(String(name).replace(/\.md$/, '')) + '.md';
-  const p = path.join(SKILLS_DIR, clean);
+  const scope = projectScope(cwd);
+  const p = path.join(scope ? scope.skillsDir : SKILLS_DIR, clean);
   if (!fs.existsSync(p)) return false;
   fs.unlinkSync(p);
-  deleteMemory(`skill:${clean.replace(/\.md$/, '')}`);
+  deleteMemory(skillKey(path.basename(clean, '.md'), scope));
   return true;
 }
 
@@ -334,6 +536,7 @@ export interface MemoryStats {
   indexedDocs: number;
 }
 
+/** 全局层的统计（保持原有字段语义不变，前端无需改动） */
 export function memoryStats(): MemoryStats {
   ensureDirs();
   const skills = listSkills();
@@ -356,20 +559,75 @@ export function memoryStats(): MemoryStats {
   };
 }
 
+/** 项目层的统计。项目记忆不存在时各项为 0，`exists` 为 false。 */
+export interface ProjectMemoryStats {
+  key: string;
+  exists: boolean;
+  coreTokens: number;
+  coreBudget: number;
+  skillCount: number;
+  skillTokens: number;
+}
+
+export function projectMemoryStats(cwd: string | null | undefined): ProjectMemoryStats | null {
+  const scope = projectScope(cwd);
+  if (!scope) return null;
+  const core = readCoreMemory(cwd);
+  const skills = readSkillsFrom(scope.skillsDir, 'project');
+  return {
+    key: scope.key,
+    exists: core.trim().length > 0,
+    coreTokens: estimateTokens(core),
+    coreBudget: CORE_MEMORY_BUDGET,
+    skillCount: skills.length,
+    skillTokens: skills.reduce((s, k) => s + k.tokens, 0),
+  };
+}
+
 /**
  * 装配注入上下文。**会话启动时冻结一次**：
  * 一轮对话中途改了 MEMORY.md，不影响正在跑的这轮 —— 否则同一个会话里
  * 前后两次工具调用看到的世界观不一致，比没有记忆更难排查。
+ *
+ * ## 顺序是有讲究的
+ *
+ * 全局核心记忆 → 用户画像 → 当前项目记忆。项目记忆放**最后**，因为
+ * 它最具体、也最容易和全局冲突（比如全局说「用 4 空格缩进」，本项目
+ * 说「用 2 空格」）。末尾位置 + 明确写出「优先级高于上面的通用记忆」，
+ * 让模型倾向于服从更近的那一条。
  */
-export function assembleMemoryContext(opts: { includeUser?: boolean } = {}): string {
+export function assembleMemoryContext(
+  opts: { includeUser?: boolean; cwd?: string | null } = {}
+): string {
   ensureDirs();
   const includeUser = opts.includeUser !== false;
   const core = truncateToBudget(readCoreMemory(), CORE_MEMORY_BUDGET);
-  const parts = ['## 用户长期记忆（跨会话生效，只读，来自 opc-agent 记忆层）', '', core.text];
+  const parts = ['## 用户长期记忆（跨项目生效，只读，来自 opc-agent 记忆层）', '', core.text];
   if (includeUser) {
     const user = truncateToBudget(readUserProfile(), USER_PROFILE_BUDGET);
     parts.push('', '## 用户偏好画像', '', user.text);
   }
+
+  // 项目层：文件不存在或内容为空时**整段不出现** —— 注入一个
+  // 「本项目暂无记忆」的空标题只会浪费 token 并诱导模型去猜。
+  //
+  // ⚠️ 必须先判 scope 再读。`readCoreMemory(undefined)` 读到的是**全局**
+  // 记忆，直接传下去会把全局内容当成项目内容再注入一遍（标题还是
+  // 「当前项目记忆」）。这条是写验证脚本时抓出来的。
+  const scope = projectScope(opts.cwd);
+  if (scope) {
+    const projectCore = readCoreMemory(opts.cwd);
+    if (projectCore.trim()) {
+      const scoped = truncateToBudget(projectCore, CORE_MEMORY_BUDGET);
+      parts.push(
+        '',
+        '## 当前项目记忆（只作用于当前工作目录，优先级高于上面的通用记忆）',
+        '',
+        scoped.text
+      );
+    }
+  }
+
   return parts.join('\n');
 }
 
@@ -381,13 +639,15 @@ function firstHeading(md: string): string {
 /**
  * 给调用方的 systemPrompt 追加记忆上下文。
  *
- * 被 `sdk` 与 `http` 两个适配器在**拼请求体之前**调用 ——
+ * 被 `sdk` / `http` / `qoder-sdk` 三个适配器在**拼请求体之前**调用 ——
  * 放在这里而不是塞进 `assembleMemoryContext`，是因为「原提示词为空时
  * 用默认提示词还是直接用记忆」这个决定属于适配器，不属于记忆层。
+ *
+ * `cwd` 传会话的工作目录：它决定「要不要带上项目记忆」。不传 = 只注入全局层。
  */
-export function withMemoryContext(systemPrompt: string | undefined): string {
+export function withMemoryContext(systemPrompt: string | undefined, cwd?: string | null): string {
   const base = (systemPrompt ?? '').trim();
-  const mem = assembleMemoryContext();
+  const mem = assembleMemoryContext({ cwd });
   return base ? `${base}\n\n${mem}` : mem;
 }
 

@@ -8,6 +8,18 @@ import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import fs from "fs";
 import * as db from "./db.js";
+// A98：项目层。命名导入是为了让路由里读起来更直接（`db.` 前缀在
+// 这些一次性调用上只是噪音）；`import * as db` 仍然保留给既有调用点。
+import {
+  backfillSessionProjects,
+  deleteProject,
+  getOrCreateProject,
+  getProject,
+  getProjectByPath,
+  getSessionProject,
+  listProjects,
+  renameProject,
+} from "./db.js";
 import { registry } from "./agents/registry.js";
 import { scoreAgentSkills } from "./agents/types.js";
 import { findDef } from "./agents/definitions.js";
@@ -44,6 +56,8 @@ import {
   deleteSkill,
   listSkills,
   memoryStats,
+  projectMemoryStats,
+  projectScope,
   readCoreMemory,
   readSkill,
   readUserProfile,
@@ -610,7 +624,9 @@ app.get("/api/sessions/:sessionId", (req, res) => {
       blocks: parseJsonColumn(msg.blocks),
     }));
     
-    res.json({ session, messages: parsedMessages });
+    // A98：顺带返回所属项目。前端据此在会话头部显示「当前项目」，
+    // 也据此知道「这个会话有没有项目记忆」。取不到就是没绑目录，正常。
+    res.json({ session, project: getSessionProject(sessionId) ?? null, messages: parsedMessages });
   } catch (error: any) {
     console.error("[Session] Error:", error);
     res.status(500).json({ error: error?.message || "获取会话失败" });
@@ -652,6 +668,12 @@ app.post("/api/sessions", (req, res) => {
       ? JSON.stringify(agentIds.filter((v: unknown) => typeof v === 'string'))
       : (typeof agentIds === 'string' ? agentIds : null);
 
+    // A98：按工作目录关联项目。同一个目录的多个会话共用一个项目，
+    // 记忆也随之共用 —— 这正是「项目记忆」这个概念的落点。
+    // 没指定目录的会话（纯问答）保持不绑定：它不属于任何项目，
+    // 硬塞一个「进程当前目录」会让它的记忆错误地共享到一个假项目里。
+    const project = typeof cwd === 'string' && cwd ? getOrCreateProject(cwd) : undefined;
+
     const session = db.createSession({
       id: uuidv4(),
       title,
@@ -668,6 +690,7 @@ app.post("/api/sessions", (req, res) => {
       reasoning_effort: typeof reasoningEffort === 'string' && reasoningEffort ? reasoningEffort : null,
       scenario_id: typeof scenarioId === 'string' && scenarioId ? scenarioId : null,
       system_prompt: typeof systemPrompt === 'string' && systemPrompt ? systemPrompt : null,
+      project_id: project?.id ?? null,
       created_at: now,
       updated_at: now
     });
@@ -709,6 +732,10 @@ app.patch("/api/sessions/:sessionId", (req, res) => {
         return res.status(400).json({ error: `工作目录不存在：${cwd}` });
       }
       updates.cwd = cwd || null;
+      // A98：换目录 = 换项目。清空目录则解绑（null）。
+      // 这里同步更新而不是留给读取时现算，是因为「会话属于哪个项目」
+      // 会被列表分组直接用到，每次现算会让分组查询退化成 N 次查找。
+      updates.project_id = cwd ? (getOrCreateProject(cwd)?.id ?? null) : null;
     }
     // A62：思考强度同理。null = 清空档位、回到 CLI 自己的默认
     if (typeof reasoningEffort === 'string') updates.reasoning_effort = reasoningEffort || null;
@@ -1337,6 +1364,10 @@ app.post("/api/chat", async (req, res) => {
     // （或重新生成一类的内部路径）没带，会话里 PATCH 过的工作目录仍然该生效，
     // 而不是悄悄退回后端进程目录 —— 那正是「会话里改了工作区却不生效」的 bug。
     cwd: cwd || session.cwd || process.cwd(),
+    // A98：记忆作用域**不做回落** —— 只认会话自己绑定的目录。
+    // 上面那行为了工具能跑会退到 process.cwd()，但记忆不能跟着退：
+    // 否则没绑目录的纯问答会话会吃进「后端进程所在仓库」的项目记忆。
+    memoryCwd: session.cwd || undefined,
     model: selectedModel,
     // A62：档位值。老会话分支已经把本次请求 patch 进 session 了
     // （`session = { ...session, ...patch }`），所以这里读 session 即最新值；
@@ -1472,14 +1503,32 @@ app.post("/api/chat", async (req, res) => {
  */
 /**
  * 记忆总览：MEMORY / USER / skills 列表 + 预算统计。
+ *
+ * A98：带 `?cwd=` 时额外返回 `project` 段（该项目的记忆与统计）。
+ * **顶层字段仍然只表示全局层** —— 这样既有的设置页一行都不用改，
+ * 新增的项目层由前端按需读取。
  */
-app.get("/api/memory", (_req, res) => {
+app.get("/api/memory", (req, res) => {
   try {
+    const cwd = typeof req.query.cwd === "string" ? req.query.cwd : "";
+    const project = projectScope(cwd);
     res.json({
       core: readCoreMemory(),
       user: readUserProfile(),
       skills: listSkills().map(s => ({ name: s.name, title: s.title, tokens: s.tokens })),
       stats: memoryStats(),
+      project: project
+        ? {
+            cwd,
+            key: project.key,
+            name: getProjectByPath(cwd)?.name ?? cwd,
+            core: readCoreMemory(cwd),
+            skills: listSkills(cwd)
+              .filter(s => s.scope === "project")
+              .map(s => ({ name: s.name, title: s.title, tokens: s.tokens })),
+            stats: projectMemoryStats(cwd),
+          }
+        : null,
     });
   } catch (error: any) {
     console.error("[Memory] read error:", error);
@@ -1492,14 +1541,29 @@ app.get("/api/memory", (_req, res) => {
  *
  * 超预算**照样保存**、只在注入时截断：在保存时就砍内容，
  * 用户会在编辑框里静默丢掉刚写的后半段（Hermes 也是冻结快照语义）。
+ *
+ * A98：`scope: 'project'` + `cwd` 时写项目层。**默认仍是 global** ——
+ * 老前端不传 scope 的行为必须一字不差，否则用户在设置页存一次全局记忆
+ * 会莫名其妙写进某个项目里。
+ * `user`（画像）不接受项目作用域：它描述「这个人」，不随仓库变。
  */
 app.put("/api/memory", (req, res) => {
   try {
-    const { core, user } = req.body ?? {};
+    const { core, user, cwd, scope } = req.body ?? {};
+    const isProject = scope === "project";
+    if (isProject && (typeof cwd !== "string" || !cwd.trim())) {
+      res.status(400).json({ error: "scope=project 时必须提供 cwd" });
+      return;
+    }
     const out: Record<string, unknown> = {};
-    if (typeof core === "string") out.core = writeCoreMemory(core);
+    if (typeof core === "string") out.core = writeCoreMemory(core, isProject ? cwd : null);
     if (typeof user === "string") out.user = writeUserProfile(user);
-    res.json({ ok: true, ...out, stats: memoryStats() });
+    res.json({
+      ok: true,
+      ...out,
+      stats: memoryStats(),
+      projectStats: isProject ? projectMemoryStats(cwd) : null,
+    });
   } catch (error: any) {
     console.error("[Memory] write error:", error);
     res.status(500).json({ error: error?.message || "保存记忆失败" });
@@ -1509,20 +1573,28 @@ app.put("/api/memory", (req, res) => {
 /** 全文检索（FTS5）。查询词做语法转义，输入减号也不会炸。 */
 app.post("/api/memory/search", (req, res) => {
   try {
-    const { query, limit } = req.body ?? {};
+    const { query, limit, cwd } = req.body ?? {};
     if (typeof query !== "string" || !query.trim()) {
       res.status(400).json({ error: "query 不能为空" });
       return;
     }
-    res.json({ hits: searchMemory(query, Math.min(Number(limit) || 10, 50)) });
+    // 带 cwd 时搜「全局 + 该项目」；不带只搜全局（见 searchMemory 的说明）
+    const hits = searchMemory(query, Math.min(Number(limit) || 10, 50), typeof cwd === "string" ? cwd : null);
+    res.json({ hits });
   } catch (error: any) {
     console.error("[Memory] search error:", error);
     res.status(500).json({ error: error?.message || "检索失败" });
   }
 });
 
+const skillCwd = (req: { query: Record<string, unknown>; body?: any }): string | null => {
+  const fromQuery = typeof req.query.cwd === "string" ? req.query.cwd : "";
+  const fromBody = typeof req.body?.cwd === "string" ? req.body.cwd : "";
+  return fromQuery || fromBody || null;
+};
+
 app.get("/api/memory/skills/:name", (req, res) => {
-  const skill = readSkill(req.params.name);
+  const skill = readSkill(req.params.name, skillCwd(req));
   if (!skill) {
     res.status(404).json({ error: "技能不存在" });
     return;
@@ -1536,7 +1608,7 @@ app.put("/api/memory/skills/:name", (req, res) => {
     res.status(400).json({ error: "body 不能为空" });
     return;
   }
-  const r = writeSkill(req.params.name, body);
+  const r = writeSkill(req.params.name, body, skillCwd(req));
   if ("error" in r) {
     res.status(400).json({ error: r.error });
     return;
@@ -1545,11 +1617,77 @@ app.put("/api/memory/skills/:name", (req, res) => {
 });
 
 app.delete("/api/memory/skills/:name", (req, res) => {
-  if (!deleteSkill(req.params.name)) {
+  if (!deleteSkill(req.params.name, skillCwd(req))) {
     res.status(404).json({ error: "技能不存在" });
     return;
   }
   res.json({ ok: true, stats: memoryStats() });
+});
+
+// ── 项目（A98）──────────────────────────────────────────────────────────
+//
+// 项目由「目录」唯一确定：path 存归一化后的路径，同一个目录永远只有一行。
+// 前端不需要先建项目再用 —— POST 一个路径就会「取或建」。
+
+app.get("/api/projects", (_req, res) => {
+  try {
+    const projects = listProjects();
+    // 顺带带上每个项目的会话数，前端分组时不用再逐个项目查一遍
+    const counts = new Map<string, number>();
+    for (const s of db.getAllSessions()) {
+      if (s.project_id) counts.set(s.project_id, (counts.get(s.project_id) ?? 0) + 1);
+    }
+    res.json({
+      projects: projects.map(p => ({
+        ...p,
+        sessionCount: counts.get(p.id) ?? 0,
+        memory: projectMemoryStats(p.path),
+      })),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "读取项目失败" });
+  }
+});
+
+app.post("/api/projects", (req, res) => {
+  const { cwd, name } = req.body ?? {};
+  if (typeof cwd !== "string" || !cwd.trim()) {
+    res.status(400).json({ error: "cwd 不能为空" });
+    return;
+  }
+  // 与建会话时同一把尺子：不存在的目录不落库
+  if (validateDirectory(cwd) === "not-found") {
+    res.status(400).json({ error: `工作目录不存在：${cwd}` });
+    return;
+  }
+  const project = getOrCreateProject(cwd, typeof name === "string" ? name : undefined);
+  if (!project) {
+    res.status(400).json({ error: "无法从该路径推导项目" });
+    return;
+  }
+  res.json({ project });
+});
+
+app.patch("/api/projects/:id", (req, res) => {
+  const { name } = req.body ?? {};
+  if (typeof name !== "string" || !name.trim()) {
+    res.status(400).json({ error: "name 不能为空" });
+    return;
+  }
+  if (!renameProject(req.params.id, name)) {
+    res.status(404).json({ error: "项目不存在" });
+    return;
+  }
+  res.json({ ok: true, project: getProject(req.params.id) });
+});
+
+app.delete("/api/projects/:id", (req, res) => {
+  // 只删项目行并解绑会话，**不删记忆文件** —— 那是用户的真实内容
+  if (!deleteProject(req.params.id)) {
+    res.status(404).json({ error: "项目不存在" });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 /** 手动重建索引（改坏了索引或外部动过 skills/ 时用）。 */
@@ -2393,6 +2531,14 @@ if (fs.existsSync(path.join(webDir, 'index.html'))) {
 const HOST = process.env.OPC_HOST || '127.0.0.1';
 // A38：索引自愈。文件是唯一事实来源，索引随时可重建，失败不阻断启动。
 bootMemory();
+// A98：老会话按 cwd 回填项目归属。幂等，失败不阻断启动 ——
+// 回填不上只会退化成「这个会话用全局记忆」，与改造前的行为一致。
+try {
+  const linked = backfillSessionProjects();
+  if (linked > 0) console.log(`[DB] 项目回填：${linked} 个会话已关联到项目`);
+} catch (e) {
+  console.warn('[DB] 项目回填失败（不影响启动）:', (e as Error).message);
+}
 // A40：权限规则预热。门禁每次工具调用都读内存缓存，这里负责先填上。
 loadPermissionRules();
 // A57：模型目录。

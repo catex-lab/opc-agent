@@ -232,7 +232,8 @@ export class SdkAdapter implements AgentProvider {
             // A38：SDK 这条路的提示词由我们装配，记忆层在这里注入。
             // 先落默认提示词再追加记忆 —— 反过来会在用户没配提示词时
             // 把默认人格整个替换成一段记忆，agent 就「不会说人话」了。
-            systemPrompt: withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT),
+            // A98：带上 cwd，让记忆层把「当前项目」那一层也注入进来
+            systemPrompt: withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd),
             permissionMode: ctx.permissionMode || 'default',
             canUseTool,
             ...(ctx.resumeToken ? { resume: ctx.resumeToken } : {}),

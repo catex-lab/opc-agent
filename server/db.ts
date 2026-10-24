@@ -1,7 +1,11 @@
 import { DatabaseSync } from 'node:sqlite';
+import crypto from 'node:crypto';
 import path from 'path';
 import fs from 'fs';
 import { dataDirPath } from './paths.js';
+// A98：项目路径归一与显示名。纯函数模块（只依赖 crypto / path），
+// 不会反过来 import db.ts，所以这里引用它是安全的。
+import { normalizeProjectPath, defaultProjectName } from './project-key.js';
 
 // 路径推导已拆到 `paths.ts`（无副作用），这里只做 re-export：
 // 既有 `import { dataDirPath } from './db.js'` 的调用点无需改动，
@@ -106,6 +110,24 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_verifications_session
     ON verifications(session_id, created_at);
+
+  -- 项目（A98）：一个「目录」就是一个项目。
+  --
+  -- 为什么必须补这一层：此前项目这个概念在库里根本不存在，只有
+  -- sessions.cwd 一个字符串。于是「项目记忆 / 项目总览 / 任务面板」
+  -- 三样东西都没有可挂载的锚点，而记忆只能全局存一份 —— 在两个仓库
+  -- 之间切换时，同一份 MEMORY.md 会同时注入到两边，项目规范互相串味。
+  --
+  -- path 存的是**归一化后**的路径（小写 + 正斜杠 + 去尾斜杠），见
+  -- project-key.ts。唯一约束落在它上面，保证「同一目录只有一个项目」。
+  -- 展示用的原始路径由归一化函数可逆地还原（除大小写外），不需要另存。
+  CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_opened_at TEXT NOT NULL
+  );
 `);
 
 /**
@@ -141,6 +163,16 @@ ensureColumn('sessions', 'reasoning_effort', 'reasoning_effort TEXT');
 ensureColumn('sessions', 'scenario_id', 'scenario_id TEXT');
 ensureColumn('sessions', 'system_prompt', 'system_prompt TEXT');
 ensureColumn('sessions', 'pinned', 'pinned INTEGER NOT NULL DEFAULT 0');
+/**
+ * A98：会话所属项目。
+ *
+ * 老会话这一列为 NULL —— 随后由 `backfillSessionProjects()` 按 cwd 回填。
+ * 刻意**不加外键**：SQLite 不支持给已有表 ALTER 出外键约束，硬加要整表
+ * 重建；而这张表是本机唯一的真实对话数据，为了一个可空外键去重建它
+ * 风险不对等。代价是读取侧必须容忍「project_id 指向一个不存在的项目」，
+ * 这一点在 `getSessionProject()` 里兜住。
+ */
+ensureColumn('sessions', 'project_id', 'project_id TEXT');
 // 群聊消息来源。老消息为 NULL，前端按「无作者」渲染成单气泡，行为不变。
 ensureColumn('messages', 'author_agent_id', 'author_agent_id TEXT');
 // P4-4：生图消息的图片块。老消息为 NULL（纯文本），语义正确。
@@ -214,6 +246,14 @@ export interface DbSession {
   /** 会话级系统提示词（场景注入） */
   system_prompt: string | null;
   /**
+   * A98：所属项目 id。NULL = 会话没绑定工作目录，或来自回填之前的旧数据。
+   *
+   * 可选声明是为了 `createSession()` 的调用点：建会话时通常先落库、
+   * 再由路由层按 cwd 关联项目。读取侧请走 `getSessionProject()`，
+   * 它会同时处理「列为 NULL」和「指向已删除项目」两种情况。
+   */
+  project_id?: string | null;
+  /**
    * 置顶标记。1 = 钉在消息列表顶部；老库迁移后为 0。
    *
    * 声明成可选是为了 `createSession()` 的调用点：新建会话一定是未置顶的，
@@ -277,6 +317,134 @@ export type DbMessageInput = Omit<
   blocks?: string | null;
 };
 
+// ============= 项目操作（A98）=============
+
+export interface DbProject {
+  id: string;
+  /** 归一化后的绝对路径（小写 + 正斜杠 + 无尾斜杠） */
+  path: string;
+  name: string;
+  created_at: string;
+  last_opened_at: string;
+}
+
+/**
+ * 按归一化路径查项目。传进来的 `cwd` 会先归一化，
+ * 所以调用方不需要关心 `E:\a\b` 和 `e:/a/b/` 的差异。
+ */
+export function getProjectByPath(cwd: string): DbProject | undefined {
+  const normalized = normalizeProjectPath(cwd);
+  if (!normalized) return undefined;
+  const stmt = db.prepare('SELECT * FROM projects WHERE path = ?');
+  return stmt.get(normalized) as unknown as DbProject | undefined;
+}
+
+export function getProject(id: string): DbProject | undefined {
+  const stmt = db.prepare('SELECT * FROM projects WHERE id = ?');
+  return stmt.get(id) as unknown as DbProject | undefined;
+}
+
+export function listProjects(): DbProject[] {
+  return db
+    .prepare('SELECT * FROM projects ORDER BY last_opened_at DESC')
+    .all() as unknown as DbProject[];
+}
+
+/**
+ * 取或建。**同一个目录永远只有一个项目** —— 靠 projects.path 的唯一约束
+ * 兜底，而不是靠先查后插（并发下那有窗口期）。
+ *
+ * 这里用 `INSERT ... ON CONFLICT(path) DO UPDATE` 而不是
+ * `INSERT OR IGNORE` + 再查：后者要两次往返，而且 ON CONFLICT 可以在
+ * 同一条语句里顺手刷新 last_opened_at。
+ */
+export function getOrCreateProject(cwd: string, name?: string): DbProject | undefined {
+  const normalized = normalizeProjectPath(cwd);
+  if (!normalized) return undefined;
+  const now = new Date().toISOString();
+  // 显示名用**原始** cwd 推导（保留大小写），键和唯一约束才用归一化路径
+  const displayName = (name ?? '').trim() || defaultProjectName(cwd) || normalized;
+
+  db.prepare(
+    `INSERT INTO projects (id, path, name, created_at, last_opened_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(path) DO UPDATE SET last_opened_at = excluded.last_opened_at`
+  ).run(crypto.randomUUID(), normalized, displayName, now, now);
+
+  return getProjectByPath(normalized);
+}
+
+/** 刷新「最近打开」，用于项目列表排序 */
+export function touchProject(id: string): void {
+  db.prepare('UPDATE projects SET last_opened_at = ? WHERE id = ?').run(
+    new Date().toISOString(),
+    id
+  );
+}
+
+export function renameProject(id: string, name: string): boolean {
+  const clean = String(name ?? '').trim();
+  if (!clean) return false;
+  const r = db.prepare('UPDATE projects SET name = ? WHERE id = ?').run(clean, id);
+  return toNumber(r.changes) > 0;
+}
+
+/**
+ * 删除项目：先把会话解绑再删行。
+ *
+ * 为什么手动解绑而不是靠外键级联：project_id 是 ALTER 出来的列，加不了
+ * 外键（见上面 ensureColumn 的说明）。这里必须自己收拾干净，
+ * 否则会留下指向不存在项目的 session，读取侧就得永远防着。
+ *
+ * **不删记忆文件** —— 那是用户的真实内容，删项目行不等于想扔掉记忆。
+ */
+export function deleteProject(id: string): boolean {
+  db.prepare('UPDATE sessions SET project_id = NULL WHERE project_id = ?').run(id);
+  const r = db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+  return toNumber(r.changes) > 0;
+}
+
+/**
+ * 取会话所属项目。**容忍三种残缺**：没绑目录、project_id 为空、
+ * project_id 指向已删除的项目。三种都返回 undefined，调用方退化成全局记忆。
+ */
+export function getSessionProject(sessionId: string): DbProject | undefined {
+  const session = getSession(sessionId);
+  if (!session) return undefined;
+  if (session.project_id) {
+    const byId = getProject(session.project_id);
+    if (byId) return byId;
+  }
+  // project_id 缺失或已失效：按 cwd 现算一个（不落库，避免读操作写库）
+  if (session.cwd) return getProjectByPath(session.cwd);
+  return undefined;
+}
+
+/**
+ * 老数据回填：把已有会话按 cwd 关联到项目。
+ *
+ * 幂等，启动时调用一次即可。`cwd` 为空的会话（纯问答、没指定目录）
+ * 保持 NULL —— 它们本来就不属于任何项目，硬塞一个「当前进程目录」
+ * 反而会让它们的记忆错误地共享到一个假项目里。
+ */
+export function backfillSessionProjects(): number {
+  const rows = db
+    .prepare(
+      `SELECT id, cwd FROM sessions
+       WHERE project_id IS NULL AND cwd IS NOT NULL AND cwd != ''`
+    )
+    .all() as unknown as Array<{ id: string; cwd: string }>;
+
+  let linked = 0;
+  for (const row of rows) {
+    const project = getOrCreateProject(row.cwd);
+    if (!project) continue;
+    db.prepare('UPDATE sessions SET project_id = ? WHERE id = ?').run(project.id, row.id);
+    linked += 1;
+  }
+  return linked;
+}
+
 // ============= 会话操作 =============
 
 // 获取所有会话
@@ -320,10 +488,10 @@ export function createSession(session: DbSession): DbSession {
     INSERT INTO sessions (
       id, title, model, agent_id, sdk_session_id,
       kind, agent_ids, orchestration,
-      cwd, reasoning_effort, scenario_id, system_prompt, pinned,
+      cwd, reasoning_effort, scenario_id, system_prompt, pinned, project_id,
       created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     bind(session.id),
@@ -339,6 +507,7 @@ export function createSession(session: DbSession): DbSession {
     bind(session.scenario_id),
     bind(session.system_prompt),
     bind(session.pinned ?? 0),
+    bind(session.project_id),
     bind(session.created_at),
     bind(session.updated_at)
   );
@@ -363,6 +532,7 @@ export function updateSession(
       | 'scenario_id'
       | 'system_prompt'
       | 'pinned'
+      | 'project_id'
     >
   >
 ): boolean {
@@ -418,6 +588,11 @@ export function updateSession(
   if (updates.pinned !== undefined) {
     fields.push('pinned = ?');
     values.push(updates.pinned ? 1 : 0);
+  }
+  // A98：换工作目录时项目跟着换。传 null = 解除项目绑定（cwd 被清空）。
+  if (updates.project_id !== undefined) {
+    fields.push('project_id = ?');
+    values.push(updates.project_id);
   }
 
   if (fields.length === 0) return false;

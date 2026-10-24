@@ -587,7 +587,8 @@ export class QoderSdkAdapter implements AgentProvider {
     // 工具定义与使用规则，整段替换掉模型就不会调工具了 —— 表现是「这个 Agent
     // 突然只会聊天」。`{type:'preset', preset:'qodercli', append}` 才是官方给
     // 「要加自己的规则」留的口子。
-    const extra = withMemoryContext(ctx.systemPrompt).trim();
+    // A98：带上 cwd，让记忆层把「当前项目」那一层也注入进来
+    const extra = withMemoryContext(ctx.systemPrompt, ctx.memoryCwd).trim();
     if (extra) {
       opts.systemPrompt = { type: 'preset', preset: 'qodercli', append: extra };
     }

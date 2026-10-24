@@ -303,7 +303,8 @@ export class HttpAdapter implements AgentProvider {
         // A38：模型直连这条路的系统提示**完全由我们给**（见文件头边界说明），
         // 所以它是记忆层最自然的注入点。CLI/ACP 类的提示词在人家 harness 里，
         // 塞不进去也不该塞。
-        const systemPrompt = withMemoryContext(ctx.systemPrompt);
+        // A98：带上 cwd，让记忆层把「当前项目」那一层也注入进来
+        const systemPrompt = withMemoryContext(ctx.systemPrompt, ctx.memoryCwd);
 
         if (this.spec.dialect === 'openai') {
           headers.authorization = `Bearer ${key}`;
