@@ -74,6 +74,21 @@ const read = () => page.evaluate(() => {
   return {
     navBg: nav ? getComputedStyle(nav).backgroundColor : null,
     navWidth: nav ? Math.round(nav.getBoundingClientRect().width) : 0,
+    /* ⚠️ 标题条要单独取 `[data-titlebar]`，**不能**用 `headers[0]` ——
+       TitleBar 渲染的是 `role="banner"` 而不是 `<header>`（它刻意避开
+       `<header>`，免得打乱其它脚本按 `document.querySelectorAll('header')`
+       下标定位的列表栏/主区标题栏）。A94 之前这里一直拿 headers[0]
+       （= 列表栏的头部，chrome）和 columnBg（= 列表栏本身，chrome）比，
+       恒为真 —— 那条「标题栏同色」其实从来没测到标题栏。 */
+    titlebarBg: (() => {
+      const tb = document.querySelector('[data-titlebar]');
+      return tb ? getComputedStyle(tb).backgroundColor : null;
+    })(),
+    // A92 把导航条从框架面里独立成 rail 一档；A94 又把标题条也拉进 rail，
+    // 于是「标题栏和谁同色」的答案变成**导航条**（框架成 L 形同色块），
+    // 列表栏退回 chrome。宽屏下列表一定在 DOM 里（窄屏才会被移除），
+    // 所以这里读 nextElementSibling 安全。
+    columnBg: column ? getComputedStyle(column).backgroundColor : null,
     headerBgs: headers.map(h => getComputedStyle(h).backgroundColor),
     mainBg: main ? getComputedStyle(main).backgroundColor : null,
     // 判「列表在不在 DOM」不能看 nav 的下一个兄弟节点 —— 列表被移除后
@@ -88,7 +103,13 @@ const read = () => page.evaluate(() => {
 
 // ── 宽屏 ──
 let r = await read();
-record('宽屏 标题栏与导航条同色', r.headerBgs[0], r.navBg);
+// A94：标题条改成 rail 之后，「标题栏和谁同色」的答案又变了一次 ——
+// 现在是**标题栏与导航条**同色（框架成 L 形），列表栏退回 chrome 一档。
+// 两条一起守，防止有人只改一半：
+// ① 标题栏必须与导航条同色（不同 = 窗口顶部又出现 A92 那根竖线）；
+// ② 列表栏必须与它们不同（相同 = 两栏又并回一档，A92 修的层次没了）。
+record('宽屏 标题栏与导航条同色（rail）', r.titlebarBg, r.navBg);
+record('宽屏 列表栏仍是 chrome（与框架分档）', r.columnBg !== r.titlebarBg ? 'chrome' : '同色', 'chrome');
 // 会话头部已改成内容面（与消息区同色，QQ 的做法）——
 // 它不再属于「框架」，所以这条断言比的是 main 而不是 nav。
 record('宽屏 主区头部与消息区同色（内容面）', r.headerBgs[1], r.mainBg);
@@ -127,7 +148,8 @@ await page.waitForTimeout(800);
 await page.emulateMedia({ colorScheme: 'dark' });
 await page.waitForTimeout(600);
 r = await read();
-record('深色 标题栏与导航条同色', r.headerBgs[0], r.navBg);
+record('深色 标题栏与导航条同色（rail）', r.titlebarBg, r.navBg);
+record('深色 列表栏仍是 chrome（与框架分档）', r.columnBg !== r.titlebarBg ? 'chrome' : '同色', 'chrome');
 record('深色 框架面与内容面有色差（≥ 8）', diffLum(r.headerBgs[0], r.mainBg) >= 8 ? '≥8' : String(diffLum(r.headerBgs[0], r.mainBg)), '≥8');
 
 // ── 设置页有外观分区 ──

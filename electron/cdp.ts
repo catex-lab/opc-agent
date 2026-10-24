@@ -231,6 +231,45 @@ export function currentCdpDescriptor(): CdpDescriptor {
 }
 
 /**
+ * 这个 target 是不是**应用自己**的窗口（A86）。
+ *
+ * ## 为什么不能只做精确相等
+ *
+ * 原来这里写的是 `appUrls.some(u => t.url === u)`。`appUrls` 是应用启动时
+ * 登记的那个 URL（`http://127.0.0.1:<port>`），而应用窗口的实际 URL 会变成
+ * `http://127.0.0.1:<port>/chat/<id>` 或带 `?glass=1` —— **永远不等于**登记值。
+ *
+ * 实测后果：`data/cdp.json` 的 `target.url` 就是应用自己的窗口，
+ * 等于把「点我们自己的界面」的权限交给了 Agent。而
+ * `PLAN-WORKSPACE-PANEL.md` §3.1 的口径是「认错 target 比没有 target 危险得多」。
+ *
+ * ## 判定口径
+ *
+ * 同 origin + 路径前缀。`appUrls` 里登记的是根（`/`）时，同 origin 即视为应用
+ * 自己的页面 —— 预览视图加载的是**别的端口**上的 dev server，不会撞上。
+ * 代价是「在预览里打开应用自己」会被排除，那种情况本来就该用系统浏览器。
+ */
+function isAppTarget(url: string): boolean {
+  for (const appUrl of appUrls) {
+    if (!appUrl) continue;
+    if (url === appUrl) return true;
+    try {
+      const a = new URL(appUrl);
+      const b = new URL(url);
+      if (a.origin !== b.origin) continue;
+      const base = a.pathname.replace(/\/+$/, '');
+      const target = b.pathname.replace(/\/+$/, '');
+      // 登记的路径是根：同 origin 的应用页面一律算应用自己
+      if (!base) return true;
+      if (target === base || target.startsWith(`${base}/`)) return true;
+    } catch {
+      /* 解析不了就只认上面那条精确相等 */
+    }
+  }
+  return false;
+}
+
+/**
  * 重新解析 target 并落地描述符。在视图创建与每次导航后调用。
  *
  * 失败时保留上一次的结果 —— 一次网络抖动不该让已经拿到 target 的 Agent
@@ -260,7 +299,7 @@ export async function refreshCdpDescriptor(viewUrl: string): Promise<CdpDescript
   //    集合很小，这个推断是稳的。多于一个就宁可交出去 null：认错 target
   //    比没有 target 危险得多（那等于让 Agent 去点应用自己的界面）。
   if (!match) {
-    const rest = pages.filter(t => !appUrls.some(u => !!u && t.url === u));
+    const rest = pages.filter(t => !isAppTarget(t.url));
     if (rest.length === 1) match = rest[0];
   }
 

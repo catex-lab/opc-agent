@@ -337,6 +337,60 @@ async function runSmoke() {
       '冒烟：拒绝时给出可读原因',
       JSON.stringify(rejected)
     );
+
+    /* ⑥ A86 回归：**重启**不能被旧进程的退出事件打成「已退出」。
+     *
+     * 旧实现的 `start()` 先 `kill()` 再起新的，但旧进程的退出回调是异步的，
+     * 而 kill 摘不掉已经注册的 `onExit` / `on('close')` —— 旧进程真正退出的
+     * 那一刻，`finish()` 落在**新** shell 上：running 被改成 false、exitCode
+     * 写成旧进程的退出码，`this.pty` 被置空，新 shell 变成孤儿。
+     * 用户看到的就是「点一下重启，终端就死了」。 */
+    const first = await page.evaluate(async cwd => {
+      const opc = (window as unknown as {
+        opc?: {
+          terminalStart?: (c: string) => Promise<{ ok?: boolean }>;
+          terminalState?: () => Promise<{ running?: boolean; exitCode?: number | null }>;
+        };
+      }).opc;
+      if (!opc?.terminalStart || !opc.terminalState) return null;
+      const a = await opc.terminalStart(cwd);
+      await new Promise(r => setTimeout(r, 900));
+      const before = await opc.terminalState();
+      // 立刻重启：旧进程的退出事件会在随后一两秒内到达
+      const b = await opc.terminalStart(cwd);
+      return { a, b, before };
+    }, projDir);
+    ok(first?.a?.ok === true, '冒烟：重启前能正常启动 shell', JSON.stringify(first?.a));
+    ok(first?.before?.running === true, '冒烟：第一次启动后 running=true', JSON.stringify(first?.before));
+
+    await page.waitForTimeout(2500);
+    const afterRestart = await page.evaluate(async () => {
+      const opc = (window as unknown as {
+        opc?: {
+          terminalState?: () => Promise<{ running?: boolean; exitCode?: number | null }>;
+          terminalKill?: () => Promise<unknown>;
+        };
+      }).opc;
+      if (!opc?.terminalState) return null;
+      const state = await opc.terminalState();
+      // 收尾：把 shell 关掉，不留进程
+      try {
+        await opc.terminalKill?.();
+      } catch {
+        /* 已退 */
+      }
+      return state;
+    });
+    ok(
+      afterRestart?.running === true,
+      '冒烟：重启后新 shell 仍是 running（旧进程退出不污染新会话）',
+      JSON.stringify(afterRestart)
+    );
+    ok(
+      afterRestart?.exitCode === null,
+      '冒烟：重启后 exitCode 为空（没有把旧进程的退出码写进来）',
+      JSON.stringify(afterRestart)
+    );
   } catch (e) {
     ok(false, '冒烟：整体异常', e instanceof Error ? e.message.split('\n')[0] : String(e));
     console.error(e);

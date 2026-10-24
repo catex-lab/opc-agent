@@ -444,7 +444,9 @@ console.log('\n[7] 自绘标题栏');
   ok(bar?.token === '40px', '标题条高度令牌 = 40px', bar?.token ?? 'n/a');
   ok(bar?.height === 40, '标题条实际高度 = 40px', bar ? `${bar.height}px` : 'n/a');
   ok(bar?.y === 0, '标题条在窗口第 0 行（系统标题栏已让位）', bar ? `y=${bar.y}` : 'n/a');
-  ok(bar?.bg === 'rgb(245, 245, 245)', '标题条底色 = 框架面 #f5f5f5', bar?.bg ?? 'n/a');
+  // A94：标题条从 chrome 改走 rail（与导航条同色，框架成 L 形），
+  // 于是这里期望的值从 #f5f5f5 变成 #ececec。
+  ok(bar?.bg === 'rgb(236, 236, 236)', '标题条底色 = 导航条 rail #ececec', bar?.bg ?? 'n/a');
   ok(/drag/.test(bar?.region ?? ''), '整条是窗口拖动区', bar?.region ?? 'n/a');
   ok(
     bar != null && Math.abs(bar.width - bar.innerWidth) <= 1,

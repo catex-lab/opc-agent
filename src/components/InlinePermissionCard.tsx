@@ -96,13 +96,13 @@ export function InlinePermissionCard({ request, onAllow, onDeny }: InlinePermiss
   const reason = request.rule && gateVerdict ? `命中规则：${request.rule}` : null;
   return (
     <div className="animate-fade-in flex items-center gap-3 flex-wrap py-2">
-      {/* 工具图标和标签 */}
-      <div 
-        className="flex items-center gap-2 px-3 py-1.5 rounded-full"
-        style={{ 
-          backgroundColor: `${toolConfig.color}15`,
-          color: toolConfig.color
-        }}
+      {/* 工具图标和标签
+          A84：原先是一枚 `${color}15` 的淡色胶囊。同色低透明度的底把同色图标
+          糊成一团，而这行字本来就是「哪个工具要执行」的关键信息，不该被削弱。
+          去掉底后只剩彩色图标 + 文字，颜色自己就完成了分类。 */}
+      <div
+        className="flex items-center gap-2 px-0 py-1.5"
+        style={{ color: toolConfig.color }}
       >
         <span className="flex items-center text-base">{toolConfig.icon}</span>
         <span className="text-sm font-medium">{toolConfig.label}</span>

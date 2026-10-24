@@ -155,6 +155,16 @@ const sample = () => page.evaluate(() => {
       const i = document.querySelector('input[placeholder="搜索会话"]');
       return i ? getComputedStyle(i).borderTopWidth : null;
     })(),
+    // A92：导航条单独一档（rail）之后，这里守两件事 ——
+    // ① 令牌本身还在（有人把它删了，导航条会退化成透明）；
+    // ② 导航条**真的用上了**它（令牌定义了却没人用，是另一类静默失败）。
+    // 列表栏仍须是 chrome：两栏同色正是 A92 修掉的问题，改回去要能被抓。
+    railBg: (() => {
+      const n = document.querySelector('nav');
+      return n ? getComputedStyle(n).backgroundColor : null;
+    })(),
+    railToken: v('--tc-surface-rail'),
+    chromeToken: v('--tc-surface-chrome'),
   };
 });
 
@@ -289,6 +299,14 @@ const checks = [
   // 这两件事的失败方式完全不同，各留一条。
   ['浅色 品牌底文字 = #ffffff', rgb(light.onBrand), '#ffffff'],
   ['深色 品牌底文字 = #171717', rgb(dark.onBrand), '#171717'],
+  // A92：左侧两栏原来是同一个 chrome 令牌（ΔL* = 0），264px 的列表栏和 56px
+  // 的导航条被读成一整块灰。现在导航条单独一档、方向随主题（浅色更深、
+  // 深色更亮），四档才单调。这四条同时守「值」和「接线」：
+  // 前两条证明导航条用了 rail，后两条证明列表栏没跟着一起漂。
+  ['浅色 导航条 = #ececec（比列表栏深一档）', rgb(light.railBg), 'rgb(236, 236, 236)'],
+  ['浅色 列表栏仍是框架面 #f5f5f5', rgb(light.chromeToken), '#f5f5f5'],
+  ['深色 导航条 = #232323（比列表栏亮一档）', rgb(dark.railBg), 'rgb(35, 35, 35)'],
+  ['深色 列表栏仍是框架面 #1b1b1b', rgb(dark.chromeToken), '#1b1b1b'],
   // A19 已移除导航图标角标，未读角标对比度不再断言
   // 遍历性断言：整棵 DOM 里不许出现任何蓝色系渲染色。
   ['浅色 全 DOM 无蓝色渲染色', light.blueCount === 0 ? '0 处' : `${light.blueCount} 处：${light.blueHits.join(' | ')}`, '0 处'],

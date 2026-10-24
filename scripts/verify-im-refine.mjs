@@ -356,7 +356,17 @@ console.log('\n[5] 板块分割线：已取消，控件描边仍在');
   ok(invisible(light.navBorder), '浅色：导航条右边线不可见', light.navBorder);
   ok(invisible(light.headerBorder), '浅色：栏头底边线不可见', light.headerBorder);
   ok(!invisible(light.stroke), '控件描边仍有实色（输入框/按钮不能一起透明）', light.stroke);
-  ok(light.bubbleBorder === 'rgb(229, 229, 229)', '浅色：思考块描边仍是 --td-component-stroke', light.bubbleBorder);
+  // A83：控件描边从 #e5e5e5（10% 墨）降到 7% 墨 —— 断言改为
+  // 「中性、低 alpha、仍然可见」，而不是比字面色值。
+  const strokeAlpha = (() => {
+    const m = light.bubbleBorder.match(/[\d.]+/g);
+    return m && m.length >= 4 ? Number(m[3]) : 1;
+  })();
+  ok(
+    strokeAlpha > 0 && strokeAlpha <= 0.12,
+    '浅色：控件描边仍在（A83：7% 极淡）',
+    light.bubbleBorder
+  );
 
   await page.evaluate(() => document.documentElement.classList.add('dark'));
   await page.waitForTimeout(400);

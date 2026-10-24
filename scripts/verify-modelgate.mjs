@@ -172,15 +172,35 @@ console.log('\n[2b] 模型浮层规格（标题栏 / 行内 ✓ / 底部通栏�
   check('标题栏写「内置模型」', (await pop.getByText('内置模型', { exact: true }).count()) === 1);
   check('标题栏有 ⓘ 说明按钮', (await pop.locator('[data-model-popup-info]').count()) === 1);
 
-  // 规格 2：每行 = 字标 + 名称 + 角标 + 右侧倍率
+  // 规格 2：每行 = 名称 + 角标 + 右侧倍率
   const rows = pop.locator('[role="option"]');
   check('两行模型', (await rows.count()) === 2, `rows=${await rows.count()}`);
   check('有免费角标', (await pop.getByText('免费', { exact: true }).count()) === 1);
   check('有付费角标', (await pop.getByText('付费', { exact: true }).count()) === 1);
   check('倍率按右对齐渲染', (await pop.getByText('0.34x', { exact: true }).count()) === 1);
-  // 字标：provider 名首字母。夹具里是 Anthropic / Z.AI → A / Z
+  /* A93：用户要求「取消模型选框里的模型前面的 logo」。
+     这里原来是「断言字标 = provider 首字母（A/Z）」，现在反过来断言它**不存在**。
+     顺带守两件容易漏的事：
+       · 浮层宽度收窄 —— 用户原话「太宽了，留白太大」。272 是实测的
+         「最长模型名不截断」宽度，闸门给到 300 留一点余量；
+       · 删掉字标后左边不能留一块空位 —— 否则等于「换了个隐形 logo」。 */
   const letters = await pop.locator('[role="option"] > span[aria-hidden]').allInnerTexts();
-  check('字标取 provider 首字母', letters.join('') === 'AZ', `letters=${JSON.stringify(letters)}`);
+  check('行内不再有字标方块（A93 移除）', letters.length === 0, `letters=${JSON.stringify(letters)}`);
+  const popBox = await pop.boundingBox();
+  check('浮层宽度收窄（≤ 300px）', !!popBox && popBox.width <= 300, popBox ? `width=${Math.round(popBox.width)}` : 'n/a');
+  const firstTextLeft = await rows.first().evaluate(row => {
+    const r = row.getBoundingClientRect();
+    for (const el of row.querySelectorAll('*')) {
+      if (!el.textContent.trim() || el.children.length) continue;
+      return el.getBoundingClientRect().left - r.left;
+    }
+    return null;
+  });
+  check(
+    '行内文字从左侧内边距开始（删字标后没留空位）',
+    firstTextLeft !== null && firstTextLeft <= 16,
+    `left=${firstTextLeft === null ? 'n/a' : Math.round(firstTextLeft)}`
+  );
 
   // 规格 3：选中行右侧 ✓ —— 用 data-model-row 而不是数 svg，
   // 因为「有几条被选中」才是这条断言真正想守的东西

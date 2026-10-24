@@ -20,6 +20,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isVisibleOverlayElement } from '../src/overlayGuard.js';
 
 const failures: string[] = [];
 const checks = { total: 0 };
@@ -115,7 +116,10 @@ function checkContracts() {
   ok(bridge.includes('export function subscribeNavState'), '契约：browserPanel 导出 subscribeNavState');
 
   const guard = read('src/overlayGuard.ts');
-  ok(guard.includes('getClientRects().length > 0'), '契约：浮层判定用 getClientRects（display:none 的 details 子节点仍在 DOM 里）');
+  ok(guard.includes('isVisibleOverlayElement'), '契约：浮层判定抽成可测的纯函数（A86）');
+  ok(guard.includes("closest('details')"), '契约：判定要看祖先 details 的开合（A86 的实际命中原因）');
+  ok(guard.includes('checkVisibility'), '契约：用 checkVisibility 覆盖 display/visibility/opacity');
+  ok(guard.includes('rect.width > 0 || rect.height > 0'), '契约：0 尺寸不算浮层');
   ok(guard.includes('[data-opc-overlay]'), '契约：认我们自己的浮层标记');
   ok(guard.includes('[class*="t-dialog"]'), '契约：认 TDesign 弹层');
 
@@ -141,6 +145,63 @@ function checkContracts() {
 
   const header = read('src/components/ChatHeader.tsx');
   ok(header.includes('data-opc-overlay'), '契约：自绘更多菜单带浮层标记（否则被预览视图盖住）');
+}
+
+/* ── A2. 浮层判定的行为断言（A86） ───────────────────────────────────── */
+
+/**
+ * 这一组**必须先在旧代码上失败**，否则证明不了它测到了东西。
+ *
+ * 旧实现只有一条 `getClientRects().length > 0`。拿 Electron 44 上真实存在的
+ * 形状喂进去 —— 收起的 `<details>` 里一个 160×79 的菜单 —— 它返回 true，
+ * 于是预览视图被永久判成「被浮层盖住」，`setBrowserVisible(false)` 恒定。
+ * 用假元素直接调纯函数，不需要真 DOM（这也是把判定抽出来的原因）。
+ */
+function checkOverlayBehavior() {
+  interface FakeOpts {
+    /** null / 省略 = 没有 details 祖先；true / false = 祖先的开合状态 */
+    detailsOpen?: boolean | null;
+    width?: number;
+    height?: number;
+    /** checkVisibility 的返回值 */
+    visible?: boolean;
+    /** 模拟没有 checkVisibility 的老 Chromium */
+    noCheck?: boolean;
+  }
+  const fake = (o: FakeOpts = {}) => {
+    const el: Record<string, unknown> = {
+      closest: (sel: string) => {
+        if (sel !== 'details') return null;
+        if (o.detailsOpen === null || o.detailsOpen === undefined) return null;
+        return { open: o.detailsOpen };
+      },
+      getBoundingClientRect: () => ({ width: o.width ?? 160, height: o.height ?? 79 }),
+    };
+    if (!o.noCheck) el.checkVisibility = () => o.visible !== false;
+    return el as unknown as Element;
+  };
+
+  ok(
+    isVisibleOverlayElement(fake({ detailsOpen: false })) === false,
+    '行为：收起的 <details> 里的浮层不算可见（A86 的根因）'
+  );
+  ok(
+    isVisibleOverlayElement(fake({ detailsOpen: true })) === true,
+    '行为：展开的 <details> 里的浮层算可见'
+  );
+  ok(isVisibleOverlayElement(fake({ detailsOpen: null })) === true, '行为：普通可见浮层算可见');
+  ok(
+    isVisibleOverlayElement(fake({ detailsOpen: null, visible: false })) === false,
+    '行为：checkVisibility 为假（display:none 等）不算可见'
+  );
+  ok(
+    isVisibleOverlayElement(fake({ detailsOpen: null, width: 0, height: 0 })) === false,
+    '行为：0 尺寸不算可见'
+  );
+  ok(
+    isVisibleOverlayElement(fake({ detailsOpen: true, noCheck: true })) === true,
+    '行为：没有 checkVisibility 的老环境退化为「details + 尺寸」两条'
+  );
 }
 
 /* ── B. 真实 Electron 冒烟 ───────────────────────────────────────────── */
@@ -264,6 +325,9 @@ async function runSmoke(): Promise<void> {
 async function main() {
   console.log('[A] 源码契约');
   checkContracts();
+
+  console.log('[A2] 浮层判定行为');
+  checkOverlayBehavior();
 
   console.log('[B] 真实 Electron 冒烟');
   await runSmoke();

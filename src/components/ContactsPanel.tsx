@@ -251,11 +251,10 @@ export function ContactsPanel({
         <div className={SEARCH_ROW_CLASS}>
           {/* 搜索胶囊：圆角全圆，与 QQ 的搜索框同一形态。
               尺寸类名来自 columnHeader.ts —— 与会话栏共用一份真源，
-              两栏切换时搜索框不能有任何跳动。 */}
-          <div
-            className={SEARCH_PILL_CLASS}
-            style={{ backgroundColor: 'var(--tc-surface-raised)' }}
-          >
+              两栏切换时搜索框不能有任何跳动。
+              A84：底色已收进 SEARCH_PILL_CLASS（常态透明、hover/聚焦才浮现），
+              这里不再内联 backgroundColor —— 两栏各写一份正是当初不一致的根因。 */}
+          <div className={SEARCH_PILL_CLASS}>
             <Search size={SEARCH_ICON_SIZE} style={{ color: 'var(--td-text-color-placeholder)' }} />
             <input
               value={keyword}
@@ -279,10 +278,7 @@ export function ContactsPanel({
               aria-label="添加"
               aria-expanded={addMenuOpen}
               className={`relative z-30 ${ROUND_ADD_CLASS}`}
-              style={{
-                backgroundColor: 'var(--tc-surface-raised)',
-                color: 'var(--td-text-color-secondary)',
-              }}
+              style={{ color: 'var(--td-text-color-secondary)' }}
             >
               <Plus size={ADD_ICON_SIZE} />
             </button>
@@ -619,10 +615,7 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
       {regionBadge && (
         <span
           className="shrink-0 rounded px-1 text-caption"
-          style={{
-            backgroundColor: 'var(--tc-surface-raised)',
-            color: 'var(--td-text-color-placeholder)',
-          }}
+          style={{ color: 'var(--td-text-color-placeholder)' }}
           title={`区域：${agent.regionName ?? regionMeta?.label ?? regionBadge}`}
           data-region-badge={regionBadge}
         >

@@ -4,9 +4,9 @@
 
 // 权限相关类型收敛到 shared/（与 server 共用同一份，避免前后端定义漂移）
 import type { PermissionMode, PermissionSupport } from '../shared/types';
-import type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock } from '../shared/blocks';
+import type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlock } from '../shared/blocks';
 export type { PermissionMode, PermissionSupport };
-export type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock };
+export type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlock };
 
 /** 会话类型：一对一 / 群聊 */
 export type SessionKind = 'direct' | 'group';
@@ -291,6 +291,16 @@ export type AgentKind = 'sdk' | 'cli' | 'acp' | 'mock';
 /** 能力标签，即 Agent 资料页上的「擅长领域」 */
 export type AgentCapability = 'chat' | 'code' | 'write' | 'tools' | 'image' | 'search';
 
+/** 可执行的任务类别；结构与后端 AgentSkill 对齐。 */
+export interface AgentSkill {
+  id: string;
+  name: string;
+  description: string;
+  tags?: string[];
+  inputModes?: string[];
+  outputModes?: string[];
+}
+
 /**
  * 可用性状态。IM 范式下它对应「在线状态」：
  * ready = 在线，needs-auth = 未登录，not-installed = 未添加，unsupported = 不可用。
@@ -361,6 +371,8 @@ export interface RegisteredAgent {
   vendor?: string;
   kind: AgentKind;
   capabilities: AgentCapability[];
+  /** Agent 可承接的任务类别；旧服务端可能不返回 */
+  skills?: AgentSkill[];
   description?: string;
   icon?: string;
   color?: string;

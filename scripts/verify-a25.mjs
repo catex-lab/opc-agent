@@ -219,7 +219,14 @@ console.log('\n[2] 板块分割线：取消');
   ok(invisible(r.nav), '导航条右边线不可见', r.nav);
   ok(invisible(r.header), '栏头底边线不可见', r.header);
   ok(r.stroke !== 'transparent', '控件描边未被一起取消', r.stroke);
-  ok(r.bubble === 'rgb(229, 229, 229)', '卡片描边仍在（功能轮廓）', r.bubble);
+  // A83：描边令牌从 #e5e5e5（10% 墨）降到 7% 墨，所以这里不再比字面值，
+  // 改判「仍然有值、且是低 alpha 的中性色」—— 这条断言的本意是
+  // 「控件轮廓不能跟着分割线一起透明」，与具体色值无关。
+  const strokeAlpha = (() => {
+    const m = r.bubble.match(/[\d.]+/g);
+    return m && m.length >= 4 ? Number(m[3]) : 1;
+  })();
+  ok(strokeAlpha > 0 && strokeAlpha <= 0.12, '卡片描边仍在（A83：7% 极淡，不是 10% 实线）', r.bubble);
   await shot(page, 'a25-no-dividers');
   await ctx.close();
 }

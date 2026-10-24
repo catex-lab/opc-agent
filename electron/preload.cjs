@@ -97,6 +97,33 @@ contextBridge.exposeInMainWorld('opc', {
   },
 
   /**
+   * A93：把剪贴板里的图片落盘，返回绝对路径。
+   *
+   * 附件链路传的是**路径**（消息正文里拼 `- <绝对路径>`，Agent 直接读文件），
+   * 而剪贴板里的图片只有一个 Blob、没有路径 —— 所以先在主进程写成临时文件，
+   * 前端拿回路径当普通附件挂上。
+   *
+   * @param {Uint8Array} bytes 图片字节
+   * @param {string} ext 扩展名（png/jpg/gif/webp/bmp），主进程另有白名单
+   * @returns {Promise<string|null>} 绝对路径；失败或非桌面端为 null
+   */
+  savePastedImage(bytes, ext) {
+    return ipcRenderer.invoke('opc:save-pasted-image', { bytes, ext });
+  },
+
+  /**
+   * A86：新建工作区。选一个父目录，在它下面建一个空文件夹并返回路径。
+   *
+   * 建目录为什么在主进程而不是后端：`server/fs.ts` 是只读的，给它开 mkdir
+   * 等于让任意会话能在任意位置造目录。这里父目录必须由用户在原生对话框里选。
+   *
+   * @returns {Promise<{path?: string, error?: string} | null>} null = 用户取消
+   */
+  createWorkspace() {
+    return ipcRenderer.invoke('opc:create-workspace');
+  },
+
+  /**
    * A77：工作区文件面板 —— 用系统默认程序打开一个文件。
    *
    * 与 revealInFolder 的区别：那个是「在资源管理器里露出位置」，
@@ -108,6 +135,41 @@ contextBridge.exposeInMainWorld('opc', {
   openPath(path) {
     if (typeof path !== 'string' || !path) return Promise.resolve('路径为空');
     return ipcRenderer.invoke('opc:open-path', path);
+  },
+
+  /**
+   * 关于与隐私：匿名使用统计的开关。
+   *
+   * 真正的生效点在主进程（electron/analytics.ts），这里只是转发 ——
+   * 前端拿到的 available 为 false 时说明这个构建根本没配上报端点，
+   * 设置页应当显示"此版本不收集"而不是给一个无效的开关。
+   *
+   * @returns {Promise<{available: boolean, enabled: boolean, sessionActive: boolean}>}
+   */
+  analyticsState() {
+    return ipcRenderer.invoke('opc:analytics-state');
+  },
+
+  /**
+   * 切换统计开关。关闭后当前会话的收尾上报也会被拦住。
+   *
+   * @param {boolean} enabled
+   * @returns {Promise<{available: boolean, enabled: boolean, sessionActive: boolean}>} 切换后的最新状态
+   */
+  setAnalytics(enabled) {
+    return ipcRenderer.invoke('opc:analytics-set', !!enabled);
+  },
+
+  /**
+   * 关于页：应用版本与构建信息。
+   *
+   * 版本号来自主进程的 app.getVersion()，读的是**打包后**的 package.json ——
+   * 前端不能自己 import package.json，那拿到的是构建时的值。
+   *
+   * @returns {Promise<{name: string, version: string, electron: string, node: string, chrome: string, platform: string, arch: string}>}
+   */
+  appInfo() {
+    return ipcRenderer.invoke('opc:app-info');
   },
 
   /**

@@ -136,8 +136,18 @@ const LOCKED_ASAR = path.join(DEFAULT_OUT, 'win-unpacked', 'resources', 'default
  * 回退目录只用来躲开**默认目录**里的锁文件。调用方既然显式指定了别的目录，
  * 就说明它已经绕开这个问题 —— 此时再塞一个覆盖，会把调用方的意图悄悄改掉
  * （典型场景：打 `release-p48` 时既要躲锁、又要落到约定目录）。
+ *
+ * ⚠️ A84（打 release-p57 时）修掉的第三个 bug：这条正则原先写的是
+ * `^-c(?:onfig)?\.`，**匹配不上** `--config.directories.output=...`（两个连字符开头）。
+ * 于是调用方按 `--config.` 形式传目录时，`callerSetOutput` 判定为 false，脚本
+ * 又追加了一条 `-c.directories.output=release-builds/b...`。两个 output 参数同时
+ * 进 electron-builder，schema 校验直接报
+ *   `configuration.directories should be a null`
+ * 整包失败 —— 而且报错文本完全看不出「参数重复」这件事，只会让人以为
+ * 配置对象本身写错了。现在两种写法都认；同时 `--config.` 那个形式本身也不是
+ * electron-builder 的合法 CLI 语法，实际应传 `-c.`，见 AGENTS/文档。
  */
-const callerSetOutput = extraArgs.some(a => /^-c(?:onfig)?\.directories\.output=/.test(a));
+const callerSetOutput = extraArgs.some(a => /^(?:--?c|--config)\.directories\.output=/.test(a));
 
 let outDir = DEFAULT_OUT;
 let configArg = [];

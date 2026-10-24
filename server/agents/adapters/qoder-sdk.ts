@@ -877,6 +877,31 @@ export function createQoderMapper(
           content: flattenToolResult(rawBlock.content),
           isError: Boolean(rawBlock.is_error),
         });
+        const resultParts = Array.isArray(rawBlock.content) ? rawBlock.content : [];
+        for (const [index, partValue] of resultParts.entries()) {
+          if (!partValue || typeof partValue !== 'object') continue;
+          const part = partValue as Record<string, unknown>;
+          if (part.type === 'image' && typeof part.data === 'string') {
+            const mimeType = typeof part.mimeType === 'string' ? part.mimeType : 'image/png';
+            out.push({
+              type: 'artifact',
+              id: `qoder-image-${toolId}-${index}`,
+              name: `图像产物 ${index + 1}`,
+              mediaType: mimeType,
+              data: { encoding: 'base64', content: part.data },
+              description: '由 Qoder SDK 工具结果返回的图像数据',
+            });
+          } else if (part.type === 'resource_link' && typeof part.uri === 'string') {
+            out.push({
+              type: 'artifact',
+              id: `qoder-resource-${toolId}-${index}`,
+              name: String(part.name ?? `资源 ${index + 1}`),
+              mediaType: String(part.mimeType ?? 'application/octet-stream'),
+              uri: part.uri,
+              ...(typeof part.description === 'string' ? { description: part.description } : {}),
+            });
+          }
+        }
         const i = openTools.indexOf(toolId);
         if (i >= 0) openTools.splice(i, 1);
       }

@@ -31,6 +31,7 @@ interface OpcBridge {
   getFilePath?(file: File): string;
   pickDirectory?(): Promise<string | null>;
   revealInFolder?(path: string): void;
+  createWorkspace?(): Promise<{ path?: string; error?: string } | null>;
   windowControl?: unknown;
 }
 
@@ -81,6 +82,26 @@ export function revealInFolder(dir: string): void {
  */
 export function hasNativeDialogs(): boolean {
   return typeof bridge()?.pickDirectory === 'function';
+}
+
+/**
+ * A86：新建工作区 —— 选父目录、在里面建一个空文件夹、返回它的绝对路径。
+ *
+ * 为什么不让后端建：`server/fs.ts` 的定位是**只读**（见那里的三条边界）。
+ * 为「新建工作区」给它开一个 mkdir 接口，等于让任意会话可以在任意位置
+ * 造目录；而这件事本来只需要一次**用户在原生对话框里的选择**。所以建目录
+ * 落在主进程，且父目录必须由用户亲手选。
+ *
+ * @returns `{ path }` 成功；`{ error }` 失败原因；`null` 用户取消 / 环境不支持
+ */
+export async function createWorkspace(): Promise<{ path?: string; error?: string } | null> {
+  const fn = bridge()?.createWorkspace;
+  if (!fn) return null;
+  try {
+    return (await fn()) ?? null;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : '新建工作区失败' };
+  }
 }
 
 /**

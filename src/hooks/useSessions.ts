@@ -152,7 +152,9 @@ export function useSessions() {
           // 前端据此不渲染统计行 —— 而不是显示 0 秒 / $0 冒充「这次没花钱」
           durationMs: typeof m.duration_ms === 'number' ? m.duration_ms : undefined,
           cost: typeof m.cost === 'number' ? m.cost : undefined,
-          tokens: typeof m.tokens === 'number' ? m.tokens : undefined
+          tokens: typeof m.tokens === 'number' ? m.tokens : undefined,
+          // 群聊编排叙述（不落库，但夹具/内存中可能携带）
+          note: m.note || undefined,
         }));
 
         setSessions(prev => prev.map(s =>

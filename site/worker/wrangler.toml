@@ -1,0 +1,49 @@
+# OPC Agent 统计与下载中转 Worker
+#
+# 首次部署：
+#   npm i -g wrangler            # 或用 npx wrangler
+#   wrangler login
+#   wrangler d1 create opc-stats          # 把返回的 database_id 填到下面
+#   wrangler d1 execute opc-stats --remote --file=schema.sql
+#   wrangler deploy                       # 路由已写在下面，会自动挂上
+#
+# ⚠️ 前提：catex-lab 必须已经在 Cloudflare 里且状态为 Active（NS 已指向 CF）。
+#    否则 deploy 会因为找不到 zone 而报错。
+
+name = "opc-agent-api"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# 同域方案：Worker 只接管这几个路径，其余请求照常交给 Pages。
+# Worker 路由的优先级高于 Pages 自定义域，所以 /api/* 不会落到静态站上。
+# 好处是不用开 api. 子域、没有跨域问题、下载链接是干净的 catex-lab/d/win-x64。
+routes = [
+  { pattern = "catex-lab/api/*", zone_name = "catex-lab" },
+  { pattern = "catex-lab/d/*", zone_name = "catex-lab" },
+  { pattern = "catex-lab/github", zone_name = "catex-lab" },
+  { pattern = "catex-lab/update/*", zone_name = "catex-lab" },
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "opc-stats"
+database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
+
+[vars]
+# 看板访问密钥：访问 /stats.html?key=这串 才能看到数据
+# 已生成，勿提交到公开仓库前再改一次（如果你 fork 后公开了这个文件）
+STATS_KEY = "REPLACE_WITH_YOUR_STATS_KEY"
+
+# GitHub 仓库，用于查最新 Release 和反代更新清单
+# ⚠️ 待填：OWNER 换成你的 GitHub 用户名
+GITHUB_REPO = ""
+
+# 允许的前端来源（站点域名，带协议，不带末尾斜杠）
+ALLOWED_ORIGIN = "https://github.com/catex-lab/opc-agent"
+
+# R2 公共域名。填了之后安装包优先从 R2 下载；留空则全部走 GitHub。
+# 形如 https://downloads.invalid（R2 桶绑定的自定义域）或 https://pub-xxxx.r2.dev
+R2_PUBLIC_BASE = ""
+
+# 安装包在 R2 上的目录结构：<R2_PUBLIC_BASE>/<tag>/<原文件名>
+# 例如 https://downloads.invalid/v1.0.0/OPC Agent-1.0.0-x64-setup.exe

@@ -20,10 +20,12 @@
 import { app, BrowserWindow, screen, shell, nativeTheme, ipcMain, dialog } from 'electron';
 import { once } from 'node:events';
 import { join, isAbsolute } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { server } from '../server/index.js';
 import { registry } from '../server/agents/registry.js';
 import { browserPanel, runBrowserSmoke } from './browser-view.js';
 import { terminal, type TerminalState } from './terminal.js';
+import { initAnalytics, endAnalytics, getAnalyticsState, setAnalyticsEnabled } from './analytics.js';
 import {
   enableCdp,
   initCdpEndpoint,
@@ -296,6 +298,29 @@ function registerIpc() {
     maximized: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized(),
   }));
 
+  // 关于与隐私：统计开关。真正的生效点在主进程（analytics.ts）——
+  // 前端只负责展示和切换。关闭后不仅下次启动不再上报，当前会话的
+  // 收尾请求也会被拦住（见 setAnalyticsEnabled 里的 ended 置位）。
+  ipcMain.handle('opc:analytics-state', () => getAnalyticsState());
+  ipcMain.handle('opc:analytics-set', (_e, value: unknown) => {
+    if (typeof value !== 'boolean') return getAnalyticsState();
+    setAnalyticsEnabled(value);
+    return getAnalyticsState();
+  });
+
+  // 关于页：版本与构建信息。版本号必须走 app.getVersion()（读打包后的
+  // package.json），不能在前端 import package.json —— 那样打进 bundle 的是
+  // 构建时的值，和实际运行的二进制可能不是同一个版本。
+  ipcMain.handle('opc:app-info', () => ({
+    name: app.getName(),
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    node: process.versions.node,
+    chrome: process.versions.chrome,
+    platform: process.platform,
+    arch: process.arch,
+  }));
+
   // A63：工作区 —— 选目录对话框。
   //
   // `properties: ['openDirectory']` 让对话框只能选文件夹（不能选文件），
@@ -319,6 +344,95 @@ function registerIpc() {
   ipcMain.handle('opc:reveal-in-folder', (_e, p: unknown) => {
     if (typeof p !== 'string' || !p) return false;
     return shell.showItemInFolder(p);
+  });
+
+  /**
+   * A93：剪贴板图片落盘，返回绝对路径。
+   *
+   * ## 为什么必须经过主进程
+   *
+   * 附件链路传的是**路径**：`ChatInput` 把附件拼成 `- <绝对路径>` 塞进消息正文，
+   * Agent 拿到的是可直接读的文件路径。剪贴板里的图片只有一个 Blob，没有路径
+   * （Electron 44 起 `File.path` 已移除，`webUtils.getPathForFile` 对剪贴板
+   * 生成的 File 也返回空串）。所以只能自己写一份出来。
+   *
+   * ## 为什么写 temp 而不是 data/
+   *
+   * `data/` 是用户数据目录（数据库 + 生成图缓存），AGENTS §6 明令禁止清理；
+   * 粘贴来的截图是一次性素材，混进去会让「用户数据」和「临时文件」的边界
+   * 变模糊，而且没人会去回收它。放系统 temp，由系统自己收。
+   *
+   * ## 边界
+   *
+   * · 扩展名走白名单，避免把任意后缀写进临时目录；
+   * · 单次 32 MB 上限 —— 剪贴板截图正常在 1~5 MB，超过这个量级多半是
+   *   用户误粘了一个巨型文件，静默失败比塞进消息正文更好；
+   * · 失败一律返回 null，前端据此给出「粘贴失败」提示，不抛异常。
+   */
+  ipcMain.handle('opc:save-pasted-image', (_e, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return null;
+    const { bytes, ext } = payload as { bytes?: unknown; ext?: unknown };
+    if (!(bytes instanceof Uint8Array) || bytes.length === 0) return null;
+    if (bytes.length > 32 * 1024 * 1024) return null;
+    const safeExt =
+      typeof ext === 'string' && /^(png|jpe?g|gif|webp|bmp)$/i.test(ext) ? ext.toLowerCase() : 'png';
+    try {
+      const dir = join(app.getPath('temp'), 'opc-paste');
+      mkdirSync(dir, { recursive: true });
+      const name = `paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
+      const file = join(dir, name);
+      writeFileSync(file, bytes);
+      return file;
+    } catch {
+      return null;
+    }
+  });
+
+  /**
+   * A86：新建工作区。
+   *
+   * 两步：① 用户在原生对话框里选**父目录**；② 在它下面建一个空文件夹。
+   *
+   * ## 为什么建目录放在主进程，而不是给后端加 mkdir
+   *
+   * `server/fs.ts` 的定位是**只读**（见该文件开头的三条边界）。为了一个
+   * 「新建工作区」给它开写接口，等于让任何能调 HTTP 的会话在任意位置造目录。
+   * 而这里父目录由用户亲手选，写操作的范围被一次显式交互锁死了。
+   *
+   * ## 名字为什么是自动的
+   *
+   * 原生目录对话框只负责「选位置」，没有输入框；为一次命名再拉一个自绘弹窗
+   * 不划算。默认名 `新工作区`，重名自动加序号（`新工作区-2`…）。用户想改名
+   * 就在资源管理器里改 —— 绑定的是路径，改名后重新选一次即可。
+   *
+   * @returns `{path}` 成功 / `{error}` 失败原因 / `null` 用户取消
+   */
+  ipcMain.handle('opc:create-workspace', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: '选择新工作区放在哪里',
+      buttonLabel: '在这里新建',
+      // createDirectory 只在 macOS 生效（给对话框加「新建文件夹」按钮）；
+      // Windows 的目录选择框本来就自带「新建文件夹」，不需要它。
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (canceled || filePaths.length === 0) return null;
+
+    const parent = filePaths[0];
+    const base = '新工作区';
+    let target = join(parent, base);
+    for (let i = 2; existsSync(target) && i <= 99; i++) {
+      target = join(parent, `${base}-${i}`);
+    }
+    if (existsSync(target)) {
+      return { error: `「${base}」同名目录太多了，请先整理一下 ${parent}` };
+    }
+    try {
+      mkdirSync(target);
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : '新建目录失败' };
+    }
+    return { path: target };
   });
 
   // A77：工作区文件面板 —— 用系统默认程序打开一个文件。
@@ -581,6 +695,9 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
     registerIpc();
+    // 匿名统计：未配置端点时内部直接 return，不会发出任何请求。
+    // 放在 createWindow 之前，避免窗口加载完才上报导致启动时长统计偏差。
+    initAnalytics();
     return createWindow();
   }).catch(err => {
     console.error('[Main] 启动失败:', err);
@@ -598,7 +715,9 @@ app.on('window-all-closed', () => {
 
 // 退出前回收 ACP 等长驻子进程（Hermes 是一个常驻的 Python 进程，
 // 不主动杀会变成孤儿进程留在系统里）
-app.on('before-quit', () => {
+let quitFlushed = false;
+
+app.on('before-quit', event => {
   try {
     registry.disposeAll();
   } catch (err) {
@@ -610,5 +729,14 @@ app.on('before-quit', () => {
     terminal.kill();
   } catch (err) {
     console.error('[Main] 清理终端失败:', (err as Error).message);
+  }
+
+  // 统计收尾：拦住退出最多 1.2 秒，把本次会话时长报上去，之后无论成败都放行。
+  // 未启用统计时 endAnalytics() 立即 resolve，这里几乎没有感知。
+  // quitFlushed 保证 app.quit() 引发的第二次 before-quit 直接放行，不会死循环。
+  if (!quitFlushed) {
+    quitFlushed = true;
+    event.preventDefault();
+    void endAnalytics().finally(() => app.quit());
   }
 });

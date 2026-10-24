@@ -330,6 +330,60 @@ console.log('\n[5b] 附件随消息发出（端到端）');
   await ctx.close();
 }
 
+// ============= [5c] A93：粘贴剪贴板图片 =============
+/**
+ * 用户在输入区按 Ctrl+V 粘一张截图，应该直接变成附件 chip。
+ *
+ * 这里能守的是**事件层**：粘贴事件被输入区接管（`defaultPrevented`），
+ * 且纯文字粘贴不拦。落盘那一半（`window.opc.savePastedImage` → 主进程写
+ * 临时文件）在浏览器里没有 `window.opc`，只能走失败分支 —— 而失败分支
+ * 恰恰也该断言：不能静默吞掉，必须给一句提示。
+ *
+ * 成功路径靠真 Electron 端到端验证（探针见 HANDOFF 的 A93 条目）：
+ * 真主进程 + 真 preload + 真 IPC，断言「返回值是路径 / 文件真的存在 /
+ * 字节一致 / chip 的 kind=image / chip 指向的文件存在」。
+ */
+console.log('\n[5c] A93：粘贴剪贴板图片');
+{
+  const { ctx, page } = await newPage();
+  await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(900);
+
+  /* paste 是 composed 事件，监听挂在 <t-chat-sender> 宿主上也能收到
+     —— 但**合成事件必须自己带 `composed: true`**，否则它不会穿过
+     shadow 边界，宿主上的监听器收不到，探针会误判成「没接管」。 */
+  const pasteImage = () =>
+    page.evaluate(() => {
+      const el = document.querySelector('t-chat-sender');
+      const dt = new DataTransfer();
+      dt.items.add(new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], 'shot.png', { type: 'image/png' }));
+      const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true, composed: true });
+      el.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    });
+  const pasteText = () =>
+    page.evaluate(() => {
+      const el = document.querySelector('t-chat-sender');
+      const dt = new DataTransfer();
+      dt.setData('text/plain', '粘贴的纯文字');
+      const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true, composed: true });
+      el.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    });
+
+  ok(await pasteImage(), '粘贴图片时输入区接管事件（不落到默认行为）');
+
+  /* 浏览器态没有 window.opc：必须给出可读提示，而不是「按了没反应」。
+     提示条 4 秒后自动消失，所以这里读完就立刻断言。 */
+  await page.waitForTimeout(300);
+  const note = await page.locator('[data-paste-note]').first().textContent().catch(() => null);
+  ok(!!note && note.trim().length > 0, '无桥接时给出提示（不静默失败）', note ? note.trim().slice(0, 40) : 'null');
+  ok(await page.locator('[data-attachments]').count() === 0, '落盘失败时不产生半截 chip');
+
+  ok(!(await pasteText()), '粘贴纯文字不拦截（照常进 textarea）');
+  await ctx.close();
+}
+
 // ============= [6] 右键选区 =============
 console.log('\n[6] 右键选区：拦下原生菜单并浮出工具条');
 {

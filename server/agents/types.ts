@@ -29,6 +29,16 @@ export type AgentEvent =
    */
   | { type: 'tool_output'; toolId: string; content: string }
   | { type: 'tool_result'; toolId: string; content: string; isError?: boolean }
+  /** 任务产物元数据；文件内容由 uri 提供，避免把大文件塞进事件流。 */
+  | {
+      type: 'artifact';
+      id: string;
+      name: string;
+      mediaType: string;
+      uri?: string;
+      data?: unknown;
+      description?: string;
+    }
   /**
    * 用量上报（不产生块）。
    *
@@ -101,6 +111,59 @@ export type AgentEventCapability =
   | 'usage'         // token 用量
   | 'cost'          // 费用
   | 'permission';   // 反向权限请求
+
+/** Agent 能承接的结构化任务类别（参考 A2A AgentSkill）。 */
+export interface AgentSkill {
+  /** 稳定机器键，用于编排与过滤；同一个 Agent 内唯一 */
+  id: string;
+  /** 面向用户的任务名 */
+  name: string;
+  /** 适用任务说明 */
+  description: string;
+  /** 适合匹配用户任务的关键词 */
+  tags?: string[];
+  /** 支持的输入/输出媒体类型，如 text/plain、application/json */
+  inputModes?: string[];
+  outputModes?: string[];
+}
+
+/** 可解释的技能匹配：技能名/说明/标签与用户任务的词项重合分数。 */
+export function scoreAgentSkills(skills: readonly AgentSkill[], prompt: string): number {
+  const tokens = (value: string) => {
+    const parts = value.toLocaleLowerCase().match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+|[\p{L}\p{N}_+#.-]+/gu) ?? [];
+    return parts.flatMap(part => {
+      if (!/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(part)) return [part];
+      if (part.length < 2) return [part];
+      const bigrams = Array.from({ length: part.length - 1 }, (_, i) => part.slice(i, i + 2));
+      return [part, ...bigrams];
+    });
+  };
+  const promptTokens = new Set(tokens(prompt));
+  if (promptTokens.size === 0) return 0;
+  let best = 0;
+  for (const skill of skills) {
+    const words = new Set(tokens([skill.id, skill.name, skill.description, ...(skill.tags ?? [])].join(' ')));
+    let score = 0;
+    for (const word of words) {
+      if (promptTokens.has(word)) score += word.length > 1 ? 2 : 1;
+      else if (word.length >= 2 && [...promptTokens].some(token => token.includes(word) || word.includes(token))) score += 1;
+    }
+    best = Math.max(best, score);
+  }
+  return best;
+}
+
+/** 结构化产物数据上限，避免原生适配器把巨型 payload 写入 SSE/SQLite。 */
+export const MAX_ARTIFACT_DATA_BYTES = 256 * 1024;
+
+const SKILL_META: Record<AgentCapability, { name: string; description: string }> = {
+  chat: { name: '问答', description: '回答问题并分析信息' },
+  code: { name: '代码任务', description: '编写、审查或修改代码' },
+  write: { name: '写作', description: '撰写或编辑长短文本' },
+  tools: { name: '工具操作', description: '使用 Agent 自身支持的工具完成任务' },
+  image: { name: '图像生成', description: '根据提示生成图像' },
+  search: { name: '联网检索', description: '检索并综合在线信息' },
+};
 
 /** 可用性状态。前端据此渲染徽标与修复指引。 */
 export type AgentAvailability =
@@ -189,6 +252,8 @@ export interface AgentDescriptor {
   kind: AgentKind;
   /** 能力标签 */
   capabilities: AgentCapability[];
+  /** 细化的任务技能；缺省时由通用能力标签派生兼容技能 */
+  skills?: AgentSkill[];
   /**
    * 事件能力（E1）。
    *
@@ -433,7 +498,16 @@ export function toAgentInfo(
   descriptor: AgentDescriptor,
   status: AgentStatus
 ): AgentInfo {
-  return { ...descriptor, status };
+  const skills = descriptor.skills?.length
+    ? descriptor.skills
+    : descriptor.capabilities.map(capability => ({
+        id: capability,
+        ...SKILL_META[capability],
+        tags: [capability],
+        inputModes: ['text/plain'],
+        outputModes: capability === 'image' ? ['text/plain', 'image/*'] : ['text/plain'],
+      }));
+  return { ...descriptor, skills, status };
 }
 
 /** 未探测时的初始状态 */

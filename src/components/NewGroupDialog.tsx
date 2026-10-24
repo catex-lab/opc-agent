@@ -177,8 +177,7 @@ export function NewGroupDialog({
             <div
               // ⚠️ 必须 `w-full`：头部改成 flex 之后，这个胶囊成了 flex 项，
               // 不给宽度就按内容收缩（实测只剩 197px，搜索框窄得没法用）。
-              className="flex h-10 w-full items-center gap-2 rounded-full px-3.5"
-              style={{ backgroundColor: 'var(--tc-surface-raised)' }}
+              className="flex h-10 w-full items-center gap-2 rounded-full bg-transparent px-3.5 transition-colors focus-within:bg-[var(--tc-fill-hover)]"
             >
               <Search size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
               <input

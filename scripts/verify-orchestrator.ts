@@ -17,6 +17,7 @@ import {
   type OrchestratorDeps,
   type TurnPhase,
 } from '../server/orchestrator.js';
+import { scoreAgentSkills } from '../server/agents/types.js';
 
 interface Call {
   agentId: string;
@@ -46,6 +47,7 @@ function makeDeps(opts: {
   reply?: (agentId: string, phase: TurnPhase) => string;
   /** 可用成员白名单；不传表示全可用 */
   usable?: string[];
+  skillScore?: (agentId: string, prompt: string) => number;
 } = {}) {
   const calls: Call[] = [];
   const notes: string[] = [];
@@ -65,9 +67,45 @@ function makeDeps(opts: {
     note: t => notes.push(t),
     displayName: id => id.toUpperCase(),
     isUsable: id => !opts.usable || opts.usable.includes(id),
+    skillScore: opts.skillScore,
   };
 
   return { deps, calls, notes, started, finished };
+}
+
+// ── 0. 分派：唯一明显匹配技能的 Agent 进入候选，避免主控在无关成员中猜 ──
+{
+  const { deps, calls, notes } = makeDeps({
+    reply: (_id, phase) => phase === 'route' ? 'ROUTE: coder' : '已完成',
+    skillScore: id => id === 'coder' ? 8 : id === 'writer' ? 1 : 0,
+  });
+  await runOrchestration(
+    { mode: 'dispatch', members: ['ctrl', 'writer', 'coder'], prompt: '修复代码错误' },
+    deps
+  );
+  eq(calls[0]?.prompt.includes('coder'), true, '技能匹配：主控路由上下文保留最佳候选');
+  eq(calls[0]?.prompt.includes('writer'), false, '技能匹配：明显弱匹配候选从路由范围排除');
+  eq(calls.map(c => `${c.agentId}:${c.phase}`), ['ctrl:route', 'coder:work', 'ctrl:summary'], '技能匹配：工作委派与原有总结流程保留');
+  ok(notes.some(note => note.includes('技能匹配推荐 CODER')), '技能匹配：用户可在群聊过程看到推荐成员');
+}
+
+// ── 0a. 中文 prompt 与默认中文技能描述能够匹配 ───────────────────────
+{
+  const score = scoreAgentSkills([{
+    id: 'code', name: '代码任务', description: '编写或审查代码', tags: ['code'],
+  }], '请帮我审查这段代码中的错误');
+  ok(score > 0, '技能匹配：中文请求可命中中文技能描述', `得分=${score}`);
+}
+
+// ── 0b. 分派：技能平分或无匹配时仍交给主控决定 ───────────────
+{
+  const { deps, calls } = makeDeps({
+    reply: () => 'ROUTE: w2',
+    skillScore: id => id === 'w1' || id === 'w2' ? 3 : 0,
+  });
+  await runOrchestration({ mode: 'dispatch', members: ['ctrl', 'w1', 'w2'], prompt: '请分析这个任务' }, deps);
+  eq(calls[0]?.prompt.includes('w1') && calls[0]?.prompt.includes('w2'), true, '技能匹配：平分时不缩窄候选');
+  eq(calls[1]?.agentId, 'w2', '技能匹配：平分时保留主控路由结果');
 }
 
 // ── 1. 广播：全员并行、同一 prompt ────────────────────────────────

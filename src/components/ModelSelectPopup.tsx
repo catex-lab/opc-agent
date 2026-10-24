@@ -18,13 +18,16 @@
  *     两者语义不同（后者在行很宽时也能一眼看到选的是哪条）。
  * 所以换成自绘 portal 浮层，写法与附件菜单（`data-attach-menu`）一致。
  *
- * ## 字标图标为什么是中性色
+ * ## 字标图标（A93 已移除）
  *
- * 截图里每行左侧是一枚「首字母方块」。这里**刻意不上品牌色**：
- * `Model` 类型只有 `providerName`（"OpenCode / Z.AI / GitHub Copilot"），
- * 没有厂商品牌色字段。按 provider 名哈希出一个颜色，看起来像品牌色但其实不是，
- * 用户会拿它去对照官网 —— 那是假信息。所以用中性底 + 首字母，
- * 只做「这一行属于哪个 provider」的区分，不声称任何品牌归属。
+ * 原来每行左侧有一枚「首字母方块」。它**刻意不上品牌色**，因为 `Model` 类型
+ * 只有 `providerName`，没有厂商品牌色字段 —— 按名字哈希出一个颜色看起来像
+ * 品牌色但其实不是，用户会拿它去对照官网。
+ *
+ * 但即便用中性色，这个方块仍然是个**假字标**：同一 provider 下的模型首字母
+ * 全一样（OpenCode 的 90+ 条模型都是「O」），既不能区分行，又要占 28px 宽。
+ * A93 按用户要求去掉，行的信息层级变成「模型名 → 厂商名 → 倍率」三级，
+ * 面板宽度也随之从 340 收到 272。
  *
  * ## 诚实边界
  *
@@ -50,8 +53,13 @@ export interface ModelSelectPopupProps {
   anchor: { left: number; top: number; width: number };
 }
 
-/** 与截图一致的面板宽度 */
-const PANEL_WIDTH = 340;
+/** 面板宽度。
+ *
+ * A93：340 → 272。原来 340 是按「首字母方块 + 名称 + 角标 + 倍率」四段排的，
+ * 去掉方块之后右侧空出近三分之一，一行里有一半是空气。272 是「最长模型名
+ * 不被截断」的实测值（DeepSeek V4 Flash Free + 免费角标 + 倍率 + ✓ 共约
+ * 250px，另留 20px 余量）；再窄长名就要吃省略号了。 */
+const PANEL_WIDTH = 272;
 /** 列表最高这么高就自己滚，别把输入区顶出屏幕 */
 const LIST_MAX_HEIGHT = 320;
 
@@ -63,14 +71,10 @@ function tagStyle(tag: NonNullable<Model['tag']>): React.CSSProperties {
 }
 
 /**
- * 取字标字母：优先 provider 展示名首字母，没有就退到模型名首字母。
- * 统一大写，`slice(0,1)` 取一个**码点**而不是一个 UTF-16 单元 ——
- * 否则 emoji 或代理对上半会取出半个字符，渲染成豆腐块。
+ * 取字标字母：**A93 起不再使用**（浮层里已去掉首字母方块，理由见行内注释）。
+ * 保留函数会误导后来者以为还有一处在用，所以直接删掉；这里留一行说明，
+ * 免得有人从历史里翻出来又加回去。
  */
-function letterOf(model: Model): string {
-  const src = (model.providerName || model.name || '?').trim();
-  return [...src][0]?.toUpperCase() ?? '?';
-}
 
 export function ModelSelectPopup({
   models,
@@ -152,12 +156,12 @@ export function ModelSelectPopup({
       role="dialog"
       aria-label="内置模型"
       data-model-popup
-      className="tc-glass fixed z-[60] flex flex-col overflow-hidden rounded-xl shadow-popup"
+      className="opc-choice-panel fixed z-[60] flex flex-col overflow-hidden rounded-xl shadow-popup"
       style={{
         left,
         bottom,
         width: PANEL_WIDTH,
-        border: '1px solid var(--td-component-stroke)',
+        border: '1px solid var(--tc-edge-strong)',
       }}
       onPointerDown={e => e.preventDefault()}
     >
@@ -215,7 +219,7 @@ export function ModelSelectPopup({
                *    没有填充，正是用户说的「选中回显态填充色不一致」。
                * 3. 行改成左右内缩 4px + 圆角，与 menuItem.ts 那套菜单行同
                *    外形；否则全宽的直角底色会在浮层的圆角处溢出。 */
-              className="mx-1 flex w-[calc(100%_-_8px)] items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors"
+              className="mx-1 flex w-[calc(100%_-_8px)] items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors"
               style={{
                 backgroundColor: selected
                   ? 'var(--tc-fill-selected)'
@@ -225,18 +229,11 @@ export function ModelSelectPopup({
                 color: selected ? 'var(--td-brand-color)' : 'var(--td-text-color-primary)',
               }}
             >
-              {/* 字标：中性底，见文件头「为什么是中性色」 */}
-              <span
-                aria-hidden
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-medium"
-                style={{
-                  backgroundColor: 'var(--td-bg-color-component)',
-                  color: 'var(--td-text-color-secondary)',
-                }}
-              >
-                {letterOf(m)}
-              </span>
-
+              {/* A93：这一格原来是「provider 首字母方块」。去掉的理由不是审美 ——
+                  它是一个**假字标**：`Model` 只有 `providerName`，没有品牌色字段，
+                  方块里的字母既不来自厂商也不来自模型名，用户会拿它当品牌标识去对照
+                  官网。同一列里 OpenCode 的 90 多个模型全是同一个「O」，区分度为零，
+                  却占了 20px + 8px 间距。现在左侧直接是模型名。 */}
               <span className="min-w-0 flex-1">
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate text-body leading-5">{m.name}</span>

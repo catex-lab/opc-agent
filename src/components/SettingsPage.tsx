@@ -22,13 +22,14 @@ import {
   CloseCircleFilledIcon,
   RefreshIcon
 } from 'tdesign-icons-react';
-import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers } from 'lucide-react';
+import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
 import { HintTip } from './HintTip';
 import { AgentCredentialSettings } from './AgentCredentialSettings';
 import { ModelCatalogSettings } from './ModelCatalogSettings';
 import { MemoryPanel } from './MemoryPanel';
 import { PermissionRulesPanel } from './PermissionRulesPanel';
+import AboutPanel from './AboutPanel';
 import { CustomAgent, PermissionMode, ThemePreference } from '../types';
 import {
   TRANSPARENCY_DEFAULT,
@@ -110,7 +111,7 @@ type LoginMethod = 'env' | 'cli' | 'none';
  * ⚠️ 三个 key 是硬编码的三块内容，不是从数据生成的：它们各自依赖不同的
  * 后端数据（登录状态 / agents 列表），抽成数据驱动只会把条件渲染藏得更深。
  */
-type SettingsSectionKey = 'memory' | 'permission' | 'appearance' | 'login' | 'models' | 'agents';
+type SettingsSectionKey = 'memory' | 'permission' | 'appearance' | 'login' | 'models' | 'agents' | 'about';
 
 const SETTINGS_SECTIONS: Array<{
   key: SettingsSectionKey;
@@ -124,6 +125,8 @@ const SETTINGS_SECTIONS: Array<{
   { key: 'login', label: '登录配置', hint: 'API Key 或命令行登录', Icon: KeyRound },
   { key: 'models', label: '模型清单', hint: '枚举来源与手动刷新', Icon: Layers },
   { key: 'agents', label: '自定义 Agent', hint: '本地提示词与工具权限', Icon: Bot },
+  // 排最后：这是「偶尔来一次」的分区，不该抢占前六项的位置
+  { key: 'about', label: '关于与隐私', hint: '版本、官方入口与统计开关', Icon: Info },
 ];
 
 interface LoginStatus {
@@ -348,11 +351,18 @@ export function SettingsPage({
    *
    * 与上面的 `?agent=` 是两件独立的事：一个切节，一个在节内定位某一行。
    * 同时带两个参数时两条都会跑，互不干扰。
+   *
+   * 原先这里写死了 `if (sec !== 'models') return`，只有模型清单能吃这个参数。
+   * 现在改成按 SETTINGS_SECTIONS 白名单匹配 —— 任意分区都能被 URL 直达
+   * （关于页、权限门禁都需要这个能力），同时非法值仍会被忽略，
+   * 不会出现 `?section=xxx` 把面板切成空白。
    */
   useEffect(() => {
     const sec = new URLSearchParams(window.location.search).get('section');
-    if (sec !== 'models') return;
-    setSection('models');
+    if (!sec) return;
+    if (SETTINGS_SECTIONS.some(item => item.key === sec)) {
+      setSection(sec as SettingsSectionKey);
+    }
   }, []);
 
   const resetForm = () => {
@@ -479,7 +489,7 @@ export function SettingsPage({
                 // 信息没有丢 —— 挂到 title 上，悬停仍能看到这一区管什么；
                 // 常驻显示时它只是把三个按钮各撑高一行，读起来像目录。
                 title={hint}
-                className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors"
+                className="relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors"
                 style={{
                   backgroundColor: active ? 'var(--td-brand-color-light)' : 'transparent',
                   color: active ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)',
@@ -1115,6 +1125,11 @@ export function SettingsPage({
             </div>
           </div>
         )}
+
+        {/* ── 关于与隐私 ──────────────────────────────────────────
+            版本信息、官网/源码/反馈入口，以及匿名统计开关。
+            放在最后：用户平时不会来，但报 issue 前会被指引到这里。 */}
+        {section === 'about' && <AboutPanel />}
           </div>
         </div>
       </div>

@@ -71,6 +71,8 @@ export interface OrchestratorDeps {
 
   /** 该 Agent 当前是否可调用；不可用的会被排除在编排之外 */
   isUsable(agentId: string): boolean;
+  /** 可选的技能相关度，用于默认分派优先排序；平分时保留群成员顺序。 */
+  skillScore?(agentId: string, prompt: string): number;
 }
 
 /** 辩论默认轮数：正反各说几轮。2 轮足以暴露分歧，再多用户读不动。 */
@@ -425,21 +427,34 @@ async function runDispatch(
   }
 
   const candidates = members.slice(1);
-  deps.note(`主控 ${deps.displayName(controller)} 正在判断该交给谁`);
+  const rankedCandidates = deps.skillScore
+    ? [...candidates].sort((a, b) => deps.skillScore!(b, prompt) - deps.skillScore!(a, prompt))
+    : candidates;
+  const topScore = deps.skillScore && rankedCandidates.length > 0
+    ? deps.skillScore(rankedCandidates[0], prompt)
+    : 0;
+  const secondScore = deps.skillScore && rankedCandidates.length > 1
+    ? deps.skillScore(rankedCandidates[1], prompt)
+    : 0;
+  const skillMatch = topScore > 0 && topScore > secondScore;
+  const routingCandidates = skillMatch ? rankedCandidates.slice(0, 1) : rankedCandidates;
+  deps.note(skillMatch
+    ? `技能匹配推荐 ${deps.displayName(routingCandidates[0])}，主控 ${deps.displayName(controller)} 正在确认`
+    : `主控 ${deps.displayName(controller)} 正在判断该交给谁`);
 
   const route = await deps.runAgent(
     controller,
-    routePrompt(prompt, candidates, deps.displayName),
+    routePrompt(prompt, routingCandidates, deps.displayName),
     'route'
   );
 
-  const chosen = parseRouting(route.text, candidates, deps.displayName);
+  const chosen = parseRouting(route.text, routingCandidates, deps.displayName);
 
   // 解析失败时不要瞎猜：退回广播，让所有候选人都答一遍，用户自己挑。
   // 这比「猜一个错的然后整轮结果都跑偏」要好得多。
   if (!chosen) {
     deps.note('主控没有给出可识别的指派，已退化为广播（所有候选成员各自作答）');
-    await runBroadcast(candidates, prompt, deps);
+    await runBroadcast(routingCandidates, prompt, deps);
     return;
   }
 

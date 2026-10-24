@@ -227,10 +227,10 @@ export function GroupMemberPanel({ members, allAgents, onMembersChange }: GroupM
 
       {searching && (
         <div className="shrink-0 px-2.5 pt-2">
-          <div
-            className="flex items-center gap-1.5 rounded-full px-2.5 py-1"
-            style={{ backgroundColor: 'var(--tc-surface-raised)' }}
-          >
+          {/* A84：与两栏栏头的搜索胶囊同一条规则 —— 常态透明，聚焦才浮现底色。
+              这个输入框是 searching 时才挂载且 autoFocus，所以视觉上仍然是
+              「一出现就带着底」，但那层底来自聚焦态而不是常驻。 */}
+          <div className="flex items-center gap-1.5 rounded-full bg-transparent px-2.5 py-1 transition-colors focus-within:bg-[var(--tc-fill-hover)]">
             <Search size={12} style={{ color: 'var(--td-text-color-placeholder)' }} />
             <input
               autoFocus

@@ -30,8 +30,10 @@ import { ChevronLeft } from 'lucide-react';
  * - **副标题**：一律 `text-secondary`（12px）+ `mt-0.5`，次要文字色。
  *   文字块恒定 44px 高（`min-h-[44px]`），有没有副标题都一样 ——
  *   块高一旦变了，标题在 88px 里的居中位置就会跟着变，两栏标题立刻错位。
- * - **底色**：`--tc-surface-chrome`，与导航条、列表栏**同一个令牌**。
- *   标题栏属于「框架」，不属于「内容」，三者要连成一条完整的外框。
+ * - **底色**：由 `surface` 开关决定，三档语义令牌，不引入任意色值。
+ *   默认 `chrome`（框架面，与导航条、列表栏同一个令牌，三者连成一条完整外框）；
+ *   会话头部用 `content`（内容面，聊天区上下连成一片）；
+ *   右侧工作区用 `aside`（A95，内容面的近邻，见 `surface` 的注释）。
  * - **底边线**：一律 1px `--td-component-stroke`，除非显式 `divider={false}`。
  * - **水平内边距**：主区 `px-6`，窄栏 `px-4`；窄屏（<640px）主区降到 `px-4`。
  *
@@ -85,11 +87,13 @@ export interface PanelHeaderProps {
    * - `chrome`（默认）：框架面。列表栏 / 资料页用，与左侧导航连成一条外框。
    * - `content`：内容面。会话头部用 —— 聊天区上下连成一片白，头部不再像
    *   一块压在消息上的横条（QQ 的会话头部也是跟消息区同色）。
+   * - `aside`（A95）：内容面的近邻。右侧工作区用 —— 它与对话区差一档，
+   *   头部必须跟着面板走，否则面板顶会露出一条对话区颜色的横条。
    *
    * 之所以做成开关而不是让调用方自己传 style：底色属于「标题栏规范」，
    * 一旦允许外部覆盖，四处标题栏迟早又各写各的。
    */
-  surface?: 'chrome' | 'content';
+  surface?: 'chrome' | 'content' | 'aside';
   /** 是否显示底边线，默认 true */
   divider?: boolean;
   /**
@@ -145,7 +149,11 @@ export function PanelHeader({
         // 三处共用一个值，才谈得上「标题栏色调与左侧栏一致」——
         // 靠「三处都记得写同一个令牌」是靠不住的。
         backgroundColor:
-          surface === 'content' ? 'var(--tc-surface-content)' : 'var(--tc-surface-chrome)',
+          surface === 'content'
+            ? 'var(--tc-surface-content)'
+            : surface === 'aside'
+              ? 'var(--tc-surface-aside)'
+              : 'var(--tc-surface-chrome)',
         ...(divider ? { borderBottom: '1px solid var(--tc-divider)' } : {}),
       }}
     >

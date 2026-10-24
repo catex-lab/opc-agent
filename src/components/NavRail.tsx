@@ -63,10 +63,12 @@ export function NavRail({
       //    对准导航图标的中轴），两处不一致标记就会歪。
       className={`flex shrink-0 flex-col items-center gap-1.5 py-3 ${compact ? 'w-[48px]' : 'w-[56px]'}`}
       style={{
-        // 框架面（--tc-surface-chrome）：导航条 / 列表栏 / 标题栏三者同色，
-        // 它们构成应用的「外框」。内容区（--tc-surface-content）比它亮一档，
-        // 于是「哪块是框架、哪块是内容」一眼能分。
-        backgroundColor: 'var(--tc-surface-chrome)',
+        // A92：导航条从「框架面」里再拆出一档（--tc-surface-rail），是外框的
+        // 最外层。原来它和会话列表共用 chrome，两栏 ΔL* = 0，只靠一条 1px
+        // 分隔线撑着，读起来是「一整块灰」而不是两层。
+        // 现在四档：rail → 列表(chrome) → 内容(content) → 浮起(raised)。
+        // 取值与边界见 index.css 的 --tc-surface-rail 注释。
+        backgroundColor: 'var(--tc-surface-rail)',
         borderRight: '1px solid var(--tc-divider)',
       }}
     >
@@ -83,6 +85,13 @@ export function NavRail({
               type="button"
               onClick={() => onNavigate(key)}
               title={label}
+              aria-label={label}
+              /* A84：把「当前在哪一栏」显式暴露给辅助技术。
+                 原先选中态只由底色 + 左侧那条 3px 指示条表达 —— 纯视觉。
+                 `aria-current="page"` 既是无障碍信息，也让「选中回显态」
+                 变成一个可断言的属性（verify:a84 靠它区分「该有底色的」和
+                 「不该有底色的」按钮，而不是靠维护一份页面名单）。 */
+              aria-current={active ? 'page' : undefined}
               className={`
                 relative flex h-11 w-11 items-center justify-center rounded-xl
                 transition-all duration-200 ease-out
@@ -123,6 +132,8 @@ export function NavRail({
           type="button"
           onClick={onOpenSettings}
           title="设置"
+          aria-label="设置"
+          aria-current={isActive('settings') ? 'page' : undefined}
           className={`
             relative flex h-11 w-11 items-center justify-center rounded-xl
             transition-all duration-200

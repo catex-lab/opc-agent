@@ -331,6 +331,31 @@ export function AgentDetailSections({
         </section>
       )}
 
+      {/* 结构化技能（参考 A2A AgentSkill）：展示可承接的具体任务及其数据形式。 */}
+      {(agent.skills?.length ?? 0) > 0 && (
+        <section className="mt-6" data-agent-skills>
+          <h3 className="tc-section-title mb-2">可承接的任务</h3>
+          <div className="tc-detail-rows overflow-hidden rounded-xl" style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
+            {agent.skills!.map(skill => (
+              <div key={skill.id} className="px-4 py-3" data-agent-skill={skill.id}>
+                <div className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>{skill.name}</div>
+                <div className="mt-1 text-body leading-relaxed" style={{ color: 'var(--td-text-color-secondary)' }}>{skill.description}</div>
+                {skill.tags && skill.tags.length > 0 && (
+                  <div className="mt-1 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>关键词：{skill.tags.join(' · ')}</div>
+                )}
+                {((skill.inputModes?.length ?? 0) > 0 || (skill.outputModes?.length ?? 0) > 0) && (
+                  <div className="mt-1 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                    {skill.inputModes?.length ? `输入 ${skill.inputModes.join(', ')}` : ''}
+                    {skill.inputModes?.length && skill.outputModes?.length ? ' · ' : ''}
+                    {skill.outputModes?.length ? `输出 ${skill.outputModes.join(', ')}` : ''}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* 介绍 */}
       {agent.description && (
         <section className="mt-6">

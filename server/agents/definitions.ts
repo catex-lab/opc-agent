@@ -738,12 +738,28 @@ function createCodexLineageMapper(errorLabel: string): (obj: unknown) => AgentEv
         const summary = changes
           .map((c: any) => `${c.kind ?? 'update'} ${c.path ?? ''}`)
           .join('\n');
-        return {
+        const events: AgentEvent[] = [{
           type: 'tool_result',
           toolId: id,
           content: summary || '文件已修改',
           isError: item.status === 'failed',
-        };
+        }];
+        if (item.status !== 'failed') {
+          const safeChanges = changes
+            .filter((c: any) => c && typeof c.path === 'string')
+            .map((c: any) => ({ path: c.path, kind: String(c.kind ?? 'update') }));
+          if (safeChanges.length > 0) {
+            events.push({
+              type: 'artifact',
+              id: `codex-changes-${id}`,
+              name: `文件变更（${safeChanges.length}）`,
+              mediaType: 'application/vnd.opc.file-changes+json',
+              data: safeChanges,
+              description: 'Agent 原生 file_change 事件中的变更清单',
+            });
+          }
+        }
+        return events;
       }
       case 'mcp_tool_call': {
         const name = String(item.tool ?? item.name ?? 'MCP');

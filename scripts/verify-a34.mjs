@@ -130,7 +130,9 @@ console.log('\n[1] 响应式收口：长代码行不再撑宽整列');
 
   const overflow = await page.evaluate(() => {
     const scroll = document.querySelector('[data-chat-scroll]');
-    const list = document.querySelector('.max-w-3xl.mx-auto');
+    /* 用 data 钩子而不是 `.max-w-3xl` —— 容器宽度是设计变量，
+       改成 `max-w-[800px]` 之后这个选择器就静默失效了（missing → 整段跳过）。 */
+    const list = document.querySelector('[data-msg-list]');
     const answer = document.querySelector('.tc-answer');
     if (!scroll || !list || !answer) return { missing: true };
     const sr = scroll.getBoundingClientRect();

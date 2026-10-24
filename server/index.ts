@@ -9,6 +9,7 @@ import path from "path";
 import fs from "fs";
 import * as db from "./db.js";
 import { registry } from "./agents/registry.js";
+import { scoreAgentSkills } from "./agents/types.js";
 import { findDef } from "./agents/definitions.js";
 import {
   getImageProvider,
@@ -21,7 +22,7 @@ import {
 import { cacheImage, imageFilePath } from "./image-store.js";
 import { validateDirectory } from "./workspaceDir.js";
 import { dataDirPath } from "./paths.js";
-import { FS_ERROR_TEXT, listDir, type FsErrorCode } from "./fs.js";
+import { FS_ERROR_TEXT, listDir, readFileInside, type FsErrorCode } from "./fs.js";
 import {
   loadAgentCredentials,
   listCredentials,
@@ -801,6 +802,100 @@ app.get("/api/fs/list", (req, res) => {
   } catch (error: any) {
     console.error("[Fs List] Error:", error);
     res.status(500).json({ error: error?.message || "读取目录失败" });
+  }
+});
+
+/**
+ * A86：工作区面板的**只读预览**。
+ *
+ * ## 为什么需要它
+ *
+ * A77 的取舍是「点文件 = 用系统程序打开」，理由是内嵌编辑器要 monaco +
+ * 语言服务 + 保存链路。但用户的实际反馈是：面板叫「工作区」，点一个 md
+ * 却跳出应用，观感就是假的。所以这里补的是**只读预览**，不是编辑器 ——
+ * 没有保存、没有写回、没有冲突处理，写操作仍然只有 Agent 与外部编辑器两条路。
+ *
+ * ## 边界
+ *
+ * - containment 与 `/api/fs/list` 完全一致（`resolveInside`，realpath 后比对）；
+ * - 文本上限 1 MB，超限返回 `too-large` 而不是截一半（截断的源码更误导）；
+ * - 图片不塞进 JSON，走 `/api/fs/raw` 直出；
+ * - 二进制（前 8 KB 有 NUL）返回 `binary`，界面提示改用系统程序打开。
+ */
+app.get("/api/fs/read", (req, res) => {
+  try {
+    const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : "";
+    const rel = typeof req.query.path === "string" ? req.query.path : "";
+    if (!sessionId) {
+      return res.status(400).json({ error: "缺少 sessionId" });
+    }
+    if (!rel) {
+      return res.status(400).json({ error: "缺少 path" });
+    }
+
+    const session = db.getSession(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: "会话不存在" });
+    }
+    if (!session.cwd) {
+      return res.status(409).json({ error: "该会话未绑定工作目录", code: "no-cwd" });
+    }
+
+    const result = readFileInside(session.cwd, rel);
+    if ("error" in result) {
+      return res.status(FS_STATUS[result.error]).json({
+        error: FS_ERROR_TEXT[result.error],
+        code: result.error,
+      });
+    }
+
+    // 图片只给 URL，正文由 /api/fs/raw 直出：base64 塞进 JSON 会让 1 MB 的图
+    // 变成 1.4 MB 的字符串，还要在渲染进程里再解一遍。
+    if (result.kind === "image") {
+      const qs = new URLSearchParams({ sessionId, path: rel });
+      return res.json({ ...result, url: `/api/fs/raw?${qs.toString()}` });
+    }
+    res.json(result);
+  } catch (error: any) {
+    console.error("[Fs Read] Error:", error);
+    res.status(500).json({ error: error?.message || "读取文件失败" });
+  }
+});
+
+/** A86：图片预览的原始字节。只放行图片 MIME，其余一律 415。 */
+app.get("/api/fs/raw", (req, res) => {
+  try {
+    const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : "";
+    const rel = typeof req.query.path === "string" ? req.query.path : "";
+    if (!sessionId || !rel) {
+      return res.status(400).json({ error: "缺少 sessionId 或 path" });
+    }
+
+    const session = db.getSession(sessionId);
+    if (!session) return res.status(404).json({ error: "会话不存在" });
+    if (!session.cwd) return res.status(409).json({ error: "该会话未绑定工作目录", code: "no-cwd" });
+
+    const result = readFileInside(session.cwd, rel);
+    if ("error" in result) {
+      return res.status(FS_STATUS[result.error]).json({
+        error: FS_ERROR_TEXT[result.error],
+        code: result.error,
+      });
+    }
+    if (result.kind !== "image") {
+      return res.status(415).json({ error: "只支持图片预览" });
+    }
+
+    // sendFile 会按扩展名给 Content-Type；路径已经过 realpath containment 校验
+    res.setHeader("Cache-Control", "no-store");
+    // SVG 是图片也是文档：直接在地址栏打开时里面的 <script> 会以**应用源**执行。
+    // 这里用 CSP 把它按静态图对待（禁脚本、禁外链），预览用 <img> 时行为不变。
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:");
+    res.sendFile(result.abs);
+  } catch (error: any) {
+    console.error("[Fs Raw] Error:", error);
+    res.status(500).json({ error: error?.message || "读取图片失败" });
   }
 });
 
@@ -1728,6 +1823,10 @@ app.post("/api/group-chat", async (req, res) => {
         runAgent,
         note: text => sse({ type: 'group_note', text }),
         displayName: id => registry.get(id)?.name || id,
+        skillScore: id => {
+          const agent = registry.get(id);
+          return agent ? scoreAgentSkills(agent.skills ?? [], message) : 0;
+        },
         // 只把真正可用的 Agent 纳入编排：把任务派给一个必然失败的人，
         // 只会浪费一轮调用并给用户一个空结果
         isUsable: id => registry.get(id)?.status.availability === 'ready',

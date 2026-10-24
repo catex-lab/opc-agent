@@ -146,32 +146,31 @@ export function ChatHeader({
               原先它在整行最左边，和 ⋯ 之间隔着工作区徽标 —— 两个都是
               28px 的图标按钮，却被一条文字徽标隔开，看着像两组无关的控件。
               现在右侧这一组是「面板开关 + 更多」，内容状态徽标在它们左边：
-              同一类的东西挨着，人才不用在脑子里给它们分组。 */}
-          {onToggleWorkspace && (
+              同一类的东西挨着，人才不用在脑子里给它们分组。
+
+              A84（用户要求）：**面板展开后这里不再出现这个按钮** ——
+              展开态下同一枚按钮已经搬到工作区栏头的原「×」位置，由它自己
+              充当收起入口。两处同时留一个「收起工作区」，等于同一件事说两遍；
+              而且栏头的那个离面板本体更近，符合「收起谁就点谁」的直觉。
+              另外去掉它常驻的 --tc-active-chrome 底色：这个按钮从来不是
+              「选中项」，只是一个开关，常驻底色会让人误读成已激活状态。 */}
+          {onToggleWorkspace && !workspaceOpen && (
             <button
               type="button"
               onClick={onToggleWorkspace}
-              aria-pressed={!!workspaceOpen}
-              title={workspaceOpen ? '收起工作区' : '展开工作区'}
-              aria-label={workspaceOpen ? '收起工作区' : '展开工作区'}
-              className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-[var(--tc-hover-chrome)]"
-              style={{
-                backgroundColor: workspaceOpen ? 'var(--tc-active-chrome)' : 'transparent',
-                color: workspaceOpen
-                  ? 'var(--td-text-color-primary)'
-                  : 'var(--td-text-color-secondary)',
-              }}
+              title="展开工作区"
+              aria-label="展开工作区"
+              data-workspace-toggle="expand"
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-transparent transition-colors hover:bg-[var(--tc-hover-chrome)]"
+              style={{ color: 'var(--td-text-color-secondary)' }}
             >
               <PanelRight size={16} />
             </button>
           )}
           <details ref={moreRef} className="relative" data-chat-more>
           <summary
-            className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg transition-colors"
-            style={{
-              backgroundColor: 'var(--tc-hover-chrome)',
-              color: 'var(--td-text-color-secondary)',
-            }}
+            className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg bg-transparent transition-colors hover:bg-[var(--tc-hover-chrome)]"
+            style={{ color: 'var(--td-text-color-secondary)' }}
             title="更多"
             aria-label="更多操作"
           >

@@ -69,8 +69,11 @@ const SLEEP = ms => new Promise(r => setTimeout(r, ms));
 
 /** 与 electron/main.ts 的 TITLE_BAR_HEIGHT、index.css 的 --tc-titlebar-height 同源 */
 const TITLE_BAR_HEIGHT = 40;
-/** 与 --tc-surface-chrome 同源 */
-const CHROME = { light: [245, 245, 245], dark: [27, 27, 27] };
+/** 标题条与三个窗口按钮所在的那一档。A94 起它等于 `--tc-surface-rail`
+ *  （浅色 #ececec / 深色 #232323），不再是 `--tc-surface-chrome`。
+ *  ⚠️ 这两个数是**像素采样**的期望值，不是令牌原文 —— 改令牌必须同步改这里，
+ *     否则会得到「按钮底色不对」的假红。 */
+const TITLEBAR = { light: [236, 236, 236], dark: [35, 35, 35] };
 
 /** 取打包版 exe 路径：默认用最新的 release-*，避免拿旧包测出绿结果 */
 function exeFromArgs() {
@@ -459,7 +462,7 @@ try {
   ok(bar?.height === TITLE_BAR_HEIGHT, `标题条高度 = ${TITLE_BAR_HEIGHT}px`, bar ? `${bar.height}px` : 'n/a');
   ok(bar?.token === `${TITLE_BAR_HEIGHT}px`, '--tc-titlebar-height 令牌同值', bar?.token ?? 'n/a');
   ok(bar?.y === 0, '标题条位于窗口第 0 行（没有被系统标题栏压下去）', bar ? `y=${bar.y}` : 'n/a');
-  ok(bar?.bg === 'rgb(245, 245, 245)', '标题条底色 = 框架面 #f5f5f5', bar?.bg ?? 'n/a');
+  ok(bar?.bg === 'rgb(236, 236, 236)', '标题条底色 = 导航条 rail #ececec（A94）', bar?.bg ?? 'n/a');
   ok(
     /drag/.test(bar?.appRegion ?? ''),
     '整条是窗口拖动区（-webkit-app-region: drag）',
@@ -531,8 +534,8 @@ try {
   );
   // 用平均色而不是众数色：众数色做了 4 位量化，245 会被归到 255 那一档。
   ok(
-    maxDiff(capLight.avg, CHROME.light) <= 6,
-    '按钮落点区是框架面 #f5f5f5（系统没在上面另画一条标题栏）',
+    maxDiff(capLight.avg, TITLEBAR.light) <= 6,
+    '按钮落点区是标题条 rail #ececec（系统没在上面另画一条标题栏）',
     capLight.avg.join(',')
   );
   // ⚠️ 不要试图用 PrintWindow 验自绘按钮的**字形**：它走 GDI 合成，
@@ -585,7 +588,9 @@ try {
     const el = document.querySelector('[data-titlebar]');
     return el ? getComputedStyle(el).backgroundColor : null;
   });
-  ok(barDark === 'rgb(27, 27, 27)', '标题条 CSS 也进入深色 #1b1b1b', barDark ?? 'n/a');
+  // A94：标题条走 rail 档，深色下是 #232323（rgb(35,35,35)），
+  // 不再是 chrome 的 #1b1b1b。断言仍守「页面侧跟着系统主题一起变」。
+  ok(barDark === 'rgb(35, 35, 35)', '标题条 CSS 也进入深色 #232323（rail 档）', barDark ?? 'n/a');
 
   const shotDark = captureWindow(hwnd, path.join(shotDir, 'dark.png'));
   const capDark = regionStats(shotDark.img, ...captionBox(shotDark.img));
@@ -593,8 +598,8 @@ try {
     `    按钮落点区 平均色=${capDark.avg.join(',')} 众数色=${capDark.mode.join(',')}`
   );
   ok(
-    maxDiff(capDark.avg, CHROME.dark) <= 6,
-    '按钮落点区跟着变深 = #1b1b1b（与应用一起，没有割裂）',
+    maxDiff(capDark.avg, TITLEBAR.dark) <= 6,
+    '按钮落点区跟着变深 = #232323（与应用一起，没有割裂）',
     capDark.avg.join(',')
   );
   const winTopLumaDark = bandLuma(shotDark.img, px(4), px(TITLE_BAR_HEIGHT - 4), 0.25, 0.45);
@@ -615,7 +620,7 @@ try {
   const shotBack = captureWindow(hwnd, path.join(shotDir, 'light-again.png'));
   const capBack = regionStats(shotBack.img, ...captionBox(shotBack.img));
   ok(
-    maxDiff(capBack.avg, CHROME.light) <= 6,
+    maxDiff(capBack.avg, TITLEBAR.light) <= 6,
     '按钮落点区亮回来',
     capBack.avg.join(',')
   );

@@ -92,7 +92,12 @@ export default {
       },
       transitionTimingFunction: {
         'tencent': 'var(--ease-tencent)',
-        'spring': 'var(--ease-spring)',
+        /* A84：这里原来还有一条 `spring: 'var(--ease-spring)'`。
+           A83 已经把 `--ease-spring` 令牌删掉了（拖拽不允许回弹，全站
+           也没有任何一处该用过冲曲线），但 Tailwind 这一行还留着 ——
+           于是 `ease-spring` 变成一个**指向不存在变量**的类：谁哪天写了它，
+           编译不报错、运行时静默回退到默认曲线，A83 那条
+           「全站没有过冲缓动」的断言也就形同虚设。死别名一并删掉。 */
       },
       transitionDuration: {
         'fast': 'var(--duration-fast)',

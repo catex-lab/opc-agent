@@ -232,7 +232,7 @@ async function run() {
 
     await appPage.goto(`${api}/chat/${session.id}`, { waitUntil: 'domcontentloaded' });
     await appPage.evaluate(() => {
-      try { localStorage.setItem('opc.workspace-open', 'true'); } catch { /* 隐私模式 */ }
+      try { localStorage.setItem('opc.workspace-open', '1'); } catch { /* 隐私模式 */ }
     });
     await appPage.reload({ waitUntil: 'domcontentloaded' });
     await appPage.waitForFunction(() => document.querySelector('nav') !== null, { timeout: 60_000 });
@@ -243,10 +243,10 @@ async function run() {
         return;
       } catch {
         const toggle = appPage.getByRole('button', { name: /展开工作区|收起工作区/ });
-        if (await toggle.count()) {
-          const pressed = await toggle.first().getAttribute('aria-pressed');
-          if (pressed === 'false') await toggle.first().click();
-        }
+        // 这枚按钮只在收起态渲染（展开态的收起入口在面板栏头），所以「存在」就等于
+        // 「该点」。原来按 aria-pressed === 'false' 判断，而按钮上没有这个属性 ——
+        // getAttribute 永远返回 null，兜底点击一次都没生效过。
+        if (await toggle.count()) await toggle.first().click();
         await appPage.waitForSelector('[role="tablist"]', { timeout: 20_000 });
       }
     };
@@ -407,7 +407,7 @@ async function run() {
 
     await page2.goto(`${api2}/chat/${session2.id}`, { waitUntil: 'domcontentloaded' });
     await page2.evaluate(() => {
-      try { localStorage.setItem('opc.workspace-open', 'true'); } catch { /* 隐私模式 */ }
+      try { localStorage.setItem('opc.workspace-open', '1'); } catch { /* 隐私模式 */ }
     });
     await page2.reload({ waitUntil: 'domcontentloaded' });
     await page2.waitForFunction(() => document.querySelector('nav') !== null, { timeout: 60_000 });
@@ -415,10 +415,8 @@ async function run() {
       await page2.waitForSelector('[role="tablist"]', { timeout: 10_000 });
     } catch {
       const toggle = page2.getByRole('button', { name: /展开工作区|收起工作区/ });
-      if (await toggle.count()) {
-        const pressed = await toggle.first().getAttribute('aria-pressed');
-        if (pressed === 'false') await toggle.first().click();
-      }
+      // 同 ensurePanel：按钮只在收起态渲染，「存在」即「该点」。
+      if (await toggle.count()) await toggle.first().click();
       await page2.waitForSelector('[role="tablist"]', { timeout: 25_000 });
     }
     await page2.getByRole('tab', { name: '终端' }).click();

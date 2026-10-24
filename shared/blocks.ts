@@ -91,6 +91,19 @@ export interface ImageBlock {
   image: BlockImage;
 }
 
+/** 可下载或可复用的任务产物（参考 A2A Artifact）；与过程消息分离。 */
+export interface ArtifactBlock {
+  id: string;
+  type: 'artifact';
+  name: string;
+  mediaType: string;
+  /** 本地 API 路径或稳定 URI；不应放短期签名 URL */
+  uri?: string;
+  /** 小型结构化结果；大型文件应通过 uri 获取 */
+  data?: unknown;
+  description?: string;
+}
+
 /** 编排叙述（群聊的「主控决定交给 X」「第 2/3 棒」） */
 export interface NoteBlock {
   id: string;
@@ -99,7 +112,7 @@ export interface NoteBlock {
   level: 'info' | 'warn';
 }
 
-export type Block = TextBlock | ThinkingBlock | ToolBlock | ImageBlock | NoteBlock;
+export type Block = TextBlock | ThinkingBlock | ToolBlock | ImageBlock | NoteBlock | ArtifactBlock;
 
 // ============= 事件（v2） =============
 

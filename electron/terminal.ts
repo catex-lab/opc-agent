@@ -149,6 +149,24 @@ export class TerminalSession {
   private child: ChildProcessWithoutNullStreams | null = null;
   private pty: import('node-pty').IPty | null = null;
   private state: TerminalState = { ...IDLE };
+  /**
+   * 代次计数（A86）。
+   *
+   * ## 为什么必须有它
+   *
+   * `start()` 先 `kill()` 旧 shell 再起新的，但**旧进程的退出事件是异步的**，
+   * 而 `kill()` 只把 `this.pty` / `this.child` 置 null —— 摘不掉已经注册的
+   * `onExit` / `on('close')` 回调。旧进程真正退出的那一刻，回调落在**新** shell
+   * 上：`finish()` 把 `running` 改成 false、`exitCode` 写成旧进程的退出码，
+   * 并把 `this.pty` 置空 —— 新 shell 变成孤儿进程，之后的输入全部落空。
+   *
+   * 用户看到的就是「点一下重启，终端就死了」，而且报的还是上一个进程的退出码。
+   * 实测：`start()` → `{ok:true}`，1.5s 后 `{running:false, exitCode:-1073741510}`。
+   *
+   * 修法是给每次启动一个代次：回调里比对，不是当前代次的直接丢弃。
+   * 这样不必依赖「回调能不能被注销」（node-pty 的 onExit 返回值在各版本行为不一）。
+   */
+  private generation = 0;
   private tail = '';
   private dataListeners = new Set<(chunk: string) => void>();
   private stateListeners = new Set<(s: TerminalState) => void>();
@@ -179,12 +197,19 @@ export class TerminalSession {
     // 先杀旧的：两个 shell 交错输出，用户分不清哪行是谁打的
     this.kill();
 
+    // 杀掉之后立刻换代：旧进程的退出回调随后到达时会被这条代次挡住
+    const gen = ++this.generation;
+
     const pty = loadPty();
-    if (pty) return this.startPty(pty, cwd);
-    return this.startPipe(cwd);
+    if (pty) return this.startPty(pty, cwd, gen);
+    return this.startPipe(cwd, gen);
   }
 
-  private startPty(pty: NodePty, cwd: string): { ok: true } | { ok: false; error: string } {
+  private startPty(
+    pty: NodePty,
+    cwd: string,
+    gen: number
+  ): { ok: true } | { ok: false; error: string } {
     const { command, args } = pickShell();
     let proc: import('node-pty').IPty;
     try {
@@ -201,7 +226,7 @@ export class TerminalSession {
     } catch (e) {
       // PTY 起不来（比如 ConPTY 被安全软件拦）就退管道版，别让标签点不动
       console.warn(`[Terminal] PTY 启动失败，降级为管道版：${(e as Error).message}`);
-      return this.startPipe(cwd);
+      return this.startPipe(cwd, gen);
     }
 
     this.pty = proc;
@@ -219,13 +244,19 @@ export class TerminalSession {
     this.pushState();
 
     proc.onData(data => {
+      // 上一代的残留输出不能混进新会话的 tail
+      if (gen !== this.generation) return;
       // 类型上 data 是 string（没设 encoding，默认 utf8）；运行时仍可能是
       // Buffer（升级 node-pty 或改了 encoding 时），所以不直接信类型。
       const text = typeof data === 'string' ? data : String(data);
       this.tail = (this.tail + text).slice(-OUTPUT_TAIL_BYTES);
       for (const cb of this.dataListeners) cb(text);
     });
-    proc.onExit(({ exitCode }) => this.finish(typeof exitCode === 'number' ? exitCode : null));
+    // 代次比对：旧进程的退出事件晚于新进程启动时，绝不能打到新进程头上
+    proc.onExit(({ exitCode }) => {
+      if (gen !== this.generation) return;
+      this.finish(typeof exitCode === 'number' ? exitCode : null);
+    });
 
     // 开场白：说清楚这是什么、在哪跑。没有它，用户面对一个空面板不知道
     // 该不该输入，也不确定 cwd 对不对。
@@ -233,7 +264,7 @@ export class TerminalSession {
     return { ok: true };
   }
 
-  private startPipe(cwd: string): { ok: true } | { ok: false; error: string } {
+  private startPipe(cwd: string, gen: number): { ok: true } | { ok: false; error: string } {
     // args 必须真的传下去：pickShell() 算了半天，spawn 收一个 [] 就全废了
     //（这个 bug 在 A80 首发版里真实存在过 —— cmd 因此一直在双重回显）
     const { command, args } = pickShell();
@@ -270,6 +301,7 @@ export class TerminalSession {
     this.pushState();
 
     const onChunk = (chunk: Buffer | string) => {
+      if (gen !== this.generation) return;
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
       this.tail = (this.tail + text).slice(-OUTPUT_TAIL_BYTES);
       for (const cb of this.dataListeners) cb(text);
@@ -278,11 +310,14 @@ export class TerminalSession {
     child.stderr.on('data', onChunk);
 
     child.on('error', err => {
+      if (gen !== this.generation) return;
       this.emit(`\r\n[终端] 进程出错：${err.message}\r\n`);
       this.finish(null);
     });
 
     child.on('close', code => {
+      // 同 PTY：旧进程的 close 不能把新 shell 打成已退出
+      if (gen !== this.generation) return;
       this.finish(typeof code === 'number' ? code : null);
     });
 

@@ -181,9 +181,97 @@ await page.waitForTimeout(250);
 const senderAfter = await senderStyle();
 ok(!!senderAfter, '聚焦后仍能读到样式');
 if (senderBefore && senderAfter) {
-  ok(senderAfter.boxShadow === senderBefore.boxShadow, '输入框聚焦后投影不变（无光环）', senderAfter.boxShadow.slice(0, 60));
+  /* A83 修订：A30 当时把聚焦态压成「与常态完全一致」，代价是没有任何
+     焦点反馈。用户后来要求「输入框聚焦用阴影替代高亮」，所以这里的判据
+     从「投影不变」改成「投影变了，但变出来的必须是柔和的阴影而不是光环」。
+
+     三条一起看才成立：
+       ① 投影确实变了 —— 否则等于又回到「没有反馈」；
+       ② 边框色不变 —— A30 的核心诉求（不许描边）；
+       ③ 阴影里每个颜色都是**中性、低 alpha（≤0.2）、且带模糊半径** ——
+          「中性」排除品牌色/语义色光环，「低 alpha」排除实心环，
+          「带模糊」排除 `0 0 0 3px` 这种硬描边伪装成阴影。 */
+  ok(
+    senderAfter.boxShadow !== senderBefore.boxShadow,
+    '输入框聚焦后有阴影反馈（A83：阴影替代高亮）',
+    senderAfter.boxShadow.slice(0, 80)
+  );
   ok(senderAfter.borderColor === senderBefore.borderColor, '输入框聚焦后边框色不变', senderAfter.borderColor);
-  ok(!/0px 0px 0px 3px/.test(senderAfter.boxShadow), '输入框没有 3px 焦点环');
+
+  const shadowColors = [...senderAfter.boxShadow.matchAll(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/g)]
+    .map(m => ({ r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] }));
+  const neutral = shadowColors.every(c => c.r === c.g && c.g === c.b);
+  const soft = shadowColors.every(c => c.a <= 0.2);
+  ok(neutral, '聚焦阴影是中性色（不是品牌色光环）', JSON.stringify(shadowColors));
+  ok(soft, '聚焦阴影足够淡（alpha ≤ 0.2，不是实心环）', JSON.stringify(shadowColors.map(c => c.a)));
+
+  // 至少有一层带模糊半径（`x y blur` 的第三个数 > 0）：否则就是换个写法的描边
+  const radii = [...senderAfter.boxShadow.matchAll(/(?:rgba?\([^)]*\)\s*)?(-?[\d.]+px)\s+(-?[\d.]+px)\s+([\d.]+px)/g)]
+    .map(m => parseFloat(m[3]));
+  ok(radii.some(r => r > 0), '聚焦阴影带模糊半径（是阴影，不是描边）', JSON.stringify(radii));
+}
+
+/**
+ * A93：输入框的字号与描边。
+ *
+ * 字号这条必须落到**真实的 textarea** 上。组件把字号写在 shadow 内部的
+ * `font: var(--td-font-body-medium)`，外层五条路径全部实测改不动
+ * （`::part` 跨不了两层 shadow、CSS 变量被 shadow 内的本地定义压过、
+ * 内联 style 被 autosize 每次重写抹掉 —— 详见 src/senderTextarea.ts 文件头）。
+ * 现在由注入的样式表改成 15px，这里断言它真的落地，别再退回 16px。
+ *
+ * 正文基准是 `.chat-markdown ::part(md_p)` 的 15px / 1.72。那也在另一层
+ * shadow 里，`document.querySelector` 取不到，所以字号写死 15 并在标签里
+ * 标明来源；行高只校验**倍率区间**（1.4–1.8），不锁死像素值 —— 锁死了
+ * 以后调整行距就会误报。
+ */
+{
+  const r = await page.evaluate(() => {
+    const dig = (root, d = 0) => {
+      if (!root || d > 5) return null;
+      const ta = root.querySelector('textarea');
+      if (ta) return ta;
+      for (const el of root.querySelectorAll('*')) {
+        if (el.shadowRoot) {
+          const f = dig(el.shadowRoot, d + 1);
+          if (f) return f;
+        }
+      }
+      return null;
+    };
+    const alphaOf = c => {
+      const m = c && c.match(/rgba?\(([^)]*)\)/);
+      if (!m) return 0;
+      const p = m[1].split(/[,/]/).map(v => v.trim()).filter(Boolean);
+      return p.length >= 4 ? Number(p[3]) : 1;
+    };
+    const host = document.querySelector('t-chat-sender');
+    const ta = host?.shadowRoot ? dig(host.shadowRoot) : null;
+    const shell = host?.shadowRoot?.querySelector('[part~="t-chat__input__content"]');
+    if (!ta || !shell) return { err: '取不到 textarea / 输入框本体' };
+    const t = getComputedStyle(ta);
+    const s = getComputedStyle(shell);
+    const borders = [s.borderTopColor, s.borderRightColor, s.borderBottomColor, s.borderLeftColor];
+    return {
+      fontSize: parseFloat(t.fontSize),
+      lineHeight: parseFloat(t.lineHeight),
+      borderAlphas: borders.map(alphaOf),
+      border: s.borderTopColor,
+    };
+  });
+  ok(!r.err, '取得到输入框里的 textarea', r.err || 'ok');
+  ok(!r.err && r.fontSize === 15, '输入框字号 = 15px（与正文 md_p 一致）', r.err ? '-' : `${r.fontSize}px`);
+  const ratio = r.err ? 0 : r.lineHeight / r.fontSize;
+  ok(
+    !r.err && ratio >= 1.4 && ratio <= 1.8,
+    '输入框行高在正文区间（1.4–1.8 倍）',
+    r.err ? '-' : `${r.lineHeight}px / ${r.fontSize}px = ${ratio.toFixed(2)}`
+  );
+  ok(
+    !r.err && r.borderAlphas.every(a => a === 0),
+    'A93：输入框描边整圈透明',
+    r.err ? '-' : `${r.border}（alpha ${r.borderAlphas.join('/')}）`
+  );
 }
 
 /**

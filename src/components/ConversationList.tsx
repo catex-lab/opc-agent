@@ -224,10 +224,10 @@ export function ConversationList({
           borderBottom: '1px solid var(--tc-divider)',
         }}
       >
-        <div
-          className={SEARCH_PILL_CLASS}
-          style={{ backgroundColor: 'var(--tc-surface-raised)' }}
-        >
+        {/* A84：底色收进 SEARCH_PILL_CLASS（常态透明、hover/聚焦才浮现）。
+            原先这里内联一块 `--tc-surface-raised` 常驻圆块，视觉上就是压在
+            栏头浅底上的一块浅白补丁，放大镜本身反而不显眼。 */}
+        <div className={SEARCH_PILL_CLASS}>
           <Search size={SEARCH_ICON_SIZE} style={{ color: 'var(--td-text-color-placeholder)' }} />
           <input
             value={keyword}
@@ -250,10 +250,7 @@ export function ConversationList({
             aria-expanded={addMenuOpen}
             data-conversation-add
             className={`relative z-30 ${ROUND_ADD_CLASS}`}
-            style={{
-              backgroundColor: 'var(--tc-surface-raised)',
-              color: 'var(--td-text-color-secondary)',
-            }}
+            style={{ color: 'var(--td-text-color-secondary)' }}
           >
             <Plus size={ADD_ICON_SIZE} />
           </button>

@@ -13,6 +13,7 @@ import { InlinePermissionCard } from './InlinePermissionCard';
 import { installCherryCodeIconFix } from './cherryCodeIcon';
 import { AgentAvatar } from './AgentAvatar';
 import { ImageBubble } from './ImageBubble';
+import { TypingText } from './TypingText';
 import { formatUsage } from '../utils/formatUsage';
 
 /* ── 消息呈现（A33）─────────────────────────────────────────────────────
@@ -62,7 +63,11 @@ function ThinkingView({ block }: { block: ThinkingBlock }) {
           {block.text.length} 字
         </span>
       </summary>
-      <div className="whitespace-pre-wrap leading-relaxed">{block.text}</div>
+      <div className="whitespace-pre-wrap leading-relaxed">
+        {/* A83：思考正文在流式时逐字浮现；思考结束后传 false ——
+            历史消息打开时不该「重打一遍」。 */}
+        <TypingText text={block.text} animate={streaming} />
+      </div>
     </details>
   );
 }
@@ -103,7 +108,20 @@ function StreamStatus({
         <span className="tc-live-core" style={{ backgroundColor: 'var(--td-brand-color)' }} />
         <span className="tc-live-ring" style={{ borderColor: 'var(--td-brand-color)' }} />
       </span>
-      {label}，用时 {elapsed ?? 0} 秒
+      {/* A83：阶段文案走打字机（模糊渐显 + 逐字错开）。
+          只包 label、不包后面的「用时 N 秒」—— 那个数字每秒都变，
+          一起包进去会让整行每秒重打一遍（startsWith 断在数字上）。
+          阶段切换（思考 → 调用工具 → 生成）时才重播，正好对应
+          「换了一件事在做」这个语义。
+
+          ⚠️ 外层必须再套一个 span：这一行是 `flex items-center gap-1.5`，
+          两个 span 直接并排会被 gap 撑出 6px，渲染成「正在思考 ，用时 0 秒」
+          （逗号前多一个空格）。套一层之后 gap 只作用在「指示灯 ↔ 文字」之间，
+          文字内部是普通行内流，标点紧贴。 */}
+      <span>
+        <TypingText text={label} />
+        <span>，用时 {elapsed ?? 0} 秒</span>
+      </span>
     </span>
   );
 }
@@ -1032,6 +1050,87 @@ export function ChatMessages({
       return <ImageBubble key={block.id} image={block.image} />;
     }
 
+    if (block.type === 'artifact') {
+      const isFileChanges = block.mediaType === 'application/vnd.opc.file-changes+json';
+      const changedFiles = isFileChanges && Array.isArray(block.data)
+        ? block.data.filter((item): item is { path: string; kind: string } =>
+            !!item && typeof item === 'object' &&
+            typeof (item as { path?: unknown }).path === 'string' &&
+            typeof (item as { kind?: unknown }).kind === 'string'
+          )
+        : [];
+      const imageData = block.mediaType.startsWith('image/') &&
+        !!block.data && typeof block.data === 'object' &&
+        (block.data as { encoding?: unknown }).encoding === 'base64' &&
+        typeof (block.data as { content?: unknown }).content === 'string'
+        ? (block.data as { content: string }).content
+        : undefined;
+      const safeArtifactHref = (() => {
+        if (!block.uri) return undefined;
+        if (block.uri.startsWith('/')) return block.uri;
+        try {
+          const url = new URL(block.uri);
+          return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : undefined;
+        } catch {
+          return undefined;
+        }
+      })();
+      return (
+        <div
+          key={block.id}
+          className="my-2 rounded-lg px-3 py-2"
+          style={{ backgroundColor: 'var(--td-bg-color-container)', border: '1px solid var(--tc-divider)' }}
+          data-artifact={block.id}
+        >
+          <div className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+            {block.name}
+          </div>
+          {block.description && (
+            <div className="mt-1 text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
+              {block.description}
+            </div>
+          )}
+          <div className="mt-1 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+            {block.mediaType}
+          </div>
+          {safeArtifactHref && (
+            <a
+              className="mt-2 inline-flex text-caption underline"
+              href={safeArtifactHref}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: 'var(--td-brand-color)' }}
+            >
+              打开产物
+            </a>
+          )}
+          {imageData && (
+            <img
+              className="mt-2 max-h-80 max-w-full rounded-md object-contain"
+              src={`data:${block.mediaType};base64,${imageData}`}
+              alt={block.description || block.name}
+              loading="lazy"
+            />
+          )}
+          {isFileChanges && (
+            <ul className="mt-2 space-y-1 text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
+              {changedFiles.length ? changedFiles.map((file, fileIndex) => (
+                  <li key={`${file.path}-${fileIndex}`} className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0 rounded px-1.5 py-0.5" style={{ backgroundColor: 'var(--td-bg-color-page-container)' }}>{file.kind}</span>
+                    <code className="min-w-0 break-all">{file.path}</code>
+                  </li>
+                )) : <li>未记录文件变更</li>}
+            </ul>
+          )}
+          {block.data !== undefined && !imageData && !isFileChanges && (
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
+              {typeof block.data === 'string' ? block.data : JSON.stringify(block.data, null, 2)}
+            </pre>
+          )}
+        </div>
+      );
+    }
+
     return (
       <div key={block.id} className="flex justify-center py-0.5">
         <span
@@ -1127,15 +1226,12 @@ export function ChatMessages({
    * 某个 Agent 说了这句话，也会把真正的发言挤出视觉焦点。
    */
   const renderNote = (message: Message) => (
-    <div key={message.id} className="flex justify-center py-0.5">
+    <div key={message.id} className="flex justify-center py-1" data-note>
       <span
-        className="rounded-full px-3 py-1 text-caption"
-        style={{
-          backgroundColor: 'var(--td-bg-color-secondarycontainer)',
-          color: 'var(--td-text-color-placeholder)',
-        }}
+        className="text-caption"
+        style={{ color: 'var(--td-text-color-placeholder)' }}
       >
-        {message.content}
+        · {message.content}
       </span>
     </div>
   );
@@ -1152,7 +1248,12 @@ export function ChatMessages({
   return (
     <div
       ref={rootRef}
-      className="flex min-w-0 max-w-3xl mx-auto flex-col gap-6"
+      className="flex min-w-0 max-w-[800px] mx-auto flex-col gap-6"
+      /* 消息行容器的稳定锚点。此前 `verify:groupchat` 是按
+         `max-w-3xl` 这个**宽度类名**找它的，宽度一改成 `max-w-[800px]`
+         整段断言就静默空转（rows=[]，于是「作者名标签」全红而看不出原因）。
+         宽度是设计变量，不该被测试依赖 —— 留个 data 钩子。 */
+      data-msg-list
       onCopy={handleCopy}
     >
       {messages.map(message => {

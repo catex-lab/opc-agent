@@ -290,7 +290,8 @@ export class AcpAdapter implements AgentProvider {
     if (!queue) return;
 
     const ev = mapUpdate(update);
-    if (ev) queue.push(ev);
+    if (Array.isArray(ev)) ev.forEach(item => queue.push(item));
+    else if (ev) queue.push(ev);
   }
 
   private handleServerRequest(msg: Json): void {
@@ -537,7 +538,7 @@ export class AcpAdapter implements AgentProvider {
 // ============= 协议 → 统一事件 映射 =============
 
 /** 把 ACP 的 session/update 映射成统一事件；返回 null 表示无需呈现 */
-function mapUpdate(update: Json): AgentEvent | null {
+function mapUpdate(update: Json): AgentEvent | AgentEvent[] | null {
   const kind = update.sessionUpdate as string | undefined;
 
   switch (kind) {
@@ -560,12 +561,40 @@ function mapUpdate(update: Json): AgentEvent | null {
     case 'tool_call_update': {
       const status = String(update.status ?? '');
       if (status !== 'completed' && status !== 'failed') return null;
-      return {
+      const events: AgentEvent[] = [{
         type: 'tool_result',
         toolId: String(update.toolCallId ?? ''),
         content: stringifyToolOutput(update),
         isError: status === 'failed',
-      };
+      }];
+      if (status === 'completed' && Array.isArray(update.content)) {
+        for (const [index, item] of update.content.entries()) {
+          if (!item || typeof item !== 'object') continue;
+          const content = item as Json;
+          if (content.type === 'resource_link' && typeof content.uri === 'string') {
+            events.push({
+              type: 'artifact',
+              id: `acp-resource-${String(update.toolCallId ?? 'tool')}-${index}`,
+              name: String(content.name ?? `资源 ${index + 1}`),
+              mediaType: String(content.mimeType ?? 'application/octet-stream'),
+              uri: content.uri,
+              ...(typeof content.description === 'string' ? { description: content.description } : {}),
+            });
+          }
+          if (content.type === 'image' && typeof content.data === 'string') {
+            const mimeType = typeof content.mimeType === 'string' ? content.mimeType : 'image/png';
+            events.push({
+              type: 'artifact',
+              id: `acp-image-${String(update.toolCallId ?? 'tool')}-${index}`,
+              name: `图像产物 ${index + 1}`,
+              mediaType: mimeType,
+              data: { encoding: 'base64', content: content.data },
+              description: '由 ACP 工具结果返回的图像数据',
+            });
+          }
+        }
+      }
+      return events;
     }
     // usage_update / availableCommands / plan / current_mode_update 等暂不呈现
     default:

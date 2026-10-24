@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, FolderOpen, ExternalLink, Folder } from 'lucide-react';
+import { ChevronDown, FolderOpen, ExternalLink, Folder, FolderPlus, X } from 'lucide-react';
 import { MENU_ITEM_CLASS } from './menuItem';
-import { pickDirectory, revealInFolder, dirName, hasNativeDialogs } from '../workspace';
+import { pickDirectory, revealInFolder, dirName, hasNativeDialogs, createWorkspace } from '../workspace';
 
 interface WorkspaceBadgeProps {
   /** 当前会话的工作目录。undefined / 空 = 没指定，Agent 用后端进程目录 */
@@ -50,6 +50,9 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<string[]>([]);
   const [recentLoaded, setRecentLoaded] = useState(false);
+  /** 新建工作区 / 移除目录的结果提示。这个面板没有别的地方能说话 */
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDetailsElement>(null);
 
   const hasCwd = !!cwd;
@@ -97,7 +100,47 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
     const picked = await pickDirectory();
     // null = 取消或不支持，两种都保持原值（不支持的说明写在面板里）
     if (!picked || picked === cwd) return;
+    setNotice(null);
     onChange(picked);
+  };
+
+  /**
+   * A86：新建工作区。
+   *
+   * 用户反馈「选错了目录没法回头，也没法开一个新的」—— 这里补的就是这两件。
+   * 建目录落在主进程（见 `opc:create-workspace`），父目录必须用户亲手选；
+   * 取消时什么都不做，**不**弹提示（取消是一次正常决定）。
+   */
+  const handleCreate = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await createWorkspace();
+      if (!result) return;
+      if (result.error) {
+        setNotice(result.error);
+        return;
+      }
+      if (result.path) {
+        setNotice(`已新建：${dirName(result.path)}`);
+        onChange(result.path);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * A86：移除工作目录（解绑，**不是删磁盘上的目录**）。
+   *
+   * 传空串走的是既有链路：`setSessionCwd(id, '')` → `PATCH cwd: null`。
+   * 这条链路本来就在，只是没有入口 —— 用户选错目录之后只能再选一个对的，
+   * 回不到「未绑定」。
+   */
+  const handleClear = () => {
+    if (!hasCwd) return;
+    setNotice('已移除绑定（磁盘上的目录没有动）');
+    onChange('');
   };
 
   return (
@@ -107,10 +150,17 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
       data-workspace-badge
       onToggle={e => setOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
+      {/* A84（用户要求）：常态不再铺一块 `--tc-hover-chrome`。
+          它是「当前工作目录」的状态徽标，不是一颗按下去会生效的按钮，
+          常驻底色会让人误读成「这个已经开着」。现在只有**真的展开着**
+          这个下拉时才给底色（选中回显态），其余时候靠 hover 浮现。 */}
       <summary
-        className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-lg px-2 transition-colors"
+        className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-lg bg-transparent px-2 transition-colors hover:bg-[var(--tc-fill-hover)]"
         style={{
-          backgroundColor: 'var(--tc-hover-chrome)',
+          /* A75 的教训：非展开态**不能**写 `backgroundColor: 'transparent'` ——
+             内联样式优先级高于 Tailwind 的 hover:bg-[...]，会把上面那句悬停
+             反馈整个压死（实测：鼠标划过一点都不变色）。只有展开时才写内联值。 */
+          backgroundColor: open ? 'var(--tc-fill-selected)' : undefined,
           color: hasCwd ? 'var(--td-text-color-secondary)' : 'var(--td-text-color-placeholder)',
         }}
         title={hasCwd ? `工作目录：${cwd}` : '未指定工作目录，Agent 以后端进程目录为准'}
@@ -121,9 +171,13 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
         <ChevronDown size={12} />
       </summary>
 
+      {/* A86：这个面板会盖到右侧工作区上，而浏览器预览是**原生层、永远在
+          DOM 之上**。不登记成浮层，下拉就会被一张网页糊住（点了没反应的
+          经典形态）。`data-opc-overlay` 是浮层哨兵的约定标记。 */}
       <div
         className="tc-glass absolute right-0 top-full z-30 mt-1 w-[300px] overflow-hidden rounded-xl py-1 shadow-popup"
         data-workspace-panel
+        data-opc-overlay
       >
         {/* 当前完整路径。mono 字体 + break-all：Windows 路径动辄上百字符，
             等宽字体才读得出层级；不可编辑 —— 改路径走「切换目录」或新对话页，
@@ -146,6 +200,43 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
           <Folder size={14} />
           切换目录
         </button>
+        {/* A86：新建工作区。只在有原生对话框的环境里出现 —— 浏览器开发态点了
+            也没法建目录，摆出来就是假控件。 */}
+        {hasNativeDialogs() && (
+          <button
+            type="button"
+            onClick={() => void handleCreate()}
+            className={MENU_ITEM_CLASS}
+            style={{
+              color: 'var(--td-text-color-primary)',
+              opacity: busy ? 0.6 : 1,
+              cursor: busy ? 'default' : 'pointer',
+            }}
+            disabled={busy}
+            title="选一个位置，在里面新建一个空文件夹并绑定到当前会话"
+            data-workspace-create
+          >
+            <FolderPlus size={14} />
+            {busy ? '正在新建…' : '新建工作区'}
+          </button>
+        )}
+        {/* A86：移除绑定。移除的是**会话与目录的关系**，不是磁盘上的文件。 */}
+        <button
+          type="button"
+          onClick={handleClear}
+          className={MENU_ITEM_CLASS}
+          style={{
+            color: 'var(--td-text-color-primary)',
+            opacity: hasCwd ? 1 : 0.5,
+            cursor: hasCwd ? 'pointer' : 'default',
+          }}
+          disabled={!hasCwd}
+          title={hasCwd ? '解除这个会话与当前目录的绑定（不删除磁盘上的文件）' : '当前没有绑定目录'}
+          data-workspace-clear
+        >
+          <X size={14} />
+          移除工作目录
+        </button>
         <button
           type="button"
           onClick={() => hasCwd && revealInFolder(cwd!)}
@@ -162,6 +253,16 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
           <ExternalLink size={14} />
           在资源管理器中打开
         </button>
+
+        {notice && (
+          <p
+            className="mx-3 my-1 text-caption"
+            style={{ color: 'var(--td-text-color-secondary)' }}
+            data-workspace-notice
+          >
+            {notice}
+          </p>
+        )}
 
         {/* 浏览器开发态没有原生对话框。说明白，并指一条真能走的路 ——
             摆一个点了没反应的「切换目录」才是假控件。 */}
@@ -196,7 +297,8 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
                   className={MENU_ITEM_CLASS}
                   style={{
                     color: active ? 'var(--td-text-color-primary)' : 'var(--td-text-color-secondary)',
-                    backgroundColor: active ? 'var(--tc-hover-chrome)' : undefined,
+                    /* 选中回显态：这是「当前目录」那一行，允许有底色 */
+                    backgroundColor: active ? 'var(--tc-fill-selected)' : undefined,
                   }}
                   title={dir}
                   data-workspace-recent

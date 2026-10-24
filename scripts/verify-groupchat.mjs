@@ -222,7 +222,11 @@ const rows = await page.evaluate(() => {
     for (const c of n.childNodes || []) deep(c, out);
     return out;
   };
-  const list = document.querySelector('div.flex.flex-col.gap-6.max-w-3xl.mx-auto');
+  /* 用 data 钩子而不是宽度类名。原来写的是
+     `div.flex.flex-col.gap-6.max-w-3xl.mx-auto`，容器宽度一改成
+     `max-w-[800px]` 就匹配不到 —— rows 变成 []，于是「作者名标签 /
+     正文 / 头像」六条一起红，但报错只显示「未找到」，看不出是选择器过期。 */
+  const list = document.querySelector('[data-msg-list]');
   if (!list) return [];
   return Array.from(list.children).map(row => {
     const pill = row.querySelector(':scope > span.rounded-full');
@@ -319,16 +323,25 @@ check('真的打了 /api/group-chat', chatCalls === 1, `${chatCalls} 次`);
 check('用户消息即时回显', full.includes(QUESTION));
 check('hermes turn 气泡出现（作者 Hermes）',
   /Hermes/.test(full) && /主控正在判断该交给谁/.test(full));
+/* 叙述行当前是 `<div data-note>` + `· 文案` 的 caption（A55 前后从
+   `span.rounded-full` 的「药丸」改成了行内小字）。原来按
+   `div.flex.justify-center.py-0\\.5` + `:scope > span.rounded-full` 找，
+   两个类名都不在了 —— 所以这条一直报「未找到」。改锚 data 钩子。 */
 const notes = await page.evaluate(() => {
   const out = [];
-  for (const row of document.querySelectorAll('div.flex.justify-center.py-0\\.5')) {
-    const pill = row.querySelector(':scope > span.rounded-full');
-    if (pill) out.push({ text: pill.textContent, centered: true });
+  for (const row of document.querySelectorAll('[data-note]')) {
+    out.push({
+      text: row.textContent || '',
+      centered: row.classList.contains('justify-center'),
+      inList: !!row.closest('[data-msg-list]'),
+    });
   }
   return out;
 });
 const note = notes.find(n => /路由判断/.test(n.text));
-check('group_note 渲染为居中弱化 pill', !!note, note?.text || '未找到');
+check('group_note 渲染为居中的叙述行', !!note && note.centered, note ? `centered=${note.centered}` : '未找到');
+check('group_note 落在消息列表里（不是浮在别处）', !!note && note.inList);
+check('叙述行带 `·` 前缀（不是气泡标题）', !!note && /^\s*·/.test(note.text), note?.text?.trim().slice(0, 20));
 check('group_note 不是气泡',
   (await page.locator('.tc-bubble-assistant:has-text("路由判断")').count()) === 0);
 check('opencode turn 气泡正文正确', /SSE 流式正文渲染成功。/.test(full));

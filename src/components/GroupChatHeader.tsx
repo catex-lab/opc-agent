@@ -229,12 +229,12 @@ export function GroupChatHeader({
         )
       }
       badge={
+        /* A84：这里原来铺一层 `--tc-hover-chrome`，一颗「N 人在线」的灰胶囊。
+           它只是状态读数，不是可点的东西，常驻底色让它看起来像一枚按钮。
+           去掉底后是小圆点 + 文字，与单聊栏头那个「在线」读数同一形态。 */
         <span
           className="flex items-center gap-1 rounded px-1.5 py-[1px] text-caption"
-          style={{
-            backgroundColor: 'var(--tc-hover-chrome)',
-            color: 'var(--td-text-color-secondary)',
-          }}
+          style={{ color: 'var(--td-text-color-secondary)' }}
           title={`${onlineCount} 个成员在线`}
         >
           <span
@@ -254,11 +254,8 @@ export function GroupChatHeader({
             data-chat-workflow
             title="动态工作流：写一段脚本自己组合成员"
             aria-label="动态工作流"
-            className="flex h-8 items-center gap-1 rounded-lg px-2 text-xs transition-colors"
-            style={{
-              backgroundColor: 'var(--tc-hover-chrome)',
-              color: 'var(--td-text-color-secondary)',
-            }}
+            className="flex h-8 items-center gap-1 rounded-lg bg-transparent px-2 text-xs transition-colors hover:bg-[var(--tc-fill-hover)]"
+            style={{ color: 'var(--td-text-color-secondary)' }}
           >
             <Workflow size={14} />
             工作流
@@ -286,14 +283,18 @@ export function GroupChatHeader({
             title={settingsOpen ? '关闭群聊设置' : '群聊设置'}
             aria-label={settingsOpen ? '关闭群聊设置' : '群聊设置'}
             aria-expanded={settingsOpen}
-            className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-transparent transition-colors hover:bg-[var(--tc-fill-hover)]"
             style={{
               /* A75：展开态 = 选中回显，走 selected 档（与导航、会话行、下拉
-                 选中同一档）。关着的时候保持一层常态浅底，这颗按钮不能做成
-                 纯透明 —— 它在一片白里是唯一入口，看不见就等于没有。 */
-              backgroundColor: settingsOpen
-                ? 'var(--tc-fill-selected)'
-                : 'var(--tc-hover-chrome)',
+                 选中同一档）。
+                 A84（用户要求）：关着的时候不再保留那层「常态浅底」。原来的
+                 理由是「它在一片白里是唯一入口，看不见就等于没有」—— 但图标
+                 本身（16px 的齿轮描边，secondary 色）在浅底上本来就看得见，
+                 垫一块灰只是让它看起来像已经被按下了。真正需要「显形」的是
+                 hover 那一刻，所以底色只在 hover / 展开时出现。 */
+              /* 非展开态留 undefined 而不是 'transparent'：内联 transparent 会压死
+                 类名里的 hover:bg-[...]（A75 在 NavRail 踩过同一个坑）。 */
+              backgroundColor: settingsOpen ? 'var(--tc-fill-selected)' : undefined,
               color: settingsOpen
                 ? 'var(--td-text-color-primary)'
                 : 'var(--td-text-color-secondary)',
@@ -342,11 +343,8 @@ function ModePicker({
   return (
     <details ref={detailsRef} className="relative">
       <summary
-        className="flex cursor-pointer list-none items-center gap-1 rounded-lg px-2.5 py-1.5 text-secondary"
-        style={{
-          backgroundColor: 'var(--tc-hover-chrome)',
-          color: 'var(--td-text-color-secondary)',
-        }}
+        className="flex cursor-pointer list-none items-center gap-1 rounded-lg bg-transparent px-2.5 py-1.5 text-secondary transition-colors hover:bg-[var(--tc-fill-hover)]"
+        style={{ color: 'var(--td-text-color-secondary)' }}
         title="切换编排模式"
       >
         <span className="font-medium" style={{ color: 'var(--td-text-color-primary)' }}>

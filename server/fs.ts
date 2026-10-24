@@ -71,6 +71,110 @@ export interface FsListResult {
  */
 export const MAX_ENTRIES = 500;
 
+/**
+ * A86：面板内只读预览的大小上限。
+ *
+ * 1 MB 足够覆盖绝大多数源码 / md / 配置；再大就不是「看一眼」的场景了，
+ * 让用户去外部编辑器。超限**不截断**而是明确报 `too-large` —— 截一半的
+ * 源码比不显示更危险（用户会以为文件就这么长）。
+ */
+export const MAX_TEXT_BYTES = 1024 * 1024;
+
+/** 图片预览上限。图片走 `/api/fs/raw` 直出，不塞进 JSON。 */
+export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+
+/** 预览种类。前端据此决定用什么渲染，不猜扩展名。 */
+export type FsReadKind = 'text' | 'image' | 'binary' | 'too-large';
+
+export interface FsReadResult {
+  /** 相对会话工作目录的路径（`/` 分隔） */
+  path: string;
+  abs: string;
+  size: number;
+  kind: FsReadKind;
+  /** kind === 'text' 时有值 */
+  content?: string;
+  /** 文本行数（前端据此决定是否提示「只渲染前 N 行」） */
+  lines?: number;
+  /** kind === 'image' 时的 MIME */
+  mime?: string;
+}
+
+const IMAGE_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.avif': 'image/avif',
+};
+
+/** 扩展名 → MIME。不认识返回 null（当作非图片）。 */
+export function imageMimeOf(file: string): string | null {
+  return IMAGE_MIME[path.extname(file).toLowerCase()] ?? null;
+}
+
+/** 前 8 KB 里出现 NUL 就按二进制处理 —— 与 `file(1)` 的粗判口径一致。 */
+function looksBinary(buf: Buffer): boolean {
+  const n = Math.min(buf.length, 8192);
+  for (let i = 0; i < n; i++) {
+    if (buf[i] === 0) return true;
+  }
+  return false;
+}
+
+/**
+ * 读一个文件用于**面板内预览**（只读，不写、不改）。
+ *
+ * 与 `listDir` 共用 `resolveInside`：containment 一律 realpath 之后再比对，
+ * 前端传什么都只能落在会话工作目录里。
+ */
+export function readFileInside(root: string, rel: string): FsReadResult | { error: FsErrorCode } {
+  const resolved = resolveInside(root, rel);
+  if ('error' in resolved) return resolved;
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(resolved.abs);
+  } catch {
+    return { error: 'not-found' };
+  }
+  if (stat.isDirectory()) return { error: 'not-dir' };
+
+  const base = rel.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  const size = stat.size;
+  const mime = imageMimeOf(resolved.abs);
+  const head = { path: base, abs: resolved.abs, size };
+
+  if (mime) {
+    if (size > MAX_IMAGE_BYTES) return { ...head, kind: 'too-large' };
+    return { ...head, kind: 'image', mime };
+  }
+
+  if (size > MAX_TEXT_BYTES) return { ...head, kind: 'too-large' };
+
+  let buf: Buffer;
+  try {
+    buf = fs.readFileSync(resolved.abs);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code;
+    return { error: code === 'EACCES' || code === 'EPERM' ? 'denied' : 'not-found' };
+  }
+
+  if (looksBinary(buf)) return { ...head, kind: 'binary' };
+
+  const content = buf.toString('utf8');
+  return {
+    ...head,
+    kind: 'text',
+    content,
+    lines: content.length === 0 ? 0 : content.split('\n').length,
+  };
+}
+
 interface Resolved {
   abs: string;
   rootReal: string;

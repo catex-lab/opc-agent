@@ -17,12 +17,25 @@
  *
  * 注意：搜索胶囊在两个栏里都是 `flex-1`（占满除加号外的宽度），
  * 而两栏的宽度又都取 `--tc-sidebar-width`，所以宽度天然一致。
+ *
+ * ## A84：为什么胶囊和加号现在是「无底色」的
+ *
+ * 用户的原话是「除了选中回显态可以有背景，其他都不能要背景，保证图标干净清晰」。
+ * 原先这两颗控件都常驻 `--tc-surface-raised` —— 一个浅色圆块压在同为浅色的
+ * 栏头底色上，边界全靠那 1.2% 的色差，视觉上就是两块「灰白补丁」，
+ * 而放大镜和加号本身反而成了补丁里的噪点。
+ *
+ * 现在常态透明，底色只在 hover / 聚焦时才浮现：静止时是「图标 + 文字」，
+ * 要动它的时候才显出一块可以点的面。**这条规则对全站的图标按钮都成立**，
+ * 所以交互态统一用 `--tc-fill-hover`（比 `--tc-surface-raised` 更中性，
+ * 不预设面板颜色）。
  */
-export const SEARCH_PILL_CLASS = 'flex h-9 flex-1 items-center gap-2 rounded-full px-3';
+export const SEARCH_PILL_CLASS =
+  'flex h-9 flex-1 items-center gap-2 rounded-full bg-transparent px-3 transition-colors hover:bg-[var(--tc-fill-hover)] focus-within:bg-[var(--tc-fill-hover)]';
 
 /** 加号圆钮。颜色由调用方按状态内联（多选态要变品牌色），几何在这里统一 */
 export const ROUND_ADD_CLASS =
-  'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors';
+  'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-transparent transition-colors hover:bg-[var(--tc-fill-hover)]';
 /** 搜索图标尺寸（lucide 的 size 属性） */
 export const SEARCH_ICON_SIZE = 14;
 

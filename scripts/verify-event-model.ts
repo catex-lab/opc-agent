@@ -189,6 +189,20 @@ function assertSeqMonotonic(events: RunEvent[], label: string) {
   eq((end as any).tokens, 10, '正常结束：带 token');
 }
 
+// ============= 6b. 产物数据大小边界 =============
+{
+  const projector = new RunProjector(meta);
+  projector.push({
+    type: 'artifact',
+    id: 'large',
+    name: 'large',
+    mediaType: 'application/json',
+    data: { content: 'x'.repeat(300 * 1024) },
+  });
+  const block = projector.blockList.find(b => b.type === 'artifact');
+  ok(block?.type === 'artifact' && block.data === undefined, '超限产物不进入消息持久化');
+}
+
 // ============= 7. 错误事件：网络类可重试，认证类不可 =============
 
 {
@@ -277,6 +291,17 @@ function asArray(ev: AgentEvent | AgentEvent[] | null): AgentEvent[] {
 
   const reason = asArray(map!({ type: 'item.completed', item: { id: 'r1', type: 'reasoning', text: '想一想' } }));
   eq(reason[0]?.type, 'thinking', 'codex：reasoning → thinking');
+
+  const changes = asArray(map!({
+    type: 'item.completed',
+    item: { id: 'f1', type: 'file_change', changes: [{ path: 'src/a.ts', kind: 'update' }, { path: 'README.md', kind: 'add' }] },
+  }));
+  eq(changes[0]?.type, 'tool_result', 'codex：文件修改仍保留工具结果');
+  eq(changes[1]?.type, 'artifact', 'codex：原生 file_change 生成产物事件');
+  if (changes[1]?.type === 'artifact') {
+    eq(changes[1].mediaType, 'application/vnd.opc.file-changes+json', 'codex：文件变更产物媒体类型');
+    eq(changes[1].data, [{ path: 'src/a.ts', kind: 'update' }, { path: 'README.md', kind: 'add' }], 'codex：产物只包含安全路径与操作类型');
+  }
 
   const usage = asArray(map!({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } }));
   eq(usage[0]?.type === 'usage' ? (usage[0] as any).tokens : 0, 15, 'codex：用量合并');
@@ -512,6 +537,7 @@ function asArray(ev: AgentEvent | AgentEvent[] | null): AgentEvent[] {
     { type: 'tool_output', toolId: 't1', content: 'a\n' },
     { type: 'tool_result', toolId: 't1', content: 'a\nb\n' },
     { type: 'text', content: '第二段' },
+    { type: 'artifact', id: 'a1', name: '摘要', mediaType: 'application/json', data: { ok: true } },
   ];
   for (const e of feed) out.push(...projector.push(e));
   out.push(...projector.finish('ok').closes);
@@ -520,6 +546,8 @@ function asArray(ev: AgentEvent | AgentEvent[] | null): AgentEvent[] {
   for (const e of out) applyRunEvent(client, e);
 
   eq(client, projector.blockList, '前后端块序列逐字段一致');
+  const artifact = client.find(b => b.type === 'artifact');
+  ok(artifact?.type === 'artifact', 'artifact 事件会持久投影成独立数据块');
 }
 
 // ============= 结果 =============

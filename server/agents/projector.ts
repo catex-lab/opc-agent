@@ -35,7 +35,9 @@ import type {
   TextBlock,
   ThinkingBlock,
   ToolBlock,
+  ArtifactBlock,
 } from '../../shared/blocks.js';
+import { MAX_ARTIFACT_DATA_BYTES } from './types.js';
 
 export interface RunMeta {
   runId: string;
@@ -240,6 +242,32 @@ export class RunProjector {
           this.make({ type: 'block_patch', blockId: block.id, patch }),
           this.make({ type: 'block_close', blockId: block.id, state: ev.isError ? 'error' : 'done' }),
         ];
+      }
+
+      case 'artifact': {
+        if (!ev.id || !ev.name || !ev.mediaType) return [];
+        let data: unknown;
+        if (ev.data !== undefined) {
+          try {
+            const serialized = JSON.stringify(ev.data);
+            if (serialized !== undefined && Buffer.byteLength(serialized, 'utf8') <= MAX_ARTIFACT_DATA_BYTES) {
+              data = ev.data;
+            }
+          } catch {
+            // 非 JSON 数据不进入持久化消息；uri 仍可引用外部产物。
+          }
+        }
+        const block: ArtifactBlock = {
+          id: this.nextId(),
+          type: 'artifact',
+          name: ev.name.slice(0, 240),
+          mediaType: ev.mediaType.slice(0, 120),
+          ...(ev.uri ? { uri: ev.uri.slice(0, 2048) } : {}),
+          ...(data !== undefined ? { data } : {}),
+          ...(ev.description ? { description: ev.description.slice(0, 2000) } : {}),
+        };
+        this.blocks.push(block);
+        return [this.make({ type: 'block_open', block: { ...block } })];
       }
 
       case 'error':

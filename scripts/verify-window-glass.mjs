@@ -17,7 +17,7 @@
  *   [3] body 透明（否则上面所有半透明表面都白调）
  *   [3b] 设置页滑动条：一个数字同时驱动框架面、内容面与标题条，0–100 真线性
  *   [4] 阅读面（--tc-surface-raised）也参与透明度，但仍是最实的一档（A25）
- *   [5] 切深色后：框架面变 rgba(27,27,27,.72)，标题条同值同 alpha
+ *   [5] 切深色后：框架面变 rgba(27,27,27,.72)，标题条走 rail rgba(35,35,35,.72)（A94）
  *   [6] 三个窗口按钮由页面画（A24）：数量、尺寸、与标题条同属一个 DOM
  *
  * ## A24：标题条不再有例外
@@ -203,7 +203,11 @@ try {
     '标题条也参与透明度（不再有实色例外）',
     vars.titlebarBg
   );
-  ok(bar[0] === 245 && bar[1] === 245 && bar[2] === 245, '标题条底色仍是框架面的 #f5f5f5', vars.titlebarBg);
+  // A94：标题条改走 rail，底色从 #f5f5f5(245) 变成 #ececec(236)。
+  // 顺带修掉一处**一直是红的关系**：下面那条「标题条与导航条计算值同源」
+  // 在 A92 之后其实已经不自洽了（导航条 rail 236 / 标题条 chrome 245），
+  // 只是 window-glass 只测打包版、那之后没重跑过，所以没人发现。
+  ok(bar[0] === 236 && bar[1] === 236 && bar[2] === 236, '标题条底色 = 导航条 rail #ececec', vars.titlebarBg);
   // ⚠️ 这里**不能**断言令牌的字面原文是 `var(--tc-surface-chrome)`：
   //    getPropertyValue 在 Chrome 里会把自定义属性的值解析后再返回
   //    （实测拿到 `rgb(245 245 245 / 0.720)`，不是 var(...) 原文）。
@@ -270,9 +274,10 @@ const TRANSPARENCY_RANGE = 'input[aria-label="界面透明度"]';
   ok(maxed.value === '100', '滑动条推到 100%', String(maxed.value));
   ok(Number(maxed.chromeAlpha) === 0, '框架面 alpha 真的归零（0 到 100 是直线）', maxed.chromeAlpha);
   ok(Number(maxed.contentAlpha) === 0, '内容面 alpha 一起归零（不留余量）', maxed.contentAlpha);
-  ok(/rgba\(245, 245, 245, 0\)/.test(maxed.navBg), '导航条实际计算值全透', maxed.navBg);
+  // A94：框架面与标题条都走 rail，100% 下计算值是 rgba(236,236,236,0)。
+  ok(/rgba\(236, 236, 236, 0\)/.test(maxed.navBg), '导航条实际计算值全透', maxed.navBg);
   ok(
-    /rgba\(245, 245, 245, 0\)/.test(maxed.titlebarBg),
+    /rgba\(236, 236, 236, 0\)/.test(maxed.titlebarBg),
     '标题条也归零（A24：不再有「标题条恒实色」的例外）',
     maxed.titlebarBg
   );
@@ -305,9 +310,12 @@ const TRANSPARENCY_RANGE = 'input[aria-label="界面透明度"]';
   ok(Math.abs(darkNav[3] - 0.72) < 0.02, '深色下框架面同样半透明', dark.navBg);
   ok(darkNav[0] < 60, '深色下框架面确实是深色（不是把浅色值留在那儿）', dark.navBg);
   const darkBar = parseColor(dark.titlebarBg);
+  // A94：标题条从 chrome 改走 rail，深色下计算值是 rgba(35,35,35,.72)
+  // （rail #232323），不再是 chrome 的 rgba(27,27,27,.72)。
+  // 这里仍要守住「与导航条同值同 alpha」—— 那正是 A94 的目的。
   ok(
-    darkBar[3] < 1 && Math.abs(darkBar[3] - 0.72) < 0.02 && darkBar[0] === 27,
-    '深色标题条 = rgba(27,27,27,.72)（与框架面同值同 alpha）',
+    darkBar[3] < 1 && Math.abs(darkBar[3] - 0.72) < 0.02 && darkBar[0] === 35,
+    '深色标题条 = rgba(35,35,35,.72)（与导航条 rail 同值同 alpha）',
     dark.titlebarBg
   );
 

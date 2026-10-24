@@ -266,6 +266,22 @@ export class SdkAdapter implements AgentProvider {
               for (const block of content as Array<Record<string, unknown>>) {
                 if (block.type === 'text') {
                   queue.push({ type: 'text', content: String(block.text ?? '') });
+                } else if (block.type === 'image' && typeof block.source === 'object' && block.source !== null) {
+                  const source = block.source as Record<string, unknown>;
+                  const mediaType = typeof source.media_type === 'string' ? source.media_type : 'image/png';
+                  const data = typeof source.data === 'string' ? source.data : undefined;
+                  const url = typeof source.url === 'string' ? source.url : undefined;
+                  if (data || url) {
+                    queue.push({
+                      type: 'artifact',
+                      id: `sdk-image-${randomUUID()}`,
+                      name: '图像产物',
+                      mediaType,
+                      ...(url ? { uri: url } : {}),
+                      ...(data ? { data: { encoding: 'base64', content: data } } : {}),
+                      description: '由 Agent SDK 原生消息块返回的图像',
+                    });
+                  }
                 } else if (block.type === 'tool_use') {
                   currentToolId = (block.id as string) || randomUUID();
                   openTools.push(currentToolId);

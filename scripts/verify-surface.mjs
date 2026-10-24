@@ -24,6 +24,7 @@
  *   [6] 公共底噪 veil：浅垫白、深垫黑，强度随透明度增长
  *   [7] R1 根因修复：--td-bg-color-specialcomponent 参与透明度
  *   [8] R4 根因修复：输入框 shadow DOM 的白底被盖掉
+ *   [8b] A93：输入框去掉描边后，仍靠「底色差 + 投影」与周围区分
  *   [9] A28：开关开启态真的吃到了 --tc-solid（不是靠白名单蒙过去）
  *   [10] 控制台无错误
  *
@@ -521,28 +522,108 @@ for (const dark of [false, true]) {
 }
 
 // ============= [8] R4：输入框 shadow DOM 白底 =============
+/**
+ * A93 修订：这里原本第三条断言是「输入框仍有轮廓（border alpha > 0）」，
+ * 意图是「不让输入框在视觉上消失」。用户后来的反馈是**相反方向**的：
+ * 「输入框的边缘太粗，不协调」—— 1625px 宽的截图里，半透明描边被抗锯齿
+ * 摊成两个像素，看起来是一条实线。根因是底色 + 描边 + 投影三样在画同一个
+ * 边界，于是描边被去掉（`border-color: transparent`）。
+ *
+ * 所以判据拆成两条，各管一头：
+ *   ① 描边必须透明 —— 不许再画那条线（A93 的诉求）；
+ *   ② 边界信号必须还在 —— 但改由「底色与周围有色差」+「投影」承担
+ *      （原断言真正想保护的东西，不能因为删了描边就丢掉）。
+ */
+const READ_SENDER = () => {
+  const host = document.querySelector('t-chat-sender');
+  const el = host?.shadowRoot?.querySelector('[part="t-chat__input__content"]');
+  if (!el) return { err: 'part 取不到' };
+  const alphaOf = c => {
+    if (!c) return 0;
+    const m = c.match(/rgba?\(([^)]*)\)/);
+    if (!m) return 0;
+    const parts = m[1].split(/[,/]/).map(s => s.trim()).filter(Boolean);
+    return parts.length >= 4 ? Number(parts[3]) : 1;
+  };
+  const rgbOf = c => {
+    const m = c && c.match(/rgba?\(([^)]*)\)/);
+    if (!m) return null;
+    const p = m[1].split(/[,/]/).map(s => s.trim()).filter(Boolean).map(Number);
+    return p.length >= 3 ? [p[0], p[1], p[2]] : null;
+  };
+  const cs = getComputedStyle(el);
+  /* 「周围」= 沿祖先链往上第一个有实底的元素。
+     祖先链要跨 shadow 边界接上宿主，否则走到 shadow root 顶端就断了
+     （t-chat__input__content 的 shadow 内祖先全是透明的）。
+     ⚠️ 起点必须是 `el.parentElement` 而不是 `el` —— 从自己开始走的话，
+     第一个命中的就是自己（底色 alpha = 1），「色差」永远算成 0。 */
+  const chain = [];
+  for (let n = el.parentElement; n; n = n.parentElement) chain.push(n);
+  for (let n = host?.parentElement; n; n = n.parentElement) chain.push(n);
+  let surround = null;
+  for (const n of chain) {
+    const b = getComputedStyle(n).backgroundColor;
+    if (alphaOf(b) > 0.5) { surround = b; break; }
+  }
+  return {
+    bg: cs.backgroundColor,
+    alpha: alphaOf(cs.backgroundColor),
+    borders: [cs.borderTopColor, cs.borderRightColor, cs.borderBottomColor, cs.borderLeftColor],
+    borderAlphas: [cs.borderTopColor, cs.borderRightColor, cs.borderBottomColor, cs.borderLeftColor].map(alphaOf),
+    shadow: cs.boxShadow,
+    rgb: rgbOf(cs.backgroundColor),
+    surround,
+    surroundRgb: rgbOf(surround),
+  };
+};
+
 console.log('\n[8] 输入框：shadow DOM 白底被盖掉（R4）');
 {
   const ctx = await newContext(100, false);
   const page = await ctx.newPage();
   watch(page);
   await open(page, '/chat/s1?glass=1');
-  const r = await page.evaluate(() => {
-    const host = document.querySelector('t-chat-sender');
-    const el = host?.shadowRoot?.querySelector('[part="t-chat__input__content"]');
-    if (!el) return { err: 'part 取不到' };
-    const cs = getComputedStyle(el);
-    const alphaOf = c => {
-      const m = c.match(/rgba?\(([^)]*)\)/);
-      if (!m) return 0;
-      const parts = m[1].split(/[,/]/).map(s => s.trim()).filter(Boolean);
-      return parts.length >= 4 ? Number(parts[3]) : 1;
-    };
-    return { bg: cs.backgroundColor, alpha: alphaOf(cs.backgroundColor), border: cs.borderTopColor };
-  });
+  const r = await page.evaluate(READ_SENDER);
   ok(!r.err, '能取到输入框本体（t-chat__input__content）', r.err || 'ok');
   ok(!r.err && r.alpha === 0, '浅色 100%：白底已被盖掉', r.err ? '-' : `${r.bg} (alpha ${r.alpha})`);
-  ok(!r.err && alphaOf(r.border) > 0, '输入框仍有轮廓（不然用户不知道哪里能打字）', r.err ? '-' : r.border);
+  ok(
+    !r.err && r.borderAlphas.every(a => a === 0),
+    'A93：描边整圈透明（不再画那条线）',
+    r.err ? '-' : r.borders.join(' / ')
+  );
+  ok(
+    !r.err && r.shadow !== 'none',
+    'A93：全透明态下边界仍靠投影标出（不然不知道哪里能打字）',
+    r.err ? '-' : r.shadow.slice(0, 60)
+  );
+  await ctx.close();
+}
+
+// ============= [8b] A93：非玻璃态靠「底色差 + 投影」立边界 =============
+console.log('\n[8b] 输入框：非玻璃态下不靠描边也分得清（A93）');
+{
+  const ctx = await newContext(0, false);
+  const page = await ctx.newPage();
+  watch(page);
+  await open(page, '/chat/s1');
+  const r = await page.evaluate(READ_SENDER);
+  ok(!r.err, '能取到输入框本体', r.err || 'ok');
+  ok(
+    !r.err && r.borderAlphas.every(a => a === 0),
+    '描边整圈透明',
+    r.err ? '-' : r.borderAlphas.join(' / ')
+  );
+  /* 色差用「逐通道最大差」而不是欧氏距离：判据和 verify:responsive 的
+     「框架面与内容面有色差（≥ 8）」同一把尺子，读者不用换算两套阈值。 */
+  const delta = r.rgb && r.surroundRgb
+    ? Math.max(...r.rgb.map((v, i) => Math.abs(v - r.surroundRgb[i])))
+    : null;
+  ok(
+    !r.err && delta !== null && delta >= 8,
+    '输入框底色与所在面有色差（≥ 8）',
+    r.err ? '-' : `${r.bg} vs ${r.surround} → Δ${delta}`
+  );
+  ok(!r.err && r.shadow !== 'none', '输入框有投影', r.err ? '-' : r.shadow.slice(0, 60));
   await ctx.close();
 }
 

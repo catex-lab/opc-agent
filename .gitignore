@@ -22,10 +22,17 @@ Thumbs.db
 # 它们是「给人看的证据」，不是需要版本化的资产 —— 留在磁盘上即可。
 .render-check/
 
-# 运行时缓存：模型目录（CLI 枚举 + models.dev 元数据），可随时重建；
-# 里面还记录了本机已授权的 provider，不该进版本库。
-data/model-catalog.json
+# ── data/ 整个目录都是本机运行时数据，一律不进版本库 ──────────────────
+# 逐项说明（漏任何一条都可能把隐私推上远端）：
+#   chat.db / *.db-shm / *.db-wal  sessions / messages 真实对话内容
+#                                  （历史上曾被提交：29cfa11、7ec1f0f）
+#   agent-credentials.json         各 Agent 的 API Key / 访问令牌（最敏感）
+#   permission-rules.json          用户自定义权限规则，含本机路径
+#   cdp.json                       浏览器调试端口 / CDP 地址
+#   model-catalog.json             模型目录，含已授权 provider
+#   memory/                        MEMORY.md / USER.md / skills，含个人偏好
+#   images/                        生成的图片，可能含隐私内容
+data/
 
-# 运行时记忆：应用自己写的 MEMORY.md / USER.md / skills，属于本机使用痕迹，
-# 与 model-catalog.json 同类 —— 可以重建，且含个人偏好，不进版本库。
-data/memory/
+# Wrangler 本地缓存（site/worker 部署统计后端时产生）
+site/worker/.wrangler/

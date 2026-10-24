@@ -28,20 +28,73 @@
  * 判定用 `getClientRects().length > 0` 而不是「在 DOM 里」：
  * `<details>` 收起时子节点仍在 DOM 中（只是 `display:none`），
  * 只看存在性会得到「一直有浮层」的假象，预览就再也不显示了。
+ *
+ * ## A86：上面那条判据在 Electron 44 上是**错的**（真事故）
+ *
+ * 用户报「浏览器标签输入网址打不开」，实测：`browserLoad('https://example.com')`
+ * 返回 true、调试目标里页面真的加载了，但原生视图永远不显示。
+ *
+ * 原因是 `<details>` 收起时子元素**不再**是 `display:none` —— Chromium 改成了
+ * `content-visibility: hidden` 语义，元素仍有布局盒。实测聊天头部「⋯」菜单
+ * （`data-opc-overlay`、w-[160px]、在 `<details>` 里、`open === false`）：
+ * `getClientRects().length === 1`、`getBoundingClientRect()` 是 160×79、
+ * `display:block`、`visibility:visible`。
+ *
+ * 于是 `isOverlayVisible()` **恒为 true** → `setBrowserVisible(false)` 恒定 →
+ * `WebContentsView` 永远停在隐藏状态。一块网页被自己的哨兵永久判成「被浮层盖住」。
+ *
+ * 现在的判据是三条「与」：不在收起的 `<details>` 里、`checkVisibility` 通过、
+ * 有非零尺寸。三条都抽成 `isVisibleOverlayElement`，让验证脚本能用假元素单测
+ * （DOM 行为在 Node 里造不出来，但这条纯函数可以）。
  */
 
 const OVERLAY_SELECTOR =
   '[data-opc-overlay], [class*="t-popup"], [class*="t-dialog"], [class*="t-message"]';
+
+/** `checkVisibility` 在部分环境下不存在，按可选能力用。 */
+interface MaybeCheckVisibility {
+  checkVisibility?: (options?: {
+    checkOpacity?: boolean;
+    checkVisibilityCSS?: boolean;
+  }) => boolean;
+}
+
+/**
+ * 单个节点是否**真的**占着屏幕。
+ *
+ * 三条缺一不可，顺序按「代价从小到大」：
+ *   1. 祖先里有收起的 `<details>` → 不可见（A86 的实际命中原因）；
+ *   2. 有 `checkVisibility` 就再问一次（覆盖 display:none / visibility:hidden /
+ *      opacity:0，比手工拼 computedStyle 稳）；
+ *   3. 最后要一个非零盒子（`content-visibility: hidden` 下可能得到 0 尺寸）。
+ *
+ * 导出是为了可测：验证脚本传假元素进来就能断言三条分支，不需要真 DOM。
+ */
+export function isVisibleOverlayElement(el: Element): boolean {
+  const details = el.closest('details');
+  if (details && !details.open) return false;
+
+  const probe = el as Element & MaybeCheckVisibility;
+  if (typeof probe.checkVisibility === 'function') {
+    try {
+      if (!probe.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) {
+        return false;
+      }
+    } catch {
+      /* 参数不被支持（老 Chromium）：跳过这条，靠另外两条 */
+    }
+  }
+
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 || rect.height > 0;
+}
 
 /** 当前是否有任何浮层真的占着屏幕。 */
 export function isOverlayVisible(): boolean {
   if (typeof document === 'undefined') return false;
   const nodes = document.querySelectorAll(OVERLAY_SELECTOR);
   for (let i = 0; i < nodes.length; i++) {
-    const el = nodes[i] as HTMLElement;
-    // getClientRects 对 display:none / 未挂载 / 0 尺寸的节点都返回空数组，
-    // 是「真的画出来了」最省事的判据。
-    if (el.getClientRects().length > 0) return true;
+    if (isVisibleOverlayElement(nodes[i])) return true;
   }
   return false;
 }

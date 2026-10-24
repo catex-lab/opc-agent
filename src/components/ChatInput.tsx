@@ -20,6 +20,9 @@ import { IMAGE_SIZES, IMAGE_SIZE_LABELS, IMAGE_MODELS } from '../imageOptions';
 import { PermissionGapNotice } from './PermissionGapNotice';
 import { ModelSelectPopup } from './ModelSelectPopup';
 import { MENU_ITEM_SM_CLASS } from './menuItem';
+// A93：输入框字号对齐正文。CSS 穿不过 TDesign 的两层 shadow，只能往那层
+// shadow root 里注入样式表 —— 为什么以及踩过哪些坑，见该文件开头。
+import { applySenderTypography } from '../senderTextarea';
 
 interface ChatInputProps {
   inputValue: string;
@@ -333,6 +336,102 @@ export function ChatInput({
     });
   }, []);
 
+  /* ── A93：粘贴剪贴板里的图片 ──
+   *
+   * 附件链路传的是**路径**（见 withAttachments：消息正文里拼 `- <绝对路径>`），
+   * 而剪贴板图片只有一个 Blob、没有路径 —— 所以先交给主进程落成临时文件，
+   * 再当普通附件挂上（`opc:save-pasted-image`，见 electron/main.ts）。
+   *
+   * 三件必须做对的事：
+   *  1. **只在真有图片时才 preventDefault**。纯文字粘贴必须保持浏览器默认行为，
+   *     否则用户在输入框里粘贴一段文字会没反应。
+   *  2. 监听挂在 `t-chat-sender` 宿主上而不是 React 的 onPaste —— 输入框在
+   *     两层 shadow 里，paste 是 composed 事件，冒泡到宿主最稳（与附件菜单
+   *     绕开宿主拦截的思路一致）。
+   *  3. 失败要说话。落盘失败（非桌面端 / 超限 / 写盘失败）时给一行提示，
+   *     否则用户会以为「粘贴没反应」，然后反复粘同一张图。 */
+  const [pasteNote, setPasteNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pasteNote) return;
+    const t = window.setTimeout(() => setPasteNote(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [pasteNote]);
+
+  const pasteImages = useCallback(async (files: File[]) => {
+    const bridge = (
+      window as unknown as {
+        opc?: { savePastedImage?: (bytes: Uint8Array, ext: string) => Promise<string | null> };
+      }
+    ).opc;
+    if (!bridge?.savePastedImage) {
+      setPasteNote('当前环境不支持粘贴图片，请用左侧附件按钮选择文件');
+      return;
+    }
+
+    const picked: Attachment[] = [];
+    for (const f of files) {
+      if (picked.length >= MAX_ATTACHMENTS) break;
+      // image/jpeg → jpg；其余按子类型直接当扩展名，主进程另有白名单
+      const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+      let path: string | null = null;
+      try {
+        path = await bridge.savePastedImage(new Uint8Array(await f.arrayBuffer()), ext);
+      } catch {
+        path = null;
+      }
+      if (!path) {
+        setPasteNote('这张图片没能保存，请改用附件按钮');
+        continue;
+      }
+      picked.push({
+        path,
+        name: f.name && f.name !== 'image.png' ? f.name : `粘贴图片.${ext}`,
+        size: f.size,
+        kind: 'image',
+      });
+    }
+    if (picked.length === 0) return;
+
+    setAttachments(prev => {
+      const seen = new Set(prev.map(a => a.path));
+      const merged = [...prev];
+      for (const a of picked) {
+        if (merged.length >= MAX_ATTACHMENTS) break;
+        if (seen.has(a.path)) continue;
+        seen.add(a.path);
+        merged.push(a);
+      }
+      return merged;
+    });
+  }, []);
+
+  useEffect(() => {
+    const el = chatSenderRef.current as HTMLElement | null;
+    if (!el?.addEventListener) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files: File[] = [];
+      for (const it of Array.from(items)) {
+        if (it.kind === 'file' && it.type.startsWith('image/')) {
+          const f = it.getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      // 没有图片 → 不拦，纯文字粘贴走默认行为
+      if (files.length === 0) return;
+      e.preventDefault();
+      void pasteImages(files);
+    };
+    el.addEventListener('paste', onPaste);
+    return () => el.removeEventListener('paste', onPaste);
+  }, [pasteImages]);
+
+  // A93：输入框字号 16px → 15px（与正文 md_p 一致）。
+  // 为什么只能这么做、为什么 CSS 的三条路都不通，见 src/senderTextarea.ts。
+  useEffect(() => applySenderTypography(), []);
+
   /** 把附件路径拼进消息正文：Agent 拿到的是可直接读的绝对路径 */
   const withAttachments = useCallback(
     (text: string) => {
@@ -487,6 +586,20 @@ export function ChatInput({
             }}
           >
             {mentionHint}
+          </div>
+        )}
+
+        {/* 粘贴失败提示（A93）：只在落盘失败时出现，4 秒后自己消失 */}
+        {pasteNote && (
+          <div
+            className="mb-2 rounded-lg px-2.5 py-1.5 text-caption"
+            style={{
+              backgroundColor: 'var(--td-bg-color-secondarycontainer)',
+              color: 'var(--td-text-color-secondary)',
+            }}
+            data-paste-note
+          >
+            {pasteNote}
           </div>
         )}
 
@@ -866,7 +979,7 @@ export function ChatInput({
                     onPopupVisibleChange={v => setOpenSelect(v ? 'reasoning' : null)}
                     prefixIcon={<Brain size={16} />}
                     popupProps={{
-                      overlayClassName: 'reasoning-select-popup',
+                      overlayClassName: 'opc-choice-popup reasoning-select-popup',
                       overlayInnerStyle: { width: 180, padding: '6px 4px' }
                     }}
                   >
@@ -919,18 +1032,20 @@ export function ChatInput({
                   popupVisible={openSelect === 'permission'}
                   onPopupVisibleChange={v => setOpenSelect(v ? 'permission' : null)}
                   prefixIcon={
+                    /* A84（用户要求）：图标外不要再套一块 `${color}15` 的浅色圆角方块。
+                       那块底本来是想「给图标一个容器」，实际效果是图标本体（同色、
+                       14px、细描边）和同色低透明度的底糊在一起，越看越脏。
+                       去掉底以后彩色图标直接压在输入框底色上，颜色饱和度反而
+                       把「默认 / 自动编辑 / 只读 / 全放行」四档区分得更清楚。 */
                     <span
-                      className="flex items-center justify-center w-5 h-5 rounded-md"
-                      style={{ 
-                        color: currentModeConfig.color,
-                        backgroundColor: `${currentModeConfig.color}15`,
-                      }}
+                      className="flex items-center justify-center w-5 h-5"
+                      style={{ color: currentModeConfig.color }}
                     >
                       {currentModeConfig.icon}
                     </span>
                   }
                   popupProps={{
-                    overlayClassName: 'permission-select-popup',
+                    overlayClassName: 'opc-choice-popup permission-select-popup',
                     overlayInnerStyle: { width: 160, padding: '6px 4px' }
                   }}
                 >
@@ -943,12 +1058,10 @@ export function ChatInput({
                         label={config.shortLabel}
                       >
                         <div className="flex items-center gap-2 py-0.5">
-                          <span 
-                            className="flex items-center justify-center w-5 h-5 rounded-md shrink-0"
-                            style={{ 
-                              color: config.color,
-                              backgroundColor: `${config.color}15`,
-                            }}
+                          {/* A84：同 prefixIcon，去掉 `${color}15` 方块，只留彩色图标 */}
+                          <span
+                            className="flex items-center justify-center w-5 h-5 shrink-0"
+                            style={{ color: config.color }}
                           >
                             {config.icon}
                           </span>

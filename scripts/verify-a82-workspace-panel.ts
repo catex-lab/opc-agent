@@ -70,13 +70,17 @@ function sourceContracts() {
   ok(/<WorkspaceResizer \/>/.test(panel), '契约：面板里真的渲染了手柄');
 
   const header = readFileSync(path.join(root, 'src', 'components', 'ChatHeader.tsx'), 'utf8');
-  const toggleAt = header.indexOf('onToggleWorkspace && (');
+  // A95：开关的渲染条件是 `onToggleWorkspace && !workspaceOpen && (`
+  // （展开态由面板栏头自己充当收起入口，头部不再留第二枚）。按字面量找的
+  // 断言必须跟着源码改 —— 旧字面量 indexOf 返回 -1，三条契约会一起红，
+  // 而报错只显示「不成立」，看不出是源码变了。
+  const toggleAt = header.indexOf('onToggleWorkspace && !workspaceOpen && (');
   const moreAt = header.indexOf('<details ref={moreRef}');
   const badgeAt = header.indexOf('<WorkspaceBadge');
   ok(toggleAt > 0 && moreAt > 0 && toggleAt < moreAt, '契约：工作区开关渲染在 ⋯ 之前（DOM 顺序即视觉左右）');
   ok(badgeAt > 0 && badgeAt < toggleAt, '契约：工作区徽标在开关左边（图标按钮成组，状态徽标在外）');
   // 只有一处开关：DOM 里出现两次就是复制粘贴留下来的影子控件
-  ok((header.match(/onToggleWorkspace && \(/g) ?? []).length === 1, '契约：开关只渲染一次');
+  ok((header.match(/onToggleWorkspace && !workspaceOpen && \(/g) ?? []).length === 1, '契约：开关只渲染一次');
 }
 
 /* ── [B] 真 Electron 冒烟 ─────────────────────────────────────────────── */
@@ -183,7 +187,7 @@ async function runSmoke() {
 
     await appPage.goto(`${api}/chat/${session.id}`, { waitUntil: 'domcontentloaded' });
     await appPage.evaluate(() => {
-      try { localStorage.setItem('opc.workspace-open', 'true'); } catch { /* 隐私模式 */ }
+      try { localStorage.setItem('opc.workspace-open', '1'); } catch { /* 隐私模式 */ }
     });
     await appPage.reload({ waitUntil: 'domcontentloaded' });
     await appPage.waitForFunction(() => document.querySelector('nav') !== null, { timeout: 60_000 });
@@ -197,8 +201,10 @@ async function runSmoke() {
       } catch {
         const toggle = appPage.getByRole('button', { name: /展开工作区|收起工作区/ });
         if (await toggle.count()) {
-          const pressed = await toggle.first().getAttribute('aria-pressed');
-          if (pressed === 'false') await toggle.first().click();
+          // 这枚按钮只在收起态渲染（展开态的收起入口在面板栏头），所以「存在」就等于
+          // 「该点」。原来按 aria-pressed === 'false' 判断，而按钮上没有这个属性 ——
+          // getAttribute 永远返回 null，兜底点击一次都没生效过。
+          if (await toggle.first().count()) await toggle.first().click();
         }
         await appPage.waitForSelector('aside[aria-label="工作区文件"]', { timeout: 20_000 });
         return true;
@@ -258,23 +264,34 @@ async function runSmoke() {
     const w5 = await panelWidth(appPage);
     ok(w5 === 300, '冒烟：按 → 变回 300px（两个方向都在）', `实测 ${w5}`);
 
-    /* ── 按钮位置：开关紧贴 ⋯ 左侧 ── */
+    /* ── 按钮位置：开关紧贴 ⋯ 左侧 ──
+       A95：工作区**打开**时，栏头那枚「展开工作区」是不渲染的 —— 展开态的
+       收起入口搬到面板栏头，同一件事不说两遍。而这段冒烟此时面板正开着，
+       所以不能再「按 aria-label 抓第一个匹配」：那样抓到的是面板里的
+       「收起工作区」，它在窗口最右侧，与 ⋯ 差出整个面板宽度（实测 -332px）。
+       改成只认栏头那一枚（它有 data-workspace-toggle 标记）：在，就验紧邻；
+       不在，就验「面板确实开着」—— 两种状态都成立，缺一不可。 */
     const geom = await appPage.evaluate(() => {
-      const toggle = document.querySelector('button[aria-label="收起工作区"], button[aria-label="展开工作区"]');
+      const toggle = document.querySelector('button[data-workspace-toggle="expand"]');
       const summary = document.querySelector('summary[aria-label="更多操作"]');
-      if (!toggle || !summary) return null;
+      const aside = document.querySelector('aside[aria-label="工作区文件"]');
+      if (!summary) return { kind: 'no-summary' } as const;
+      if (!toggle) return { kind: 'collapsed-only', asideOpen: !!aside } as const;
       const t = toggle.getBoundingClientRect();
       const s = summary.getBoundingClientRect();
-      return { toggleRight: t.right, toggleLeft: t.left, summaryLeft: s.left };
+      return { kind: 'both', toggleRight: t.right, summaryLeft: s.left } as const;
     });
-    ok(!!geom, '冒烟：开关与 ⋯ 都渲染出来了');
-    if (geom) {
+    ok(geom?.kind !== 'no-summary', '冒烟：⋯ 菜单渲染出来了');
+    if (geom?.kind === 'both') {
       const gap = geom.summaryLeft - geom.toggleRight;
       ok(
         geom.toggleRight <= geom.summaryLeft + 1 && gap < 16,
         '冒烟：开关紧贴 ⋯ 的左侧（同一类图标按钮成组）',
         `间距 ${Math.round(gap)}px`
       );
+    } else if (geom?.kind === 'collapsed-only') {
+      // 面板开着 → 栏头开关理应消失。若它还在，就是「两枚收起入口」回来了
+      ok(geom.asideOpen, '冒烟：面板开着时栏头开关已让位（收起入口在面板栏头）', `aside=${geom.asideOpen}`);
     }
 
     /* ── 面板内容没被手柄压住：文件树第一行还能点到 ── */

@@ -1,4 +1,5 @@
 import { Input, Select, Tooltip } from 'tdesign-react';
+import type { CSSProperties } from 'react';
 import { ChevronDownIcon, FolderOpenIcon } from 'tdesign-icons-react';
 import {
   Briefcase,
@@ -153,7 +154,13 @@ export function NewChatView({
           <label className="block text-body-lg font-medium mb-3" style={{ color: 'var(--td-text-color-primary)' }}>
             选择 Agent
           </label>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 max-h-[280px] overflow-y-auto">
+          {/* A83：Agent 数量不固定（奇数时固定两列会剩一张孤卡）。
+              换成 .tc-cards：换行后最后一行自动撑满，孤卡变成一张宽卡。
+              240px 是「能放下头像 + 名字 + 一句描述」的下限。 */}
+          <div
+            className="tc-cards max-h-[280px] overflow-y-auto"
+            style={{ '--tc-card-min': '240px' } as CSSProperties}
+          >
             {agents.map(agent => {
               const isSelected = agent.id === newChatAgentId;
               return (

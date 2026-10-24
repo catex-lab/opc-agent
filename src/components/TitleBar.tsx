@@ -11,8 +11,11 @@ import { MessagesSquare } from 'lucide-react';
  * 没有应用标识、没有拖动把手、双击也不能最大化。这条横条把那三件事补回来。
  *
  * 好处是它终于**是应用自己画的了**：字体、字号、色板、高度全部走本项目的
- * 令牌，和下面的导航条 / 列表栏共用同一个 `--tc-surface-chrome`，
- * 于是整块框架面从上到下是连续的一整片，而不是「系统灰 + 应用灰」两层。
+ * 令牌。A94 起它的底色是 `--tc-surface-rail`（与导航条同一档），于是
+ * 「标题条 + 导航条」合成一个 L 形的框架块，内容面（列表栏 / 消息区）
+ * 嵌在这个 L 里面。原来它走 `--tc-surface-chrome`，和列表栏同色 ——
+ * 顶部那 56px 的导航条因此成了贴在标题条上的一块灰条，边界只有色阶、
+ * 没有任何线或形状交代它。
  *
  * ## 三个按钮为什么也自己画（A24）
  *
@@ -158,13 +161,19 @@ export function TitleBar({ compact = false }: { compact?: boolean }) {
       }}
     >
       <span
-        className="flex shrink-0 items-center justify-center"
+        className="relative flex h-full shrink-0 items-center justify-center"
         style={{ width: railWidth }}
       >
+        {/* A94：这里原本铺了一层 `--tc-surface-rail` 的绝对定位色块（A92 加的），
+            为的是让导航条从窗口顶端贯到底、不在标题条高度内断开。现在整条标题条
+            本身就等于 rail（`--tc-titlebar-surface` → `var(--tc-surface-rail)`），
+            再铺一层等于 rail 盖 rail —— 纯冗余，已删。
+            删掉之后这 56px 仍是应用标记的定位格：宽度与 NavRail 同宽，
+            标记居中，于是「标记 / 导航图标」落在同一条竖轴上。 */}
         {/* 应用标记：品牌色实底 + 反色图标，与 .tc-btn-brand 同一套配色。
             不用 <img>：build/icon.png 不进 app.asar，打包态会静默裂图。 */}
         <span
-          className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px]"
+          className="relative flex h-[18px] w-[18px] items-center justify-center rounded-[5px]"
           style={{ backgroundColor: 'var(--td-brand-color)', color: 'var(--tc-on-brand)' }}
         >
           <MessagesSquare size={11} strokeWidth={2.5} />
