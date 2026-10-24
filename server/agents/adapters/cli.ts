@@ -9,12 +9,16 @@
  *   消除了命令注入（`; rm -rf` 之类只会被当成普通文本参数）。
  */
 
-import { spawn, type ChildProcessByStdio } from 'child_process';
-import type { Readable } from 'stream';
+import { spawn, type ChildProcess, type ChildProcessByStdio } from 'child_process';
+import type { Readable, Writable } from 'stream';
+import { randomUUID } from 'crypto';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
-import { AsyncQueue, linkAbort } from '../channel.js';
+import { AsyncQueue, PendingReplies, linkAbort } from '../channel.js';
+import { decideToolAccess } from '../toolPolicy.js';
+import { evaluateToolCall } from '../permission-gate.js';
+import { currentPermissionRules } from '../../permission-rules.js';
 import type { AgentDefinition, CliSpec } from '../definitions.js';
 import {
   findExecutable,
@@ -31,8 +35,18 @@ import type {
   AgentProvider,
   AgentStatus,
   AgentDescriptor,
+  PermissionDecision,
   SendContext,
 } from '../types.js';
+import {
+  buildStdinUserMessage,
+  classifyControlMessage,
+  buildControlResponse,
+  buildControlError,
+  buildInterruptRequest,
+  type CanUseToolAsk,
+  type ControlAsk,
+} from './claude-control.js';
 
 /** 去掉终端颜色 / 光标控制序列 */
 const ANSI_RE = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
@@ -40,8 +54,61 @@ const ANSI_RE = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.
 /** 单次 CLI 调用的默认上限 */
 const DEFAULT_TIMEOUT_MS = 8 * 60 * 1000;
 
+/**
+ * A106：优雅中止的宽限窗（毫秒）。
+ * 先 SIGTERM 让 CLI 自己收尾，宽限到头仍不退才 SIGKILL。
+ */
+const TERM_GRACE_MS = 3000;
+
+/**
+ * A106：双向模式下权限请求的等待上限。
+ * 与 SdkAdapter 保持同值同语义（超时按拒绝计），前端提示文案也一致。
+ */
+const PERMISSION_TIMEOUT = 5 * 60 * 1000;
+
 function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, '');
+}
+
+/**
+ * A106：优雅终止子进程 —— 先 SIGTERM，宽限到头仍不退再 SIGKILL。
+ *
+ * 为什么抽成模块级函数：send() 的终止链、generator 的 finally 兜底、
+ * abort() 三处都要用。曾经只有 send() 会 kill，abort() 是另一种死法 ——
+ * 两份实现必然漂移，所以收成一处。
+ *
+ * timers 可注入是为了**不起真进程也能测**（见 scripts/verify-a106-*.ts）。
+ *
+ * ⚠️ Windows 现实（写下来避免以后误判「改了没生效」）：Node 在 Windows 上
+ * 把 SIGTERM 也映射到 TerminateProcess，没有真正的优雅窗口 —— 这条只在
+ * macOS/Linux 实际生效；Windows 上行为与直接 kill 一致，但升级计时器
+ * 保证了不会留下退不掉的进程。
+ *
+ * @returns 取消升级的函数（进程自己退了就调它，省一次 SIGKILL）
+ */
+export function terminateGracefully(
+  child: ChildProcess,
+  graceMs: number,
+  timers: { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout } = {
+    setTimeout,
+    clearTimeout,
+  }
+): () => void {
+  if (child.killed) return () => {};
+  try {
+    child.kill('SIGTERM');
+  } catch {
+    /* 进程已死，忽略 */
+  }
+  const t = timers.setTimeout(() => {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* 已经退了，忽略 */
+    }
+  }, graceMs);
+  t.unref?.();
+  return () => timers.clearTimeout(t);
 }
 
 /** 判断输出里是否像「未登录 / 缺密钥」 */
@@ -71,6 +138,13 @@ function childEnv(): NodeJS.ProcessEnv {
  */
 type CliChild = ChildProcessByStdio<null, Readable, Readable>;
 
+/**
+ * A106：双向模式的子进程类型 —— stdin 是管道。
+ * 与 CliChild 分开而不是统一成 pipe：一次性模式的 stdin 语义就是
+ * 「立刻 EOF」，混在一起会让「该不该写 stdin」要靠运行时猜。
+ */
+type BidiChild = ChildProcessByStdio<Writable, Readable, Readable>;
+
 export class CliAdapter implements AgentProvider {
   readonly descriptor: AgentDescriptor;
 
@@ -81,7 +155,12 @@ export class CliAdapter implements AgentProvider {
   /** 探测结果缓存 */
   private status: AgentStatus | null = null;
   /** 正在运行的子进程：sessionId → child */
-  private running = new Map<string, CliChild>();
+  private running = new Map<string, CliChild | BidiChild>();
+  /**
+   * A106：双向模式下待答复的权限请求（requestId → 决定）。
+   * 一次性模式不产生 permission_request 事件，这张表始终是空的。
+   */
+  private replies = new PendingReplies<PermissionDecision>();
 
   constructor(def: AgentDefinition) {
     if (!def.cli) throw new Error(`CliAdapter 需要 cli 规格: ${def.descriptor.id}`);
@@ -335,7 +414,14 @@ export class CliAdapter implements AgentProvider {
     }
 
     const started = Date.now();
-    const args = this.spec.buildArgs(ctx.prompt, ctx);
+    // A106：双向模式（spec.bidi）—— 把 stdin 打开并让 buildArgs 切到
+    // `--input-format stream-json`。flag 位置只有 buildArgs 知道
+    // （与 variadic 的 --allowedTools 有冲突），适配器只做「要不要双向」的决定。
+    const bidi = this.spec.bidi === true;
+    const args = this.spec.buildArgs(
+      ctx.prompt,
+      bidi ? { ...ctx, inputFormat: 'stream-json' as const } : ctx
+    );
 
     // A100：把自己的输出方式告诉下游。纯文本解析出来的工具事件与结构化
     // 输出在界面上长得一样，但可信度差一档 —— 不标就等于把两者画成同一个样子。
@@ -349,8 +435,11 @@ export class CliAdapter implements AgentProvider {
     const queue = new AsyncQueue<AgentEvent>();
     const target = this.target;
 
-    let child: CliChild;
+    let child: CliChild | BidiChild;
     try {
+      // 类型说明：三元表达式把 stdio 的字面量类型 widen 成了 string[]，
+      // spawn 的返回值随之退化成 ChildProcess。两条分支的实际形状分别就是
+      // CliChild / BidiChild，这里按事实收窄，别让后面每个调用点都写 `as`。
       child = spawn(target.command, [...target.prefixArgs, ...args], {
         cwd: ctx.cwd || process.cwd(),
         // target.env 是启动目标的一部分（如 Trae 的 ELECTRON_RUN_AS_NODE=1），
@@ -359,8 +448,10 @@ export class CliAdapter implements AgentProvider {
         env: { ...childEnv(), ...(target.env ?? {}) },
         shell: false,           // ★ 关键：不经过 shell
         windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+        // A106：双向模式 stdin 走管道（写用户消息 / 收尾时 EOF）；
+        // 一次性模式仍是 'ignore' —— 部分 CLI 见 stdin 是 TTY 会进交互模式。
+        stdio: bidi ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
+      }) as CliChild | BidiChild;
     } catch (err) {
       yield { type: 'error', message: `启动失败：${(err as Error).message}` };
       return;
@@ -368,11 +459,42 @@ export class CliAdapter implements AgentProvider {
 
     this.running.set(ctx.sessionId, child);
 
+    // A106：双向模式的 stdin 收尾。关掉 = 告诉 CLI「没有更多输入了」，
+    // 它自己走完退出路径（比信号干净，有机会把会话状态写盘）。
+    // 关不上也有超时与 SIGTERM→SIGKILL 终止链兜底。
+    const endStdin = () => {
+      if (!bidi) return;
+      const stdin = (child as BidiChild).stdin;
+      if (!stdin || stdin.destroyed) return;
+      try {
+        stdin.end();
+      } catch {
+        /* 已经断了，忽略 */
+      }
+    };
+
+    if (bidi) {
+      // stdin 的 EPIPE 是**异步**事件（进程死了之后一次迟到的 write 才会触发），
+      // try/catch 拦不住。不挂监听的话它会以 unhandled 'error' 把整个服务端
+      // 炸掉（A106 实测踩到：abort 之后补写 interrupt，桩进程已退）。
+      (child as BidiChild).stdin.on('error', () => {
+        /* 对端没了，忽略 —— 终止链会收尸 */
+      });
+      try {
+        (child as BidiChild).stdin.write(buildStdinUserMessage(ctx.prompt) + '\n');
+      } catch (err) {
+        yield { type: 'error', message: `写入 stdin 失败：${(err as Error).message}` };
+        return;
+      }
+    }
+
     // ---- 超时与快速失败 ----
     // CLI 在遇到网络故障时会无限重连而不是退出，没有这两道闸门，
     // 一次对话就能把 HTTP 请求永久挂住（codex 实测如此）。
     let killed: 'abort' | 'timeout' | 'fatal' | null = null;
     let fatalDetail = '';
+    /** A106：取消 SIGKILL 升级的函数；进程退出时调用 */
+    let cancelKill: (() => void) | null = null;
 
     const timeoutMs = this.spec.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const timer = setTimeout(() => {
@@ -384,16 +506,36 @@ export class CliAdapter implements AgentProvider {
      * 终止子进程。
      * 注意：这里**不**关闭队列 —— 交给 close 处理器统一收尾，
      * 否则「超时/致命错误」的原因就来不及写进事件流了（push 到已关闭队列会被丢弃）。
+     *
+     * A106：终止走 terminateGracefully（先 SIGTERM，宽限后 SIGKILL）。
+     * 宽限期内 stdout 照常解析（队列没关），已产出的增量不会丢。
      */
     const stopAll = (reason: NonNullable<typeof killed>, detail = '') => {
+      // 先到先得：超时之后 stderr 又命中判死模式时，原因保持第一次的那个
+      if (killed) return;
       killed = reason;
       fatalDetail = detail;
       clearTimeout(timer);
-      if (!child.killed) child.kill();
+      cancelKill?.();
+      cancelKill = null;
+      if (child.killed) return;
+      cancelKill = terminateGracefully(child, TERM_GRACE_MS);
     };
 
     // 中止信号 → 杀子进程（linkAbort 会处理「信号已中止」的情况）
-    const unlinkAbort = linkAbort(ctx.signal, () => stopAll('abort'));
+    const unlinkAbort = linkAbort(ctx.signal, () => {
+      // A106：双向模式先按 control 协议礼貌中断（CLI 有机会停在这一轮，
+      // 不留下半截工具调用），再走 SIGTERM→SIGKILL 终止链兜底。
+      // 两者不冲突：interrupt 是「这轮别跑了」，SIGTERM 是「进程退不退」。
+      if (bidi) {
+        try {
+          (child as BidiChild).stdin.write(buildInterruptRequest() + '\n');
+        } catch {
+          /* 进程已死，忽略 */
+        }
+      }
+      stopAll('abort');
+    });
 
     let stderrBuf = '';
     let lineBuf = '';
@@ -409,6 +551,109 @@ export class CliAdapter implements AgentProvider {
 
     // 有状态的映射器（每个会话一份，避免并发串味）；没有就用无状态的 mapLine
     const mapLine = this.spec.createMapper?.() ?? this.spec.mapLine;
+
+    // ---- A106：双向模式的 control 协议处理 ----
+
+    /**
+     * 判定并应答一次 can_use_tool。
+     *
+     * 判定顺序与 SdkAdapter.canUseTool **逐条一致**（顺序即安全）：
+     *   ① 场景白名单（排他语义，最先判 —— bypass 只是「不弹窗」，
+     *      不是「白名单作废」；反过来的话「问答」场景配全放行就等于没限制）
+     *   ② 权限门禁（规则匹配 + Bash 分类器 + 路径越界；deny 任何模式都拦）
+     *   ③ bypassPermissions 直接放行（用户已经表态）
+     *   ④ 用户规则明示允许（auto）
+     *   ⑤ 其余 → 弹给用户，超时按拒绝计
+     */
+    const decideAndRespond = async (ask: CanUseToolAsk): Promise<void> => {
+      const toolUseEcho = ask.toolUseId ? { toolUseID: ask.toolUseId } : {};
+      const respond = (payload: Record<string, unknown>) => {
+        try {
+          (child as BidiChild).stdin.write(
+            buildControlResponse(ask.requestId, { ...payload, ...toolUseEcho }) + '\n'
+          );
+        } catch {
+          /* 进程已死，忽略 —— CLI 不在了，回复没有接收方 */
+        }
+      };
+
+      const gate = decideToolAccess(ctx.allowedTools, ask.toolName);
+      if (!gate.allowed) {
+        console.log(
+          `[CLI:bidi] 工具被场景白名单拦截: ${ask.toolName} (category=${gate.category ?? 'unlisted'})`
+        );
+        respond({ behavior: 'deny', message: gate.reason ?? '场景未授权该工具' });
+        return;
+      }
+
+      const verdict = evaluateToolCall({
+        toolName: ask.toolName,
+        input: ask.input,
+        cwd: ctx.cwd,
+        rules: currentPermissionRules(),
+      });
+      if (verdict.decision === 'deny') {
+        console.log(`[CLI:bidi] 门禁拦截 ${ask.toolName}: ${verdict.rule} — ${verdict.reason ?? ''}`);
+        respond({
+          behavior: 'deny',
+          message: `[权限门禁] ${verdict.reason ?? verdict.rule ?? '高危操作'}`,
+        });
+        return;
+      }
+
+      if (ctx.permissionMode === 'bypassPermissions' || verdict.auto) {
+        respond({ behavior: 'allow', updatedInput: ask.input });
+        return;
+      }
+
+      const requestId = randomUUID();
+      queue.push({
+        type: 'permission_request',
+        requestId,
+        toolUseId: ask.toolUseId,
+        toolName: ask.toolName,
+        input: ask.input,
+        // 弹窗上要显示「为什么问这一句」，否则用户只看到一堵墙
+        risk: verdict.risk,
+        rule: verdict.rule,
+      });
+
+      // 挂起，直到前端 POST /api/permission-response（或超时按拒绝）
+      const decision = await this.replies.register(
+        requestId,
+        () => ({ behavior: 'deny', message: '权限请求超时' }),
+        PERMISSION_TIMEOUT
+      );
+      if (decision.behavior === 'allow') {
+        respond({ behavior: 'allow', updatedInput: ask.input });
+      } else {
+        respond({ behavior: 'deny', message: decision.message || '用户拒绝了此操作' });
+      }
+    };
+
+    const handleControlAsk = (ask: ControlAsk): void => {
+      const write = (line: string) => {
+        try {
+          (child as BidiChild).stdin.write(line + '\n');
+        } catch {
+          /* 进程已死，忽略 */
+        }
+      };
+      if (ask.kind === 'can_use_tool') {
+        void decideAndRespond(ask).catch(err => {
+          // 判定本身抛错（不该发生）也必须应答 —— 否则 CLI 挂到 8 分钟超时
+          write(buildControlError(ask.requestId, `权限判定失败：${(err as Error).message}`));
+        });
+        return;
+      }
+      if (ask.kind === 'interrupt') {
+        // 本端没发起过中断；空载荷即「已受理」
+        write(buildControlResponse(ask.requestId, {}));
+        return;
+      }
+      // 认识但没实现：明确回错，不装聋
+      write(buildControlError(ask.requestId, `未实现的控制请求：${ask.subtype}`));
+    };
 
     // ---- 输出解析 ----
 
@@ -429,6 +674,18 @@ export class CliAdapter implements AgentProvider {
         // 不是 JSON 就按纯文本处理（很多 CLI 会混印进度信息）
         handleText(trimmed + '\n');
         return;
+      }
+      // A106：双向模式下控制消息优先分流。它不是普通事件 —— 喂给 mapLine
+      // 只会被当成无价值行丢掉，而那个请求就永远挂着（等它的是 8 分钟超时）。
+      if (bidi) {
+        const ask = classifyControlMessage(obj);
+        if (ask) {
+          handleControlAsk(ask);
+          return;
+        }
+        // result 行 = 整轮结束：关 stdin 让 CLI 自己退。
+        // 不关的话它会等下一个用户消息直到我们的超时点火。
+        if ((obj as { type?: unknown }).type === 'result') endStdin();
       }
       const token = this.spec.extractResumeToken?.(obj);
       if (token) {
@@ -495,6 +752,8 @@ export class CliAdapter implements AgentProvider {
     child.on('close', (code: number | null) => {
       unlinkAbort();
       clearTimeout(timer);
+      // A106：进程已经退了，SIGKILL 升级没必要再执行
+      cancelKill?.();
       this.running.delete(ctx.sessionId);
 
       // 冲刷 jsonl 残留
@@ -570,16 +829,32 @@ export class CliAdapter implements AgentProvider {
       for await (const ev of queue) yield ev;
     } finally {
       unlinkAbort();
-      if (!child.killed && this.running.has(ctx.sessionId)) child.kill();
+      // A106：消费方提前收尾（客户端断开）时进程可能还活着 ——
+      // 走同一条优雅终止链，不让 CLI 成为没人管的孤儿。
+      if (!child.killed && this.running.has(ctx.sessionId)) {
+        terminateGracefully(child, TERM_GRACE_MS);
+      }
       this.running.delete(ctx.sessionId);
+      // A106：双向模式的待答复权限请求随之作废（前端不等了）
+      this.replies.clear();
     }
   }
 
   abort(sessionId: string): void {
     const child = this.running.get(sessionId);
     if (child && !child.killed) {
-      child.kill();
+      // A106：与 send() 内同一条终止链（先 SIGTERM 再 SIGKILL）——
+      // 不各写一份，两份必然漂移。
+      terminateGracefully(child, TERM_GRACE_MS);
       this.running.delete(sessionId);
     }
+  }
+
+  /**
+   * A106：双向模式的权限答复入口（与 SdkAdapter 同形状）。
+   * 一次性模式永远返回 false —— 它们不产生 permission_request 事件。
+   */
+  resolvePermission(requestId: string, decision: PermissionDecision): boolean {
+    return this.replies.settle(requestId, decision);
   }
 }

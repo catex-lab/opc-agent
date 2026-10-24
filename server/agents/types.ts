@@ -479,6 +479,14 @@ export interface SendContext {
   reasoningEffort?: string;
   /** 上次调用返回的恢复令牌，用于续接上下文（CLI 的 --continue / --session） */
   resumeToken?: string | null;
+  /**
+   * A106：由 CliAdapter 在**双向模式**下注入，告诉 buildArgs 切到 stdin 供数。
+   *
+   * 为什么经 ctx 传而不是适配器自己拼 argv：`--input-format stream-json`
+   * 与 `--allowedTools`（variadic，必须收尾）存在位置冲突，只有 buildArgs
+   * 知道该把哪个 flag 放在哪。适配器只负责「要不要双向」这个决定。
+   */
+  inputFormat?: 'text' | 'stream-json';
   /** 权限模式，映射到各 CLI 的审批参数 */
   permissionMode?: PermissionMode;
   /**

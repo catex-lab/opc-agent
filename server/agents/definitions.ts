@@ -132,6 +132,16 @@ export interface CliSpec {
    */
   timeoutMs?: number;
   /**
+   * A106：stdio 双向模式（目前只有 claude 的 control 协议）。
+   *
+   * 开了之后适配器把 stdin 保持打开，按 claude 的 control 协议
+   * 逐个应答 `can_use_tool` 权限请求，而不是靠 `--allowedTools`
+   * 预授权 —— 后者会让白名单内的工具**绕过权限门禁**直接跑
+   * （预授权的工具不触发控制请求，场景白名单和高危判定都没机会生效）。
+   * 协议细节见 `adapters/claude-control.ts`。
+   */
+  bidi?: boolean;
+  /**
    * stderr 命中该模式即判定为不可恢复，立即终止并报错。
    * 用于把「会一直重试但永远不会成功」的情况快速失败。
    */
@@ -888,6 +898,22 @@ const RAW_DEFS: AgentDefinition[] = [
       // 它藏在 debug 子命令下，`codex --help` 里看不到 —— 由
       // `modelCatalog.ts` 的 CATALOG_SOURCES 接进模型菜单（A58）。
       buildArgs: (prompt, ctx) => {
+        // A106：会话续接走官方子命令 `codex exec resume <SESSION_ID> <PROMPT>`
+        // （`codex exec resume --help` 本机实测：位置参数 SESSION_ID 在前、
+        // PROMPT 在后，选项在前）。续接时**不能**传 `-s/--sandbox` ——
+        // resume 子命令的选项表里没有它（只有 -c/-m/--json/--skip-git-repo-check
+        // 等），续接的会话沿用第一次创建时的沙箱配置。于是「同一会话中途
+        // 切场景」在 codex 上改不了沙箱强度，这一点不假装支持
+        // （permissions.ts 的 limitation 里已有 plan 强制的边界说明）。
+        if (ctx.resumeToken) {
+          const resumeArgs = ['exec', 'resume', '--skip-git-repo-check', '--json'];
+          if (ctx.model) resumeArgs.push('-m', ctx.model);
+          if (ctx.reasoningEffort) {
+            resumeArgs.push('-c', `model_reasoning_effort=${ctx.reasoningEffort}`);
+          }
+          resumeArgs.push(ctx.resumeToken, prompt);
+          return resumeArgs;
+        }
         // `--json`：输出 JSONL 事件流（thread/turn/item）。不加就退化成纯文本，
         // 工具与思考永远进不了 UI —— 这是 codex 之前「只有一坨文字」的根因。
         const args = ['exec', '--skip-git-repo-check', '--json'];
@@ -976,6 +1002,11 @@ const RAW_DEFS: AgentDefinition[] = [
         if (ctx.model) args.push('-m', ctx.model);
         return args;
       },
+      // A106：gemini **不接** resume，理由是本机 `gemini --help` 实测：
+      // `-r, --resume` 只认 "latest" 或 `--list-sessions` 打出来的**序号**，
+      // 不认 init 事件里的 session_id UUID。硬传 UUID 只会失败；要映射得
+      // 先跑一次 --list-sessions 按项目反查序号，脆弱且 gemini 本机网络
+      // 阻塞无法实测。宁可每轮新开会话，也不接一条跑不通的续接。
       parse: 'jsonl',
       extractResumeToken: (obj) => {
         const o = obj as { type?: string; session_id?: unknown };
@@ -1084,7 +1115,13 @@ const RAW_DEFS: AgentDefinition[] = [
         // `--format json`：NDJSON 事件流（text / reasoning / tool_use / step_finish）。
         // 实测（2026-10-19）：工具事件在**完成时**一次性给出，
         // part.state 里带 input / output / status，所以一行要拆成「工具 + 结果」两个事件。
+        //
+        // A106：`--session, -s <id>` 续接（`opencode run --help` 实测：
+        // "Session ID to continue, or to create if it does not exist"）。
+        // extractResumeToken 从任意行取 sessionID，与 --session 同一个 ID
+        // 空间（opencode 的 JSON 流每行都带会话的 sessionID）。
         const args = ['run', '--format', 'json'];
+        if (ctx.resumeToken) args.push('--session', ctx.resumeToken);
         if (ctx.model) args.push('-m', ctx.model);
         args.push(prompt);
         return args;
@@ -1221,10 +1258,25 @@ const RAW_DEFS: AgentDefinition[] = [
         // stream-json 才能拿到 content blocks（thinking / tool_use）；
         // `-p` 模式下 claude 要求 stream-json 必须配 --verbose，缺了直接报错。
         const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
+        // A106：双向模式（本条目 bidi: true 时适配器会注入 inputFormat）。
+        // stdin 保持打开，权限请求经 control 协议逐次问我们 —— 见
+        // adapters/cli.ts 的 control 处理与 adapters/claude-control.ts。
+        const bidi = ctx.inputFormat === 'stream-json';
+        if (bidi) args.push('--input-format', 'stream-json');
         // 权限模式落到 --permission-mode（claude 2.1.291 --help 实测六个取值，
         // 此前完全没用过这个开关，「只读」在 claude 身上也是空承诺）。
         args.push('--permission-mode', claudeApproval(ctx.permissionMode));
         if (ctx.model) args.push('--model', ctx.model);
+        // A106：`-r/--resume <session-id>`（claude --help 实测）。
+        // 位置有讲究：必须在 --allowedTools **之前** —— 那是 variadic，
+        // 会把后面的参数全当成工具名吃掉。
+        if (ctx.resumeToken) args.push('--resume', ctx.resumeToken);
+        if (bidi) {
+          // 双向模式下**不能再发** --allowedTools：预授权通过的工具不会触发
+          // can_use_tool 控制请求，场景白名单与高危门禁就被绕过了
+          // （SDK 路径同理，白名单在回调里判，不预授权）。
+          return args;
+        }
         // 工具白名单落到 --allowedTools（variadic，必须放在最后，
         // 否则会把后面的参数也当成工具名吃掉）。
         const allow = claudeAllowedTools(ctx.allowedTools);
@@ -1233,6 +1285,12 @@ const RAW_DEFS: AgentDefinition[] = [
       },
       parse: 'jsonl',
       mapLine: mapClaudeCodeLine,
+      // A106：claude 走双向 control 协议（本机 2.1.291）。
+      // stdin/stdout 环路已实测跑通（发用户消息 → init/assistant/result
+      // 事件正常回收，只卡未登录）；can_use_tool 的应答形状取自本机
+      // claude.exe 内的协议 schema。真实登录态下的端到端仍待补
+      // （本机无凭据，见 TASKS A106 的「未实测」清单）。
+      bidi: true,
       extractResumeToken: (obj) => {
         const o = obj as { type?: string; subtype?: string; session_id?: unknown };
         return o.type === 'system' && o.subtype === 'init' && typeof o.session_id === 'string'

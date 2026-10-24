@@ -90,6 +90,7 @@
     "verify:a101": "tsx scripts/verify-a101-source.ts && node scripts/verify-a101.mjs",
     "verify:a102": "node scripts/verify-a102.mjs",
     "verify:a105": "tsx scripts/verify-a105.mjs",
+    "verify:a106": "tsx scripts/verify-a106-cli-upgrade.ts",
     "verify:logo": "node scripts/verify-logo.mjs"
   },
   "dependencies": {
