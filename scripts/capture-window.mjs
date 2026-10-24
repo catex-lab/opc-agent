@@ -32,7 +32,7 @@
  * 被系统「调暗」（实测 245 会变成 135），数值就没有意义了。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readdirSync, existsSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, existsSync, statSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
@@ -163,9 +163,33 @@ let buf = '';
 child.stdout.on('data', d => (buf += String(d)));
 child.stderr.on('data', d => (buf += String(d)));
 
+/**
+ * 等应用自己把 CDP 端口写出来。
+ *
+ * ⚠️ **别用 `--remote-debugging-port` 猜端口**：`server/index.ts` 启动时会重新申请
+ * 一个空闲端口（日志 `[CDP] 已申请远程调试端口`），命令行给的值被丢弃，
+ * 真实端口只在 `<userData>/DevToolsActivePort` 第一行。照旧写死 9339 的后果是
+ * `ECONNREFUSED` —— 报错长得像「应用没起来」，实际应用窗口早就画好了，
+ * 2026-10-24 打包冒烟时因此白查了一轮。
+ */
+async function waitDevToolsPort(dir, ms = 45000) {
+  const f = path.join(dir, 'DevToolsActivePort');
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try {
+      const n = Number(readFileSync(f, 'utf8').split('\n')[0].trim());
+      if (Number.isInteger(n) && n > 0) return n;
+    } catch {}
+    await SLEEP(300);
+  }
+  return null;
+}
+
 let browser = null;
 try {
-  browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`, { timeout: 40000 });
+  const cdpPort = (await waitDevToolsPort(env.OPC_USER_DATA_DIR)) ?? PORT;
+  console.log(`CDP 端口: ${cdpPort}${cdpPort === PORT ? '（回落到命令行值）' : '（应用自行申请）'}`);
+  browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, { timeout: 40000 });
   const page = browser.contexts().flatMap(c => c.pages())[0];
   await page.waitForFunction(() => document.querySelector('nav') !== null, { timeout: 40000 });
   await SLEEP(1600);
@@ -209,6 +233,8 @@ try {
     child.kill();
   } catch {}
   await SLEEP(400);
-  // Electron 子进程不会随启动器一起退出，留着会占单实例锁 + 污染下一次取样
-  spawnSync('taskkill', ['/IM', EXE ? path.basename(EXE) : 'electron.exe', '/F']);
+  // Electron 子进程不会随启动器一起退出，留着会占单实例锁 + 污染下一次取样。
+  // ⚠️ 按 PID 连树杀，**不要** `taskkill /IM "OPC Agent.exe"` —— 那会把用户自己
+  // 正在用的应用一起杀掉（同名）。
+  if (child.pid) spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F']);
 }
