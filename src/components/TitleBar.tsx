@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MessagesSquare } from 'lucide-react';
+import { AppLogo } from './AppLogo';
 
 /**
  * 自绘标题栏 —— 窗口最顶上那 40px，**连同三个窗口按钮**。
@@ -162,7 +162,10 @@ export function TitleBar({ compact = false }: { compact?: boolean }) {
     >
       <span
         className="relative flex h-full shrink-0 items-center justify-center"
-        style={{ width: railWidth }}
+        // A103：导航条被 6px 内缩之后，应用标记这一格要跟着右移同样的量，
+        // 否则「标记 / 导航图标」的中轴会错开 6px。窗口按钮仍在右上角
+        // 顶格 —— 控件属于窗口而不是属于栏目。
+        style={{ width: railWidth, marginLeft: 'var(--tc-column-gap)' }}
       >
         {/* A94：这里原本铺了一层 `--tc-surface-rail` 的绝对定位色块（A92 加的），
             为的是让导航条从窗口顶端贯到底、不在标题条高度内断开。现在整条标题条
@@ -170,13 +173,18 @@ export function TitleBar({ compact = false }: { compact?: boolean }) {
             再铺一层等于 rail 盖 rail —— 纯冗余，已删。
             删掉之后这 56px 仍是应用标记的定位格：宽度与 NavRail 同宽，
             标记居中，于是「标记 / 导航图标」落在同一条竖轴上。 */}
-        {/* 应用标记：品牌色实底 + 反色图标，与 .tc-btn-brand 同一套配色。
-            不用 <img>：build/icon.png 不进 app.asar，打包态会静默裂图。 */}
+        {/* 应用标记：同人卦徽章。黑白双色，与任务栏/桌面图标
+            （build/icon.svg 生成）同一枚设计 —— 窗口左上角这枚小徽章是
+            用户对「这个应用长什么样」的第一印象，不能和任务栏图标是两张脸。
+            界面里随主题反转（--tc-logo-*：浅色黑底白爻、深色白底黑爻），
+            OS 图标那边翻不了，靠黑底 + 白描边兼容两种桌面。
+            不用 <img>：build/ 不进 app.asar，打包态会静默裂图。 */}
         <span
-          className="relative flex h-[18px] w-[18px] items-center justify-center rounded-[5px]"
-          style={{ backgroundColor: 'var(--td-brand-color)', color: 'var(--tc-on-brand)' }}
+          data-app-logo
+          className="relative flex h-[18px] w-[18px] items-center justify-center rounded-[4px]"
+          style={{ backgroundColor: 'var(--tc-logo-tile)', color: 'var(--tc-logo-mark)' }}
         >
-          <MessagesSquare size={11} strokeWidth={2.5} />
+          <AppLogo size={13.5} />
         </span>
       </span>
       {/* pl-4 让应用名与左栏标题（PanelHeader 的 px-4）落在同一条竖线上 */}

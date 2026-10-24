@@ -17,7 +17,7 @@
  *   那一层，天然早于所有模块初始化。
  */
 
-import { app, BrowserWindow, screen, shell, nativeTheme, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, screen, shell, nativeTheme, ipcMain, dialog, Tray, Menu, nativeImage } from 'electron';
 import { once } from 'node:events';
 import { join, isAbsolute } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -588,6 +588,8 @@ async function createWindow() {
     // 窗口左上角与任务栏都用它。图标由 scripts/build-electron.mjs 拷到
     // dist-electron/ —— 不能指向 build/icon.png，那个目录是构建资源、
     // 不进 app.asar，打包态会静默失效。
+    // 设计源是 build/icon.svg（同人卦徽章），位图由 scripts/make-icons.mjs
+    // 栅格化生成；托盘图标是同源的 tray-icon.ico（见 createTray）。
     icon: join(__dirname, 'icon.png'),
     show: false, // 等首帧渲染完再显示，避免白屏闪一下
     autoHideMenuBar: true,
@@ -674,6 +676,53 @@ async function createWindow() {
   await loadWithRetry(mainWindow, withGlassFlag(url));
 }
 
+/**
+ * 系统托盘（系统提示栏）里的应用图标。
+ *
+ * 为什么现在才加：这个应用此前没有任何托盘驻留。**刻意不做「关闭窗口
+ * 缩到托盘」** —— 那会改变退出语义（用户关了窗口却不知道进程还活着），
+ * 托盘只做两件事：单击显示/聚焦窗口，右键菜单（显示 / 退出）。
+ *
+ * 图标用 .ico 而不是 .png：Windows 托盘按 DPI 取 16/20/24/32 四档，
+ * ico 是多尺寸容器，系统自己挑最接近的那枚；塞单张 png 会被系统强行
+ * 缩放，16px 下同人卦六爻糊成一条灰带。生成管线见 scripts/make-icons.mjs。
+ *
+ * 与窗口图标、任务栏图标是**同一枚设计**（build/tray-icon.ico 与
+ * build/icon.ico 同源）—— 托盘是应用在系统层的第二张脸，不另起一套。
+ */
+let tray: Tray | null = null;
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    void createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTray() {
+  const iconPath = join(__dirname, 'tray-icon.ico');
+  const image = nativeImage.createFromPath(iconPath);
+  if (image.isEmpty()) {
+    // 图标缺失不该让应用起不来：托盘是附加件。开发态忘了跑 make-icons
+    // 时给出明确指引，而不是静默少一个图标。
+    console.warn(`[Main] 托盘图标缺失或无法解析：${iconPath}（跑 node scripts/make-icons.mjs 生成）`);
+    return;
+  }
+  tray = new Tray(image);
+  tray.setToolTip('OPC Agent');
+  console.log(`[Main] 托盘图标已创建：${iconPath}`);
+  tray.on('click', showMainWindow);
+  const menu = Menu.buildFromTemplate([
+    { label: '显示主窗口', click: showMainWindow },
+    { type: 'separator' },
+    { label: '退出', click: () => app.quit() },
+  ]);
+  tray.on('right-click', () => tray?.popUpContextMenu(menu));
+}
+
 // 单实例：第二次启动时聚焦已有窗口，而不是再开一个抢同一个数据目录
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -698,7 +747,9 @@ if (!app.requestSingleInstanceLock()) {
     // 匿名统计：未配置端点时内部直接 return，不会发出任何请求。
     // 放在 createWindow 之前，避免窗口加载完才上报导致启动时长统计偏差。
     initAnalytics();
-    return createWindow();
+    await createWindow();
+    // 窗口起来之后再挂托盘：托盘图标从 dist-electron/ 读，与窗口图标同源
+    createTray();
   }).catch(err => {
     console.error('[Main] 启动失败:', err);
     app.quit();

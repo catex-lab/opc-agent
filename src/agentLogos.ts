@@ -26,6 +26,7 @@ import qoderLogo from './assets/agent-logos/qoder.svg';
 import doubaoLogo from './assets/agent-logos/doubao.svg';
 import zcodeLogo from './assets/agent-logos/zcode.svg';
 import kimicodeLogo from './assets/agent-logos/kimicode.svg';
+import traeLogo from './assets/agent-logos/trae.svg';
 import piLogo from './assets/agent-logos/pi.png';
 import antigravityLogo from './assets/agent-logos/antigravity.png';
 
@@ -130,6 +131,22 @@ export const AGENT_LOGOS: Record<string, AgentLogo> = {
     fit: 'contain',
     hex: '#1783FF',
     source: 'https://asvg.app/icons/kimi-code',
+  },
+  trae: {
+    src: traeLogo,
+    // A104：补上 Trae 的官方符号（绿色「C 形机脸 + 双菱形眼」）。
+    // 之前 descriptor 里 `icon` 刻意留空、走首字母色块，是因为拿不到官方
+    // 素材；现在从 asvg.app 取到官方 SVG（与 favicon 同色 #32F08C，
+    // 已对照 trae.com.cn 的 favicon.png 核对过），不再需要那个兜底。
+    //
+    // 走 `light` 底衬而不是把 favicon 的深色底烤进去：项目里 11/13 个 logo
+    // 都是这条路径（浅色底衬 + contain），绿色符号在浅底上与 qoder 同档，
+    // 而一枚近黑圆点会是一片浅灰头像里最重的一块。官方深色版本见
+    // trae.com.cn 的 favicon，品牌识别由符号本身承担。
+    tile: 'light',
+    fit: 'contain',
+    hex: '#32F08C',
+    source: 'https://asvg.app/icons/trae',
   },
   pi: {
     src: piLogo,

@@ -778,7 +778,17 @@ function AppContent() {
 
       <div
         className="relative flex min-h-0 flex-1 overflow-hidden"
-        style={{ backgroundColor: 'var(--tc-surface-content)' }}
+        style={{
+          backgroundColor: 'var(--tc-surface-content)',
+          // A103（用户要求）：全局各栏微圆角。两件事必须一起做才看得见圆角 ——
+          //   ① 这一层加 6px 内缩：最左/最右的栏不再顶到窗口边，圆角处露出的
+          //      是这块画布（内容面白）而不是被窗口裁掉；
+          //   ② `gap` 让栏与栏之间留缝：紧贴的两块圆角只会拼出一个梭形缺口。
+          // 画布沿用内容面白，不引入第五种表面色 —— 消息区本来就是这块白，
+          // 栏目是浮在它上面的几张圆角卡片。
+          padding: 'var(--tc-column-gap)',
+          gap: 'var(--tc-column-gap)',
+        }}
       >
         {/* 最左：功能导航条 */}
         <NavRail
@@ -832,11 +842,13 @@ function AppContent() {
                 （见 SidebarResizer.tsx 的「手柄不占布局宽度」）。 */}
             {showColumn && !compact && <SidebarResizer />}
 
-            {/* 右侧：会话内容 */}
+            {/* 右侧：会话内容。
+                A103：这一层**不再自己铺底色** —— 底色交给里面的聊天列，
+                这样「聊天列 / 工作区」之间才能露出 6px 缝（露的是外层画布的白），
+                两块的圆角才都看得见。main 只是定位容器。 */}
             {showContent || !compact ? (
               <main
                 className="flex min-w-0 flex-1 flex-col"
-                style={{ backgroundColor: 'var(--tc-surface-content)' }}
               >
                 {detailAgent ? (
                   // 资料页自带的 onBack 清掉 detailAgent，单栏模式下这就等于
@@ -852,12 +864,24 @@ function AppContent() {
                     onOpenCredential={handleOpenCredential}
                   />
                 ) : currentSession ? (
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-row">
+                  /* A103：gap 让「聊天列 / 工作区」之间留缝；两块各自圆角，
+                     缝里露出的是外层画布（内容面白）。
+                     min-w-0 不可省 —— 长标题/长行文本会把 flex 子项顶宽，
+                     聊天列不会收缩，面板会被挤出视口。 */
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-row" style={{ gap: 'var(--tc-column-gap)' }}>
                     {/* 聊天列。单独套一层而不是让 header/ChatPage 直接当 main 的子节点：
-                        右侧工作区面板要作为**兄弟列**并排，横向容器必须在这一层。
-                        min-w-0 不可省 —— 长标题/长行文本会把 flex 子项顶宽，
-                        聊天列不会收缩，面板会被挤出视口。 */}
-                    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                        右侧工作区面板要作为**兄弟列**并排，横向容器必须在这一层。 */}
+                    <div
+                      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                      data-tc-column="chat"
+                      style={{
+                        // A103：聊天列自己扛内容面底色 + 圆角。它现在是浮在白色
+                        // 画布上的一张圆角卡片 —— 顶上的会话头部（chrome 灰）
+                        // 因此有了可见的圆角上沿，消息区保持纯白。
+                        backgroundColor: 'var(--tc-surface-content)',
+                        borderRadius: 'var(--tc-column-radius)',
+                      }}
+                    >
                       {/*
                         群聊用自己的头部（成员堆叠 + 编排模式），由 ChatPage 内部渲染；
                         一对一才用 ChatHeader。两套头部都基于同一个 PanelHeader，

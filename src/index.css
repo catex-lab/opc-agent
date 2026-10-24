@@ -170,6 +170,18 @@ select:focus-visible {
    * 浅色主题品牌色是深色 → 白字；深色主题品牌色**反转为浅灰** → 深字。
    * 各处写死 #fff 的话，深色主题下按钮会变成「浅灰底 + 白字」，几乎不可读。 */
   --tc-on-brand: #ffffff;
+
+  /* ── 应用 Logo（同人卦徽章）────────────────────────────────────────
+   *
+   * 纯黑白，**随主题反转**：浅色主题黑底白爻，深色主题白底黑爻。
+   * 反转是黑白方案的自然选择 —— 纯黑底贴在深色 rail(#1C1D1F) 上只剩
+   * 一圈轮廓，而 OS 图标那边没法翻（图标文件只有一套），于是用「黑底 +
+   * 白爻 + 一圈白描边」同时吃下两种桌面。界面里能翻，就翻过来保持对比度。
+   *
+   * 几何与生成管线：src/components/AppLogo.tsx + scripts/make-icons.mjs，
+   * 三处的契约由 scripts/verify-logo.mjs 断言。 */
+  --tc-logo-tile: #000000;
+  --tc-logo-mark: #ffffff;
   
   /* 背景色 - 浅色模式 */
   --td-bg-color-page: #ffffff;
@@ -328,6 +340,21 @@ select:focus-visible {
         verify:window-glass 里写死了 245）与 verify:responsive / qq-ui 的
         「标题栏与谁同色」。 */
   --tc-titlebar-surface: var(--tc-surface-rail);
+  /* ── A103：栏目间距与圆角 ─────────────────────────────────────────────
+   *
+   * 用户要求「全局各栏使用微圆角设计」。圆角要看得见，栏与栏之间就必须有
+   * 一道缝 —— 两块紧贴的圆角只会拼出一个梭形缺口，比直角更怪。所以这里
+   * 同时定义缝宽与圆角半径，两处一起改，不要只改一个。
+   *
+   * 6px 的取值：再窄（≤4px）圆角只剩一道浅槽，竖向滚动时几乎读不出形状；
+   * 再宽（≥10px）消息区会被明显啃小，而项目里所有内容本来就是贴边铺满的。
+   * 8px 取 `--td-radius-medium`，与项目里卡片/弹层的默认圆角同一档，
+   * 不引入新的魔数（`--tc-range-bubble` 等处已是这个值）。
+   *
+   * ⚠️ 改 `--tc-column-gap` 必须同步 `SidebarResizer` 的负边距 ——
+   *    它靠 `-gap - 1px` 把高亮线钉回列表栏的右边线上（见该组件注释）。 */
+  --tc-column-gap: 6px;
+  --tc-column-radius: var(--td-radius-medium);
   /* 三个窗口按钮的宽度：46px 是 Windows 自带的规格（46×标题条高度）。
      换宽度会让按钮的落点与用户肌肉记忆错位，非必要不要改。 */
   --tc-caption-width: 46px;
@@ -520,6 +547,10 @@ select:focus-visible {
   --td-brand-color-8: #c6c6c6;
   /* 深色主题品牌色是浅灰 → 品牌底上的文字用深色 */
   --tc-on-brand: #171717;
+  /* 应用 Logo 反转：白底黑爻（理由见 :root 的 --tc-logo-* 注释）。
+   * 纯黑底在 #1C1D1F 的 rail 上只剩轮廓，深色下必须翻过来。 */
+  --tc-logo-tile: #ffffff;
+  --tc-logo-mark: #000000;
   
   /* 背景色 - 深色模式 */
   --td-bg-color-page: #121212;
@@ -1959,44 +1990,16 @@ html[data-opc-glass='1'].dark .tc-btn-brand:active:not(:disabled) {
   background-image: linear-gradient(rgb(255 255 255 / 0.18), rgb(255 255 255 / 0.18));
 }
 
-/* ── A26：分栏处的渐隐细线 ────────────────────────────────────────────
+/* ── A26 → A103：分栏渐隐细线已移除 ─────────────────────────────────
  *
- * 替代原来的 `borderRight: 1px solid var(--td-component-stroke)`。
+ * 原来这里是 `.tc-split-hairline`：会话列表 / 通讯录右缘一条 1px 两端渐隐的
+ * alpha 线，用来在两栏**紧贴**时交代边界（A26，替代更早的控件描边误用）。
  *
- * 两个改进叠在一起：
- *
- *   1. **换成 alpha 线**（`--tc-split`）。原来的固定灰阶在深色下是
- *      #404040，不透明时是「提亮线」，透明后透出亮壁纸就反转成
- *      「压暗的黑线」—— 用户报的就是这一条。alpha 白/黑只贡献相对
- *      底下的恒定对比，永远不反转。
- *
- *   2. **两端渐隐**。一条贯穿整个高度的实线读起来是「把页面切一刀」；
- *      两端淡出、只有中段存在，读起来是「两个区域之间的一点过渡」。
- *      macOS 侧栏的分界就是这么画的，而不是一条通到底的线。
- *
- * 强度随透明度增长（`--tc-split-alpha`）：t=0 时接近原值，拉到 100%
- * 表面色差消失，这条线就成为唯一的边界。 */
-.tc-split-hairline {
-  position: relative;
-}
-
-.tc-split-hairline::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 1px;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    transparent 0,
-    var(--tc-split) 14%,
-    var(--tc-split) 86%,
-    transparent 100%
-  );
-}
-
+ * A103 给各栏加了 6px 的缝与圆角之后，边界改由几何（缝 + 圆角）承担 ——
+ * 线不仅多余，还会在圆角卡片右侧留一道竖痕。故整条规则删除。
+ * `--tc-split` / `--tc-split-alpha` 令牌暂时保留：它们记录的是「随透明度
+ * 增长的分栏强度」这套算法，日后再需要画分隔线时直接取用，不必重新推。
+ */
 /* ── A26：彩色图标块（快速创建模板 / 自定义 Agent 的图标）──────────────
  *
  * 40×40 的饱和色块是 100% 透明度下视觉重量最集中的东西 —— 面积不大，
@@ -3265,12 +3268,14 @@ html[data-opc-glass='1'] t-chat-sender {
   background-color: var(--td-component-stroke);
 }
 
-/* 首行从圆点下沿起、末行到圆点上沿止；只有一个步骤时整条线不画 */
+/* 首行从圆点下沿起、末行到圆点上沿止；只有一个步骤时整条线不画。
+   A102：12px → 10px。行高从 25px 降到 22px（动词不再继承 16px），
+   圆点圆心位置跟着上移，连接线的起止点必须同步，否则线会伸进圆心里。 */
 .tc-step:first-child::before {
-  top: 12px;
+  top: 10px;
 }
 .tc-step:last-child::before {
-  bottom: calc(100% - 12px);
+  bottom: calc(100% - 10px);
 }
 .tc-step:only-child::before {
   display: none;
@@ -3279,7 +3284,9 @@ html[data-opc-glass='1'] t-chat-sender {
 .tc-step-dot {
   position: absolute;
   left: 1px;
-  top: 9px;
+  /* A102：9px → 7px。行高从 25px 降到 22px，圆心要从 12.5px 移到 10.5px
+     才能继续落在行头正中（7 + 7/2 = 10.5）。 */
+  top: 7px;
   width: 7px;
   height: 7px;
   border-radius: 999px;
@@ -3453,17 +3460,31 @@ html[data-opc-glass='1'] t-chat-sender {
   gap: 2px;
   min-width: 0;
   margin: 8px 0;
+  /* A102：整条轨迹的字号基准，**必须显式钉住**。
+     以前这里不设字号，`.tc-trace-verb` 一路继承到 body 的 16px，
+     于是一行里动词 16px、目标 12px、diff 11px、耗时 11px ——
+     四种字号挤在 25px 高的一行里，各自行高也不同（实测 21/14/11/15px），
+     基线互相错开。这就是「排版看着很乱」的直接来源。
+     现在钉在角标档，行内只允许两级：
+       主信息（摘要 / 动词 / 目标）→ --text-secondary 12px
+       辅信息（计数 / diff / 耗时 / 来源）→ 继承这里的 11px
+     行高一起钉死：不钉的话 `.tc-diff` 的 line-height:1 会让它比邻居
+     矮一截，`align-items:center` 又把这点差值变成基线错位。 */
+  font-size: var(--text-caption);
+  line-height: var(--leading-normal);
 }
 
 /* 摘要文字：一行放不下就省略，绝不让它把行高撑成两行 ——
-   收起状态下它就是整条轨迹的唯一出口，撑成两行会显得比正文还重。 */
+   收起状态下它就是整条轨迹的唯一出口，撑成两行会显得比正文还重。
+   A102：与步骤行的「动词 + 目标」同档（--text-secondary）—— 摘要本来就是
+   这条轨迹的主信息，以前它 11px 而步骤动词 16px，层级是反的。 */
 .tc-trace-summary {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-caption);
+  font-size: var(--text-secondary);
   color: var(--td-text-color-placeholder);
 }
 
@@ -3478,9 +3499,12 @@ html[data-opc-glass='1'] t-chat-sender {
 /* 行头里的「动作词 + 目标」：动词固定，目标可截断。
    目标用等宽字体 —— 文件名/路径里的 l/1/I、0/O 在比例字体下分不清。
    A85：动词和图标退到 placeholder，目标退到 secondary，
-   都不跟正文 primary 抢视线。 */
+   都不跟正文 primary 抢视线。
+   A102：动词补上字号。缺了这条它继承 body 的 16px，比旁边的目标（12px）
+   大一档，一行里最该被弱化的词反而最重。现在两者同档，靠颜色分主次。 */
 .tc-trace-verb {
   flex-shrink: 0;
+  font-size: var(--text-secondary);
   color: var(--td-text-color-placeholder);
 }
 
@@ -3496,9 +3520,21 @@ html[data-opc-glass='1'] t-chat-sender {
 
 /* 状态/耗时靠右：中间的 diff 长度不定，用 margin-left:auto 比给目标加
    flex-1 更稳 —— 后者会让「编辑 a.ts +109 -16」和「编辑 a.ts」两种行
-   的耗时列不对齐。 */
+   的耗时列不对齐。
+   A102：**只有耗时能带这个 auto**。来源标签以前也挂在 `.tc-trace-meta`
+   上，于是一行里出现两个自动边距，剩余空间被对半分：实测同一轮里
+   `600ms` 停在 x=915，而别行的 `200ms` 贴在 x=1284 —— 耗时列整列错乱。
+   现在来源标签走 `.tc-trace-src`（无 auto），右缘每行一致。 */
 .tc-trace-meta {
   margin-left: auto;
+}
+
+/* A102：事件来源标签（A100）。字号跟随 `.tc-trace` 的 11px 基准，
+   不再单独指定；颜色保留警告色 —— 它是整条轨迹里唯一「可信度低一档」
+   的提示，值得被看见，但不该靠字号抢注意力。 */
+.tc-trace-src {
+  flex-shrink: 0;
+  color: var(--td-warning-color);
 }
 
 /* diff 统计。增绿删红是代码 diff 的通用约定（与股票涨跌的红绿相反，
@@ -3513,7 +3549,11 @@ html[data-opc-glass='1'] t-chat-sender {
   font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  line-height: 1;
+  /* A102：原来是 line-height:1。它让 diff 的盒子只有 11px 高，而同一行的
+     动词/目标是 18px —— `align-items:center` 之下这点高度差就变成了
+     基线错位，`+109 -16` 看上去比旁边的字飘高一点。改成继承，
+     一行之内所有盒子同高，基线自然对齐。 */
+  line-height: inherit;
   opacity: 0.65;
   transition: opacity var(--duration-fast) var(--ease-standard);
 }
@@ -3631,7 +3671,13 @@ html[data-opc-glass='1'] t-chat-sender {
   gap: 6px;
   max-width: 100%;
   padding: 2px 0;
-  font-size: 12px;
+  /* A102：12px → 11px。验证条和上面的轨迹汇总行是同一种角色（消息底部的
+     一行状态），却一个 12px 一个 11px，并排出现时像两个系统的东西。
+     现在基准统一到 11px，标题单独提一档到 12px（见 .tc-verify-title）。
+     行高一起钉：button 元素默认行高是 normal，不钉的话这一行会比
+     上面的轨迹汇总行矮一截，两条状态行的高度对不上。 */
+  font-size: var(--text-caption);
+  line-height: var(--leading-normal);
   color: var(--td-text-color-placeholder);
   background: none;
   border: none;
@@ -3643,6 +3689,9 @@ html[data-opc-glass='1'] t-chat-sender {
 }
 .tc-verify-title {
   flex-shrink: 0;
+  /* A102：显式 12px。父级降到 11px 后不补这条，标题会跟着掉一档，
+     「已验证 / 未验证」这个状态词反而比后面的说明文字还小。 */
+  font-size: var(--text-secondary);
   font-weight: 500;
 }
 .tc-verify-meta {
@@ -3703,7 +3752,9 @@ html[data-opc-glass='1'] t-chat-sender {
   flex-shrink: 0;
   padding: 0 4px;
   border-radius: 3px;
-  font-size: 10px;
+  /* A102：10px → 11px。项目的字号档位是 11/12/13/14/15/16/17，
+     10px 是唯一一个档外值，和旁边的 11px 命令代码挤在一起时明显小一截。 */
+  font-size: var(--text-caption);
   color: var(--td-text-color-placeholder);
   background: color-mix(in srgb, var(--td-text-color-primary) 6%, transparent);
 }
@@ -3845,10 +3896,10 @@ html[data-opc-glass='1'] t-chat-sender {
   padding-left: 2px;
 }
 
-/* 嵌套里的「深度思考」再小一档：它比步骤更次要 */
-.tc-trace-nested .tc-thinking > summary {
-  font-size: 11px;
-}
+/* A102：原来这里还有一条 `.tc-trace-nested .tc-thinking > summary { font-size: 11px }`，
+   本意是让嵌套的「深度思考」比步骤再小一档。但基础规则已经是
+   `--text-caption`（11px），再写一遍是条死规则 —— 嵌套层级的区分靠
+   缩进和连接线就够了，字号已经在整条轨迹的地板上，没有更小一档可退。 */
 
 .tc-trace-faint {
   color: var(--td-text-color-placeholder);

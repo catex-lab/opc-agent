@@ -13,10 +13,28 @@
 // ============= 事件协议 =============
 
 import type { RiskLevel } from './permission-gate.js';
+import type { EventSource } from '../../shared/blocks.js';
 
 /** 统一事件流。与模板 SSE 契约一一对应。 */
 export type AgentEvent =
-  | { type: 'init'; sessionId: string; model?: string; resumeToken?: string | null }
+  | {
+      type: 'init';
+      sessionId: string;
+      model?: string;
+      resumeToken?: string | null;
+      /**
+       * 这条 run 实际走的通道（A100）。
+       *
+       * 为什么必须在**运行时**带、不能只靠静态推导：qoder 系列是
+       * 「SDK 优先、握手失败回退 CLI」的两条通道，而回退后的 CLI 是
+       * `parse: 'text'` —— 纯文本解析。静态推导只能给出「优先走 SDK」
+       * 这个乐观答案，一旦回退，标签就成了一句假话。
+       *
+       * 适配器在自己 emit init 时最清楚走了哪条，所以由它自己说。
+       * 缺省 = 适配器没报，投影器退回静态值，UI 不额外标注。
+       */
+      source?: EventSource;
+    }
   | { type: 'text'; content: string }
   /** 思考过程（Hermes ACP 的 agent_thought_chunk）。与正文分开，前端折叠展示 */
   | { type: 'thinking'; content: string }

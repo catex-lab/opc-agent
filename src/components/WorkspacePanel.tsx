@@ -319,15 +319,20 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
     <aside
       // relative：宽度手柄要绝对定位在左边缘上（见 WorkspaceResizer）
       className="relative flex min-h-0 shrink-0 flex-col"
+      // A105：给栏目一个稳定锚点（verify-surface 断言圆角用）。
+      // 这两块都是匿名 div，靠结构选择器定位会在任何一次布局调整后失效。
+      data-tc-column="workspace"
       style={{
         // 宽度走 CSS 变量：拖动时每帧改变量不触发 React 重渲染（文件树、
         // WebContentsView 宿主都在这棵树里）。没拖过时退回 300px 设计值。
         width: 'var(--tc-workspace-width, 300px)',
-        borderLeft: '1px solid var(--tc-split)',
+        // A103：微圆角。左缘原先是一条 1px `--tc-split` 边线 —— 现在它与
+        // 聊天列之间有 6px 缝，边线连同圆角一起换成几何分隔，故移除。
         // A95：工作区用专用面（比对话区差一档）。此前这里写的是
         // --tc-surface-content，和中间对话区完全同色，两侧只靠 1px 线分开 ——
         // 「在读」和「在写」两块分不清，扫一眼找不到光标在哪半边。
         backgroundColor: 'var(--tc-surface-aside)',
+        borderRadius: 'var(--tc-column-radius)',
       }}
       aria-label="工作区文件"
     >

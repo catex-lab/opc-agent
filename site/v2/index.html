@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OPC Agent — 单聊、拉群、派活儿</title>
+<meta name="description" content="OPC Agent 是一款本机多 Agent 团队协作的桌面应用：把 WorkBuddy、Codex、Gemini、Claude Code 等装进通讯录，一对一单聊，或拉群分派任务 —— 像用 IM 一样指挥你的 Agent 团队。">
+<meta name="theme-color" content="#161616">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="OPC Agent">
+<meta property="og:title" content="OPC Agent — 单聊、拉群、派活儿">
+<meta property="og:description" content="把本机 Agent 当作通讯录里的联系人，可单聊也可拉群分派任务。无需注册账号，数据本地保存。">
+<meta property="og:image" content="https://github.com/catex-lab/opc-agent/assets/screenshot-chat-dark.png">
+<meta property="og:url" content="https://github.com/catex-lab/opc-agent/">
+<link rel="icon" href="../assets/icon.png">
+<link rel="stylesheet" href="assets/style.css">
+<script>
+/* 与旧版同款的兜底：JS 没跑起来时摘掉入场动画标记，内容照常显示 */
+(function(){var d=document.documentElement;d.classList.add('js');
+setTimeout(function(){if(!window.__opcV2Ready)d.classList.remove('js')},2500)})();
+</script>
+</head>
+<body>
+
+<!-- ═══════════ 公告条 ═══════════ -->
+<div class="announce">
+  <a href="#download"><span data-i18n="announce">🎉 OPC Agent 开放下载 — 把本机的 AI Agent 变成一支团队</span><span class="announce-arrow" aria-hidden="true">→</span></a>
+</div>
+
+<!-- ═══════════ 导航 ═══════════ -->
+<header class="nav" id="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top">
+      <img src="../assets/icon.png" width="26" height="26" alt="" decoding="async">
+      <span>OPC Agent</span>
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="#features" data-i18n="nav.features">特性</a>
+      <a href="#screens" data-i18n="nav.screens">界面</a>
+      <a href="#modes" data-i18n="nav.modes">编排模式</a>
+      <a href="#start" data-i18n="nav.start">快速开始</a>
+      <a href="#changelog" data-i18n="nav.changelog">更新日志</a>
+      <a href="#faq" data-i18n="nav.faq">FAQ</a>
+    </nav>
+    <div class="nav-actions">
+      <div class="lang" role="group" aria-label="Language / 语言">
+        <button type="button" data-lang="zh" aria-pressed="true">中文</button>
+        <button type="button" data-lang="en" aria-pressed="false">EN</button>
+      </div>
+      <a class="nav-github" data-github href="https://github.com/catex-lab/opc-agent" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        <span>GitHub</span>
+      </a>
+      <a class="btn btn-primary btn-sm" href="#download" data-i18n="nav.download">免费下载</a>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ═══════════ Hero ═══════════ -->
+<section class="hero">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="container hero-inner">
+    <h1 class="hero-title" data-i18n="hero.title">单聊、拉群、派活儿。</h1>
+    <p class="hero-sub" data-i18n="hero.sub">OPC Agent 把本机装过的 AI Agent 变成通讯录里的联系人：WorkBuddy、Codex、Gemini、Claude Code —— 装了什么就有什么，一对一深聊，或者拉个群把任务分下去。</p>
+    <div class="hero-cta">
+      <a class="btn btn-primary btn-lg" data-download href="#download" data-i18n="hero.cta">下载 Windows 版</a>
+      <a class="btn btn-ghost btn-lg" data-github href="https://github.com/catex-lab/opc-agent" target="_blank" rel="noopener" data-i18n="hero.cta2">在 GitHub 查看</a>
+    </div>
+    <p class="hero-note" data-i18n="hero.note">适用于 Windows 10 / 11（x64）· 免费 · 无需注册账号</p>
+
+    <div class="agent-chips" aria-label="已支持的 Agent">
+      <span class="chip"><i class="dot" style="--c:#2fbf71"></i>WorkBuddy</span>
+      <span class="chip"><i class="dot" style="--c:#e07b53"></i>Claude Code</span>
+      <span class="chip"><i class="dot" style="--c:#7c5cff"></i>Codex</span>
+      <span class="chip"><i class="dot" style="--c:#4285f4"></i>Gemini CLI</span>
+      <span class="chip"><i class="dot" style="--c:#f1b941"></i>OpenCode</span>
+      <span class="chip"><i class="dot" style="--c:#8a8f98"></i>Cursor Agent</span>
+      <span class="chip"><i class="dot" style="--c:#49a1e8"></i>ZCode</span>
+      <span class="chip"><i class="dot" style="--c:#16b8a5"></i>KimiCode</span>
+      <span class="chip"><i class="dot" style="--c:#e05f9c"></i>Hermes</span>
+      <span class="chip chip-more" data-i18n="chips.more">…持续接入中</span>
+    </div>
+
+    <!-- ═══════════ 产品演示窗口（自动播放） ═══════════ -->
+    <div class="demo reveal" role="img" data-i18n-attr="aria-label:demo.aria"
+      aria-label="OPC Agent 界面演示：多个 Agent 在群里协作完成任务">
+      <div class="demo-titlebar">
+        <span class="demo-appicon" aria-hidden="true"><img src="../assets/icon.png" width="16" height="16" alt=""></span>
+        <span class="demo-title">OPC Agent</span>
+        <span class="demo-wc" aria-hidden="true"><i></i><i></i><i></i></span>
+      </div>
+      <div class="demo-body">
+
+        <div class="demo-rail" aria-hidden="true">
+          <span class="rail-item active"><svg viewBox="0 0 24 24"><path d="M4 6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H9l-4 4v-4.5A3 3 0 0 1 4 14V6Z"/></svg></span>
+          <span class="rail-item"><svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19c.8-3.4 3-5 5.5-5s4.7 1.6 5.5 5M16 5.6a3.2 3.2 0 0 1 0 5.8M18.5 14.4c1.4.7 2.4 2 3 4.1"/></svg></span>
+          <span class="rail-item"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><path d="M13 17.2h7M16.5 13.7v7"/></svg></span>
+          <span class="rail-spacer"></span>
+          <span class="rail-item"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18"/></svg></span>
+        </div>
+
+        <div class="demo-list" aria-hidden="true">
+          <div class="list-head"><span class="list-search" data-i18n="demo.search">搜索会话</span><span class="list-add">＋</span></div>
+          <div class="list-item">
+            <span class="avatar" style="--c:#2fbf71">W</span>
+            <span class="li-main"><b>WorkBuddy</b><small data-i18n="demo.prev1">已汇总：子任务 4/4 完成</small></span>
+            <span class="li-meta">14:02</span>
+          </div>
+          <div class="list-item group active">
+            <span class="avatar avatar-group">群</span>
+            <span class="li-main"><b data-i18n="demo.groupName">五子棋分享筹备群</b><small data-i18n="demo.prev2">Codex：测试全部通过 ✓</small></span>
+            <span class="li-meta">13:58</span>
+          </div>
+          <div class="list-item">
+            <span class="avatar" style="--c:#e07b53">C</span>
+            <span class="li-main"><b>Claude Code</b><small data-i18n="demo.none">还没有消息</small></span>
+            <span class="li-meta" data-i18n="demo.yesterday">昨天</span>
+          </div>
+          <div class="list-item">
+            <span class="avatar" style="--c:#4285f4">G</span>
+            <span class="li-main"><b>Gemini CLI</b><small data-i18n="demo.prev3">大纲第三稿已写好</small></span>
+            <span class="li-meta">10月20日</span>
+          </div>
+          <div class="list-item">
+            <span class="avatar" style="--c:#8a8f98">C</span>
+            <span class="li-main"><b>Cursor Agent</b><small data-i18n="demo.none2">还没有消息</small></span>
+            <span class="li-meta"></span>
+          </div>
+        </div>
+
+        <div class="demo-chat">
+          <div class="chat-head">
+            <span class="chat-title" data-i18n="demo.groupName">五子棋分享筹备群</span>
+            <span class="chat-mode" id="chat-mode">分派</span>
+            <span class="chat-members" data-i18n="demo.members">5 人 · 4 在线</span>
+          </div>
+          <div class="chat-scroll" id="chat-scroll">
+            <div class="chat-day" data-i18n="demo.today">今天</div>
+            <div id="chat-stream"><!-- 消息由 app.js 逐条注入 --></div>
+          </div>
+          <div class="chat-input" aria-hidden="true">
+            <span class="input-clip"><svg viewBox="0 0 24 24"><path d="m21 12-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8L13 4.4a3.7 3.7 0 0 1 5.2 5.2L10 17.8a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></span>
+            <span class="input-ghost" id="input-ghost">输入消息…</span>
+            <span class="input-model mono" id="input-model">Auto ✦</span>
+            <span class="input-send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="demo-caption" data-i18n="demo.caption">▲ 演示：拉一个群，@ 谁、谁干活 —— 主控 Agent 自动分派、追踪与汇总</p>
+  </div>
+</section>
+
+<!-- ═══════════ 版本信息条 ═══════════ -->
+<section class="verstrip">
+  <div class="container verstrip-inner reveal">
+    <span class="mono" id="ver-version">v1.0.0</span>
+    <span class="versep" aria-hidden="true">·</span>
+    <span id="ver-size">安装版 ≈ 144 MB</span>
+    <span class="versep" aria-hidden="true">·</span>
+    <span id="ver-date">2026-10</span>
+    <span class="versep" aria-hidden="true">·</span>
+    <span class="ver-local">
+      <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      <span data-i18n="ver.local">数据全在本机</span>
+    </span>
+  </div>
+</section>
+
+<!-- ═══════════ 特性 ═══════════ -->
+<section class="section" id="features">
+  <div class="container">
+    <p class="kicker reveal">FEATURES</p>
+    <h2 class="section-title reveal" data-i18n="features.title">一个人，带一支不眠的团队</h2>
+    <p class="section-sub reveal" data-i18n="features.sub">不用记每个 CLI 的参数，也不用再开十几个终端窗口。Agent 不是配置项，是联系人。</p>
+
+    <div class="feature-grid">
+      <article class="feature reveal">
+        <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M8 5v15"/><circle cx="5.9" cy="7.2" r=".8"/><circle cx="5.9" cy="12.8" r="1.2"/><circle cx="10.6" cy="12.8" r="1.2" class="dim"/><circle cx="5.9" cy="16.6" r="1.2" class="dim"/><circle cx="10.6" cy="16.6" r="1.2" class="dim"/></svg></div>
+        <h3 data-i18n="f1.title">Agent 通讯录</h3>
+        <p data-i18n="f1.desc">自动发现本机已安装的 Agent，头像、在线状态、未读红点一应俱全。装了什么就有什么，不需要手动登记。</p>
+      </article>
+      <article class="feature reveal">
+        <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8.5 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5ZM15.5 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5ZM3.5 18c.7-3 2.5-4.5 5-4.5s4.3 1.5 5 4.5M13 14.2c.8-.5 1.6-.7 2.5-.7 2.5 0 4.3 1.5 5 4.5"/></svg></div>
+        <h3 data-i18n="f2.title">多 Agent 群聊</h3>
+        <p data-i18n="f2.desc">把多个 Agent 拉进同一个群：同屏对话、横向对比、互相接力。五种编排模式决定谁先说、谁接手。</p>
+      </article>
+      <article class="feature reveal">
+        <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7 9 3 3-3 3M12.5 15H17"/></svg></div>
+        <h3 data-i18n="f3.title">工作区面板</h3>
+        <p data-i18n="f3.desc">内置真 PTY 终端、浏览器与文件树：Agent 改了哪个文件、跑了哪条命令，当场可见，不用切窗口。</p>
+      </article>
+      <article class="feature reveal">
+        <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5 5 6v5.2c0 4.4 3 8.1 7 9.3 4-1.2 7-4.9 7-9.3V6l-7-2.5Z"/><path d="m9.2 11.8 2 2 3.6-4"/></svg></div>
+        <h3 data-i18n="f4.title">权限门禁</h3>
+        <p data-i18n="f4.desc">危险命令默认拦截，文件写入与命令执行可设为逐次确认。四档权限模式逐档落地，从不虚标。</p>
+      </article>
+      <article class="feature reveal">
+        <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m5.5 17.5 4.2-4.2 3 3 2.6-2.6 3.2 3.2"/></svg></div>
+        <h3 data-i18n="f5.title">会画图的联系人</h3>
+        <p data-i18n="f5.desc">生图 Provider 同样挂在通讯录里。生成的图片自动落盘缓存，历史消息里的图永远不会裂开。</p>
+      </article>
+      <article class="feature reveal">
+        <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="M2.5 9h19M6.5 6.8h.01M9.2 6.8h.01"/></svg></div>
+        <h3 data-i18n="f6.title">本地优先</h3>
+        <p data-i18n="f6.desc">会话、图片、配置全部存在本机 SQLite。没有云端账号，删掉数据目录就是彻底删掉。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 界面（真实截图） ═══════════ -->
+<section class="section section-alt" id="screens">
+  <div class="container">
+    <p class="kicker reveal">SCREENS</p>
+    <h2 class="section-title reveal" data-i18n="screens.title">左边是谁，右边是它正在干什么</h2>
+    <p class="section-sub reveal" data-i18n="screens.sub">消息列表、对话区、工作区面板 —— 和你熟悉的 IM 一个布局，不需要重新学习。</p>
+
+    <figure class="shot reveal">
+      <picture>
+        <source type="image/webp" sizes="(max-width: 1080px) 100vw, 1064px"
+          srcset="../assets/screenshot-chat-dark-768.webp 768w, ../assets/screenshot-chat-dark-1440.webp 1440w, ../assets/screenshot-chat-dark-2160.webp 2160w">
+        <img src="../assets/screenshot-chat-dark.png" width="2880" height="1800" loading="lazy" decoding="async"
+          data-i18n-attr="alt:screens.shotAlt"
+          alt="OPC Agent 主界面：左侧是 Agent 会话列表，右侧是带工具调用过程的对话区">
+      </picture>
+      <figcaption data-i18n="screens.capChat">对话 — Agent 的读取、执行、搜索过程折叠成一行，点开就是全部细节</figcaption>
+    </figure>
+
+    <div class="shots-2col">
+      <figure class="shot shot-narrow reveal">
+        <picture>
+          <source type="image/webp" sizes="(max-width: 820px) 100vw, 350px"
+            srcset="../assets/screenshot-contacts-dark-700.webp 700w, ../assets/screenshot-contacts-dark-1050.webp 1050w">
+          <img src="../assets/screenshot-contacts-dark.png" width="712" height="890" loading="lazy" decoding="async"
+            data-i18n-attr="alt:screens.shotAltContacts"
+            alt="Agent 通讯录：自动列出本机已安装的 Agent，带头像与在线状态">
+        </picture>
+        <figcaption data-i18n="screens.capContacts">通讯录 — 本机装了什么就出现什么，未登录的如实标注</figcaption>
+      </figure>
+      <figure class="shot shot-wide reveal">
+        <picture>
+          <source type="image/webp" sizes="(max-width: 820px) 100vw, 700px"
+            srcset="../assets/screenshot-workspace-dark-768.webp 768w, ../assets/screenshot-workspace-dark-1440.webp 1440w, ../assets/screenshot-workspace-dark-2160.webp 2160w">
+        <img src="../assets/screenshot-workspace-dark.png" width="2880" height="1800" loading="lazy" decoding="async"
+          data-i18n-attr="alt:screens.shotAlt"
+          alt="工作区面板：右侧显示当前项目的文件树，同时进行多 Agent 对话">
+        </picture>
+        <figcaption data-i18n="screens.capWorkspace">工作区 — 左边聊着，右边文件树实时更新</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 编排模式 ═══════════ -->
+<section class="section" id="modes">
+  <div class="container">
+    <p class="kicker reveal">ORCHESTRATION</p>
+    <h2 class="section-title reveal" data-i18n="modes.title">五种编排，五种用法</h2>
+    <p class="section-sub reveal" data-i18n="modes.sub">群聊不只是「大家轮流说」。同一句话，用不同的编排发出去，得到的是完全不同的协作形态。</p>
+
+    <div class="mode-list">
+      <div class="mode reveal">
+        <span class="mode-tag mono">dispatch</span>
+        <div class="mode-body">
+          <h3><span data-i18n="m1.title">分派</span> <span class="mode-default" data-i18n="modes.default">默认</span></h3>
+          <p data-i18n="m1.desc">主控 Agent 读任务、判断该谁做、派发并汇总结果。你说一句话，剩下的它来安排。</p>
+        </div>
+        <div class="mode-flow" aria-hidden="true"><i data-i18n="flow.me">我</i><b>→</b><i class="c1" data-i18n="flow.lead">主控</i><b>→</b><i class="c2">Codex</i><i class="c3">Gemini</i><b>→</b><i data-i18n="flow.summary">汇总</i></div>
+      </div>
+      <div class="mode reveal">
+        <span class="mode-tag mono">broadcast</span>
+        <div class="mode-body">
+          <h3 data-i18n="m2.title">广播</h3>
+          <p data-i18n="m2.desc">群内所有 Agent 各自独立作答，同屏横向对比。选模型、比风格，一眼定稿。</p>
+        </div>
+        <div class="mode-flow" aria-hidden="true"><i data-i18n="flow.me">我</i><b>→</b><i class="c2">A</i><i class="c3">B</i><i class="c4">C</i></div>
+      </div>
+      <div class="mode reveal">
+        <span class="mode-tag mono">relay</span>
+        <div class="mode-body">
+          <h3 data-i18n="m3.title">接力</h3>
+          <p data-i18n="m3.desc">串行流水线，前者的输出是后者的输入：Codex 写码 → Gemini 审查 → Claude 写文档。</p>
+        </div>
+        <div class="mode-flow" aria-hidden="true"><i data-i18n="flow.me">我</i><b>→</b><i class="c2" data-i18n="flow.code">写码</i><b>→</b><i class="c3" data-i18n="flow.review">审查</i><b>→</b><i class="c4" data-i18n="flow.docs">文档</i></div>
+      </div>
+      <div class="mode reveal">
+        <span class="mode-tag mono">debate</span>
+        <div class="mode-body">
+          <h3 data-i18n="m4.title">辩论</h3>
+          <p data-i18n="m4.desc">指定正反方，多轮交替交锋，最后收敛成结论。技术选型吵不出结果？让它们吵给你看。</p>
+        </div>
+        <div class="mode-flow" aria-hidden="true"><i class="c2" data-i18n="flow.pro">正方</i><b>⇄</b><i class="c3" data-i18n="flow.con">反方</i><b>→</b><i data-i18n="flow.verdict">结论</i></div>
+      </div>
+      <div class="mode reveal">
+        <span class="mode-tag mono">mention</span>
+        <div class="mode-body">
+          <h3><span data-i18n="m5.title">指定</span> <span class="mode-default">@</span></h3>
+          <p data-i18n="m5.desc">@ 谁、谁唤醒。只想麻烦某一位的时候，别惊动整个群。</p>
+        </div>
+        <div class="mode-flow" aria-hidden="true"><i data-i18n="flow.me">我</i><b>→</b><i class="mono">@codex</i><b>→</b><i class="c2">Codex</i></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 快速开始 ═══════════ -->
+<section class="section section-alt" id="start">
+  <div class="container">
+    <p class="kicker reveal">QUICK START</p>
+    <h2 class="section-title reveal" data-i18n="start.title">三步跑起来</h2>
+
+    <div class="callout reveal">
+      <b data-i18n="start.calloutTitle">使用前提</b>
+      <p data-i18n-html="start.calloutBody">OPC Agent 不内置模型，它负责把你本机已有的 Agent 组织起来。请先在终端登录至少一个 Agent CLI（推荐 <code>codebuddy login</code>）。没有凭据时应用能装能开，但发消息会提示未授权 —— 这是设计如此，不是安装失败。</p>
+    </div>
+
+    <ol class="steps">
+      <li class="step reveal">
+        <span class="step-num mono">01</span>
+        <h3 data-i18n="s1.title">下载并安装</h3>
+        <p data-i18n="s1.desc">安装包未做代码签名，首次运行会弹 SmartScreen 提示，处理方式见 FAQ。</p>
+      </li>
+      <li class="step reveal">
+        <span class="step-num mono">02</span>
+        <h3 data-i18n="s2.title">登录你的 Agent</h3>
+        <p data-i18n="s2.desc">在终端里登录一次，OPC Agent 会自动复用这份凭据。</p>
+        <code class="mono">codebuddy login</code>
+      </li>
+      <li class="step reveal">
+        <span class="step-num mono">03</span>
+        <h3 data-i18n="s3.title">启动，拉群，派活</h3>
+        <p data-i18n="s3.desc">左侧通讯录自动列出可用的 Agent。单聊，或者拉个群选一种编排模式，把任务发出去。</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ═══════════ 下载 ═══════════ -->
+<section class="section" id="download">
+  <div class="container">
+    <p class="kicker reveal">DOWNLOAD</p>
+    <h2 class="section-title reveal" data-i18n="dl.title">下载 OPC Agent</h2>
+    <p class="section-sub reveal"><span data-i18n="dl.current">当前版本</span> <b class="mono" id="dl-version">v1.0.0</b> · <span data-i18n="dl.free">免费</span> · Windows x64</p>
+
+    <div class="dl-grid">
+      <a class="dl-card reveal" data-download data-variant="setup" href="#download">
+        <div class="dl-head">
+          <h3><span data-i18n="dl.setup">安装版</span> <span class="dl-rec" data-i18n="dl.rec">推荐</span></h3>
+          <span class="dl-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5v11M7.5 10 12 14.5 16.5 10M4.5 19.5h15"/></svg></span>
+        </div>
+        <p class="dl-file mono" data-dl-name>OPC Agent-1.0.0-x64-setup.exe</p>
+        <p class="dl-desc" data-i18n="dl.setupDesc">NSIS 安装向导，可选安装目录，自动创建快捷方式；支持后续自动更新，卸载时保留聊天记录。</p>
+      </a>
+      <a class="dl-card reveal" data-download data-variant="portable" href="#download">
+        <div class="dl-head">
+          <h3 data-i18n="dl.portable">便携版</h3>
+          <span class="dl-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="11" rx="2"/><path d="M9.5 7V5.5A1.5 1.5 0 0 1 11 4h2a1.5 1.5 0 0 1 1.5 1.5V7"/></svg></span>
+        </div>
+        <p class="dl-file mono" data-dl-name>OPC Agent-1.0.0-x64-portable.exe</p>
+        <p class="dl-desc" data-i18n="dl.portableDesc">单文件免安装，U 盘可用。不支持自动更新，升级需手动下载替换。</p>
+      </a>
+    </div>
+
+    <p class="dl-foot reveal" data-i18n-html="dl.foot">历史版本与校验文件见 <a data-releases href="https://github.com/catex-lab/opc-agent/releases" target="_blank" rel="noopener">GitHub Releases</a>。下载链接经由本站中转（<span class="mono">/d/*</span>）做匿名计数，不留个人身份信息。</p>
+  </div>
+</section>
+
+<!-- ═══════════ 更新日志 ═══════════ -->
+<section class="section section-alt" id="changelog">
+  <div class="container container-narrow">
+    <p class="kicker reveal">CHANGELOG</p>
+    <h2 class="section-title reveal" data-i18n="changelog.title">最近发布的版本</h2>
+    <div class="changelog reveal" id="changelog-list" aria-live="polite">
+      <div class="skeleton"></div>
+      <div class="skeleton"></div>
+      <div class="skeleton"></div>
+    </div>
+    <p class="changelog-more reveal"><a data-releases href="https://github.com/catex-lab/opc-agent/releases" target="_blank" rel="noopener" data-i18n="changelog.more">查看全部版本 →</a></p>
+  </div>
+</section>
+
+<!-- ═══════════ FAQ ═══════════ -->
+<section class="section" id="faq">
+  <div class="container container-narrow">
+    <p class="kicker reveal">FAQ</p>
+    <h2 class="section-title reveal" data-i18n="faq.title">你可能想先知道这些</h2>
+
+    <div class="faq-list">
+      <details class="faq reveal">
+        <summary><span data-i18n="q1.q">Windows 提示「已保护你的电脑」，怎么办？</span><span class="faq-plus" aria-hidden="true"></span></summary>
+        <div class="faq-body" data-i18n-html="q1.a"><p>这是 SmartScreen 对未签名程序的默认提示 —— 个人代码签名证书一年数千元，本项目没有购买。点击「更多信息 → 仍要运行」即可；也可以右键安装包 → 属性 → 勾选「解除锁定」。</p></div>
+      </details>
+      <details class="faq reveal">
+        <summary><span data-i18n="q2.q">为什么装完了发消息没反应？</span><span class="faq-plus" aria-hidden="true"></span></summary>
+        <div class="faq-body" data-i18n-html="q2.a"><p>OPC Agent 不内置模型，它调用的是你本机已装好并登录的 Agent。先在终端执行 <code>codebuddy login</code>（或配置对应 Agent 的 API Key），再重启应用。通讯录是空的，说明本机没有检测到任何 Agent CLI。</p></div>
+      </details>
+      <details class="faq reveal">
+        <summary><span data-i18n="q3.q">安装版和便携版有什么区别？</span><span class="faq-plus" aria-hidden="true"></span></summary>
+        <div class="faq-body" data-i18n-html="q3.a"><p>功能完全一致。安装版（<code>-setup.exe</code>）支持自动更新与快捷方式，卸载时可选保留数据；便携版（<code>-portable.exe</code>）免安装、可放 U 盘，但不自动更新。</p></div>
+      </details>
+      <details class="faq reveal">
+        <summary><span data-i18n="q4.q">我的聊天内容会被上传吗？</span><span class="faq-plus" aria-hidden="true"></span></summary>
+        <div class="faq-body" data-i18n-html="q4.a"><p>不会。会话、图片、配置全部存在本机数据目录。应用只上报匿名使用统计：随机安装 ID、启动时长、版本号，不含任何聊天内容。设置里可以关闭；为 fork 者预留了 <code>OPC_TELEMETRY_URL</code>，留空即彻底不上报。详见<a href="../privacy.html">隐私说明</a>。</p></div>
+      </details>
+      <details class="faq reveal">
+        <summary><span data-i18n="q5.q">支持 macOS 或 Linux 吗？</span><span class="faq-plus" aria-hidden="true"></span></summary>
+        <div class="faq-body" data-i18n-html="q5.a"><p>目前只发布 Windows x64 安装包。代码本身是跨平台的 Electron 应用，可以自行构建（<code>npm install</code> 后 <code>npm run electron:build</code>），但没有官方产物，也未做完整验证。</p></div>
+      </details>
+      <details class="faq reveal">
+        <summary><span data-i18n="q6.q">「待接入」状态的联系人是什么意思？</span><span class="faq-plus" aria-hidden="true"></span></summary>
+        <div class="faq-body" data-i18n-html="q6.a"><p>通讯录按本机实际探测结果如实展示：没装、装了没登录、或该 Agent 暂无可用的无头调用方式，都会标出来并给出下一步指引。我们坚持「点得动的按钮才给点」。</p></div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ CTA + 页脚 ═══════════ -->
+<section class="cta">
+  <div class="container">
+    <h2 class="reveal" data-i18n="cta.title">现在，拉第一个群。</h2>
+    <p class="reveal" data-i18n="cta.sub">无需注册 OPC 账号。应用在本机运行，调用你选择的 Agent 服务。</p>
+    <div class="reveal">
+      <a class="btn btn-primary btn-lg" data-download href="#download" data-i18n="cta.button">下载 Windows 版</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="container footer-inner">
+    <div class="footer-brand">
+      <a class="brand" href="#top">
+        <img src="../assets/icon.png" width="22" height="22" alt="" decoding="async">
+        <span>OPC Agent</span>
+      </a>
+      <p class="footer-tag" data-i18n="footer.tag">把本机的 AI Agent，变成一支团队。</p>
+    </div>
+    <nav class="footer-links" aria-label="页脚导航">
+      <a data-github href="https://github.com/catex-lab/opc-agent" target="_blank" rel="noopener" data-i18n="footer.source">源码</a>
+      <a data-releases href="https://github.com/catex-lab/opc-agent/releases" target="_blank" rel="noopener" data-i18n="footer.download">下载</a>
+      <a data-issues href="https://github.com/catex-lab/opc-agent/issues" target="_blank" rel="noopener" data-i18n="footer.issues">反馈问题</a>
+      <a href="../privacy.html" data-i18n="footer.privacy">隐私说明</a>
+      <a href="#faq" data-i18n="footer.faq">FAQ</a>
+    </nav>
+  </div>
+  <div class="container footer-legal">
+    <p data-i18n="footer.legal">© 2026 OPC Agent · OPC Agent 是独立第三方工具，与 WorkBuddy、Codex、Gemini、Claude Code 等产品无隶属关系，相关名称与商标归各自所有者。</p>
+  </div>
+</footer>
+
+<script src="assets/config.js"></script>
+<script src="assets/i18n.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

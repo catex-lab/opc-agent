@@ -228,13 +228,14 @@ export function ContactsPanel({
   const switchTab = (next: Tab) => setTab(next);
   return (
     <div
-      className={`flex flex-col ${compact ? 'w-full' : 'shrink-0 tc-split-hairline'}`}
+      className={`flex flex-col ${compact ? 'w-full' : 'shrink-0'}`}
       style={{
         backgroundColor: 'var(--tc-surface-chrome)',
         // 与会话列表同一个宽度令牌，切栏不跳宽
         width: compact ? undefined : 'var(--tc-sidebar-width)',
-        // A26：与 ConversationList 同因同治 —— 原来误用控件描边画版面分栏，
-        // 深色 + 100% 下会变成一条黑线。改由 .tc-split-hairline 画。
+        // A103：微圆角，与 ConversationList 同规格（见那里的注释）。
+        // A26 的 `.tc-split-hairline` 分栏线随缝的出现一并移除。
+        borderRadius: 'var(--tc-column-radius)',
       }}
     >
       {/*

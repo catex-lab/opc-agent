@@ -254,7 +254,7 @@ export class HttpAdapter implements AgentProvider {
     }
     const key = process.env[keyName]!.trim();
 
-    yield { type: 'init', sessionId: ctx.sessionId, model: ctx.model ?? this.spec.defaultModel };
+    yield { type: 'init', sessionId: ctx.sessionId, model: ctx.model ?? this.spec.defaultModel, source: 'native' };
 
     const queue = new AsyncQueue<AgentEvent>();
     const started = Date.now();

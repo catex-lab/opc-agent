@@ -28,6 +28,15 @@ export interface LaunchTarget {
   /** 供展示的原始路径 */
   displayPath: string;
   /**
+   * 启动前必须注入的环境变量。
+   *
+   * Trae CN 的 `trae-cn.cmd` 是 `set ELECTRON_RUN_AS_NODE=1` 后用
+   * **Electron 主程序**跑 `cli.js` —— 少了这个变量它就以 GUI 模式启动，
+   * 一个窗口挂在后台，stdout 永远不出东西。这类「垫片里 set 的环境变量」
+   * 属于启动目标的一部分，不能丢。
+   */
+  env?: Record<string, string>;
+  /**
    * 已知的问题：目标文件存在但根本执行不了。
    * 典型场景是 npm 的 native optional dependency 没装上，
    * 包只留了一个同名占位脚本（Claude Code 的 `.exe` 实际是 500 字节的文本）。
@@ -80,11 +89,16 @@ const isWindows = process.platform === 'win32';
  * npm 的 bin 目录里同时存在三份同名文件：`codex`（POSIX shell 脚本）、
  * `codex.cmd`、`codex.ps1`。如果先试无扩展名的那份，会拿到 bash 脚本，
  * spawn 直接 ENOENT —— 实测踩过这个坑。
+ *
+ * `extraExts` 给「引擎是 `.cjs`」这类 Agent 用（ZCode 桌面版的引擎就是
+ * `resources/glm/zcode.cjs`，没有任何可执行扩展名）。放在 `''` 之前：
+ * 有扩展名的真实文件优先于无扩展名的同名脚本。
  */
-function pathExts(): string[] {
-  if (!isWindows) return [''];
-  const raw = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD';
-  return [...raw.split(';').filter(Boolean), ''];
+function pathExts(extraExts: string[] = []): string[] {
+  const raw = isWindows
+    ? process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD'
+    : '';
+  return [...raw.split(';').filter(Boolean), ...extraExts, ''];
 }
 
 function isFile(p: string): boolean {
@@ -97,14 +111,28 @@ function isFile(p: string): boolean {
 
 /**
  * 在 PATH 中查找可执行文件。
- * @param cmd 命令名或路径
+ * @param cmd 命令名或路径（传数组时按顺序找，第一个命中的用）
  * @param extraDirs 额外搜索目录（部分工具装在 PATH 之外，如 Hermes 的 bin）
+ * @param extraExts 追加的扩展名（如 `['.cjs']`，给引擎不是可执行文件的 Agent 用）
  * @returns 绝对路径，未找到返回 null
  */
-export function findExecutable(cmd: string, extraDirs: string[] = []): string | null {
+export function findExecutable(
+  cmd: string | string[],
+  extraDirs: string[] = [],
+  extraExts: string[] = []
+): string | null {
+  const names = Array.isArray(cmd) ? cmd : [cmd];
+  for (const name of names) {
+    const hit = findOneExecutable(name, extraDirs, extraExts);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function findOneExecutable(cmd: string, extraDirs: string[], extraExts: string[]): string | null {
   // 已带路径分隔符，直接检查
   if (cmd.includes('/') || cmd.includes('\\')) {
-    for (const ext of pathExts()) {
+    for (const ext of pathExts(extraExts)) {
       const candidate = cmd + ext;
       if (isFile(candidate)) return path.resolve(candidate);
     }
@@ -118,7 +146,7 @@ export function findExecutable(cmd: string, extraDirs: string[] = []): string | 
   ].filter(Boolean);
 
   for (const dir of dirs) {
-    for (const ext of pathExts()) {
+    for (const ext of pathExts(extraExts)) {
       const candidate = path.join(dir, cmd + ext);
       if (isFile(candidate)) return path.resolve(candidate);
     }
@@ -137,6 +165,68 @@ export function expandPath(template: string): string {
     );
     return key ? process.env[key]! : whole;
   });
+}
+
+/**
+ * 从 Windows 快捷方式（.lnk）里挖出它指向的可执行文件。
+ *
+ * 为什么需要：ZCode 这类工具**只通过桌面版分发**（官方指引就是「装桌面版后
+ * 把引擎软链到 PATH」），安装目录由用户在安装时自选（本机在 `E:\AI\ZCode`，
+ * 默认则在 `%LOCALAPPDATA%\Programs\ZCode`），没有任何环境变量记录它。
+ * 而开始菜单 / 桌面的快捷方式**一定**指向真实路径 —— 这是唯一稳定的线索。
+ *
+ * 做法是「解码后搜」而不是按二进制结构逐字段解析：.lnk 的
+ * LinkInfo.LocalBasePath 是 UTF-16LE 以 NUL 结尾的字符串，直接整块解码成
+ * utf16le 再正则抓 `X:\...\*.exe` 比按偏移量解析耐版本差异得多
+ * （实测本机 `ZCode.lnk` 一把命中）。ASCII 兜底是给老式写入器留的余量。
+ */
+export function resolveWindowsShortcut(lnkPath: string): string | null {
+  if (!isWindows) return null;
+  let buf: Buffer;
+  try {
+    buf = fs.readFileSync(lnkPath);
+  } catch {
+    return null;
+  }
+
+  // 只认「盘符:\」开头的绝对路径，避免把命令行参数或图标路径当目标
+  const RE = /([A-Za-z]:\\[^\u0000"'|<>]*?\.exe)/;
+  for (const decoded of [buf.toString('utf16le'), buf.toString('latin1')]) {
+    const m = decoded.match(RE);
+    if (m) {
+      const target = m[1]!.trim();
+      if (isFile(target)) return target;
+    }
+  }
+  return null;
+}
+
+/**
+ * 在开始菜单与桌面找指定名字的快捷方式，返回它指向的**安装根目录**。
+ * 找不到返回 null（不猜）。
+ */
+export function shortcutInstallRoot(shortcutName: string): string | null {
+  if (!isWindows) return null;
+  const roots = [
+    path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+    path.join(process.env.USERPROFILE || '', 'Desktop'),
+    path.join(process.env.PUBLIC || '', 'Desktop'),
+    // 开始菜单里也可能是「一个目录 + 里面的同名快捷方式」
+  ];
+  for (const root of roots) {
+    if (!root) continue;
+    const direct = path.join(root, shortcutName);
+    if (isFile(direct)) {
+      const target = resolveWindowsShortcut(direct);
+      if (target) return path.dirname(target);
+    }
+    const nested = path.join(root, shortcutName, shortcutName);
+    if (isFile(nested)) {
+      const target = resolveWindowsShortcut(nested);
+      if (target) return path.dirname(target);
+    }
+  }
+  return null;
 }
 
 /** 垫片里指向 JS 入口的引用 */
@@ -170,6 +260,22 @@ export function resolveLaunchTarget(binPath: string): LaunchTarget {
   const ext = path.extname(binPath).toLowerCase();
   const isShim = ext === '.cmd' || ext === '.bat';
 
+  // JS 引擎本体（`.cjs` / `.mjs` / `.js`）：直接用 node 跑。
+  // ZCode 桌面版的引擎就是 `resources/glm/zcode.cjs` —— 它没有任何可执行
+  // 扩展名，spawn 它只会 ENOENT；而它本来就是个 Node 脚本。
+  if (!isShim && /\.(c|m)?js$/i.test(binPath)) {
+    const command = nodeExecutable();
+    // 只有 node 也找不到、只能拿 Electron 主程序兜底时，才需要声明
+    // 「以 node 身份跑」—— 否则它会起一个看不见的 GUI 窗口。
+    const needNodeMode = command === process.execPath && isElectronRuntime();
+    return {
+      command,
+      prefixArgs: [binPath],
+      displayPath: binPath,
+      ...(needNodeMode ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {}),
+    };
+  }
+
   if (!isShim) {
     const problem = /\.(exe|com)$/i.test(binPath)
       ? (checkNativeBinary(binPath) ?? undefined)
@@ -193,8 +299,11 @@ export function resolveLaunchTarget(binPath: string): LaunchTarget {
   if (jsMatch) {
     const scriptPath = toAbs(jsMatch[1]);
     if (isFile(scriptPath)) {
+      // 垫片同目录自带 node.exe 就用它；否则退回 PATH 里的 node
+      // （**不能**直接用 process.execPath：打包后它是 Electron 主程序，
+      //  见 nodeExecutable 的说明）
       const localNode = path.join(dir, 'node.exe');
-      const command = isFile(localNode) ? localNode : process.execPath;
+      const command = isFile(localNode) ? localNode : nodeExecutable();
       return { command, prefixArgs: [scriptPath], displayPath: binPath };
     }
   }
@@ -214,6 +323,28 @@ export function resolveLaunchTarget(binPath: string): LaunchTarget {
   }
 
   return { command: binPath, prefixArgs: [], displayPath: binPath };
+}
+
+/**
+ * 是否跑在 Electron 运行时里（主进程）。
+ *
+ * 打包后 `process.execPath` 指向的是 **Electron 主程序**而不是 node ——
+ * 拿它 spawn 一个 `.cjs` 会以 GUI 模式启动，stdout 永远不出东西。
+ */
+function isElectronRuntime(): boolean {
+  return Boolean((process.versions as { electron?: string }).electron);
+}
+
+/**
+ * 跑 JS 引擎时用的 node 解释器。
+ *
+ * 优先找 PATH 里的真 node；找不到才退回 `process.execPath` ——
+ * 开发态（tsx / node 直跑）它就是 node，打包态它是 Electron，
+ * 那种情况由调用方补 `ELECTRON_RUN_AS_NODE=1`（Electron 认这个变量，
+ * 会退化成纯 node 进程）。
+ */
+export function nodeExecutable(): string {
+  return findExecutable('node') ?? process.execPath;
 }
 
 /**
@@ -398,8 +529,63 @@ function isDirectory(p: string): boolean {
 }
 
 /**
- * 统一的启动目标解析：依次尝试 JS 垫片、Python 启动器、PowerShell 包装，
- * 最后退回原样执行。
+ * 解析「Electron 以 node 模式跑 cli.js」型垫片。
+ *
+ * Trae CN 的 `bin/trae-cn.cmd` 是这种形态（2026-10-24 本机实读）：
+ *
+ *   @echo off
+ *   setlocal
+ *   set ELECTRON_RUN_AS_NODE=1
+ *   "%~dp0..\Trae CN.exe" "%~dp0..\resources\app\out\cli.js" %*
+ *
+ * 即：把 **Electron 主程序**当 node 解释器，去跑自带的 cli.js。
+ * 三种已有解析都覆盖不到它（没有 npm 的 node_modules 引用、不是 Python
+ * 启动器、也不是 PowerShell 包装），不认它就会把明明装好的 Trae 判成
+ * 「无法解析垫片」。
+ *
+ * 两个必须一起挖出来的东西：
+ *   1. `ELECTRON_RUN_AS_NODE=1` —— 少了它 Electron 以 GUI 模式启动，
+ *      挂一个看不见的窗口，stdout 永远不出东西（探测会假超时）。
+ *   2. exe 与 js 的**顺序** —— 先出现的是主程序，后出现的是入口脚本。
+ *      按「第一个 .exe + 第一个 .js」去匹配会把别处的 .js 抢先命中，
+ *      所以 js 只在 exe 引用**之后**的文本里找。
+ */
+export function resolveElectronNodeShim(binPath: string): LaunchTarget | null {
+  const ext = path.extname(binPath).toLowerCase();
+  if (ext !== '.cmd' && ext !== '.bat') return null;
+
+  const content = readTextFile(binPath);
+  if (!content) return null;
+  if (!/ELECTRON_RUN_AS_NODE\s*=\s*1/i.test(content)) return null;
+
+  const baseDir = path.dirname(binPath);
+  const norm = content.replace(/%~dp0/gi, baseDir + path.sep);
+
+  const exeMatch = norm.match(/"([^"]+\.exe)"/i);
+  if (!exeMatch || exeMatch.index === undefined) return null;
+
+  // js 入口只在 exe 引用之后找，且排除垫片自带的 node.exe 当主程序
+  const exeRel = exeMatch[1]!;
+  if (SHIM_NODE_RE.test(exeRel)) return null;
+  const rest = norm.slice(exeMatch.index + exeMatch[0].length);
+  const jsMatch = rest.match(/"([^"]+\.(?:c|m)?js)"/i);
+  if (!jsMatch) return null;
+
+  const exe = path.resolve(exeRel.replace(/[\\/]/g, path.sep));
+  const js = path.resolve(jsMatch[1]!.replace(/[\\/]/g, path.sep));
+  if (!isFile(exe) || !isFile(js)) return null;
+
+  return {
+    command: exe,
+    prefixArgs: [js],
+    displayPath: binPath,
+    env: { ELECTRON_RUN_AS_NODE: '1' },
+  };
+}
+
+/**
+ * 统一的启动目标解析：依次尝试 JS 垫片、Python 启动器、PowerShell 包装、
+ * Electron-node 垫片，最后退回原样执行。
  */
 export function resolveAnyLaunchTarget(binPath: string): LaunchTarget {
   const js = resolveLaunchTarget(binPath);
@@ -410,6 +596,9 @@ export function resolveAnyLaunchTarget(binPath: string): LaunchTarget {
 
   const ps = resolvePowerShellShim(binPath);
   if (ps) return ps;
+
+  const en = resolveElectronNodeShim(binPath);
+  if (en) return en;
 
   return { command: binPath, prefixArgs: [], displayPath: binPath };
 }
@@ -457,7 +646,9 @@ export function runCapture(
     try {
       child = spawn(target.command, [...target.prefixArgs, ...args], {
         cwd,
-        env: env ?? process.env,
+        // target.env 是启动目标的一部分（如 Trae 的 ELECTRON_RUN_AS_NODE=1），
+        // 必须垫在 process.env 之上；显式传入的 env 优先级最高。
+        env: { ...process.env, ...(target.env ?? {}), ...(env ?? {}) },
         shell: false,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],

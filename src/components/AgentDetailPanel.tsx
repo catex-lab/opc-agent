@@ -49,8 +49,12 @@ export function AgentDetailPanel({
 
   return (
     <div
-      className="flex min-h-0 min-w-0 flex-1 flex-col"
-      style={{ backgroundColor: 'var(--tc-surface-content)' }}
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      style={{
+        backgroundColor: 'var(--tc-surface-content)',
+        // A103：资料页也是「一栏」，与聊天列同规格的圆角。
+        borderRadius: 'var(--tc-column-radius)',
+      }}
     >
       {/* 只有返回键的窄条。高度与别处的 compact 头部同值（--tc-header-height），
           这样切栏时这条底边线跟通讯录栏头落在同一行。 */}

@@ -393,41 +393,71 @@ for (const dark of [false, true]) {
   await ctx.close();
 }
 
-// ============= [3] 结构分栏线 =============
-console.log('\n[3] 结构分栏线：两端渐隐 + 随透明度增强');
+// ============= [3] 栏目分隔：缝 + 圆角（A103）=============
+console.log('\n[3] 栏目分隔：6px 缝 + 8px 圆角');
 {
   const read = async t => {
     const ctx = await newContext(t, false);
+    // 工作区默认收起（localStorage 里没有 opc.workspace-open）—— 要量它的
+    // 圆角就得先把它开起来。init script 在文档解析前执行，效果等价于
+    // 「用户上次开着面板」。
+    await ctx.addInitScript(() => {
+      try {
+        localStorage.setItem('opc.workspace-open', '1');
+      } catch {
+        /* 隐私模式下 localStorage 会抛，与 App.tsx 的读取端同样兜住 */
+      }
+    });
     const page = await ctx.newPage();
     watch(page);
-    await open(page, '/chat/s1?glass=1');
+    await open(page, '/chat/s1');
     const r = await page.evaluate(() => {
-      const el = document.querySelector('.tc-split-hairline');
-      if (!el) return null;
-      const cs = getComputedStyle(el, '::after');
-      const vars = {};
-      const probe = document.createElement('div');
-      document.body.appendChild(probe);
-      for (const n of ['--tc-split', '--tc-hairline', '--tc-solid', '--tc-veil']) {
-        probe.style.backgroundColor = `var(${n})`;
-        vars[n] = getComputedStyle(probe).backgroundColor;
-      }
-      probe.remove();
-      return { bgImage: cs.backgroundImage, width: cs.width, position: cs.position, vars };
+      const nav = document.querySelector('nav');
+      const list = document.querySelector('.tc-split-hairline, [style*="--tc-sidebar-width"]');
+      const main = document.querySelector('main');
+      // A103 起 main 只是透明定位容器（圆角移到子列上）—— 所以「内容面的
+      // 圆角」要量聊天列而不是 main。A105 给聊天列 / 工作区加了
+      // data-tc-column 锚点：两块都是匿名 div，靠结构选择器定位的话，
+      // 任何一次布局调整都会让断言失效。
+      const chat = document.querySelector('[data-tc-column="chat"]');
+      const ws = document.querySelector('[data-tc-column="workspace"]');
+      const box = el => { if (!el) return null; const b = el.getBoundingClientRect(); return { left: Math.round(b.left), right: Math.round(b.right), top: Math.round(b.top), bottom: Math.round(b.bottom) }; };
+      const cs = el => (el ? getComputedStyle(el) : null);
+      return {
+        nav: box(nav), list: box(list), main: box(main),
+        navRadius: cs(nav)?.borderRadius,
+        listRadius: cs(list)?.borderRadius,
+        chatRadius: cs(chat)?.borderRadius,
+        wsRadius: ws ? cs(ws).borderRadius : null,
+        hasWorkspace: ws !== null,
+        // 缝 = 导航条右缘到列表左缘的距离（两者之间只会有容器 padding/gap）
+        gapNavToList: list && nav ? Math.round(box(list).left - box(nav).right) : null,
+        gapListToMain: list && main ? Math.round(box(main).left - box(list).right) : null,
+      };
     });
     await ctx.close();
     return r;
   };
 
   const a = await read(0);
-  const b = await read(100);
-  ok(a !== null, '分栏元素存在（.tc-split-hairline）');
-  ok(/linear-gradient/.test(a.bgImage), '分栏线是渐变而不是实线（两端渐隐）', a.bgImage.slice(0, 70));
-  ok(a.width === '1px' && a.position === 'absolute', '线宽 1px、绝对定位（不占布局）', `${a.width} ${a.position}`);
-  const sa = alphaOf(a.vars['--tc-split']);
-  const sb = alphaOf(b.vars['--tc-split']);
-  ok(sb > sa, '强度随透明度增强（表面色差消失后由它承担边界）', `t=0:${sa} → t=100:${sb}`);
-  ok(sb > 0.1 && sb < 0.25, 't=100 时强度落在可见但不刺眼的区间', String(sb));
+  ok(a.nav !== null && a.list !== null && a.main !== null, '三栏都在场');
+  ok(a.gapNavToList === 6, '导航条与列表栏之间有 6px 缝', String(a.gapNavToList));
+  ok(a.gapListToMain === 6, '列表栏与内容区之间有 6px 缝', String(a.gapListToMain));
+  // 圆角现在量「真正承载内容面的三块」：导航条、列表栏、聊天列。
+  // main 是透明定位容器，它自己没有圆角（也不该有）。
+  ok(
+    a.navRadius === '8px' && a.listRadius === '8px' && a.chatRadius === '8px',
+    '三栏圆角均为 8px（--td-radius-medium）',
+    `${a.navRadius} / ${a.listRadius} / ${a.chatRadius}`
+  );
+  // 工作区面板开着时也必须同圆角（它与聊天列并排，圆角不一致会很难看）
+  ok(
+    !a.hasWorkspace || a.wsRadius === '8px',
+    '工作区面板同圆角（开着时）',
+    a.hasWorkspace ? a.wsRadius : '未渲染（视口不够宽，跳过）'
+  );
+  // 最左栏不再顶到窗口左缘：圆角处露出的必须是画布而不是被窗口裁掉
+  ok(a.nav.left === 6, '最左栏距窗口左缘 6px（圆角落在了画布上）', `left=${a.nav.left}`);
 }
 
 // ============= [4] 控件轮廓线 =============

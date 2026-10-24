@@ -35,6 +35,7 @@ import { cacheImage, imageFilePath } from "./image-store.js";
 import { validateDirectory } from "./workspaceDir.js";
 import { detectVerifyCommands } from "./verify-commands.js";
 import { runVerifyCommand } from "./verify-runner.js";
+import { summarizeEvidence, verifyFileChanges } from "./file-evidence.js";
 import { dataDirPath } from "./paths.js";
 import { FS_ERROR_TEXT, listDir, readFileInside, type FsErrorCode } from "./fs.js";
 import {
@@ -75,7 +76,7 @@ import {
   savePermissionRules,
 } from "./permission-rules.js";
 import { distillSkill } from "./skill-distill.js";
-import { textOfBlocks, toolCallsOfBlocks } from "../shared/blocks.js";
+import { legacyToBlocks, textOfBlocks, toolCallsOfBlocks } from "../shared/blocks.js";
 import type { RunEvent } from "../shared/blocks.js";
 import {
   resolveModelForAgent,
@@ -626,7 +627,34 @@ app.get("/api/sessions/:sessionId", (req, res) => {
     
     // A98：顺带返回所属项目。前端据此在会话头部显示「当前项目」，
     // 也据此知道「这个会话有没有项目记忆」。取不到就是没绑目录，正常。
-    res.json({ session, project: getSessionProject(sessionId) ?? null, messages: parsedMessages });
+    //
+    // A100：`dangling` —— 上一轮没有产出回复。
+    //
+    // 为什么必须在这里算、而且要后端算：
+    //   · 运行态（runHub）只活在内存里，进程一重启就没了。用户重开应用后，
+    //     那条「发出去了但没有回答」的用户消息还留在库里，界面上却什么都不说，
+    //     用户会以为是消息丢了或者自己没发出去。
+    //   · 前端算不了：它不知道**别的窗口/别的标签页**是不是正在跑这一轮。
+    //     只凭「最后一条是 user」就报中断，会在正常执行中误报。
+    //
+    // 判定只有一条：最后一条消息是 user，且这个会话当前没有活跃 run。
+    // 于是「正常等待回复」不会被误判（有活跃 run），「应用被关掉」必然命中。
+    //
+    // 措辞上刻意说「没有产出回复」而不是「被中断」：用户手动中止、进程崩溃、
+    // 应用被强关，在这里留下的痕迹完全一样，硬要区分就是在编。
+    const lastMessage = messages[messages.length - 1];
+    const hasActiveRun = runHub.activeRuns().some(r => r.sessionId === sessionId);
+    const dangling =
+      !hasActiveRun && lastMessage?.role === "user"
+        ? { messageId: lastMessage.id, at: lastMessage.created_at }
+        : null;
+
+    res.json({
+      session,
+      project: getSessionProject(sessionId) ?? null,
+      messages: parsedMessages,
+      dangling,
+    });
   } catch (error: any) {
     console.error("[Session] Error:", error);
     res.status(500).json({ error: error?.message || "获取会话失败" });
@@ -1327,6 +1355,9 @@ app.post("/api/chat", async (req, res) => {
     messageId: assistantMessageId,
     agentId,
     model: selectedModel,
+    // A100：事件来源。纯文本解析出来的工具事件与 SDK 原生事件在界面上
+    // 长得一样，必须让用户能分辨。
+    source: registry.eventSourceOf(agentId),
   });
 
   /** 写一条 v2 事件：带 SSE id（断线重放按它续传） */
@@ -2399,6 +2430,72 @@ app.get("/api/verify/results", (req, res) => {
     return;
   }
   res.json({ verifications: db.getVerificationsBySession(sessionId) });
+});
+
+/**
+ * 文件变更核对（A99）。
+ *
+ * ## 为什么是 GET 而不是 POST
+ *
+ * 它只读：读一遍消息的 blocks、读一遍磁盘，不写任何东西。A97 的 /api/verify/run
+ * 是 POST，因为它真的**执行命令**；这里没有执行，别让语义跟着抄。
+ *
+ * ## 为什么只认 messageId，不认前端传来的路径
+ *
+ * 与 /api/verify/run 只接受 commandId 是同一条理由：核对的对象必须是
+ * **落库的那份记录**。前端手里的 blocks 可能还在流式、也可能被本地状态
+ * 改过；拿它去核对，等于用被核对方的说法去证明它自己。
+ *
+ * ## 为什么把 cwd 也返回
+ *
+ * 相对路径是按会话 cwd 解析的。前端要显示「相对哪个目录」，而会话的 cwd
+ * 允许为空（纯问答会话），那时所有相对路径都判 skipped —— 这个事实必须
+ * 让用户看见，而不是静默给个空列表。
+ */
+app.get("/api/files/evidence", (req, res) => {
+  const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : "";
+  const messageId = typeof req.query.messageId === "string" ? req.query.messageId : "";
+  if (!messageId) {
+    res.status(400).json({ error: "缺少 messageId 参数" });
+    return;
+  }
+
+  const message = db.getMessage(messageId);
+  if (!message) {
+    res.status(404).json({ error: "消息不存在" });
+    return;
+  }
+  // 带上 sessionId 时校验归属：否则任意 messageId 都能被枚举出文件路径
+  if (sessionId && message.session_id !== sessionId) {
+    res.status(403).json({ error: "消息不属于该会话" });
+    return;
+  }
+
+  const session = db.getSession(message.session_id);
+  const cwd = session?.cwd ?? null;
+
+  let blocks = legacyToBlocks({
+    content: message.content,
+    toolCalls: message.tool_calls ? JSON.parse(message.tool_calls) : undefined,
+    images: message.images ? JSON.parse(message.images) : undefined,
+  });
+  if (message.blocks) {
+    try {
+      const parsed = JSON.parse(message.blocks);
+      if (Array.isArray(parsed) && parsed.length > 0) blocks = parsed;
+    } catch {
+      // 半截 JSON：退回 legacy 还原，不因为解析失败就整条拒掉
+    }
+  }
+
+  const createdAt = Date.parse(message.created_at);
+  const items = verifyFileChanges(
+    blocks,
+    cwd,
+    Number.isFinite(createdAt) ? createdAt : undefined
+  );
+
+  res.json({ cwd, items, summary: summarizeEvidence(items) });
 });
 
 app.post("/api/verify/run", async (req, res) => {

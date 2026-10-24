@@ -115,7 +115,10 @@ export function GroupChatHeader({
   return (
     <PanelHeader
       compact
-      surface="content"
+      // A103（用户要求）：与 ChatHeader 同步 —— 会话头部改用框架面 chrome，
+      // 和左边消息列表栏同色。一对一与群聊是同一个位置的两副内容，
+      // 只有一套配色，不能一个白一个灰。
+      surface="chrome"
       onBack={onBack}
       backLabel="返回消息列表"
       // 头像堆叠作为标题的 leading：一眼看出「这是一群人在说话」。

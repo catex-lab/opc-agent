@@ -181,8 +181,10 @@ if (summary) {
     summary.color
   );
   ok(
-    summary.fontSize === '11px',
-    '汇总行字号 = caption (11px)',
+    // A102 把汇总行从 caption(11px) 提到 secondary(12px)，与步骤行主信息同档 ——
+    // 原来 11px 的汇总行配 12px 的步骤行，同一块区域两种字号。
+    summary.fontSize === '12px',
+    '汇总行字号 = secondary (12px，A102 起与步骤行主信息同档)',
     summary.fontSize
   );
 }

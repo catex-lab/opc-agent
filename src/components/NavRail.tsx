@@ -69,7 +69,10 @@ export function NavRail({
         // 现在四档：rail → 列表(chrome) → 内容(content) → 浮起(raised)。
         // 取值与边界见 index.css 的 --tc-surface-rail 注释。
         backgroundColor: 'var(--tc-surface-rail)',
-        borderRight: '1px solid var(--tc-divider)',
+        // A103：微圆角。栏不再顶到窗口左缘（父级有 6px 内缩），四个角都看得见。
+        // 右边框原本是 1px `--tc-divider`（值为 transparent），现在有缝了，
+        // 留着不影响视觉，但会实打实占 1px 布局宽度 —— 一并去掉。
+        borderRadius: 'var(--tc-column-radius)',
       }}
     >
       {/* 主导航。

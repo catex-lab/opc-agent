@@ -26,6 +26,7 @@ import { GroupSettingsPanel } from '../components/GroupSettingsPanel';
 import { AgentDetailModal } from '../components/AgentDetailModal';
 import { PermissionGapNotice } from '../components/PermissionGapNotice';
 import { WorkflowDialog } from '../components/WorkflowDialog';
+import { DanglingNotice } from '../components/DanglingNotice';
 import { useGroupChat } from '../hooks/useGroupChat';
 
 /**
@@ -621,6 +622,20 @@ export function ChatPage({
               />
             )}
           </div>
+
+          {/* A100：上一轮没有产出回复。只在「最后一条是 user 且没有活跃 run」时
+              由后端算出并返回 —— 刷新/重启后仍然成立，因为它查的是库里的消息
+              顺序而不是内存里的运行态。群聊走另一条编排链路，这里不接。
+
+              `dangling` 是**加载时**的快照，这一轮跑成功后不会自动消失，
+              所以再拿本地消息顺序校验一次：最后一条真的是 user 才显示。
+              没有这道校验，用户发完新消息、回答到了，横幅还会再冒出来。 */}
+          {!isGroup &&
+            currentSession?.dangling &&
+            !loading &&
+            currentSession.messages[currentSession.messages.length - 1]?.role === 'user' && (
+              <DanglingNotice at={currentSession.dangling.at} />
+            )}
 
           {/*
             输入区域。

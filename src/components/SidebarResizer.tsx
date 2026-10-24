@@ -106,8 +106,16 @@ export function SidebarResizer({ onCommit }: SidebarResizerProps) {
         localStorage.removeItem('opc.sidebar-width');
       }}
       title="拖动调整宽度，双击恢复默认"
-      className="group relative z-10 -ml-px -mr-1 w-[5px] shrink-0 cursor-col-resize"
-      style={{ backgroundColor: 'transparent' }}
+      className="group relative z-10 -mr-1 w-[5px] shrink-0 cursor-col-resize"
+      style={{
+        // A103：父级容器加了 6px 的缝（--tc-column-gap）。这条负边距先把缝
+        // 抵消掉、再退回 1px，让手柄左边缘仍落在列表栏的右边上 ——
+        // 不抵消的话高亮线会离列表栏 6px，从「点亮那条边界」变成「在旁边
+        // 另画一条线」。`-mr-1` 保持原样：把 5px 占位抵掉 4px，
+        // 主内容不会被顶走（净占位 = -1 + 5 + 6 - 4 = 6px，正好是那道缝）。
+        marginLeft: 'calc(-1 * var(--tc-column-gap) - 1px)',
+        backgroundColor: 'transparent',
+      }}
     >
       {/* 视觉上只有悬停/拖动时才亮出来的一条线：常驻一条竖线会把两栏
           硬生生切开，而用户平时并不需要看到「这里可以拖」。

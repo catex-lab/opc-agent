@@ -635,6 +635,18 @@ export function getMessagesBySession(sessionId: string): DbMessage[] {
   return stmt.all(sessionId) as unknown as DbMessage[];
 }
 
+/**
+ * 按 id 取单条消息（A99）。
+ *
+ * 文件核对要拿的是**落库的那份 blocks**，不是前端传来的块 —— 前端那份
+ * 可能还在流式、也可能被本地补丁改过。核对结论必须基于持久化的记录，
+ * 否则「核对」本身就成了另一个不可信的来源。
+ */
+export function getMessage(id: string): DbMessage | undefined {
+  const stmt = db.prepare('SELECT * FROM messages WHERE id = ?');
+  return stmt.get(bind(id)) as unknown as DbMessage | undefined;
+}
+
 // 创建消息
 export function createMessage(message: DbMessageInput): DbMessage {
   const stmt = db.prepare(`

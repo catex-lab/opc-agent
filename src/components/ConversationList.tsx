@@ -183,20 +183,18 @@ export function ConversationList({
 
   return (
     <div
-      className={`flex flex-col ${compact ? 'w-full' : 'shrink-0 tc-split-hairline'}`}
+      className={`flex flex-col ${compact ? 'w-full' : 'shrink-0'}`}
       style={{
         // 框架面：与导航条、标题栏同色（见 index.css 的 --tc-surface-chrome）
         backgroundColor: 'var(--tc-surface-chrome)',
         // 宽度走令牌（--tc-sidebar-width）：通讯录用同一个值，切栏不跳宽
         width: compact ? undefined : 'var(--tc-sidebar-width)',
-        // 单栏模式下它是唯一的栏，右侧不需要分割线。
+        // A103：微圆角。父级容器有 6px 内缩 + 6px 缝，四个角都看得见。
         //
-        // A26：原来是 `borderRight: 1px solid var(--td-component-stroke)`。
-        // 那是一个**误用** —— --td-component-stroke 是控件描边（浅 #e5e5e5 /
-        // 深 #404040），拿它画版面分栏，在深色 + 100% 透明度下会变成一条
-        // 发黑的黑线（透出亮壁纸后固定灰阶的语义反转了，见 PLAN-A26 1.2）。
-        // 现在改由 `.tc-split-hairline` 画：alpha 白/黑 + 两端渐隐 +
-        // 强度随透明度增长。单栏模式（compact）本来就不该有线。
+        // 原来这里挂着 `tc-split-hairline`（右缘一条 1px 渐隐线）—— A26 加它是
+        // 为了在两栏**紧贴**时交代边界。现在边界由缝与圆角承担，那条线只会
+        // 在圆角卡片右侧再画一道多余的竖痕，故移除（该类已无使用者）。
+        borderRadius: 'var(--tc-column-radius)',
       }}
     >
       {/*

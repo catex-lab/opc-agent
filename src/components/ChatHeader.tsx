@@ -96,7 +96,17 @@ export function ChatHeader({
   return (
     <PanelHeader
       compact
-      surface="content"
+      // A103（用户要求）：标题栏与左栏同色 —— 从 `content` 改回 `chrome`。
+      //
+      // 这里原来是 `content`（#ffffff），理由是「聊天区是一条连续的白色工作面，
+      // 头部压一块灰会像一条横条盖在消息上」（QQ 的做法）。但实际观感是：
+      // 头部比左边列表栏浅一档，同一行里两种灰并排，反而像没对齐。
+      //
+      // 改成 chrome 之后，消息列表栏与会话头部同为 #f5f5f5，两栏标题落在
+      // 同一条色带上；消息区仍是白色，靠圆角（A103）和那道 6px 的缝分出层次。
+      // 窗口最顶上那条标题条仍是 rail（#ececec），与最左导航条同色 ——
+      // 三处框架面各自与相邻的栏一致，不要求全部相等。
+      surface="chrome"
       className="relative"
       onBack={onBack}
       backLabel="返回消息列表"

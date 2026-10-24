@@ -113,6 +113,9 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
       messageId,
       agentId,
       model: resolvedModel,
+      // A100：事件来源（纯文本解析 vs 结构化输出 vs 原生协议）。
+      // 群聊里每一棒可能换人，所以每个棒单独取一次，不能在外层取一遍。
+      source: registry.eventSourceOf(agentId),
     });
     if (!internal) {
       runHub.create(runId);

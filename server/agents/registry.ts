@@ -9,13 +9,14 @@
  * 显式调用 probeAll(true) 才强制刷新。
  */
 
-import { AGENT_DEFS, findDef } from './definitions.js';
+import { AGENT_DEFS, findDef, eventSourceOf } from './definitions.js';
 import { createProvider, AcpAdapter } from './adapters/index.js';
 import { familyHintsFor } from './familyHints.js';
 import { installEnv } from './installEnv.js';
 import { getModelsForAgent, mergeModelOptions, type ModelOption } from './modelCatalog.js';
 import { permissionSupportFor } from './permissions.js';
 import { toAgentInfo, unknownStatus } from './types.js';
+import type { EventSource } from '../../shared/blocks.js';
 import type {
   AgentDescriptor,
   AgentInfo,
@@ -317,6 +318,23 @@ class AgentRegistry {
   /** 按 id 反查定义（供需要 cli 规格等静态信息的场景） */
   definition(id: string) {
     return findDef(id);
+  }
+
+  /**
+   * 这个 Agent 的工具事件是什么来源（A100）。
+   *
+   * ## 为什么按 Agent 而不是按事件
+   *
+   * 一个 Agent 的输出方式不会中途改变：走 SDK 的全程是原生事件，
+   * 走 jsonl 的全程是结构化事件，只有纯文本的那 3 个全程是解析出来的。
+   * 逐事件标注只是把同一个值抄一万遍。
+   *
+   * 判定逻辑本体在 `definitions.ts` 的 `eventSourceOf`（纯函数）——
+   * 这里只是按 id 取定义。分开是为了让那套判定能被单测覆盖：
+   * 若把逻辑写在注册表里，测一次就得把 16 个 Agent 的探测全跑一遍。
+   */
+  eventSourceOf(id: string): EventSource | undefined {
+    return eventSourceOf(findDef(id));
   }
 
   /** 进程退出时清理长驻子进程 */

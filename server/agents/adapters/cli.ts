@@ -22,6 +22,7 @@ import {
   isUnresolvedShim,
   probeVersion,
   expandPath,
+  shortcutInstallRoot,
   allHostsUnreachable,
   type LaunchTarget,
 } from '../probe.js';
@@ -89,6 +90,62 @@ export class CliAdapter implements AgentProvider {
     this.spec = def.cli;
   }
 
+  // ============= 可执行文件定位 =============
+
+  /**
+   * 全部搜索目录（A105）。
+   *
+   * 三部分拼起来：
+   *   1. `extraPaths` —— 装在 PATH 之外的工具（Hermes 的 bin 等）
+   *   2. `engineCandidates` 的所在目录 —— 引擎是 `.cjs`、且安装目录自选的
+   *      Agent（ZCode 桌面版）。`{root}` 占位符先被快捷方式反推的安装根替换
+   *   3. 快捷方式（开始菜单 / 桌面）反推的安装根 —— 安装目录由用户自选，
+   *      没有任何环境变量记录它，这是唯一稳定的线索
+   */
+  private searchDirs(): string[] {
+    const dirs = (this.def.extraPaths ?? []).map(expandPath);
+
+    const root = (this.def.shortcutNames ?? [])
+      .map(name => shortcutInstallRoot(name))
+      .find((r): r is string => Boolean(r));
+
+    for (const cand of this.def.engineCandidates ?? []) {
+      const filled = root && cand.includes('{root}') ? cand.replace('{root}', root) : cand;
+      dirs.push(path.dirname(expandPath(filled)));
+    }
+    return dirs;
+  }
+
+  /** 引擎候选文件展开后的完整路径（供「文件直接命中」兜底） */
+  private engineFiles(): string[] {
+    const root = (this.def.shortcutNames ?? [])
+      .map(name => shortcutInstallRoot(name))
+      .find((r): r is string => Boolean(r));
+    return (this.def.engineCandidates ?? []).map(cand => {
+      const filled = root && cand.includes('{root}') ? cand.replace('{root}', root) : cand;
+      return path.resolve(expandPath(filled));
+    });
+  }
+
+  /**
+   * 定位可执行文件。
+   *
+   * 先按「命令名 + 扩展名」在 PATH / extraPaths / 引擎目录里找（常规形态），
+   * 再兜底逐个检查引擎候选文件本身（目录在、但文件名与 bin 名不完全对应时）。
+   */
+  private findBin(): string | null {
+    const hit = findExecutable(this.spec.bin, this.searchDirs(), this.spec.binExts ?? []);
+    if (hit) return hit;
+    for (const file of this.engineFiles()) {
+      try {
+        if (fs.statSync(file).isFile()) return file;
+      } catch {
+        /* 不存在就试下一个 */
+      }
+    }
+    return null;
+  }
+
   // ============= 探测 =============
 
   async probe(): Promise<AgentStatus> {
@@ -104,15 +161,13 @@ export class CliAdapter implements AgentProvider {
       return this.status;
     }
 
-    const binPath = findExecutable(
-      this.spec.bin,
-      (this.def.extraPaths ?? []).map(expandPath)
-    );
+    const binPath = this.findBin();
     if (!binPath) {
+      const label = Array.isArray(this.spec.bin) ? this.spec.bin.join('` / `') : this.spec.bin;
       this.status = {
         availability: 'not-installed',
         installed: false,
-        message: `PATH 中未找到命令 \`${this.spec.bin}\``,
+        message: `PATH 中未找到命令 \`${label}\``,
         probedAt: now,
       };
       return this.status;
@@ -282,7 +337,14 @@ export class CliAdapter implements AgentProvider {
     const started = Date.now();
     const args = this.spec.buildArgs(ctx.prompt, ctx);
 
-    yield { type: 'init', sessionId: ctx.sessionId, model: ctx.model };
+    // A100：把自己的输出方式告诉下游。纯文本解析出来的工具事件与结构化
+    // 输出在界面上长得一样，但可信度差一档 —— 不标就等于把两者画成同一个样子。
+    yield {
+      type: 'init',
+      sessionId: ctx.sessionId,
+      model: ctx.model,
+      source: this.spec.parse === 'text' ? 'parsed_text' : 'structured_cli',
+    };
 
     const queue = new AsyncQueue<AgentEvent>();
     const target = this.target;
@@ -291,7 +353,10 @@ export class CliAdapter implements AgentProvider {
     try {
       child = spawn(target.command, [...target.prefixArgs, ...args], {
         cwd: ctx.cwd || process.cwd(),
-        env: childEnv(),
+        // target.env 是启动目标的一部分（如 Trae 的 ELECTRON_RUN_AS_NODE=1），
+        // 必须垫在子进程环境之上 —— 少了它 Electron 会以 GUI 模式启动，
+        // 挂一个看不见的窗口，stdout 永远不出东西。
+        env: { ...childEnv(), ...(target.env ?? {}) },
         shell: false,           // ★ 关键：不经过 shell
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -367,7 +432,12 @@ export class CliAdapter implements AgentProvider {
       }
       const token = this.spec.extractResumeToken?.(obj);
       if (token) {
-        queue.push({ type: 'init', sessionId: ctx.sessionId, resumeToken: token });
+        queue.push({
+          type: 'init',
+          sessionId: ctx.sessionId,
+          resumeToken: token,
+          source: this.spec.parse === 'text' ? 'parsed_text' : 'structured_cli',
+        });
       }
       const mapped = mapLine?.(obj);
       if (!mapped) return;

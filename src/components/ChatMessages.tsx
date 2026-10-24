@@ -11,6 +11,7 @@ import { useBackgroundTasks } from '../hooks/useBackgroundTasks';
 import { formatHandledDuration, hasFileEdits, lingeringToolBlocks } from '../../shared/trace';
 import { InlinePermissionCard } from './InlinePermissionCard';
 import { VerifyPanel } from './VerifyPanel';
+import { FileEvidencePanel } from './FileEvidencePanel';
 import { useVerifications } from '../hooks/useVerifications';
 import { installCherryCodeIconFix } from './cherryCodeIcon';
 import { AgentAvatar } from './AgentAvatar';
@@ -1465,6 +1466,18 @@ export function ChatMessages({
                   rows={verifications.filter(v => v.message_id === message.id)}
                   onUpdated={refreshVerifications}
                 />
+              )}
+
+            {/* A99：文件核对。与上面那条「验证」并排 ——
+                验证回答「能不能跑」，核对回答「到底有没有落地」，
+                两件事互不替代。同样只在这轮真的改过文件时出现。 */}
+            {message.role === 'assistant' &&
+              !message.isStreaming &&
+              !message.error &&
+              !!message.id &&
+              !!currentSessionId &&
+              hasFileEdits(toBlocks(message)) && (
+                <FileEvidencePanel sessionId={currentSessionId} messageId={message.id} />
               )}
 
             {/* P6 成本统计：耗时 / 费用 / token 一行小字，跟在气泡下面。

@@ -441,6 +441,7 @@ export class AcpAdapter implements AgentProvider {
       sessionId: ctx.sessionId,
       model: ctx.model,
       resumeToken: acpSessionId,
+      source: 'native',
     };
 
     const queue = new AsyncQueue<AgentEvent>();

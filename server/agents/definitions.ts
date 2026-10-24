@@ -7,6 +7,7 @@
 
 import type { AgentDescriptor, AgentEvent, AgentInstall, SendContext } from './types.js';
 import type { ScenarioTool } from '../../shared/scenarios.js';
+import type { EventSource } from '../../shared/blocks.js';
 import { codexSandboxFor } from './permissions.js';
 
 /**
@@ -82,8 +83,17 @@ export type PermissionMode = NonNullable<SendContext['permissionMode']>;
 
 /** CLI 调用规格 */
 export interface CliSpec {
-  /** PATH 中查找的命令名 */
-  bin: string;
+  /**
+   * PATH 中查找的命令名。传数组表示同一条目有多个可能的命令名，
+   * 按顺序找第一个命中的（A105：Trae 国内版装出来是 `trae-cn`，
+   * 官方文档写的却是 `traecli` —— 只写一个就会把装好的用户判成未安装）。
+   */
+  bin: string | string[];
+  /**
+   * 追加的扩展名（A105：ZCode 桌面版的引擎是 `zcode.cjs`，
+   * 没有任何可执行扩展名，不加这一项 PATHEXT 匹配不到它）。
+   */
+  binExts?: string[];
   /** 构造 argv（不含命令本身与垫片前缀参数） */
   buildArgs(prompt: string, ctx: SendContext): string[];
   /**
@@ -207,6 +217,26 @@ export interface AgentDefinition {
    * 用于装在 PATH 之外的工具，例如 Hermes 的 bin 目录。
    */
   extraPaths?: string[];
+  /**
+   * 引擎文件的候选路径（A105，支持 `%VAR%` / `~` 模板）。
+   *
+   * 与 `extraPaths` 的分工：`extraPaths` 是**目录**，靠命令名去匹配；
+   * 这里是**文件**的完整路径，用于「知道引擎在哪、但不在 PATH 里」的 Agent
+   * （ZCode 桌面版的引擎就是官方设计成不进 PATH 的）。探测时会把每个候选
+   * 的所在目录并入搜索路径，再由 `bin` + `binExts` 命中。
+   *
+   * 路径里的 `{root}` 是占位符，会被 `shortcutNames` 反推出来的安装根替换
+   * （安装目录由用户自选，写死任何盘符都会漏）。
+   */
+  engineCandidates?: string[];
+  /**
+   * 桌面快捷方式名（A105，Windows）。
+   *
+   * 安装目录由用户在安装时自选，没有任何环境变量记录它；而开始菜单 / 桌面
+   * 的快捷方式一定指向真实路径。探测时解析它反推安装根，再拼上
+   * `engineCandidates` 的相对部分 —— 不写死任何盘符。
+   */
+  shortcutNames?: string[];
   /**
    * 运行时必须能访问到的后端主机（不含协议，可带端口，默认 443）。
    *
@@ -1018,7 +1048,10 @@ const RAW_DEFS: AgentDefinition[] = [
     credential: {
       keyEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
       baseUrlEnv: 'GOOGLE_GEMINI_BASE_URL',
-      hint: 'Google AI Studio 申请 API Key；若官方端点不可达，可在「接入地址」填兼容网关',
+      // A105：gemini-cli 有两条登录路 —— API Key，或在终端跑 `gemini` 走
+      // Google 账号 OAuth（凭据写 ~/.gemini/oauth_creds.json）。只写 Key
+      // 那条，用户会以为「登录过 Google 账号」不算数，从而反复重登。
+      hint: 'Google AI Studio 申请 API Key，或在终端运行 gemini 完成 Google 账号 OAuth 登录；若官方端点不可达，可在「接入地址」填兼容网关',
     },
   },
   {
@@ -1485,7 +1518,9 @@ const RAW_DEFS: AgentDefinition[] = [
     // A30：后端实测可达（无 Key 时 401），所以只要在设置页填上 Key 就能直接用
     credential: {
       keyEnv: ['ARK_API_KEY', 'DOUBAO_API_KEY'],
-      hint: '火山方舟控制台创建 API Key；模型可填推理接入点 ID（ep-xxxx）或 doubao-1.5-pro-32k',
+      // A105：同 Kimi —— 豆包桌面 App 的登录态与方舟 API Key 是两套东西，
+      // 用户装了 App、登了号，看到「未登录」只会更困惑。
+      hint: '火山方舟控制台创建 API Key（与豆包桌面 App 的登录态不通用）；模型可填推理接入点 ID（ep-xxxx）或 doubao-1.5-pro-32k',
     },
   },
   {
@@ -1512,10 +1547,14 @@ const RAW_DEFS: AgentDefinition[] = [
       color: '#534AB7',
       command: 'zcode',
       installHint:
-        '安装 ZCode 桌面版后把引擎软链到 PATH（如 /Applications/ZCode.app/Contents/Resources/glm/zcode.cjs → /usr/local/bin/zcode）；模型在 ~/.zcode/cli/config.json 里配，本应用不代管',
+        '安装 ZCode 桌面版即可（应用会自动在开始菜单快捷方式与默认安装目录里找引擎 resources/glm/zcode.cjs，也可手动把引擎软链到 PATH）；模型在 ~/.zcode/cli/config.json 里配，本应用不代管',
     },
     cli: {
       bin: 'zcode',
+      // A105：引擎是 `zcode.cjs`（Node 脚本），没有任何可执行扩展名 ——
+      // 不加这项，findExecutable 按 PATHEXT 找不到它，装好的桌面版也会
+      // 被报成「PATH 中未找到命令 zcode」。
+      binExts: ['.cjs'],
       buildArgs: (prompt, ctx) => {
         // 依据 zcode 0.14.5 实测（Open ACE 的集成手册，与本文件其他 CLI 同规格）：
         //   --prompt <text>   单次执行，不开 TUI
@@ -1580,6 +1619,21 @@ const RAW_DEFS: AgentDefinition[] = [
     // 凭据不在环境变量里：zcode login（OAuth）或 ~/.zcode/cli/config.json 的
     // provider.options.apiKey。探测阶段只看配置文件在不在。
     authFiles: ['.zcode/cli/config.json'],
+    // A105：ZCode **只通过桌面版分发**，官方设计就是引擎不进 PATH。
+    // 安装目录由用户自选（本机实测在 `E:\AI\ZCode`，默认在
+    // `%LOCALAPPDATA%\Programs\ZCode`），没有任何环境变量记录它 ——
+    // 所以两条路一起走：默认安装位置猜一遍，再从开始菜单 / 桌面的
+    // `ZCode.lnk` 反推真实安装根（`{root}` 会被替换成那个根）。
+    // 两条都不中才判未安装。
+    engineCandidates: [
+      '{root}\\resources\\glm\\zcode.cjs',
+      '%LOCALAPPDATA%\\Programs\\ZCode\\resources\\glm\\zcode.cjs',
+      '%LOCALAPPDATA%\\ZCode\\resources\\glm\\zcode.cjs',
+      '%ProgramFiles%\\ZCode\\resources\\glm\\zcode.cjs',
+      '/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs',
+      '~/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs',
+    ],
+    shortcutNames: ['ZCode.lnk'],
     extraPaths: [],
   },
   {
@@ -1617,7 +1671,11 @@ const RAW_DEFS: AgentDefinition[] = [
     backendHosts: ['api.moonshot.cn'],
     credential: {
       keyEnv: ['MOONSHOT_API_KEY', 'KIMI_API_KEY'],
-      hint: 'Moonshot 开放平台申请 API Key（账户状态需正常）',
+      // A105：用户在本机 Kimi 桌面 App / Kimi Code CLI 里登录过，名册这一条
+      // 仍显示未登录 —— 官方 FAQ 明确「开放平台 API Key 与 Kimi Code Key 不
+      // 通用」，桌面 App 的登录态更不是 Key。不写这一句，用户会反复去登录
+      // 一个本来就登录着的 App，然后认定应用坏了。
+      hint: 'Moonshot 开放平台申请 API Key（账户状态需正常）；注意与 Kimi 桌面 App / Kimi Code CLI 的登录态不通用',
     },
   },
 
@@ -1854,18 +1912,25 @@ const RAW_DEFS: AgentDefinition[] = [
       eventCapabilities: ['tool', 'usage'],
       description:
         '字节 Trae 的官方终端 Agent（traecli），支持非交互 exec、JSONL 事件流与沙箱权限；与 IDE 共用同一账号',
-      // ⚠️ 没有官方 logo 素材，也**不编一个颜色**：`icon` 留空时 AgentAvatar 会退化
-      // 成「首字母色块」，那是如实的「暂缺品牌素材」，比按印象填一个像品牌色
-      // 其实不是的十六进制值更诚实（与 ModelSelectPopup 字标同一条理由）。
+      // A104：接上官方 logo（src/assets/agent-logos/trae.svg，取自 asvg.app，
+      // 与 trae.com.cn 的 favicon 同色 #32F08C）。
+      // 原先这里留空走「首字母色块」，注释写的是「没有官方 logo 素材」——
+      // 那个理由现在已经不成立，素材已落地，故连同注释一起替换。
+      icon: 'trae',
       command: 'traecli',
       installHint:
         'TraeCode CLI（traecli）由 Trae 官方分发，需企业版旗舰套餐；安装方式见 docs.trae.cn，装完运行 traecli login',
     },
     cli: {
-      bin: 'traecli',
+      // A105：国内版装出来的命令名是 **`trae-cn`**（`E:\AI\Trae CN\bin\trae-cn.cmd`，
+      // 已在 PATH 里），官方文档写的 `traecli` 在本机不存在。两个都列，
+      // 谁在就用谁 —— 只写文档名会把装好的用户判成「未安装」（实测踩过）。
+      bin: ['trae-cn', 'traecli'],
       /**
-       * ⚠️ 本机**没有装 traecli**，所以下面这些参数只核到「官方文档写了」，
-       * 没有一条是实跑验证过的。依据：docs.trae.cn/cli_command-line-parameters
+       * ⚠️ 本机装有 Trae CN 国内版（2026-10-24 实读 `bin/trae-cn.cmd`，
+       * `--version` 实测返回 1.107.1），但**没有实跑过 `exec`**，
+       * 所以事件结构只核到「官方文档写了」，没有一条是实跑验证过的。
+       * 依据：docs.trae.cn/cli_command-line-parameters
        * （2026-10-22 实读），逐条对应：
        *   `traecli exec [选项] [PROMPT]`  非交互运行
        *   `--json`                        事件以 JSONL 流式打到 stdout
@@ -1875,7 +1940,7 @@ const RAW_DEFS: AgentDefinition[] = [
        *   `--permission-mode <MODE>`      default / auto / bypass_permissions
        *   `-y/--yolo`                     跳过全部确认且不沙箱（危险）
        *   `--skip-git-repo-check`         允许在非 git 仓库里跑
-       * 装好之后第一件事：跑 `traecli exec --json "say hi"` 看真实事件结构，
+       * 装好之后第一件事：跑 `trae-cn exec --json "say hi"` 看真实事件结构，
        * 再回来核对 createMapper 是否对得上。
        */
       buildArgs: (prompt, ctx) => {
@@ -2113,4 +2178,41 @@ export const INSTALL_HOSTS = [
 /** 按 id 快速查找 */
 export function findDef(id: string): AgentDefinition | undefined {
   return AGENT_DEFS.find(d => d.descriptor.id === id);
+}
+
+/**
+ * 由 Agent 定义推导它的工具事件来源（A100）。**纯函数**，可单测。
+ *
+ * ## 为什么需要这个函数
+ *
+ * 13 个 CLI 里 9 个吐 jsonl、1 个吐 json-object、3 个只有纯文本。前两类
+ * 的事件是 CLI 自己声明的结构化输出；纯文本那 3 个是适配器按模式**解析**出来
+ * 的。两者在界面上长得一模一样，但可信度差一个量级 —— 不区分，就等于把
+ * 「我猜的」和「它说的」画成同一个样子。
+ *
+ * ## 判定顺序（从最可信往下）
+ *
+ * 1. `sdk` 优先于 `cli`：定义表里两者可以同时存在（SDK 握手失败才回退 CLI），
+ *    而能走 SDK 时事件就是原生的。
+ * 2. `kind === 'sdk'` / `acp` / `http` 都是官方接口：SDK 走的是厂商 SDK，
+ *    ACP 是正式协议，HTTP 是结构化接口 —— 都算 native。
+ *    ⚠️ 曾经漏了 `kind === 'sdk'`，只判了 `def.sdk` 字段。两者的覆盖并不重合：
+ *    `kind` 说的是**我们怎么接**，`def.sdk` 说的是**有没有配 SDK 握手参数**。
+ *    漏掉它的后果是主力 Agent（workbuddy，kind='sdk'）在界面上没有来源标注。
+ * 3. `cli` 看 `parse`：`jsonl` / `json-object` 是 CLI 自己吐的结构化输出；
+ *    `text` 是适配器解析出来的，低一档。
+ * 4. 其余（mock 等）返回 undefined —— **不猜**。UI 对 undefined 不标注。
+ */
+export function eventSourceOf(def: AgentDefinition | undefined): EventSource | undefined {
+  if (!def) return undefined;
+  if (def.sdk) return 'native';
+  if (
+    def.descriptor.kind === 'sdk' ||
+    def.descriptor.kind === 'acp' ||
+    def.descriptor.kind === 'http'
+  ) {
+    return 'native';
+  }
+  if (def.cli) return def.cli.parse === 'text' ? 'parsed_text' : 'structured_cli';
+  return undefined;
 }

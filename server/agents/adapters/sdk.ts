@@ -240,7 +240,7 @@ export class SdkAdapter implements AgentProvider {
           },
         });
 
-        queue.push({ type: 'init', sessionId, model: ctx.model });
+        queue.push({ type: 'init', sessionId, model: ctx.model, source: 'native' });
 
         let currentToolId: string | null = null;
         const openTools: string[] = [];
@@ -255,6 +255,7 @@ export class SdkAdapter implements AgentProvider {
               sessionId,
               model: ctx.model,
               resumeToken: (m.session_id as string) ?? null,
+              source: 'native',
             });
             continue;
           }

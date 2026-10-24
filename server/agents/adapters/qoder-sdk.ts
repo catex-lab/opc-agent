@@ -486,7 +486,7 @@ export class QoderSdkAdapter implements AgentProvider {
     // 为什么先发一个「合成 init」：SDK 的第一个真实事件要等 CLI 冷启动
     // （实测 60s+），期间前端连消息气泡都不会出现。`SdkAdapter` 也是这么做的。
     // 它不参与 `contentEvents` 计数，所以握手失败时仍然可以安全回退。
-    yield { type: 'init', sessionId, model: ctx.model };
+    yield { type: 'init', sessionId, model: ctx.model, source: 'native' };
 
     try {
       for await (const ev of queue) {
@@ -777,6 +777,7 @@ export function createQoderMapper(
           sessionId: opts.sessionId,
           model: typeof m.model === 'string' ? m.model : opts.model,
           resumeToken: typeof m.session_id === 'string' ? m.session_id : null,
+          source: 'native',
         });
         return out;
       }

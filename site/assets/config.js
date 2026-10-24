@@ -7,7 +7,7 @@ window.OPC_CONFIG = {
 
   // GitHub 仓库（格式 owner/repo）。为空时下载与 GitHub 链接会保持禁用，
   // 不展示虚构地址；拿到正式仓库名后在此填写。
-  repo: '',
+  repo: 'catex-lab/opc-agent',
 
   // 统计与下载中转的 Worker 基地址（同域方案，Worker 挂在主域路径上）。
   //

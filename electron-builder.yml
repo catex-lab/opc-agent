@@ -86,7 +86,7 @@ nodeGypRebuild: false
 buildDependenciesFromSource: false
 
 win:
-  # 应用图标（多尺寸 .ico，由 scripts/make-icons.py 从源图生成）。
+  # 应用图标（多尺寸 .ico，由 scripts/make-icons.mjs 从 build/icon.svg 栅格化生成）。
   #
   # 这一处同时决定了五件事，所以必须配：
   #   • exe 文件本身的图标（资源管理器里看到的）

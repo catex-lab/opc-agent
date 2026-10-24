@@ -30,6 +30,7 @@ import type { AgentEvent } from './types.js';
 import type {
   Block,
   BlockState,
+  EventSource,
   RunEvent,
   RunStatus,
   TextBlock,
@@ -45,6 +46,14 @@ export interface RunMeta {
   messageId: string;
   agentId: string;
   model?: string;
+  /**
+   * 这个 Agent 的事件来源（A100）。由调用方从注册表取，投影器只负责盖章。
+   *
+   * 为什么由调用方传而不是投影器自己去查注册表：投影器是纯逻辑，
+   * 拿夹具就能单测。一旦它 import 注册表，单测就得先把 16 个 Agent 定义
+   * 全跑一遍探测 —— 那已经不叫单元测试了。
+   */
+  source?: EventSource;
 }
 
 /** 单个 run 的块上限：防止异常适配器把内存打爆 */
@@ -52,7 +61,14 @@ const MAX_BLOCKS = 400;
 
 export class RunProjector {
   private seq = 0;
-  private readonly meta: RunMeta;
+  /**
+   * 本次运行的元信息。
+   *
+   * 刻意**不是** readonly：`source` 允许在收到适配器的 init 事件后被覆盖
+   * （见 `case 'init'`）。把它做成 readonly 会逼着另外开一个字段，
+   * 那样就有两处需要保持一致的地方了。
+   */
+  private meta: RunMeta;
   private readonly now: () => number;
   private readonly blocks: Block[] = [];
   /** 当前正在追加的文本/思考块（工具块不参与「续写」） */
@@ -166,6 +182,16 @@ export class RunProjector {
   push(ev: AgentEvent): RunEvent[] {
     switch (ev.type) {
       case 'init': {
+        // A100：适配器在 init 里报了它实际走的通道 —— 以它为准，
+        // 覆盖掉构造时传进来的静态值。
+        //
+        // 为什么必须有这一步：qoder 系列是「SDK 优先、握手失败回退 CLI」。
+        // 静态推导只能给出「优先走 SDK」这个乐观答案；一旦回退到
+        // `parse: 'text'` 的 CLI，事件其实是从纯文本解析出来的。
+        // 不覆盖的话，界面上那个「原生」标签就是一句假话。
+        if (ev.source) {
+          this.meta = { ...this.meta, source: ev.source };
+        }
         if (this.started) {
           // 后续 init 只用于更新续接令牌，不重复发 run_start
           return [];
@@ -205,6 +231,9 @@ export class RunProjector {
               : undefined,
           status: 'running',
           startedAt: this.now(),
+          // A100：把「这个工具事件从哪来」烙在块上。投影器是唯一创建
+          // ToolBlock 的地方，所以只在这里写一次，UI 就能如实标注。
+          source: this.meta.source,
         };
         this.blocks.push(block);
         return [...closing, this.make({ type: 'block_open', block: { ...block } })];

@@ -227,6 +227,18 @@ export interface Session {
    * 由 fetchSessions 还原出来的会话不会带此标记。
    */
   isLocal?: boolean;
+  /**
+   * 上一轮没有产出回复（A100）。
+   *
+   * 由后端算好返回：最后一条消息是 user、且这个会话当前没有活跃 run。
+   * 只在「重新打开会话」时才有值 —— 应用被关闭/进程崩溃/用户中止都会留下
+   * 这个痕迹，而它们的**后果完全一样**（这一轮没了），所以不区分原因，
+   * 只如实说「没有产出回复」，并明确「无法恢复」。
+   *
+   * 前端**不要自己推**：它看不见别的标签页是不是正在跑这一轮，
+   * 只凭「最后一条是 user」会误报成中断。
+   */
+  dangling?: { messageId: string; at: string } | null;
 }
 
 export interface CustomAgent {

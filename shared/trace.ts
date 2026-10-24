@@ -58,6 +58,31 @@ export interface TraceItem {
 
 const lower = (name: unknown): string => (typeof name === 'string' ? name.toLowerCase() : '');
 
+/**
+ * 「会改动文件」的工具名（小写）。
+ *
+ * 为什么收敛成一份：这个名字集合原本在 `hasFileEdits` 里写了一份、在
+ * `isFileTool` 里写了一份、`diffOf` 里又按名字分支了一遍。A99 的文件核对
+ * 还要再用一次 —— 四份副本必然漂移，而漂移的后果是「某个 Agent 的工具
+ * 在轨迹里有角标、在核对里被跳过」，用户看到的两个数字对不上。
+ */
+export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'write',
+  'writefile',
+  'create_file',
+]);
+
+/** 「按 old/new 替换」类工具（能算出真实增删） */
+export const EDIT_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'edit',
+  'editfile',
+  'multiedit',
+  'str_replace_editor',
+]);
+
+/** 只读类：确实没有 diff 概念，但仍属「文件类」步骤（要留 diff 位） */
+const READ_TOOL_NAMES: ReadonlySet<string> = new Set(['read', 'readfile', 'delete', 'deletefile']);
+
 /** 取入参里的文件路径（不同 CLI 的字段名不一样） */
 export function toolPathOf(input?: Record<string, unknown>): string | undefined {
   if (!input) return undefined;
@@ -201,19 +226,7 @@ function diffOf(name: string, input?: Record<string, unknown>): TraceDiff | unde
 
 /** 是不是「文件类」步骤（决定要不要留 diff 位） */
 function isFileTool(name: string): boolean {
-  return (
-    name === 'write' ||
-    name === 'writefile' ||
-    name === 'create_file' ||
-    name === 'edit' ||
-    name === 'editfile' ||
-    name === 'multiedit' ||
-    name === 'str_replace_editor' ||
-    name === 'read' ||
-    name === 'readfile' ||
-    name === 'delete' ||
-    name === 'deletefile'
-  );
+  return WRITE_TOOL_NAMES.has(name) || EDIT_TOOL_NAMES.has(name) || READ_TOOL_NAMES.has(name);
 }
 
 /**
@@ -224,16 +237,12 @@ function isFileTool(name: string): boolean {
  */
 export function hasFileEdits(blocks: readonly Block[] | undefined | null): boolean {
   if (!blocks) return false;
-  const WRITE_TOOLS = new Set([
-    'write',
-    'writefile',
-    'create_file',
-    'edit',
-    'editfile',
-    'multiedit',
-    'str_replace_editor',
-  ]);
-  return blocks.some(b => b.type === 'tool' && WRITE_TOOLS.has(lower(b.name)));
+  // 「写」和「替换」都算改过文件；read / delete 不算（见上方注释）。
+  return blocks.some(b => {
+    if (b.type !== 'tool') return false;
+    const n = lower(b.name);
+    return WRITE_TOOL_NAMES.has(n) || EDIT_TOOL_NAMES.has(n);
+  });
 }
 
 // ============= 块 → 轨迹 =============

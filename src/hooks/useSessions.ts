@@ -158,7 +158,15 @@ export function useSessions() {
         }));
 
         setSessions(prev => prev.map(s =>
-          s.id === sessionId ? { ...s, messages } : s
+          s.id === sessionId
+            ? {
+                ...s,
+                messages,
+                // A100：后端算好的「上一轮没有产出回复」。只在拿到响应时更新，
+                // 不做本地推断 —— 前端看不到别的标签页是否正在跑这一轮。
+                dangling: data.dangling ?? null,
+              }
+            : s
         ));
         markLoaded(sessionId);
       } else {

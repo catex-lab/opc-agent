@@ -309,6 +309,22 @@ function StepRow({ item }: { item: TraceItem }) {
         <span className="tc-trace-verb">{item.verb}</span>
         {item.target && <span className="tc-trace-target">{item.target}</span>}
         {item.diff && <DiffTag diff={item.diff} />}
+        {/* A100：事件来源标签。**只标纯文本解析那一种** —— 原生 / 结构化
+            输出是绝大多数，逐条标出来反而把轨迹刷满噪音；而「解析出来的」
+            是少数且可信度低一档，值得让人一眼看见。
+            A102：标签挪到耗时**前面**，并且不再复用 `.tc-trace-meta`。
+            那个类带 `margin-left:auto`，两个自动边距会把行内剩余空间对半
+            分，耗时从此贴不到右缘（实测同轮 600ms 停在 x=915，别行 200ms
+            在 x=1284）。现在只有耗时带 auto，每行右缘一致。 */}
+        {item.kind === 'tool' && item.block?.source === 'parsed_text' && (
+          <span
+            className="tc-trace-src"
+            data-trace-source="parsed_text"
+            title="这个 Agent 只输出纯文本，工具事件由 OPC 从输出里解析得出。与官方结构化事件相比，这一步的可信度低一档"
+          >
+            文本解析
+          </span>
+        )}
         {meta && <span className="tc-trace-meta">{meta}</span>}
       </div>
       {open && (

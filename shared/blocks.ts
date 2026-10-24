@@ -54,6 +54,29 @@ export interface ThinkingBlock {
 
 export type ToolBlockStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
+/**
+ * 工具事件的**来源可信度**（A100）。
+ *
+ * 为什么需要这个字段：13 个 CLI 里 9 个吐 jsonl、1 个吐 json-object、
+ * **3 个只有纯文本**。前两类的事件是 Agent 自己声明的结构化事件，
+ * 纯文本那 3 个则是适配器从 stdout 里**解析**出来的 —— 看起来一样，
+ * 可信度差一个量级。不给用户区分，等于把「我猜的」和「它说的」画成同一个样子。
+ *
+ * 粒度为**每个 Agent**而不是每个事件：一个 Agent 的输出方式不会中途改变，
+ * 逐事件标注只是把同一个值抄一万遍。
+ *
+ * 刻意没有 `inferred`（推断）这一档：本项目的适配器不产生推断事件 ——
+ * 解析文本好歹有原文可对，而「根据等待时间猜它在干什么」那种做法这里没做，
+ * 也就不需要为它留一个名字。
+ */
+export type EventSource =
+  /** 官方 SDK / ACP 协议 / 结构化 HTTP 接口 */
+  | 'native'
+  /** CLI 的 jsonl / json-object 结构化输出 */
+  | 'structured_cli'
+  /** CLI 的纯文本输出，由适配器按模式解析出来 */
+  | 'parsed_text';
+
 export interface ToolBlock {
   id: string;
   type: 'tool';
@@ -71,6 +94,11 @@ export interface ToolBlock {
   startedAt: number;
   endedAt?: number;
   isError?: boolean;
+  /**
+   * 这个工具事件是怎么来的。缺省 = 未知（老数据 / mock 适配器），
+   * UI 对缺省值**不标注也不猜测**。
+   */
+  source?: EventSource;
 }
 
 /** 图片块的数据部分，字段与 src/types.ts 的 ImageBlock 保持结构兼容 */
