@@ -80,7 +80,8 @@
     "verify:a83": "node scripts/verify-a83.mjs",
     "verify:a84": "node scripts/verify-a84.mjs",
     "verify:a85": "node scripts/verify-a85.mjs",
-    "verify:a86": "tsx scripts/verify-a86-workspace.ts"
+    "verify:a86": "tsx scripts/verify-a86-workspace.ts",
+    "verify:a96": "tsx scripts/verify-a96-diff.ts && node scripts/verify-a96.mjs"
   },
   "dependencies": {
     "@qoder-ai/qoder-agent-sdk": "^1.0.55",

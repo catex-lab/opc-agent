@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 import type { Block } from '../../shared/blocks';
 import {
+  buildDiffHunks,
   buildTrace,
   formatHandledDuration,
   formatStepDuration,
@@ -54,6 +55,7 @@ import {
   type TraceDiff,
   type TraceItem,
 } from '../../shared/trace';
+import { DiffView } from './DiffView';
 
 /**
  * 工具 → 图标 + 颜色。
@@ -260,7 +262,14 @@ function StepRow({ item }: { item: TraceItem }) {
   const [open, setOpen] = useState(false);
   const { icon: Icon, color } = iconOf(item.toolName);
   const detail = item.kind === 'tool' ? detailOf(item) : null;
-  const hasDetail = detail != null || !!item.block?.output;
+  // A96：文件类工具优先给行级 diff。没有 diff 数据（read / delete / 未知工具）
+  // 时返回 null，这里自动退回原来的明细渲染 —— 两条路互斥，不会重复显示。
+  const hunks = useMemo(
+    () =>
+      item.kind === 'tool' && item.block ? buildDiffHunks(item.toolName, item.block.input) : null,
+    [item.kind, item.toolName, item.block]
+  );
+  const hasDetail = hunks != null || detail != null || !!item.block?.output;
 
   const meta =
     item.status === 'running'
@@ -304,7 +313,7 @@ function StepRow({ item }: { item: TraceItem }) {
       </div>
       {open && (
         <>
-          {detail}
+          {hunks ? <DiffView hunks={hunks} /> : detail}
           <OutputBox
             label="输出"
             text={item.block?.output ?? ''}

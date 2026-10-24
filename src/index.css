@@ -3534,6 +3534,91 @@ html[data-opc-glass='1'] t-chat-sender {
   opacity: 0.75;
 }
 
+/* ── 行级 diff 视图（A96）─────────────────────────────────────────
+   点开轨迹里的 +109 -16，看具体改了哪几行。数据来自 ToolBlock.input
+   （edit 的 old_string / new_string），裁剪算法见 shared/trace.ts。
+
+   为什么底色用 color-mix 而不是写死 rgba：增删色必须跟随主题 —— 深色下
+   写死的 10% 绿色会脏成一片灰绿，而 color-mix 直接对 --td-success-color
+   取 alpha，明暗自动同步（本文件已有 12 处同样用法）。
+
+   为什么折行而不是横向滚动：这里要回答「改了什么」，不是「精确对齐同一行」。
+   折行省掉了两列行号的 sticky 定位（暗色下还得各自补背景），出错面更小。 */
+.tc-diffview {
+  margin-top: 6px;
+  border: 1px solid var(--tc-hairline);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--tc-surface-content);
+  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.tc-diffview-note {
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  background: var(--tc-surface-rail, transparent);
+  border-bottom: 1px solid var(--tc-hairline);
+}
+.tc-diffhunk + .tc-diffhunk {
+  border-top: 1px solid var(--tc-hairline);
+}
+.tc-diffhunk-head {
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  background: var(--tc-surface-rail, transparent);
+}
+.tc-diffline {
+  display: flex;
+  align-items: flex-start;
+  padding-right: 8px;
+}
+.tc-diffline-no {
+  flex: 0 0 auto;
+  width: 34px;
+  padding-right: 6px;
+  text-align: right;
+  color: var(--td-text-color-placeholder);
+  opacity: 0.7;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.tc-diffline-sign {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  user-select: none;
+  opacity: 0.85;
+}
+.tc-diffline-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--td-text-color-primary);
+}
+.tc-diffline.is-add {
+  background: color-mix(in srgb, var(--td-success-color) 10%, transparent);
+}
+.tc-diffline.is-add .tc-diffline-sign {
+  color: var(--td-success-color);
+}
+.tc-diffline.is-del {
+  background: color-mix(in srgb, var(--td-error-color) 10%, transparent);
+}
+.tc-diffline.is-del .tc-diffline-sign {
+  color: var(--td-error-color);
+}
+.tc-diffhunk-more {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  background: var(--tc-surface-rail, transparent);
+}
+
 /* 轨迹滚动区。
    为什么要限高：一条消息挂 30 个步骤时，不封顶就会把整个会话顶成
    一屏全是过程、答案被挤到看不见。参考图也是同样处理。

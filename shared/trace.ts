@@ -387,3 +387,165 @@ export function lingeringToolBlocks(blocks: readonly Block[], runFinished: boole
       b.startedAt > 0
   );
 }
+
+// ============= 行级 diff（A96） =============
+
+/**
+ * 把工具入参还原成**可渲染的**行级 diff。
+ *
+ * ## 与 `lineDiff` 的关系（必须保持一致）
+ *
+ * 角标上那个 `+109 -16` 由 `lineDiff()` 算出，展开后的内容由本函数生成 ——
+ * 两者**必须用同一套口径**，否则用户会看到「角标写 +3，展开却有 20 行绿色」。
+ * 所以这里复用完全相同的 head/tail 裁剪算法：相同的行算上下文，中间的
+ * 旧行算删除、新行算新增。`+N` 就是新增段的长度，`-M` 就是删除段的长度。
+ *
+ * ## 为什么不做真正的 LCS
+ *
+ * LCS 会在改动段内部再对齐相同的行（Git 的行为），对「审查 Agent 改了什么」
+ * 收益有限，代价是 O(n²) 且要处理大量边界。当前 Agent 的 Edit 基本是
+ * 「替换一小段」，head/tail 裁剪已经能准确圈出变化区。
+ * 真正需要逐行对齐的场景是「整个文件重写」，而那种情况走的是 `write`，
+ * 入参里根本没有旧内容 —— 再怎么算也只能是「全部新增」。
+ *
+ * ## 三种工具的差异
+ *
+ * | 工具 | 入参里有旧内容 | 能给出 |
+ * |---|---|---|
+ * | `edit` / `multiedit` | 有（old_string） | 完整的 +/- |
+ * | `write` | 没有 | 只有 +（`mode='create'`，UI 要如实标注） |
+ * | 其余 | 无 | `null`，退回原来的 JSON 展示 |
+ */
+
+export type DiffLineKind = 'context' | 'add' | 'del';
+
+export interface DiffLine {
+  kind: DiffLineKind;
+  text: string;
+  /** 旧文件行号；`add` 行没有 */
+  oldLine?: number;
+  /** 新文件行号；`del` 行没有 */
+  newLine?: number;
+}
+
+export interface DiffHunk {
+  /** 改动块在旧文件中的起始行（1 基）；`mode='create'` 时为 0 */
+  oldStart: number;
+  /** 改动块在新文件中的起始行（1 基） */
+  newStart: number;
+  lines: DiffLine[];
+  /** 因超长被截掉的行数（0 / 未定义 = 完整展示） */
+  hidden?: number;
+  /**
+   * `replace` = 新旧都在，能看出改了什么；
+   * `create` = 只有新内容（旧内容不在入参里），**不能假装知道删了什么**
+   */
+  mode: 'replace' | 'create';
+}
+
+/** 改动块前后各保留几行上下文 */
+const DIFF_CONTEXT = 3;
+/** 单个块最多渲染多少行，超出截断（防整文件重写把对话撑爆） */
+const DIFF_MAX_LINES = 240;
+
+/** 单块的裁剪 + 组装。算法与 `lineDiff()` 逐字一致。 */
+function hunkOf(oldText: string, newText: string): DiffHunk {
+  const a = oldText ? oldText.split('\n') : [];
+  const b = newText ? newText.split('\n') : [];
+
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]
+  ) {
+    tail++;
+  }
+
+  const ctxHead = Math.min(head, DIFF_CONTEXT);
+  const ctxTail = Math.min(tail, DIFF_CONTEXT);
+  const delEnd = a.length - tail;
+  const addEnd = b.length - tail;
+
+  const lines: DiffLine[] = [];
+  for (let i = head - ctxHead; i < head; i += 1) {
+    lines.push({ kind: 'context', text: a[i], oldLine: i + 1, newLine: i + 1 });
+  }
+  for (let i = head; i < delEnd; i += 1) {
+    lines.push({ kind: 'del', text: a[i], oldLine: i + 1 });
+  }
+  for (let i = head; i < addEnd; i += 1) {
+    lines.push({ kind: 'add', text: b[i], newLine: i + 1 });
+  }
+  for (let i = 0; i < ctxTail; i += 1) {
+    const oi = a.length - tail + i;
+    const ni = b.length - tail + i;
+    lines.push({ kind: 'context', text: a[oi], oldLine: oi + 1, newLine: ni + 1 });
+  }
+
+  let hidden = 0;
+  if (lines.length > DIFF_MAX_LINES) {
+    hidden = lines.length - DIFF_MAX_LINES;
+    lines.length = DIFF_MAX_LINES;
+  }
+
+  return {
+    oldStart: Math.max(1, head - ctxHead + 1),
+    newStart: Math.max(1, head - ctxHead + 1),
+    lines,
+    hidden: hidden || undefined,
+    mode: 'replace',
+  };
+}
+
+/** `write` 类：只有写入后的内容，全部算新增 */
+function createHunk(content: string): DiffHunk {
+  const all = content.split('\n');
+  const lines: DiffLine[] = all.map((text, i) => ({ kind: 'add' as const, text, newLine: i + 1 }));
+  let hidden = 0;
+  if (lines.length > DIFF_MAX_LINES) {
+    hidden = lines.length - DIFF_MAX_LINES;
+    lines.length = DIFF_MAX_LINES;
+  }
+  return { oldStart: 0, newStart: 1, lines, hidden: hidden || undefined, mode: 'create' };
+}
+
+/**
+ * 从工具名与入参构建 diff 块。
+ * 返回 `null` 表示「这个工具没有可展示的 diff」，调用方应退回原来的明细渲染。
+ */
+export function buildDiffHunks(
+  toolName: string,
+  input?: Record<string, unknown>
+): DiffHunk[] | null {
+  if (!input) return null;
+  const name = lower(toolName);
+
+  if (name === 'edit' || name === 'editfile' || name === 'str_replace_editor') {
+    const oldText = str(input.old_string ?? input.old_str ?? input.oldText);
+    const newText = str(input.new_string ?? input.new_str ?? input.newText);
+    if (!oldText && !newText) return null;
+    return [hunkOf(oldText, newText)];
+  }
+
+  if (name === 'multiedit') {
+    const edits = Array.isArray(input.edits) ? input.edits : [];
+    const hunks = edits
+      .map(e => {
+        const r = (e ?? {}) as Record<string, unknown>;
+        return hunkOf(str(r.old_string), str(r.new_string));
+      })
+      .filter(h => h.lines.length > 0);
+    return hunks.length ? hunks : null;
+  }
+
+  if (name === 'write' || name === 'writefile' || name === 'create_file') {
+    const content = str(input.content ?? input.text ?? input.file_text);
+    if (!content) return null;
+    return [createHunk(content)];
+  }
+
+  return null;
+}
