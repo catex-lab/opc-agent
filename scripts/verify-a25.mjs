@@ -210,13 +210,24 @@ console.log('\n[2] 板块分割线：取消');
       divider: cs.getPropertyValue('--tc-divider').trim(),
       stroke: cs.getPropertyValue('--td-component-stroke').trim(),
       nav: nav && getComputedStyle(nav).borderRightColor,
+      // A103 把导航条的 border-right 整条删了（圆角 + 缝取代分栏线），
+      // 这时 borderRightColor 回落到 currentColor（文字色）—— 必须连
+      // style / width 一起读，才能区分「真的没有边框」和「画了条同色线」。
+      navStyle: nav && getComputedStyle(nav).borderRightStyle,
+      navWidth: nav && getComputedStyle(nav).borderRightWidth,
       header: header && getComputedStyle(header).borderBottomColor,
       bubble: strokeColor,
     };
   });
-  const invisible = v => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
+  // 「不可见」有三种情形：颜色透明、或者**根本没有这条边框**（A103 之后
+  // 导航条就是后者）—— 删得干净比画成透明更不可见，不能判成失败。
+  const invisible = (v, style, width) =>
+    v === 'rgba(0, 0, 0, 0)' ||
+    v === 'transparent' ||
+    style === 'none' ||
+    width === '0px';
   ok(r.divider === 'transparent', '--tc-divider = transparent', r.divider);
-  ok(invisible(r.nav), '导航条右边线不可见', r.nav);
+  ok(invisible(r.nav, r.navStyle, r.navWidth), '导航条右边线不可见', `${r.nav} / style=${r.navStyle} / width=${r.navWidth}`);
   ok(invisible(r.header), '栏头底边线不可见', r.header);
   ok(r.stroke !== 'transparent', '控件描边未被一起取消', r.stroke);
   // A83：描边令牌从 #e5e5e5（10% 墨）降到 7% 墨，所以这里不再比字面值，

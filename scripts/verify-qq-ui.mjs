@@ -356,12 +356,15 @@ console.log('\n[6b] 拖拽调整左侧二栏宽度');
   });
   ok(
     !!geom && Math.abs(geom.handleLeft - (geom.colRight - 1)) <= 1,
-    '手柄左缘压在列表栏那 1px 分割线上（对齐，不再偏移）',
+    '手柄左缘压在列表栏右缘上（对齐，不再偏移）',
     geom ? `handle ${geom.handleLeft} vs colRight ${geom.colRight}` : 'n/a'
   );
+  // A103：不再「紧接」—— 全局改成 6px 缝 + 8px 微圆角，缝里露的是画布白。
+  // 断言从「mainLeft === colRight」改成「间距恰为缝宽」：既守住新设计，
+  // 也守住原意图（手柄不占布局宽度 —— 宽度全在 gap 里，不偷任何一栏）。
   ok(
-    !!geom && geom.mainLeft === geom.colRight,
-    '主内容紧接列表栏（手柄不占布局宽度，接缝处没有异色竖带）',
+    !!geom && geom.mainLeft - geom.colRight === 6,
+    '主内容与列表栏之间是 6px 缝（A103：手柄不占布局宽度，缝里露画布白）',
     geom ? `main ${geom.mainLeft} vs colRight ${geom.colRight}` : 'n/a'
   );
   ok(
@@ -412,8 +415,13 @@ console.log('\n[6b] 拖拽调整左侧二栏宽度');
 }
 await go('/chat/s1');
 {
-  const bg = await page.locator('main header').first().evaluate(el => getComputedStyle(el).backgroundColor);
-  ok(bg === 'rgb(255, 255, 255)', '会话头部与消息区同色（内容面）', bg);
+  // A103：会话头部从 content(白) 改回 chrome 灰（#f5f5f5）—— 与最左导航条
+  // 同色系，比消息区差一档。原来断言「头部与消息区同色」是有意的「QQ 做法」，
+  // 用户明确要求反转，所以这里反过来钉「差一档」。
+  const header = await page.locator('main header').first().evaluate(el => getComputedStyle(el).backgroundColor);
+  const column = await page.locator('main [data-tc-column="chat"]').first().evaluate(el => getComputedStyle(el).backgroundColor);
+  ok(header === 'rgb(245, 245, 245)', '会话头部用 chrome 灰（A103：与最左栏同色系）', header);
+  ok(column === 'rgb(255, 255, 255)', '消息区仍是内容面纯白（与头部差一档）', column);
   const listHeaderBg = await page.locator('header').first().evaluate(el => getComputedStyle(el).backgroundColor);
   ok(listHeaderBg === 'rgb(245, 245, 245)', '左栏标题栏仍是框架面 #f5f5f5', listHeaderBg);
 }

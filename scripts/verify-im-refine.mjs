@@ -344,16 +344,31 @@ console.log('\n[5] 板块分割线：已取消，控件描边仍在');
       divider: cs.getPropertyValue('--tc-divider').trim(),
       stroke: cs.getPropertyValue('--td-component-stroke').trim(),
       navBorder: nav ? getComputedStyle(nav).borderRightColor : null,
+      navBorderStyle: nav ? getComputedStyle(nav).borderRightStyle : null,
+      navBorderWidth: nav ? getComputedStyle(nav).borderRightWidth : null,
       headerBorder: header ? getComputedStyle(header).borderBottomColor : null,
       bubbleBorder: strokeColor,
     };
   });
-  // 透明边框在计算样式里有两种写法：`rgba(0, 0, 0, 0)` 或关键字 `transparent`
-  const invisible = v => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
+  // 透明边框在计算样式里有两种写法：`rgba(0, 0, 0, 0)` 或关键字 `transparent`。
+  // A103 之后导航条的 `border-right` 被**整条删掉**（圆角 + 缝取代了分栏线），
+  // 那时 `borderRightColor` 不再显式为 transparent，会回落到默认 `currentColor`
+  // （= 文字色，一条实线！）。所以「不可见」要同时接受第三种情形：
+  // **根本没有这条边框**（style=none / width=0）—— 那比透明更不可见。
+  // 只认 transparent 会把「删得干净」误判成「画了条黑线」。
+  const invisible = (v, style, width) =>
+    v === 'rgba(0, 0, 0, 0)' ||
+    v === 'transparent' ||
+    style === 'none' ||
+    width === '0px';
 
   const light = await read();
   ok(light.divider === 'transparent', '浅色 --tc-divider = transparent（A25 取消分割线）', light.divider);
-  ok(invisible(light.navBorder), '浅色：导航条右边线不可见', light.navBorder);
+  ok(
+    invisible(light.navBorder, light.navBorderStyle, light.navBorderWidth),
+    '浅色：导航条右边线不可见',
+    `${light.navBorder} / style=${light.navBorderStyle} / width=${light.navBorderWidth}`
+  );
   ok(invisible(light.headerBorder), '浅色：栏头底边线不可见', light.headerBorder);
   ok(!invisible(light.stroke), '控件描边仍有实色（输入框/按钮不能一起透明）', light.stroke);
   // A83：控件描边从 #e5e5e5（10% 墨）降到 7% 墨 —— 断言改为
@@ -372,7 +387,7 @@ console.log('\n[5] 板块分割线：已取消，控件描边仍在');
   await page.waitForTimeout(400);
   const dark = await read();
   ok(dark.divider === 'transparent', '深色 --tc-divider 同样是 transparent', dark.divider);
-  ok(invisible(dark.navBorder), '深色：导航条右边线不可见', dark.navBorder);
+  ok(invisible(dark.navBorder, dark.navBorderStyle, dark.navBorderWidth), '深色：导航条右边线不可见', dark.navBorder);
   ok(invisible(dark.headerBorder), '深色：栏头底边线不可见', dark.headerBorder);
   ok(dark.stroke !== 'transparent', '深色控件描边仍是实色', dark.stroke);
   await shot('im-refine-dark-dividers');
