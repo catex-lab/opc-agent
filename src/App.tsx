@@ -1013,7 +1013,10 @@ function AppContent() {
           >
             <div
               className="absolute inset-0"
-              style={{ backgroundColor: 'rgba(0, 0, 0, 0.38)' }}
+              /* A115 续：遮罩换到 --tc-mask-soft。设置弹窗现在是半透明玻璃
+                 （.tc-dialog），再压 38% 的黑会让整块比周围暗一圈，
+                 立体感反而没了 —— 与 A115 给 workflow-dialog 换遮罩同因。 */
+              style={{ backgroundColor: 'var(--tc-mask-soft)' }}
               onClick={handleCloseSettings}
               data-settings-backdrop
             />
@@ -1023,14 +1026,16 @@ function AppContent() {
                 「浮层」这层语义才成立。 */}
             <div
               ref={settingsPanelRef}
-              className="relative flex h-[min(700px,100%)] w-[min(900px,100%)] overflow-hidden rounded-2xl [&_header]:select-none"
-              style={{
-                border: '1px solid var(--td-component-stroke)',
-                boxShadow: 'var(--shadow-float)',
-                backgroundColor: 'var(--tc-surface-content)',
-                // 位移不在这里写：拖动时由 applySettingsOffset 直接改 DOM，
-                // 避免每帧重渲染设置页（见上面的注释）。
-              }}
+              /* A115 续：改挂 .tc-dialog —— 与其余六个业务弹窗同一套
+                 「玻璃 + 四层立体影 + 两条厚度边」。改之前这里是内联
+                 实色底 + 1px 10% 墨描边 + --shadow-float 两段影：
+                 整个应用里最后一块「旧语言」的面，而它恰恰是用户最常
+                 打开的一块。⚠️ 内联的 backgroundColor / border / boxShadow
+                 必须一并删掉 —— 内联优先级高于 class，留着任何一个都会
+                 把玻璃底盖回实色，那种失效没有报错，只是「看起来没变」。
+                 位移也不在这里写：拖动时由 applySettingsOffset 直接改 DOM，
+                 避免每帧重渲染设置页（见上面的注释）。 */
+              className="tc-dialog relative flex h-[min(700px,100%)] w-[min(900px,100%)] overflow-hidden rounded-2xl [&_header]:select-none"
               onPointerDown={onSettingsDragStart}
               onPointerMove={onSettingsDragMove}
               onPointerUp={onSettingsDragEnd}

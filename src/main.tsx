@@ -50,7 +50,32 @@ applyUiPrefs();
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <BrowserRouter>
+      {/*
+        A115（用户反馈）：「切换会话时选中的列表上下回跳、新会话内容屏闪」。
+
+        ⚠️ `useTransitions={false}` 是这一条的**根因修复**，不要当无关紧要的
+        参数删掉。React Router v7 的 BrowserRouter 默认把路由状态更新包在
+        `React.startTransition` 里（见 node_modules/react-router 的
+        `setState`：useTransitions !== false 时走 startTransition）。
+        startTransition 是**低优先级**更新，于是 `navigate()` 之后：
+
+          帧1（紧急）  currentSessionId = 新会话 ✓， 但路由 state 还是旧 URL
+                       → App 的「从 URL 同步 sessionId」effect 发现
+                         urlSessionId(旧) !== currentSessionId(新)
+                       → setCurrentSessionId(旧)   ← 选中被弹回上一行
+          帧2（过渡提交）路由 state = 新 URL, currentSessionId = 旧
+                       → 同一个 effect 又把它推回新会话
+          帧3          两边一致，才稳下来
+
+        用户看到的就是「选中框在新旧两行之间来回跳」+ 消息区在
+        「旧消息 / 骨架 / 新消息」之间连换三次（屏闪）。
+
+        关掉 transition 后，路由 state 与 setCurrentSessionId 在同一个
+        事件处理器里被 React 一起批处理，一帧到位，effect 不再有机会
+        看到「URL 旧、state 新」的中间态。对这个应用来说路由本来就是
+        本地状态的一面镜子，没有需要被 transition 降优先级的大页面切换。
+      */}
+      <BrowserRouter useTransitions={false}>
         <App />
       </BrowserRouter>
     </ErrorBoundary>

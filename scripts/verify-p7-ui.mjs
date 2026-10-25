@@ -215,8 +215,15 @@ await shot('verify-p7-panel');
     '面板宽度 = 群成员栏宽度',
     box && member ? `panel.w=${Math.round(box.width)} member.w=${Math.round(member.width)}` : '无 box'
   );
-  const vp = page.viewportSize();
-  ok(!!box && !!vp && Math.abs(vp.width - (box.x + box.width)) < 2, '面板贴右侧通栏', box ? `right=${box.x + box.width}` : '无 box');
+  // A103 起三栏各内缩 6px（圆角落到画布上，见 verify:surface [3]），
+  // 「贴右侧通栏」的基准从**视口**变成了**聊天列的右缘** —— 这条断言
+  // 当时没跟着改，于是一直拿 1274 比 1280 假失败。群成员栏与设置面板
+  // 都在聊天列内，两者右缘相同才是真的「通栏」。
+  const chatRight = await page.evaluate(() => {
+    const el = document.querySelector('[data-tc-column="chat"]');
+    return el ? Math.round(el.getBoundingClientRect().right) : null;
+  });
+  ok(!!box && !!chatRight && Math.abs(chatRight - (box.x + box.width)) < 2, '面板贴聊天列右缘（通栏的基准是栏目，A103 起不再是视口）', box ? `right=${box.x + box.width} chatRight=${chatRight}` : '无 box');
 
   ok(
     !!box && !!member && Math.abs(box.y - member.y) < 2,
@@ -234,6 +241,7 @@ await shot('verify-p7-panel');
     box && member ? `panel.bottom=${Math.round(box.y + box.height)} member.bottom=${Math.round(member.y + member.height)}` : 'n/a'
   );
   // 不再是「整屏模态」：容器只有面板那么宽，左侧区域不被覆盖
+  const vp = page.viewportSize();
   ok(!!box && box.width < (vp?.width ?? 0) - 100, '面板不再铺满整屏（左侧消息区不被遮挡）', box ? `w=${Math.round(box.width)} / vp=${vp?.width}` : 'n/a');
 
   // 面板参与布局：输入区必须整体落在面板左边缘之外，一点都不能被压住

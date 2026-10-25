@@ -79,7 +79,7 @@ export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps
         role="dialog"
         aria-modal="true"
         aria-labelledby="tc-agent-detail-title"
-        className="tc-glass tc-pop-in flex max-h-full w-full max-w-[440px] flex-col overflow-hidden rounded-2xl"
+        className="tc-dialog tc-pop-in flex max-h-full w-full max-w-[440px] flex-col overflow-hidden rounded-2xl"
       >
         {/* 卡头：头像 + 名字 + 状态 + 关闭。固定不滚，滚的是下面的信息区 */}
         <div

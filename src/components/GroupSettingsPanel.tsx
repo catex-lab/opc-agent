@@ -8,11 +8,14 @@ import {
   groupNickname,
   groupRemark,
   notifyModeOf,
+  setGroupAvatar,
   setGroupNickname,
   setGroupRemark,
   setNotifyMode,
+  useGroupAvatar,
   type NotifyMode,
 } from '../sessionFlags';
+import { GroupAvatar, AvatarPickerGrid } from './UserAvatar';
 import type { RegisteredAgent } from '../types';
 
 /**
@@ -189,6 +192,10 @@ export function GroupSettingsPanel({
 
   const [nickname, setNicknameState] = useState(() => (sessionId ? groupNickname(sessionId) : ''));
   const [remark, setRemarkState] = useState(() => (sessionId ? groupRemark(sessionId) : ''));
+  // A115：群头像。**订阅**而不是 useState 快照 —— 用户在别处（比如会话列表
+  // 将来也放一个入口）改完，这个面板要立刻跟上；useState 只会在挂载时读一次。
+  const groupAvatar = useGroupAvatar(sessionId);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [notify, setNotifyState] = useState<NotifyMode>(() =>
     sessionId ? notifyModeOf(sessionId) : 'normal'
   );
@@ -378,6 +385,53 @@ export function GroupSettingsPanel({
             `[&>*]:shrink-0` 是必须的 —— flex 列默认会压缩子项来「塞进」
             容器，那样内容就永远不溢出、也就没有滚动条了。 */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto [&>*]:shrink-0">
+          {/* ── 群头像（A115，用户要求「为群聊增加更换头像的功能」）──
+              放在最前面：它是这个群的「脸」，比任何一项设置都更该被看见。
+              点一下展开 12 个预设的平铺格子，再点一下收起 —— 不做弹窗，
+              236px 的面板里弹一层模态反而是倒退。
+              「恢复默认」单独一行：没有它，用户选错了只能记住原来那颗
+              「多人群」图标长什么样，却没办法真的回去。 */}
+          <Section label="群头像" />
+          <div className="px-4 pb-3" data-group-avatar-section>
+            <div className="flex items-center gap-3">
+              <GroupAvatar avatar={groupAvatar} size={44} title={title} />
+              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setAvatarPickerOpen(v => !v)}
+                  aria-expanded={avatarPickerOpen}
+                  data-group-avatar-toggle
+                  className="rounded-lg px-3 py-1.5 text-left text-body transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                  style={{
+                    backgroundColor: 'var(--tc-surface-raised)',
+                    color: 'var(--td-text-color-primary)',
+                  }}
+                >
+                  {avatarPickerOpen ? '收起' : '更换头像'}
+                </button>
+                {groupAvatar && (
+                  <button
+                    type="button"
+                    onClick={() => sessionId && setGroupAvatar(sessionId, '')}
+                    data-group-avatar-reset
+                    className="rounded-lg px-3 py-1.5 text-left text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                  >
+                    恢复默认
+                  </button>
+                )}
+              </div>
+            </div>
+            {avatarPickerOpen && (
+              <div className="mt-3">
+                <AvatarPickerGrid
+                  value={groupAvatar}
+                  onChange={id => sessionId && setGroupAvatar(sessionId, id)}
+                />
+              </div>
+            )}
+          </div>
+
           {/* ── 群聊成员 ──
               头像悬停出名片（A24 用户反馈：这里也要有）。与成员栏、通讯录
               共用同一个 AgentHoverCard —— 三处都指向同一份注册表，
@@ -423,7 +477,11 @@ export function GroupSettingsPanel({
                       className="absolute -right-1.5 -top-1.5 flex h-[18px] w-[18px] items-center justify-center rounded-full opacity-40 shadow-card transition-opacity focus-visible:opacity-100 group-hover/member:opacity-100 hover:!opacity-100 disabled:cursor-not-allowed disabled:opacity-0"
                       style={{
                         backgroundColor: 'var(--td-bg-color-container)',
-                        border: '1px solid var(--td-component-stroke)',
+                        // A115 续：控件轮廓走 --tc-edge-strong（7% 墨）——
+                        // A83 给「需要明确可点的控件」定的一档，比原来的
+                        // --td-component-stroke（10%）淡，但 18px 的小圆钮
+                        // 在成员头像上仍然读得出「这是一个可点的东西」。
+                        border: '1px solid var(--tc-edge-strong)',
                         color: 'var(--td-text-color-secondary)',
                       }}
                     >
@@ -488,7 +546,10 @@ export function GroupSettingsPanel({
                   className="max-h-[190px] overflow-y-auto rounded-lg py-1"
                   style={{
                     backgroundColor: 'var(--tc-surface-raised)',
-                    border: '1px solid var(--td-component-stroke)',
+                    // A115 续：被动容器的描边走 --tc-edge（4.5% 墨）——
+                    // 「边界保险」档。这个浮层有自己的底色，不再需要
+                    // 10% 的墨线来声明边界。
+                    border: '1px solid var(--tc-edge)',
                   }}
                 >
                   {inviteCandidates.map(a => (
@@ -674,7 +735,10 @@ export function GroupSettingsPanel({
                 <div
                   role="listbox"
                   className="tc-glass absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg py-1 shadow-popup"
-                  style={{ border: '1px solid var(--td-component-stroke)' }}
+                  /* A115 续：内联描边会压掉 .tc-glass 的 border-color（内联
+                     优先级高于 class），所以这里必须显式走 --tc-glass-border，
+                     不能删掉了事 —— 删了连 1px 的边框宽度都没有了。 */
+                  style={{ border: '1px solid var(--tc-glass-border)' }}
                 >
                   {NOTIFY_OPTIONS.map(opt => {
                     const active = opt.mode === notify;
@@ -737,7 +801,10 @@ export function GroupSettingsPanel({
               className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-body transition-colors"
               style={{
                 color: 'var(--td-error-color)',
-                border: '1px solid var(--td-component-stroke)',
+                // A115 续：控件轮廓 --tc-edge-strong（7%）。这两个是
+                // 「删除 / 退出」这种危险操作，轮廓要比普通按钮明确一档，
+                // 但仍然不是 10% 的墨线。
+                border: '1px solid var(--tc-edge-strong)',
               }}
             >
               <Trash2 size={15} />
@@ -750,7 +817,7 @@ export function GroupSettingsPanel({
               className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-body transition-colors"
               style={{
                 color: 'var(--td-error-color)',
-                border: '1px solid var(--td-component-stroke)',
+                border: '1px solid var(--tc-edge-strong)',
               }}
             >
               <LogOut size={15} />
@@ -840,7 +907,10 @@ function ToggleRow({
         className="relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150"
         style={{
           backgroundColor: checked ? 'var(--td-brand-color)' : 'var(--tc-hover-chrome)',
-          border: checked ? 'none' : '1px solid var(--td-component-stroke)',
+          // A115 续：未选中态的轮廓走 --tc-edge-strong（7% 墨）—— 开关是
+          // 控件，轮廓要比内容卡片明确一档；原来的 10% 在 22px 的小开关
+          // 上太抢。
+          border: checked ? 'none' : '1px solid var(--tc-edge-strong)',
         }}
       >
         <span

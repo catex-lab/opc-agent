@@ -75,7 +75,7 @@ export function RemarkDialog({ open, name, value, onSave, onCancel }: RemarkDial
         aria-modal="true"
         aria-labelledby="tc-remark-title"
         data-remark-dialog
-        className="tc-glass w-full max-w-[360px] rounded-xl p-6"
+        className="tc-dialog w-full max-w-[360px] rounded-xl p-6"
       >
         <h2
           id="tc-remark-title"
@@ -103,12 +103,11 @@ export function RemarkDialog({ open, name, value, onSave, onCancel }: RemarkDial
           aria-label="备注"
           data-remark-input
           maxLength={24}
-          className="mt-4 h-9 w-full rounded-lg px-3 text-body outline-none"
-          style={{
-            backgroundColor: 'var(--td-bg-color-component)',
-            border: '1px solid var(--td-component-stroke)',
-            color: 'var(--td-text-color-primary)',
-          }}
+          /* A115 续：.tc-input —— 聚焦态由 --tc-focus-shadow 抬起来，
+             不再是一圈 10% 墨的静态描边。底色从 --td-bg-color-component
+             换成 container：备注框压在弹窗里，两者只差一档，用 component
+             会让它比弹窗底还暗，读起来像嵌进去一块。 */
+          className="tc-input mt-4 h-9 w-full px-3 text-body"
         />
 
         <div className="mt-6 flex justify-end gap-2">

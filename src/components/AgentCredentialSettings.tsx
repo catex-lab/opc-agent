@@ -148,7 +148,10 @@ export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProp
             className="rounded-lg"
             style={{
               backgroundColor: 'var(--tc-surface-raised)',
-              border: '1px solid var(--td-component-stroke)',
+              // A115 续：行卡片描边 --tc-edge（4.5% 墨）—— 这些行排在
+              // 设置页内容面上，靠 raised 底色已经能分出层次，描边只作
+              // 「边界保险」。
+              border: '1px solid var(--tc-edge)',
             }}
             data-credential-row={item.agentId}
           >

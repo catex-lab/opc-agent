@@ -84,7 +84,7 @@ export function ConfirmDialog({
         aria-modal="true"
         aria-labelledby="tc-confirm-title"
         data-confirm-dialog
-        className="tc-glass w-full max-w-[400px] rounded-xl p-6"
+        className="tc-dialog w-full max-w-[400px] rounded-xl p-6"
       >
         <h2
           id="tc-confirm-title"

@@ -230,15 +230,20 @@ console.log('\n[2] 分区导航：只剩图标 + 标签');
       height: Math.round(el.getBoundingClientRect().height),
     }))
   );
-  // A38/A40 之后是 5 个分区；A60 加了「模型清单」→ 6 个。改成显式标签表：
+  // A38/A40 之后是 5 个分区；A60 加了「模型清单」→ 6 个；A95 加了
+  // 「关于与隐私」→ 7 个；A115 加了「我的资料」→ 8 个。改成显式标签表：
   // 漏一个/多一个/顺序错了都会抓到。
+  // ⚠️ 这张表与 verify-a28 的 NAV_LABELS 是同一份事实的两处拷贝 ——
+  // 加分区时两处都要改，只改一处另一边必红（a28 那边已经这么错过一次）。
   const LABELS = {
+    profile: '我的资料',
     memory: '记忆',
     permission: '权限门禁',
     appearance: '外观',
     login: '登录配置',
     models: '模型清单',
     agents: '自定义 Agent',
+    about: '关于与隐私',
   };
   ok(nav.length === Object.keys(LABELS).length, `${Object.keys(LABELS).length} 个分区都在`, String(nav.length));
   ok(nav.every(n => n.text === LABELS[n.key]), '导航项文本只剩标签（没有第二行小字）', nav.map(n => n.text).join(' / '));

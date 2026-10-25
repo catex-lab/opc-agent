@@ -22,13 +22,14 @@ import {
   CloseCircleFilledIcon,
   RefreshIcon
 } from 'tdesign-icons-react';
-import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info } from 'lucide-react';
+import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info, UserRound } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
 import { HintTip } from './HintTip';
 import { AgentCredentialSettings } from './AgentCredentialSettings';
 import { ModelCatalogSettings } from './ModelCatalogSettings';
 import { MemoryPanel } from './MemoryPanel';
 import { PermissionRulesPanel } from './PermissionRulesPanel';
+import { ProfilePanel } from './ProfilePanel';
 import AboutPanel from './AboutPanel';
 import { CustomAgent, PermissionMode, ThemePreference } from '../types';
 import {
@@ -111,7 +112,15 @@ type LoginMethod = 'env' | 'cli' | 'none';
  * ⚠️ 三个 key 是硬编码的三块内容，不是从数据生成的：它们各自依赖不同的
  * 后端数据（登录状态 / agents 列表），抽成数据驱动只会把条件渲染藏得更深。
  */
-type SettingsSectionKey = 'memory' | 'permission' | 'appearance' | 'login' | 'models' | 'agents' | 'about';
+type SettingsSectionKey =
+  | 'profile'
+  | 'memory'
+  | 'permission'
+  | 'appearance'
+  | 'login'
+  | 'models'
+  | 'agents'
+  | 'about';
 
 const SETTINGS_SECTIONS: Array<{
   key: SettingsSectionKey;
@@ -119,6 +128,10 @@ const SETTINGS_SECTIONS: Array<{
   hint: string;
   Icon: typeof Monitor;
 }> = [
+  // A115（用户要求「增加用户更换自己头像和昵称的功能」）：排第一。
+  // 这是唯一一项「关于我而不是关于软件」的设置，放在最前面才找得到 ——
+  // QQ / 微信的设置页也都把个人资料摆在首位。
+  { key: 'profile', label: '我的资料', hint: '昵称与头像，昵称会被 Agent 识别', Icon: UserRound },
   { key: 'memory', label: '记忆', hint: '跨会话记忆、用户画像与沉淀的技能', Icon: Brain },
   { key: 'permission', label: '权限门禁', hint: '危险命令分类与自定义规则', Icon: ShieldAlert },
   { key: 'appearance', label: '外观', hint: '主题、界面透明度、鼠标光斑', Icon: Monitor },
@@ -500,15 +513,23 @@ export function SettingsPage({
                 // 信息没有丢 —— 挂到 title 上，悬停仍能看到这一区管什么；
                 // 常驻显示时它只是把三个按钮各撑高一行，读起来像目录。
                 title={hint}
-                className="relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors"
+                className="relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--tc-fill-hover)]"
                 style={{
                   backgroundColor: active ? 'var(--td-brand-color-light)' : 'transparent',
-                  color: active ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)',
+                  /* A115（用户要求）：「对设置页的菜单文字进行高亮设计，提高对比度」。
+                     未选中项原来是 `--td-text-color-secondary`（浅色 #737373），
+                     压在 #f5f5f5 的设置面板上对比度约 3.6:1 —— 小字号下读着发虚，
+                     扫一遍找不到自己想改的那一区。现在提到 primary（#171717），
+                     与正文同档；选中项保留品牌色，并额外加粗一档，
+                     「在哪一区」不再只靠底色那一层 12% 的浅灰说话。 */
+                  color: active ? 'var(--td-brand-color)' : 'var(--td-text-color-primary)',
                 }}
                 data-settings-section={key}
               >
                 <Icon size={16} className="shrink-0" />
-                <span className="text-sm font-medium">{label}</span>
+                {/* `text-sm` 是本项目唯一一处 Tailwind 裸字号；换成 --text-body-lg(14px)，
+                    与设置页其余文字同一刻度 */}
+                <span className={`text-body-lg ${active ? 'font-semibold' : ''}`}>{label}</span>
               </button>
             );
           })}
@@ -528,10 +549,17 @@ export function SettingsPage({
                 type="button"
                 onClick={() => setSection(key)}
                 aria-current={active ? 'page' : undefined}
-                className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-caption transition-colors"
+                className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-secondary transition-colors"
                 style={{
                   backgroundColor: active ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-component)',
-                  color: active ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)',
+                  // A115：与宽屏那条导航同一套对比度口径（见上面对未选中项的说明）。
+                  // 药丸上多一层 border：未选中态的底是 --td-bg-color-component，
+                  // 和面板底只差一档，没有边线时三个药丸会糊成一片。
+                  // A115 续：边线走 --tc-edge-strong（7% 墨，控件轮廓档）——
+                  // 原来的 10% 是「把界面切成格子」的老语言，7% 在一排
+                  // 小药丸上仍然立得住。
+                  color: active ? 'var(--td-brand-color)' : 'var(--td-text-color-primary)',
+                  border: active ? '1px solid transparent' : '1px solid var(--tc-edge-strong)',
                 }}
               >
                 <Icon size={14} />
@@ -543,6 +571,13 @@ export function SettingsPage({
 
         <div className="min-w-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6">
           <div className="mx-auto max-w-3xl space-y-8" data-settings-panel={section}>
+
+        {/* ── 我的资料（A115）────────────────────────────────────
+            用户要求「增加用户更换自己头像和昵称的功能，昵称可以被 agent 识别」。
+            昵称由服务端存（server/user-profile.ts）并在 registry.stream() 时
+            注入 systemPrompt —— 所以这里的保存是一次 PUT，不是纯本地 state。
+            头像只在本机界面上用，但和昵称放一起改，用户少一个入口。 */}
+        {section === 'profile' && <ProfilePanel />}
 
         {/* ── 记忆（A38）────────────────────────────────────────
             导航里排第一，但**默认落点仍是外观**：一是指定默认分区会让
@@ -698,9 +733,12 @@ export function SettingsPage({
           
           {/* 环境变量配置 */}
           <div className="mb-6">
-            <h3 
+            {/* A115（用户要求「设置页的菜单文字高亮、提高对比度」）：
+                子标题原来是 secondary(#737373)，压在 #f5f5f5 上约 3.6:1，
+                比正文虚一档。提到 primary，与分区标题同一刻度。 */}
+            <h3
               className="text-sm font-medium mb-3"
-              style={{ color: 'var(--td-text-color-secondary)' }}
+              style={{ color: 'var(--td-text-color-primary)' }}
             >
               方式一：环境变量
             </h3>
@@ -812,9 +850,10 @@ export function SettingsPage({
           
           {/* CLI 登录 */}
           <div>
-            <h3 
+            {/* A115：同「方式一」，子标题提到 primary 提高对比度 */}
+            <h3
               className="text-sm font-medium mb-3"
-              style={{ color: 'var(--td-text-color-secondary)' }}
+              style={{ color: 'var(--td-text-color-primary)' }}
             >
               方式二：CodeBuddy CLI
             </h3>
@@ -856,7 +895,7 @@ export function SettingsPage({
           <div className="mt-8" data-agent-credentials-section>
             <h3
               className="mb-3 flex items-center gap-1.5 text-sm font-medium"
-              style={{ color: 'var(--td-text-color-secondary)' }}
+              style={{ color: 'var(--td-text-color-primary)' }}
             >
               方式三：Agent API Key
               <HintTip
@@ -1441,7 +1480,10 @@ function AppearanceSliders() {
           className="flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
           style={{
             color: 'var(--td-text-color-secondary)',
-            border: '1px solid var(--td-component-stroke)',
+            // A115 续：控件轮廓 --tc-edge-strong（7% 墨）—— 这是一颗
+            // 按钮，轮廓要比内容卡片明确一档；原来的 10% 在三个滑杆
+            // 旁边太抢。
+            border: '1px solid var(--tc-edge-strong)',
           }}
         >
           <RefreshIcon size={13} />

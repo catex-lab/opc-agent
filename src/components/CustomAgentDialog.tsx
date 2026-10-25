@@ -124,7 +124,7 @@ export function CustomAgentDialog({ open, onClose, onCreated }: CustomAgentDialo
   return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6"
-      style={{ backgroundColor: 'rgba(0, 0, 0, 0.42)' }}
+      style={{ backgroundColor: 'var(--tc-mask-soft)' }}
       onMouseDown={e => {
         // 只有点在遮罩本身才关闭：从面板里按下、拖到遮罩上松手不该关
         if (e.target === e.currentTarget) onClose();
@@ -135,12 +135,9 @@ export function CustomAgentDialog({ open, onClose, onCreated }: CustomAgentDialo
         aria-modal="true"
         aria-label="自定义 Agent"
         data-custom-agent-dialog
-        className="flex w-[min(460px,100%)] flex-col overflow-hidden rounded-2xl"
-        style={{
-          border: '1px solid var(--td-component-stroke)',
-          boxShadow: 'var(--shadow-float)',
-          backgroundColor: 'var(--tc-surface-content)',
-        }}
+        /* A115：与其余四个弹窗统一到 `.tc-dialog`（半透明玻璃 + 四层立体影）。
+           原来这里是实色底 + `--shadow-float`，同一屏里两套弹窗语言。 */
+        className="tc-dialog flex w-[min(460px,100%)] flex-col overflow-hidden rounded-2xl"
       >
         {/* 头部：图标 + 标题 + 关闭。字号用 text-body 而不是 text-title-lg ——
             这是个 460px 的小弹窗，标题太大反而压住表单 */}

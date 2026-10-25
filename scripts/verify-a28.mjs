@@ -355,16 +355,16 @@ console.log('\n[6] 设置页分区：互斥渲染 + 副标题跟着走');
   await open(page, '/settings?glass=1');
 
   // A38/A40 之后设置页 5 个分区；A60 加了「模型清单」→ 6 个；
-  // A83–A95 又加了「关于与隐私」→ 7 个。
+  // A83–A95 又加了「关于与隐私」→ 7 个；A115 加了「我的资料」→ 8 个。
   // 按**显式标签表**断言而不是「有几项」——A37 已经证明按数量断言的探针
   // 每次加分区都会误报一次，而按标签断言只会漏掉「该在的没在」。
-  const NAV_LABELS = ['记忆', '权限门禁', '外观', '登录配置', '模型清单', '自定义 Agent', '关于与隐私'];
+  const NAV_LABELS = ['我的资料', '记忆', '权限门禁', '外观', '登录配置', '模型清单', '自定义 Agent', '关于与隐私'];
   const navTexts = await page.locator('[data-settings-section]').allInnerTexts();
   const navCount = navTexts.length;
   const navOk =
     navCount === NAV_LABELS.length &&
     NAV_LABELS.every((label, i) => navTexts[i]?.trim().startsWith(label));
-  ok(navOk, '分区导航为七项且顺序正确（记忆/权限/外观/登录/模型清单/Agent/关于）', navTexts.map(t => t.trim()).join(' | '));
+  ok(navOk, '分区导航为八项且顺序正确（我的资料/记忆/权限/外观/登录/模型清单/Agent/关于）', navTexts.map(t => t.trim()).join(' | '));
   ok(await page.locator('[data-settings-panel="appearance"]').count() > 0, '默认落在「外观」');
   ok(await page.locator('[data-settings-panel="appearance"] .t-switch').count() > 0, '外观分区含光斑开关');
 

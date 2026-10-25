@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentHoverCard } from './AgentHoverCard';
+import { GroupAvatar } from './UserAvatar';
 import { ContextMenu } from './ContextMenu';
 import { ConfirmDialog } from './ConfirmDialog';
 import { RemarkDialog } from './RemarkDialog';
@@ -346,17 +347,9 @@ export function ConversationList({
                 {/* 头像悬停出名片：扫列表时想确认「这是谁」不必点进会话。
                     未注册的 Agent（后端已下线）没有资料可看，就不挂名片。 */}
                 {session.kind === 'group' ? (
-                  // 群聊没有单一 Agent，用「多人群」图标，与通讯录的群聊行同一语言
-                  <span
-                    className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-full"
-                    style={{
-                      backgroundColor: 'var(--tc-surface-raised)',
-                      color: 'var(--td-text-color-secondary)',
-                    }}
-                    aria-hidden="true"
-                  >
-                    <Users size={18} />
-                  </span>
+                  // 群聊没有单一 Agent。A115：换成 GroupAvatar —— 用户在群设置里
+                  // 选的头像（sessionFlags.avatar）优先，没选过才是这颗「多人群」图标。
+                  <GroupAvatar avatar={flags[session.id]?.avatar} size={42} />
                 ) : agent ? (
                   <AgentHoverCard agent={agent}>
                     <AgentAvatar

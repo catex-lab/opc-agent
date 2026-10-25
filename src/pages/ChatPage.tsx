@@ -28,6 +28,8 @@ import { PermissionGapNotice } from '../components/PermissionGapNotice';
 import { WorkflowDialog } from '../components/WorkflowDialog';
 import { DanglingNotice } from '../components/DanglingNotice';
 import { useGroupChat } from '../hooks/useGroupChat';
+// A115：群头像（群设置里换的，存在 sessionFlags）
+import { useGroupAvatar } from '../sessionFlags';
 
 /**
  * 在（可能嵌套的）shadow root 里找输入框的 `textarea`。
@@ -515,6 +517,10 @@ export function ChatPage({
   const groupTitle =
     currentSession?.title || groupMembers.map(m => m.name).join('、') || '群聊';
 
+  // A115：群头像。用 Hook 而不是直接读 —— 群设置面板就在本组件里，
+  // 用户点「换头像」后这里必须立刻跟着变，否则要等一次无关重渲染。
+  const groupAvatar = useGroupAvatar(currentSession?.id);
+
   return (
     <>
       {/* 群聊头部：成员头像堆叠 + 编排模式切换，替代一对一的单人头部 */}
@@ -531,6 +537,8 @@ export function ChatPage({
           onSettingsOpenChange={setSettingsOpen}
           onBack={onBack}
           onOpenWorkflow={openWorkflow}
+          // A115：群头像。用户在群设置里换的，头部 leading 据此切成一整颗
+          groupAvatar={groupAvatar}
         />
       )}
 

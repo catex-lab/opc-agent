@@ -43,6 +43,16 @@ export interface SessionFlags {
   nickname?: string;
   /** 群聊备注：自己给这个群写的一行说明 */
   remark?: string;
+  /**
+   * 群头像（A115）：头像预设 id，空 = 用「多人群」图标兜底。
+   *
+   * 为什么和 nickname / remark 一样只存本地：这三项都是「我这台机器上
+   * 这个群长什么样」，不是群本身的数据（群的数据是成员与编排模式，
+   * 它们在服务端）。落库要给 sessions 表加一列 + 迁移 + PATCH 接口，
+   * 收益只是「换台机器也记得」—— 单机桌面应用上没有这个场景。
+   * 真要多端同步的那天，把它挪进 sessions 表即可，前端只改读写处。
+   */
+  avatar?: string;
   /** 群消息接收方式；缺省等同 'normal' */
   notifyMode?: NotifyMode;
 }
@@ -82,6 +92,8 @@ function patch(sessionId: string, next: SessionFlags): void {
   if (!flags.unread) delete flags.unread;
   if (!flags.nickname) delete flags.nickname;
   if (!flags.remark) delete flags.remark;
+  // A115：群头像同理 —— 空串不占位
+  if (!flags.avatar) delete flags.avatar;
   // 'normal' 是该字段的缺省值，不必占位
   if (!flags.notifyMode || flags.notifyMode === 'normal') delete flags.notifyMode;
 
@@ -89,6 +101,12 @@ function patch(sessionId: string, next: SessionFlags): void {
   else merged[sessionId] = flags;
 
   write(merged);
+  // A115（用户反馈）：「右键菜单改完标记后列表必须立刻重画」这句话只在
+  // **右键菜单**那条路上成立 —— `patch()` 原先只写文件、不通知订阅者，
+  // 于是会话行点击里的 `setManuallyUnread(id, false)` 是**静默**的：
+  // 红点要等下一次无关重渲染才消失（有时一直挂着）。
+  // 现在每次写入都通知一次，谁写谁生效，不再依赖「碰巧有个别的 state 变了」。
+  for (const fn of listeners) fn();
 }
 
 export function subscribeSessionFlags(fn: () => void): () => void {
@@ -147,6 +165,31 @@ export function setGroupNickname(sessionId: string, nickname: string): void {
 
 export function setGroupRemark(sessionId: string, remark: string): void {
   patch(sessionId, { remark: remark.trim() });
+}
+
+/** A115：换群头像（群聊设置里改）。空串 = 回到「多人群」图标兜底 */
+export function setGroupAvatar(sessionId: string, avatar: string): void {
+  patch(sessionId, { avatar: avatar.trim() });
+}
+
+/** A115：读群头像预设 id，没有时返回空串（非 Hook，供事件回调里读） */
+export function groupAvatar(sessionId: string): string {
+  return snapshot[sessionId]?.avatar ?? '';
+}
+
+/**
+ * A115：同上，但**订阅式** —— 组件用它才能在「换头像」后立刻重画。
+ *
+ * 为什么不直接 `useSessionFlags()[id]?.avatar`：那个 Hook 返回整张表，
+ * 任何一个会话的任何标记变化都会让所有消费者重渲染。这里只订一个键，
+ * 语义也更直白（「我要的是这个群的头像」）。
+ */
+export function useGroupAvatar(sessionId: string | null | undefined): string {
+  return useSyncExternalStore(
+    subscribeSessionFlags,
+    () => (sessionId ? snapshot[sessionId]?.avatar ?? '' : ''),
+    () => ''
+  );
 }
 
 export function setManuallyUnread(sessionId: string, unread: boolean): void {

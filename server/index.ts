@@ -91,6 +91,9 @@ import {
   PLATFORM_DEFAULT_MODEL,
 } from "./model-routing.js";
 import { ensureCatalogLoaded, getCatalogSummary, getDefaultModelForAgent, invalidateCatalog, isCatalogModel, loadCatalog } from "./agents/modelCatalog.js";
+// A115：用户资料（昵称 + 头像）。昵称由 registry.stream 注入 systemPrompt，
+// 这里只负责 HTTP 读写。
+import { loadUserProfile, saveUserProfile } from "./user-profile.js";
 import { mapSdkModels } from "./agents/sdk-models.js";
 import { readDeclaredModels } from "./agents/wbProductConfig.js";
 import type { ModelOption } from "./agents/modelCatalog.js";
@@ -437,11 +440,40 @@ app.post("/api/agents/probe", async (req, res) => {
   }
 });
 
+// ============= 用户资料（A115）=============
+// 昵称 + 头像。昵称由 registry.stream() 注入 systemPrompt（见
+// server/user-profile.ts 的 withUserIdentity），所以它必须是服务端状态；
+// 头像只在本机界面上用，但两份放在一起存、一起改，用户少一个入口。
+
+app.get("/api/user-profile", (_req, res) => {
+  try {
+    res.json(loadUserProfile());
+  } catch (error: any) {
+    console.error("[UserProfile] Get error:", error);
+    res.status(500).json({ error: error?.message || "读取用户资料失败" });
+  }
+});
+
+app.put("/api/user-profile", (req, res) => {
+  try {
+    // 只认这两个字段，别的键一律忽略 —— 免得调用方把整个 req.body 倒进来
+    // 把文件撑成谁都不知道形状的东西。
+    const { nickname, avatar } = req.body ?? {};
+    const next = saveUserProfile({
+      ...(typeof nickname === "string" ? { nickname } : {}),
+      ...(typeof avatar === "string" ? { avatar } : {}),
+    });
+    res.json(next);
+  } catch (error: any) {
+    console.error("[UserProfile] Save error:", error);
+    res.status(500).json({ error: error?.message || "保存用户资料失败" });
+  }
+});
+
 // ============= 用户自建 Agent（A114）=============
 // ⚠️ 这三条必须排在 `/api/agents/:agentId` **之前**注册：Express 按注册顺序
 // 匹配，`:agentId` 会把 "custom" 当成一个 agent id 吃掉，返回 404。
 // 只列定义、不回传 Key —— 列表接口不该带密钥出门。
-
 app.get("/api/agents/custom", async (_req, res) => {
   try {
     res.json({ agents: loadCustomSpecs() });

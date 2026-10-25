@@ -158,14 +158,16 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
           className="overflow-hidden rounded-lg"
           style={{
             backgroundColor: 'var(--tc-surface-raised)',
-            border: '1px solid var(--td-component-stroke)',
+            // A115 续：容器描边 --tc-edge（4.5% 墨）。行与行之间那条
+            // 分隔线同理 —— 它们是「列表里的行」，不是栏目的边界。
+            border: '1px solid var(--tc-edge)',
           }}
         >
           {rows.map((row, i) => (
             <div
               key={row.id}
               className="flex items-center gap-3 px-3 py-2.5"
-              style={i > 0 ? { borderTop: '1px solid var(--td-component-stroke)' } : undefined}
+              style={i > 0 ? { borderTop: '1px solid var(--tc-edge)' } : undefined}
               data-catalog-row={row.id}
             >
               <span
@@ -196,7 +198,7 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
           {/* WorkBuddy 单独一行：它不走 CLI 枚举，走 SDK */}
           <div
             className="flex items-center gap-3 px-3 py-2.5"
-            style={{ borderTop: '1px solid var(--td-component-stroke)' }}
+            style={{ borderTop: '1px solid var(--tc-edge)' }}
             data-catalog-row="workbuddy"
           >
             <span

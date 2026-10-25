@@ -173,25 +173,29 @@ function iconOf(kind: AttachmentKind) {
 }
 
 // 权限模式配置
-const PERMISSION_MODE_CONFIG: Record<PermissionMode, { 
-  label: string; 
+// A115（用户要求）：「权限图标替换为黑白色，不要彩色」＋「深色模式下那颗锁
+// 还是黑色看不清」。四档原来各带一个彩色 hex，#1f1f1f 的锁在深色输入框底上
+// 几乎消失。现在全部走 index.css 的 --tc-perm-* 中性阶（跟随主题），
+// 颜色退出编码，只由形状区分四档。
+const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
+  label: string;
   shortLabel: string;
-  icon: React.ReactNode; 
+  icon: React.ReactNode;
   color: string;
   description: string;
 }> = {
-  'default': { 
-    label: '默认模式', 
+  'default': {
+    label: '默认模式',
     shortLabel: '默认',
-    icon: <LockOnIcon />, 
-    color: '#1f1f1f',
+    icon: <LockOnIcon />,
+    color: 'var(--tc-perm-default)',
     description: '每次操作都需要确认'
   },
-  'acceptEdits': { 
-    label: '自动编辑', 
+  'acceptEdits': {
+    label: '自动编辑',
     shortLabel: '自动编辑',
-    icon: <EditIcon />, 
-    color: '#2ba471',
+    icon: <EditIcon />,
+    color: 'var(--tc-perm-accept)',
     description: '自动允许文件编辑操作'
   },
   'plan': {
@@ -201,7 +205,7 @@ const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
     label: '只读',
     shortLabel: '只读',
     icon: <TaskIcon />,
-    color: '#ed7b2f',
+    color: 'var(--tc-perm-plan)',
     description: '只生成计划，不执行操作'
   },
   'bypassPermissions': {
@@ -209,7 +213,7 @@ const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
     label: '全放行',
     shortLabel: '全放行',
     icon: <LockOffIcon />,
-    color: '#e34d59',
+    color: 'var(--tc-perm-bypass)',
     description: '跳过所有权限确认（危险）'
   },
 };
@@ -763,7 +767,10 @@ export function ChatInput({
                     style={{
                       left: attachMenu.left,
                       bottom: attachMenu.bottom,
-                      border: '1px solid var(--td-component-stroke)',
+                      // A115 续：内联描边会压掉 .tc-glass 的 border-color
+                      // （内联优先级高于 class），所以显式走 --tc-glass-border；
+                      // 删掉了事会连 1px 的边框宽度都没有。
+                      border: '1px solid var(--tc-glass-border)',
                     }}
                     data-attach-menu
                   >
@@ -1080,8 +1087,9 @@ export function ChatInput({
                     /* A84（用户要求）：图标外不要再套一块 `${color}15` 的浅色圆角方块。
                        那块底本来是想「给图标一个容器」，实际效果是图标本体（同色、
                        14px、细描边）和同色低透明度的底糊在一起，越看越脏。
-                       去掉底以后彩色图标直接压在输入框底色上，颜色饱和度反而
-                       把「默认 / 自动编辑 / 只读 / 全放行」四档区分得更清楚。 */
+                       去掉底以后图标直接压在输入框底色上。
+                       A115：底色没了以后，图标的明度就成了唯一负担 —— 四档现在走
+                       --tc-perm-* 中性阶（跟随主题），不再出现深色底上压一颗近黑的锁。 */
                     <span
                       className="flex items-center justify-center w-5 h-5"
                       style={{ color: currentModeConfig.color }}
@@ -1103,7 +1111,8 @@ export function ChatInput({
                         label={config.shortLabel}
                       >
                         <div className="flex items-center gap-2 py-0.5">
-                          {/* A84：同 prefixIcon，去掉 `${color}15` 方块，只留彩色图标 */}
+                          {/* A84：同 prefixIcon，去掉 `${color}15` 方块，只留图标。
+                             A115：颜色走 --tc-perm-* 中性阶（黑白），见上方配置注释 */}
                           <span
                             className="flex items-center justify-center w-5 h-5 shrink-0"
                             style={{ color: config.color }}

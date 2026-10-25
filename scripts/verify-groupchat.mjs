@@ -229,8 +229,13 @@ const rows = await page.evaluate(() => {
   const list = document.querySelector('[data-msg-list]');
   if (!list) return [];
   return Array.from(list.children).map(row => {
-    const pill = row.querySelector(':scope > span.rounded-full');
-    if (pill) return { kind: 'note', text: pill.textContent, centered: row.classList.contains('justify-center') };
+    /* A115 续：叙述行按 data-note 锚点认（A55 起它就是 `<div data-note>`，
+       不再有 span.rounded-full 药丸）。这里**不能**再写
+       `:scope > span.rounded-full` —— A115 给用户消息加了 UserAvatar，
+       它正是一颗 span.rounded-full，于是用户整行会被误判成叙述行、
+       label 为 undefined，「用户气泡在右侧」一条必红。写错的迹象很隐蔽：
+       红的是另一条断言，看不出是解析器把行分错了类。 */
+    if (row.matches('[data-note]')) return { kind: 'note', text: row.textContent, centered: row.classList.contains('justify-center') };
     const col = row.querySelector(':scope > div.flex.flex-col');
     if (!col) return { kind: 'other', classes: row.className };
     // A35：作者名从「气泡列内的一行小字」提到了消息头部（logo 后面），

@@ -141,8 +141,11 @@ export function GroupMemberPanel({ members, allAgents, onMembersChange }: GroupM
             backgroundColor: 'var(--td-bg-color-container)',
             // 这是**控件**的轮廓，不是板块分割线 —— A25 把 --tc-divider
             // 置为 transparent 之后，这里如果还挂着它，按钮就变成一团没有
-            // 边界的浮影。控件描边用 --td-component-stroke（有功能含义）。
-            border: '1px solid var(--td-component-stroke)',
+            // 边界的浮影。控件描边走 --tc-edge-strong（7% 墨，A83 给
+            // 「需要明确可点的控件」定的一档）：比板块描边的 4.5% 重一档，
+            // 9px 的热区在成员栏边缘才立得住；也不再使用 10% 的
+            // --td-component-stroke —— 那是「把界面切成格子」的老语言。
+            border: '1px solid var(--tc-edge-strong)',
             color: 'var(--td-text-color-secondary)',
           }}
         >

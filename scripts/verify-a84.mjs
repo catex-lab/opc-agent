@@ -136,6 +136,16 @@ const alphaOf = s => {
   return m.length >= 4 ? Number(m[3]) : 1;
 };
 
+/** A115：是不是中性色（R/G/B 三通道相等）——「黑白图标」的字面判据 */
+const isNeutral = s => {
+  if (!s) return false;
+  if (s === 'transparent') return false;
+  const m = s.match(/[\d.]+/g);
+  if (!m || m.length < 3) return false;
+  const [r, g, b] = m.map(Number);
+  return r === g && g === b;
+};
+
 /** 取某个元素的「自身底色」——不看祖先，只认它自己画的这一层 */
 const bgOf = (sel, nth = 0) =>
   page.evaluate(
@@ -271,13 +281,17 @@ ok(
   '所有选项的图标都没有底色方块',
   permOptions.map(o => `${o.text}:${o.bg}`).join(' | ')
 );
-// 四档颜色必须还分得开 —— 去掉底之后，颜色是唯一的区分手段，
-// 如果它们被改成同一个色，这条要求就变成了「全都变灰」。
+/* A115（用户要求）：「权限图标替换为黑白色，不要彩色」。
+ * A84 原本在这里断言「四档 4 色分得开」—— 那条要求从 A115 起反过来了：
+ * 颜色退出编码，四档只由形状区分。所以这里改成断言「四档全是中性灰」。
+ * 档位数从 4 变成 3 是**有意的**（默认与全放行同重，见 index.css 的
+ * --tc-perm-* 注释），不是回归。 */
 const permColors = new Set(permOptions.map(o => o.color));
+const neutralCount = permOptions.filter(o => isNeutral(o.color)).length;
 ok(
-  permColors.size === 4,
-  '去掉底之后四档图标仍然靠**颜色**分得开（4 档 4 色）',
-  `${permColors.size} 种：${[...permColors].join(' / ')}`
+  neutralCount === permOptions.length && permOptions.length > 0,
+  `四档图标全是中性灰（${neutralCount}/${permOptions.length}）`,
+  `${permColors.size} 档：${[...permColors].join(' / ')}`
 );
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);

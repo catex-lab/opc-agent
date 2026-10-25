@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Users, ChevronDown, Check, Pencil, Menu, Workflow } from 'lucide-react';
+import { GroupAvatar } from './UserAvatar';
 import { AgentAvatar } from './AgentAvatar';
 import { PanelHeader } from './PanelHeader';
 import { ORCHESTRATION_META, type OrchestrationMode, type RegisteredAgent } from '../types';
@@ -65,6 +66,13 @@ interface GroupChatHeaderProps {
   onBack?: () => void;
   /** A41：打开动态工作流弹窗（写脚本自己组合成员） */
   onOpenWorkflow: () => void;
+  /**
+   * A115：群头像（头像预设 id）。用户在群设置里换的。
+   * 有值时就以它作为头部 leading（替代成员堆叠）—— 换头像的目的就是
+   * 「让这个群有个自己的脸」，不显示等于没换。
+   * 空串 = 沿用成员堆叠。
+   */
+  groupAvatar?: string;
 }
 
 export function GroupChatHeader({
@@ -79,6 +87,7 @@ export function GroupChatHeader({
   onSettingsOpenChange,
   onBack,
   onOpenWorkflow,
+  groupAvatar,
 }: GroupChatHeaderProps) {
   /** 正在就地改群名 */
   const [editing, setEditing] = useState(false);
@@ -125,7 +134,12 @@ export function GroupChatHeader({
       // 每枚头像都是按钮 —— 点它弹出该 Agent 的详情（P7，与消息流里的头像同一手势）
       leading={
         <div className="flex flex-shrink-0 items-center">
-          {shown.length === 0 ? (
+          {/* A115：换过头像就只显示它。成员堆叠是「谁在群里」的答案，
+              而头像已经是「这是哪个群」的答案 —— 两个并排会互相解释，
+              还多占 30px。要看成员可以点右侧成员栏。 */}
+          {groupAvatar ? (
+            <GroupAvatar avatar={groupAvatar} size={36} title={title} />
+          ) : shown.length === 0 ? (
             <div
               className="flex h-9 w-9 items-center justify-center rounded-full"
               style={{ backgroundColor: 'var(--tc-hover-chrome)' }}

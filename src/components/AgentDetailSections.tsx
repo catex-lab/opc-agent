@@ -15,15 +15,30 @@ import {
  * Agent 资料的信息区块 —— 资料页（AgentDetailPanel）与详情弹窗
  * （AgentDetailModal）共用同一份。
  *
- * ## 为什么抽出来
- *
- * 「这个 Agent 能干什么、为什么连不上」是同一个问题，只是两个入口：
- * 通讯录里点开是一整页，聊天里点「⋯ → Agent 详情」是一层弹窗。
- * 如果各写一份，两处的字段迟早会漂移 —— 弹窗里少一行「上次错误」，
- * 或者资料页多一个「接入说明」，用户就会觉得「同一个 Agent 怎么两个说法」。
+ * 之所以抽出来：「这个 Agent 能干什么、为什么连不上」是同一个问题，
+ * 只是两个入口：通讯录里点开是一整页，聊天里点「⋯ → Agent 详情」是
+ * 一层弹窗。如果各写一份，两处的字段迟早会漂移 —— 弹窗里少一行
+ * 「上次错误」，或者资料页多一个「接入说明」，用户就会觉得
+ * 「同一个 Agent 怎么两个说法」。
  *
  * 所以这里只定义**内容**（有哪些字段、按什么顺序、怎么排版），
  * 容器（整页 / 弹窗）、头部（大头像 / 紧凑行）、底部操作留给调用方。
+ *
+ * ## A115 排版刻度（用户反馈「文字、组件大小不统一」）
+ *
+ * 这一页原来同时存在四种「差不多大的小字」：`text-caption`(11)、
+ * `text-secondary`(12)、裸 `text-[12px]`、以及 chip 上**一个字号类都没写**
+ * （于是落到浏览器默认 16px，比旁边的能力 chip 大出一号）。同屏并排时
+ * 就是用户说的「大小不一」。
+ *
+ * 现在整页只留三级字号，改字号只改这里：
+ *
+ *   区块标题   `tc-section-title`   15px / 600   —— 每个 section 的 h3
+ *   行标签/值  `text-body`          13px         —— DetailRow 的两列
+ *   次级说明   `text-secondary`     12px         —— 副行、路径、提示语、chip
+ *
+ *  chip 与 DetailRow 的标签列宽度也从「各写一份」收成两个常量，
+ * 免得下次加一块又引入第四种内边距 / 第五种列宽。
  */
 export function AgentDetailSections({
   agent,
@@ -49,6 +64,20 @@ export function AgentDetailSections({
   const capabilities = agent.capabilities
     .map(cap => ({ key: cap, meta: CAPABILITY_META[cap] }))
     .filter((c): c is { key: typeof c.key; meta: NonNullable<typeof c.meta> } => !!c.meta);
+
+  // A115：整页共用的排版刻度（理由见文件头）。值写成常量而不是散在 JSX 里，
+  // 是为了让「加一块新内容」时直接抄这两个名字，不会再长出第四种规格。
+  /** 信息行的左右内边距 —— 四个卡片容器、InstallCard、localSiblings 同一值 */
+  const ROW_X = 'px-4';
+  /** 信息行的上下内边距 */
+  const ROW_Y = 'py-3';
+  /** 标签列宽度：DetailRow 与 localSiblings 的手写标签共用，两列才对得齐 */
+  const LABEL_W = 'w-[76px]';
+  /** 卡片（装信息行的容器）与卡片内的子卡：相邻两档，不引入第三种圆角 */
+  const CARD = 'rounded-xl';
+  const CARD_INNER = 'rounded-lg';
+  /** chip：能力 / 过程能力两种 chip 必须同规格，否则同屏并排会一大一小 */
+  const CHIP = 'rounded-md px-2 py-1 text-secondary';
 
   // ── 身份（A68）──
   const surfaceLabel = agent.surface ? SURFACE_META[agent.surface]?.label : undefined;
@@ -151,10 +180,7 @@ export function AgentDetailSections({
       {/* 基本信息 */}
       <section className="mt-6 first:mt-0">
         <h3 className="tc-section-title mb-2">基本信息</h3>
-        <div
-          className="tc-detail-rows overflow-hidden rounded-xl"
-          style={{ backgroundColor: 'var(--td-bg-color-container)' }}
-        >
+        <div className={`tc-detail-rows overflow-hidden ${CARD}`} style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
           <DetailRow
             label="状态"
             // 没上报 message 时退回可用性标签 —— 标签文案只有
@@ -166,7 +192,7 @@ export function AgentDetailSections({
               target=_blank 会被主进程的 setWindowOpenHandler 转交
               系统浏览器打开（不在应用内开新窗口）。 */}
           {agent.status.availability === 'needs-auth' && agent.status.authUrl && (
-            <div className="px-4 py-3">
+            <div className={`${ROW_X} ${ROW_Y}`}>
               <button
                 type="button"
                 className="tc-btn-brand"
@@ -191,13 +217,15 @@ export function AgentDetailSections({
           {showInstallCard && (
             <div
               className="border-t"
-              style={{ borderColor: 'var(--td-component-stroke)' }}
+              /* A115 续：分区间的分隔线走 --tc-edge（4.5% 墨）——
+                 「边界保险」档。安装卡有自己的底色，不需要 10% 的墨线。 */
+              style={{ borderColor: 'var(--tc-edge)' }}
               data-agent-install
             >
-              <div
-                className="px-4 pt-3 text-[12px]"
-                style={{ color: 'var(--td-text-color-placeholder)' }}
-              >
+              {/* A115：这个小标签原来写 `text-[12px]` —— 与旁边的 `text-secondary`
+                  是同一个字号，却是两种写法；同屏出现第三种「差不多大的小字」
+                  正是用户说的大小不统一。现在统一走 token。 */}
+              <div className={`${ROW_X} pt-2.5 text-secondary`} style={{ color: 'var(--td-text-color-placeholder)' }}>
                 获取
               </div>
               <InstallCard
@@ -216,10 +244,7 @@ export function AgentDetailSections({
       {hasIdentity && (
         <section className="mt-6" data-agent-identity>
           <h3 className="tc-section-title mb-2">身份</h3>
-          <div
-            className="tc-detail-rows overflow-hidden rounded-xl"
-            style={{ backgroundColor: 'var(--td-bg-color-container)' }}
-          >
+          <div className={`tc-detail-rows overflow-hidden ${CARD}`} style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
             {agent.familyName && <DetailRow label="产品族" value={agent.familyName} />}
             {surfaceLabel && <DetailRow label="产品形态" value={surfaceLabel} />}
             {regionText && <DetailRow label="区域" value={regionText} />}
@@ -239,8 +264,9 @@ export function AgentDetailSections({
                 value={
                   <>
                     {agent.lastRequest.accountLabel} · {agent.lastRequest.model}
+                    {/* A115：`text-[12px]` → `text-secondary`（同一字号的唯一写法） */}
                     <span
-                      className="mt-0.5 block text-[12px] leading-relaxed"
+                      className="mt-0.5 block text-secondary leading-relaxed"
                       style={{ color: 'var(--td-text-color-placeholder)' }}
                     >
                       {formatAgo(agent.lastRequest.at)} · 来源 {agent.lastRequest.source}
@@ -255,11 +281,11 @@ export function AgentDetailSections({
                 「现在这条就是国际版」。所以只陈述探测到的事实 + 为什么没接。
                 **不放接入按钮** —— 真接入要先有第二份凭据，按一下就能完成的是假控件。 */}
             {agent.localSiblings && agent.localSiblings.length > 0 && (
-              <div className="px-4 py-3" data-local-siblings>
-                <div
-                  className="w-[76px] shrink-0 text-body"
-                  style={{ color: 'var(--td-text-color-placeholder)' }}
-                >
+              <div className={`${ROW_X} ${ROW_Y}`} data-local-siblings>
+                {/* A115：标签列宽度与 DetailRow 共用 LABEL_W —— 这里原来自己写了
+                    一份 `w-[76px]`，两份一旦漂移，「其他版本」四个字就和左边
+                    各行的标签对不齐了。 */}
+                <div className={`${LABEL_W} shrink-0 text-body`} style={{ color: 'var(--td-text-color-placeholder)' }}>
                   其他版本
                 </div>
                 <div className="mt-1 flex flex-col gap-2">
@@ -267,27 +293,27 @@ export function AgentDetailSections({
                     <div
                       key={s.id}
                       data-local-sibling={s.id}
-                      className="rounded-lg px-3 py-2"
+                      className={`${CARD_INNER} px-3 py-2`}
                       style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
                     >
                       <div className="text-body" style={{ color: 'var(--td-text-color-primary)' }}>
                         {s.name} · {s.regionName}
                       </div>
                       <div
-                        className="mt-0.5 break-all font-mono text-[12px]"
+                        className="mt-0.5 break-all font-mono text-secondary"
                         style={{ color: 'var(--td-text-color-placeholder)' }}
                       >
                         {s.detectedPath}
                       </div>
                       <div
-                        className="mt-1 text-[12px] leading-relaxed"
+                        className="mt-1 text-secondary leading-relaxed"
                         style={{ color: 'var(--td-text-color-secondary)' }}
                       >
                         {s.evidence}
                       </div>
                       {s.blockedBy && (
                         <div
-                          className="mt-1 text-[12px] leading-relaxed"
+                          className="mt-1 text-secondary leading-relaxed"
                           style={{ color: 'var(--td-warning-color)' }}
                           data-sibling-blocked
                         >
@@ -300,7 +326,7 @@ export function AgentDetailSections({
                           这后半句吞掉，用户只能看到问题看不到出路。 */}
                       {s.nextStep && (
                         <div
-                          className="mt-1 text-[12px] leading-relaxed"
+                          className="mt-1 text-secondary leading-relaxed"
                           style={{ color: 'var(--td-brand-color)' }}
                           data-sibling-next-step
                         >
@@ -322,11 +348,7 @@ export function AgentDetailSections({
           <h3 className="tc-section-title mb-2">擅长领域</h3>
           <div className="flex flex-wrap gap-2">
             {capabilities.map(({ key, meta: cm }) => (
-              <span
-                key={key}
-                className="rounded-md px-2 py-1 text-secondary"
-                style={{ backgroundColor: `${cm.color}18`, color: cm.color }}
-              >
+              <span key={key} className={CHIP} style={{ backgroundColor: `${cm.color}18`, color: cm.color }}>
                 {cm.label}
               </span>
             ))}
@@ -355,7 +377,13 @@ export function AgentDetailSections({
                   title={meta.hint}
                   data-event-capability={key}
                   data-supported={supported ? '1' : '0'}
-                  className="rounded-md px-2 py-1"
+                  /* A115：这里原来**一个字号类都没写**，于是 chip 落到浏览器默认
+                     字号（比旁边的能力 chip 大出一号）—— 同屏并排时「组件大小
+                     不一」就是这么来的。现在与能力 chip 共用 CHIP。
+                     虚线边用 `border` + `box-border` 之外的写法会改变 chip 的
+                     实际尺寸（边框吃进 padding），所以不支持态补一层
+                     `border border-transparent` 占位，两种态外框同宽。 */
+                  className={`${CHIP} border border-transparent box-border`}
                   style={
                     supported
                       ? {
@@ -377,7 +405,7 @@ export function AgentDetailSections({
             })}
           </div>
           {agent.eventCapabilities.length === 0 && (
-            <p className="mt-2 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+            <p className="mt-2 text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
               这个 Agent 只返回最终回答，不暴露执行过程。
             </p>
           )}
@@ -388,16 +416,16 @@ export function AgentDetailSections({
       {(agent.skills?.length ?? 0) > 0 && (
         <section className="mt-6" data-agent-skills>
           <h3 className="tc-section-title mb-2">可承接的任务</h3>
-          <div className="tc-detail-rows overflow-hidden rounded-xl" style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
+          <div className={`tc-detail-rows overflow-hidden ${CARD}`} style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
             {agent.skills!.map(skill => (
-              <div key={skill.id} className="px-4 py-3" data-agent-skill={skill.id}>
+              <div key={skill.id} className={`${ROW_X} ${ROW_Y}`} data-agent-skill={skill.id}>
                 <div className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>{skill.name}</div>
                 <div className="mt-1 text-body leading-relaxed" style={{ color: 'var(--td-text-color-secondary)' }}>{skill.description}</div>
                 {skill.tags && skill.tags.length > 0 && (
-                  <div className="mt-1 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>关键词：{skill.tags.join(' · ')}</div>
+                  <div className="mt-1 text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>关键词：{skill.tags.join(' · ')}</div>
                 )}
                 {((skill.inputModes?.length ?? 0) > 0 || (skill.outputModes?.length ?? 0) > 0) && (
-                  <div className="mt-1 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                  <div className="mt-1 text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
                     {skill.inputModes?.length ? `输入 ${skill.inputModes.join(', ')}` : ''}
                     {skill.inputModes?.length && skill.outputModes?.length ? ' · ' : ''}
                     {skill.outputModes?.length ? `输出 ${skill.outputModes.join(', ')}` : ''}
@@ -414,7 +442,7 @@ export function AgentDetailSections({
         <section className="mt-6">
           <h3 className="tc-section-title mb-2">介绍</h3>
           <p
-            className="rounded-xl px-4 py-3 text-body leading-relaxed"
+            className={`${CARD} ${ROW_X} ${ROW_Y} text-body leading-relaxed`}
             style={{
               backgroundColor: 'var(--td-bg-color-container)',
               color: 'var(--td-text-color-secondary)',
@@ -429,10 +457,7 @@ export function AgentDetailSections({
       {(agent.status.binaryPath || agent.status.lastError) && (
         <section className="mt-6">
           <h3 className="tc-section-title mb-2">技术信息</h3>
-          <div
-            className="tc-detail-rows overflow-hidden rounded-xl"
-            style={{ backgroundColor: 'var(--td-bg-color-container)' }}
-          >
+          <div className={`tc-detail-rows overflow-hidden ${CARD}`} style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
             {agent.status.binaryPath && (
               <DetailRow label="可执行文件" value={agent.status.binaryPath} mono />
             )}
@@ -460,6 +485,9 @@ export function DetailRow({
   error?: boolean;
 }) {
   return (
+    // A115：`px-4 py-3` 原来是这里和各处手写的第四份；现在只有这一份。
+    // 上下 12px 与 chip 的 `py-1`(4px)×2 + 12px 行高 = 20px 形成 2:5 的节奏，
+    // 一行读起来不会显得比 chip 重。
     <div className="flex gap-3 px-4 py-3">
       <span
         className="w-[76px] shrink-0 text-body"

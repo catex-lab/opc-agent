@@ -129,7 +129,7 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
           </div>
           {install.note && (
             <div
-              className="mt-1 text-[12px] leading-relaxed"
+              className="mt-1 text-secondary leading-relaxed"
               style={{ color: 'var(--td-text-color-secondary)' }}
               data-install-note
             >
@@ -144,9 +144,15 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
           className="mt-2 select-all overflow-hidden rounded-lg px-2.5 py-1.5"
           style={{
             backgroundColor: 'var(--tc-surface-sunken, rgba(0,0,0,0.04))',
-            border: '1px solid var(--td-component-stroke)',
+            // A115 续：命令条是「嵌进去」的内容块，描边走 --tc-edge
+            // （4.5% 墨）—— 它有 sunken 底色把自己和周围分开，
+            // 不再需要 10% 的墨线。
+            border: '1px solid var(--tc-edge)',
             fontFamily: 'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)',
-            fontSize: 12,
+            // A115：原来这里是裸 `fontSize: 12`，与旁边正文的 13px 差一档但
+            // 没有任何令牌说明为什么。取 --text-secondary，与「次级说明」
+            // 同一档 —— 命令块确实是次级信息，字号小一档是对的，只是要有出处。
+            fontSize: 'var(--text-secondary)',
             lineHeight: 1.6,
             color: 'var(--td-text-color-secondary)',
             whiteSpace: 'pre-wrap',
@@ -160,7 +166,7 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
 
       {envWarn && (
         <div
-          className="mt-2 text-[12px] leading-relaxed"
+          className="mt-2 text-secondary leading-relaxed"
           style={{ color: 'var(--td-warning-color, #B26A00)' }}
           data-install-env-warn
         >
@@ -173,11 +179,11 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {method === 'npm' && install.command && (
           <button
             type="button"
-            className="tc-btn-brand px-3 py-1.5 text-xs"
+            className="tc-btn-brand px-3 py-1.5 text-secondary"
             onClick={onCopy}
             data-install-copy
           >
-            {copied ? <Check size={13} /> : <Copy size={13} />}
+            {copied ? <Check size={14} /> : <Copy size={14} />}
             {copied ? '已复制' : '复制命令'}
           </button>
         )}
@@ -185,11 +191,11 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {(method === 'script' || method === 'installer') && install.url && (
           <button
             type="button"
-            className="tc-btn-brand px-3 py-1.5 text-xs"
+            className="tc-btn-brand px-3 py-1.5 text-secondary"
             onClick={() => open(install.url!)}
             data-install-open
           >
-            <ExternalLink size={13} />
+            <ExternalLink size={14} />
             {method === 'script' ? '打开安装页' : '打开下载页'}
           </button>
         )}
@@ -197,11 +203,11 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {method === 'script' && install.command && (
           <button
             type="button"
-            className="tc-btn-secondary px-3 py-1.5 text-xs"
+            className="tc-btn-secondary px-3 py-1.5 text-secondary"
             onClick={onCopy}
             data-install-copy
           >
-            {copied ? <Check size={13} /> : <Copy size={13} />}
+            {copied ? <Check size={14} /> : <Copy size={14} />}
             {copied ? '已复制' : '复制命令'}
           </button>
         )}
@@ -209,11 +215,11 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {method === 'npm' && install.url && (
           <button
             type="button"
-            className="tc-btn-secondary px-3 py-1.5 text-xs"
+            className="tc-btn-secondary px-3 py-1.5 text-secondary"
             onClick={() => open(install.url!)}
             data-install-open
           >
-            <ExternalLink size={13} />
+            <ExternalLink size={14} />
             打开项目页
           </button>
         )}
@@ -221,11 +227,11 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {method === 'key' && onOpenCredential && (
           <button
             type="button"
-            className="tc-btn-brand px-3 py-1.5 text-xs"
+            className="tc-btn-brand px-3 py-1.5 text-secondary"
             onClick={() => onOpenCredential(agent.id)}
             data-install-open-settings
           >
-            <KeyRound size={13} />
+            <KeyRound size={14} />
             填写 API Key
           </button>
         )}
@@ -234,12 +240,12 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {onReprobe && (
           <button
             type="button"
-            className="ml-auto flex items-center gap-1 px-2 py-1.5 text-xs"
+            className="ml-auto flex items-center gap-1 px-2 py-1.5 text-secondary"
             style={{ color: 'var(--td-text-color-secondary)' }}
             onClick={onReprobe}
             data-install-reprobe
           >
-            <RefreshCw size={12} />
+            <RefreshCw size={14} />
             重新检测
           </button>
         )}
@@ -248,7 +254,7 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
       {!bare && install.checkedAt && (
         // 核实日期是给"这条链接还新不新"用的，不是装饰。放在角落里不打扰人。
         <div
-          className="mt-2 text-[11px]"
+          className="mt-2 text-caption"
           style={{ color: 'var(--td-text-color-placeholder)' }}
           data-install-checked
         >

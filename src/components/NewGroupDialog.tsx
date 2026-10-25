@@ -142,7 +142,7 @@ export function NewGroupDialog({
   return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6"
-      style={{ backgroundColor: 'rgba(0, 0, 0, 0.42)' }}
+      style={{ backgroundColor: 'var(--tc-mask-soft)' }}
       onMouseDown={e => {
         // 只有点在遮罩本身才关闭：从面板里按下、拖到遮罩上松手不该关
         if (e.target === e.currentTarget) onClose();
@@ -153,12 +153,11 @@ export function NewGroupDialog({
         aria-modal="true"
         aria-label="发起群聊"
         data-new-group-dialog
-        className="flex h-[min(600px,100%)] w-[min(880px,100%)] overflow-hidden rounded-2xl"
-        style={{
-          border: '1px solid var(--td-component-stroke)',
-          boxShadow: 'var(--shadow-float)',
-          backgroundColor: 'var(--tc-surface-content)',
-        }}
+        /* A115：原来这里是实色底 + `--shadow-float`，与另外四个弹窗
+           （ConfirmDialog / RemarkDialog / GetAgentsDialog / AgentDetailModal）
+           完全两套语言。现在统一走 `.tc-dialog` —— 半透明玻璃 + 四层立体影。
+           遮罩也换成 `--tc-mask-soft`（实色 0.42 配半透明底只会让界面发黑）。 */
+        className="tc-dialog flex h-[min(600px,100%)] w-[min(880px,100%)] overflow-hidden rounded-2xl"
       >
         {/* ── 左栏：挑人 ── */}
         <div
@@ -305,7 +304,10 @@ export function NewGroupDialog({
                             className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full transition-colors"
                             style={{
                               backgroundColor: checked ? 'var(--td-brand-color)' : 'transparent',
-                              border: checked ? 'none' : '1.5px solid var(--td-component-stroke)',
+                              // A115 续：未选中态的勾选框走 --tc-edge-strong
+                              // （7% 墨）—— 控件轮廓档。1.5px 保留：18px 的
+                              // 圆圈上 1px 显得太细。
+                              border: checked ? 'none' : '1.5px solid var(--tc-edge-strong)',
                               color: 'var(--tc-on-brand)',
                             }}
                           >

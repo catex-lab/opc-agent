@@ -256,6 +256,12 @@ const WHITELIST = [
    * overlay 管「浮层」。两边都不留缝：浮层如果掉回 0，overlay 会失败。
    */
   { test: e => e.cls.includes('tc-glass'), reason: '浮层：压在内容之上，下限 0.9（A27，由 verify:overlay 守）' },
+  // A115 续：模态弹窗（.tc-dialog）与 tc-glass 同一族 —— 玻璃底 + 遮罩，
+  // 压在内容之上而不是桌面上。A115 起设置弹窗本体也走这一类（原来是
+  // 实色底 + --shadow-float），于是设置页扫描里第一次出现它。
+  // 下限并非无人守：verify:overlay 的「退出群聊确认框」量的就是
+  // [data-confirm-dialog]，它自带 tc-dialog 类。
+  { test: e => e.cls.includes('tc-dialog'), reason: '模态弹窗：与 tc-glass 同族，玻璃底 + 遮罩（下限由 verify:overlay 的确认框一条守）' },
   {
     test: e => /t-popup__content|t-dialog|t-message|t-notification/.test(e.cls),
     reason: 'TDesign 弹层族：同上（A27）',

@@ -140,7 +140,7 @@ export function GetAgentsDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="tc-get-agents-title"
-        className="tc-glass tc-pop-in flex max-h-full w-full max-w-[560px] flex-col overflow-hidden rounded-2xl"
+        className="tc-dialog tc-pop-in flex max-h-full w-full max-w-[560px] flex-col overflow-hidden rounded-2xl"
         data-get-agents
       >
         <div
@@ -215,7 +215,9 @@ export function GetAgentsDialog({
                       className="mx-5 mb-2 overflow-hidden rounded-xl"
                       style={{
                         backgroundColor: 'var(--tc-surface-raised)',
-                        border: '1px solid var(--td-component-stroke)',
+                        // A115 续：安装卡描边 --tc-edge（4.5% 墨）—— 弹窗里
+                        // 的内容卡，靠 raised 底色分层，描边只兜底。
+                        border: '1px solid var(--tc-edge)',
                       }}
                       data-get-agents-row={a.id}
                     >

@@ -165,7 +165,7 @@ export function AgentDetailPanel({
               message 里的话重复，读起来像结巴。只有当探测没给 message 时
               才退回这句通用说明。 */}
           {!canChat && (
-            <p className="mt-2 text-center text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+            <p className="mt-2 text-center text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
               {agent.status.message || `${availabilityLabelOf(agent)} · 需要先完成登录或修复`}
             </p>
           )}
@@ -177,7 +177,7 @@ export function AgentDetailPanel({
             <div className="mt-3 flex justify-center">
               {confirmDelete ? (
                 <div
-                  className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-caption"
+                  className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-secondary"
                   style={{
                     color: 'var(--td-error-color)',
                     backgroundColor: 'var(--td-error-color-light)',
@@ -208,11 +208,13 @@ export function AgentDetailPanel({
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(true)}
-                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-secondary transition-colors hover:bg-[var(--tc-hover-chrome)]"
                   style={{ color: 'var(--td-text-color-placeholder)' }}
                   data-custom-delete
                 >
-                  <Trash2 size={13} />
+                  {/* A115：13 → 14。与页脚「发消息」的 16 只差一档，
+                      原来 13 是这一页唯一一个奇数尺寸 */}
+                  <Trash2 size={14} />
                   删除这个自建 Agent
                 </button>
               )}

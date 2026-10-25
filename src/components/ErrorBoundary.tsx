@@ -61,7 +61,9 @@ export class ErrorBoundary extends Component<Props, State> {
           className="max-w-lg w-full rounded-xl p-6"
           style={{
             backgroundColor: 'var(--td-bg-color-container)',
-            border: '1px solid var(--td-component-stroke)',
+            // A115 续：错误卡描边 --tc-edge（4.5% 墨）—— 全屏唯一一张卡，
+            // 不需要 10% 的墨线来「框住」它。
+            border: '1px solid var(--tc-edge)',
           }}
         >
           <h1

@@ -17,6 +17,8 @@ import { installEnv } from './installEnv.js';
 import { getModelsForAgent, mergeModelOptions, type ModelOption } from './modelCatalog.js';
 import { permissionSupportFor } from './permissions.js';
 import { toAgentInfo, unknownStatus } from './types.js';
+// A115：用户资料注入（昵称 → systemPrompt）。见 withUserIdentity 的注释。
+import { withUserIdentity } from '../user-profile.js';
 import type { EventSource } from '../../shared/blocks.js';
 import type {
   AgentDescriptor,
@@ -330,11 +332,18 @@ class AgentRegistry {
     this.statuses.set(id, { ...prev, lastError: message });
   }
 
-  /** 把一次调用转成事件流（统一入口，供 /api/chat 使用） */
+  /**
+   * 把一次调用转成事件流（统一入口，供 /api/chat 使用）
+   *
+   * A115：`systemPrompt` 在这里过一次 `withUserIdentity()` —— 用户资料
+   * （昵称）注入的**唯一**入口。选注册表而不是逐个适配器：适配器有五个
+   * （sdk / http / acp / qoder-sdk / mock），漏一个就变成「有的 Agent
+   * 认得我、有的不认得」，而这种不一致没有任何报错，只有用户会发现。
+   */
   stream(id: string, ctx: SendContext): AsyncIterable<AgentEvent> | null {
     const provider = this.providers.get(id);
     if (!provider) return null;
-    return provider.send(ctx);
+    return provider.send({ ...ctx, systemPrompt: withUserIdentity(ctx.systemPrompt) });
   }
 
   abort(id: string, sessionId: string): void {
@@ -352,7 +361,11 @@ class AgentRegistry {
       // 只在「确认可用」时预热：未探测 / 未登录 / 未安装都不该白起一个
       // ≈24MB 的进程（起来也会卡在鉴权上，最后还得被超时清掉）
       if (this.statuses.get(id)?.availability !== 'ready') return;
-      this.providers.get(id)?.prewarm?.(ctx);
+      // A115：与 stream() 同样过一次 withUserIdentity。
+      // 不只是为了「预热也能带上称呼」—— sdk 适配器按 systemPrompt 的
+      // **指纹**决定要不要重建会话池，两边不一致会让首条消息被判成
+      // 「结构性不符」而重建，预热白做（见 sdk.ts 的建池键注释）。
+      this.providers.get(id)?.prewarm?.({ ...ctx, systemPrompt: withUserIdentity(ctx.systemPrompt) });
     } catch (err) {
       // 预热纯属优化：任何异常都不该冒到请求层
       console.error('[Registry] prewarm 失败（忽略）:', (err as Error).message);

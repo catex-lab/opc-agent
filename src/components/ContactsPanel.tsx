@@ -27,6 +27,8 @@ import {
   ADD_ICON_SIZE,
 } from './columnHeader';
 import { NewGroupDialog } from './NewGroupDialog';
+import { GroupAvatar } from './UserAvatar';
+import { useGroupAvatar } from '../sessionFlags';
 import { MENU_ITEM_CLASS } from './menuItem';
 import { AVAILABILITY_META, REGION_META, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
 
@@ -760,6 +762,8 @@ function GroupRow({ session, getAgent, onOpen }: GroupRowProps) {
     session.title ||
     (memberNames.length > 0 ? memberNames.join('、') : '群聊') ||
     '群聊';
+  // A115：订阅这个群的头像（Hook 必须放在组件顶层，不能写在 JSX 里）
+  const groupAvatar = useGroupAvatar(session.id);
 
   return (
     <button
@@ -768,15 +772,10 @@ function GroupRow({ session, getAgent, onOpen }: GroupRowProps) {
       title={`打开群聊：${title}`}
       className="tc-list-item flex w-full items-center gap-2.5 px-2.5 py-2.5 text-left"
     >
-      <span
-        className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-full"
-        style={{
-          backgroundColor: 'var(--tc-surface-raised)',
-          color: 'var(--td-text-color-secondary)',
-        }}
-      >
-        <Users size={18} />
-      </span>
+      {/* A115：群头像。与会话列表、群聊头部共用同一个 GroupAvatar ——
+          用户在群设置里换的头像，三个地方必须同时变，否则「换了没换」
+          要看运气。 */}
+      <GroupAvatar avatar={groupAvatar} size={42} />
       <span
         className="min-w-0 flex-1 truncate text-body-lg font-medium"
         style={{ color: 'var(--td-text-color-primary)' }}

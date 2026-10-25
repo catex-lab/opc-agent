@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loading, MessagePlugin } from 'tdesign-react';
 import { ChatMarkdown } from '@tdesign-react/chat';
-import { Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, TextSelect, User, Image as ImageIcon } from 'lucide-react';
+import { Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, TextSelect, Image as ImageIcon } from 'lucide-react';
 import { Message, Model, PermissionRequest, RegisteredAgent, Block, ThinkingBlock, ToolBlock, RawBlock } from '../types';
 import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
@@ -15,6 +15,8 @@ import { FileEvidencePanel } from './FileEvidencePanel';
 import { useVerifications } from '../hooks/useVerifications';
 import { installCherryCodeIconFix } from './cherryCodeIcon';
 import { AgentAvatar } from './AgentAvatar';
+import { UserAvatar } from './UserAvatar';
+import { useUserProfile } from '../userProfile';
 import { ImageBubble } from './ImageBubble';
 import { TypingText } from './TypingText';
 import { formatUsage } from '../utils/formatUsage';
@@ -976,6 +978,8 @@ export function ChatMessages({
 }: ChatMessagesProps) {
   /** 消息区根节点：选区工具条用它判断「选区是不是在这片消息里」 */
   const rootRef = useRef<HTMLDivElement>(null);
+  /** A115：用户自己的资料（昵称 + 头像）—— 用户消息那颗头像用它渲染 */
+  const userProfile = useUserProfile();
   /** A97：验证结果（按会话取一次，前端按 message_id 分组） */
   const { rows: verifications, refresh: refreshVerifications } = useVerifications(currentSessionId);
   /**
@@ -1381,17 +1385,16 @@ export function ChatMessages({
             // 而那一档用户是认可的。用 color-mix 按 --opc-t 插值，t=0 时
             // 100% 品牌色（与原来完全一致），t=1 时 100% 淡底 —— 中间平滑过渡。
             // 图标色同理：白 → 品牌色，否则淡底上的白图标会消失。
-            <div
-              className="w-9 h-9 flex items-center justify-center flex-shrink-0 rounded-full self-start"
-              style={{
-                backgroundColor:
-                  'color-mix(in srgb, var(--td-brand-color) calc((1 - var(--opc-t, 0)) * 100%), var(--td-brand-color-light))',
-                color:
-                  'color-mix(in srgb, #fff calc((1 - var(--opc-t, 0)) * 100%), var(--td-brand-color))',
-              }}
-            >
-              <User size={18} />
-            </div>
+            //
+            // A115：用户在「我的资料」里换过头像/昵称后，这里跟着变 ——
+            // 否则「换了头像」在聊天里看不到任何效果，用户会以为没保存。
+            // 没设资料时仍是原来那颗人像图标（零变化的兜底）。
+            <UserAvatar
+              nickname={userProfile.nickname}
+              avatar={userProfile.avatar}
+              size={36}
+              className="self-start"
+            />
           ) : null}
 
           {/* A35（用户反馈）：助手侧改成「头部一行 + 正文另起一行」。

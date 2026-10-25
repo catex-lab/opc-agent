@@ -397,6 +397,30 @@ select:focus-visible {
   /* 旧名保留为别名：20+ 处引用不必逐个改，语义与值都跟着上面走。 */
   --tc-hover-chrome: var(--tc-fill-hover);
 
+  /* ── A115：权限模式图标的黑白化 ─────────────────────────────────────
+   *
+   * 用户两条反馈：「将图中权限的图标替换为黑白色，不要彩色」＋「深色模式下
+   * 红框位置的锁图标仍是黑色导致看不清」。根因是同一处：
+   * ChatInput 的 PERMISSION_MODE_CONFIG 里四档各写死一个彩色 hex，其中
+   * 「默认」是 #1f1f1f —— 在深色主题的输入框底（#1b1b1b）上对比度不到
+   * 2:1，等于没有。
+   *
+   * 现在改成一条跟随主题的中性阶，颜色彻底退出编码，四档只由形状区分
+   * （闭锁 / 编辑 / 清单 / 开锁）：
+   *
+   *   默认      primary     最重 —— 这一档是「每次都要确认」，最常看
+   *   自动编辑  secondary   中间
+   *   只读      placeholder 最轻 —— 只出计划不动手
+   *   全放行    primary     与默认同重 —— 它是另一端极端（跳过所有确认），
+   *                          同样得一眼看见；两颗都是锁，形状区分足够
+   *
+   * 为什么不一路递降到 disabled：最宽松的一档看起来「被禁用」比「彩色」
+   * 更糟，用户会以为选择器坏了。 */
+  --tc-perm-default: var(--td-text-color-primary);
+  --tc-perm-accept: var(--td-text-color-secondary);
+  --tc-perm-plan: var(--td-text-color-placeholder);
+  --tc-perm-bypass: var(--tc-perm-default);
+
   /* ── A83 质感层：微色阶 / 柔边 / 焦点阴影 ────────────────────────────
    *
    * 用户的原话是「靠 1%–3% 微色阶分层代替生硬边框，输入框聚焦用阴影替代高亮」。
@@ -613,6 +637,10 @@ select:focus-visible {
   --tc-fill-selected: rgba(229, 229, 229, 0.12);
   --tc-fill-pressed: rgba(255, 255, 255, 0.18);
   --tc-hover-chrome: var(--tc-fill-hover);
+
+  /* A115：与浅色同一套四档（见 :root 的 --tc-perm-* 说明）。
+   * 深色下文字四档本身是「提白」的，所以直接复用同一组变量即可 ——
+   * 锁图标从此跟着主题走，不再出现「深色底上压一颗近黑的锁」。 */
 
   /* A83 质感层（深色）：方向反过来 —— 越靠前越亮，所以叠白。
    * 微色阶的三档比值与浅色完全一致（1.2 / 2.4 / 3.6%），只是墨色变白：
@@ -1171,6 +1199,45 @@ svg.t-icon {
   background-color: var(--td-brand-color);
 }
 
+/* ── A115 续：文本输入框（把 A83 的焦点承诺兑现到组件里）──────────────
+ *
+ * A83 建了 `--tc-focus-shadow`（「聚焦只加阴影、不动边框色」），但直到
+ * 本轮之前**一个组件都没用它** —— 各处输入框仍是手写内联
+ * `border: 1px solid var(--td-component-stroke)`，聚焦态要么没有、
+ * 要么靠 TDesign 默认的那圈蓝。令牌建了不铺开，等于没有。
+ *
+ * 这个类把三件事收在一条里：
+ *   · 常态描边走 --tc-edge（4.5% 墨）—— 与卡片的「边界保险」同一档；
+ *   · 聚焦时描边只提到 --tc-edge-strong（7%），**不加粗不变色**，
+ *     真正告诉用户「激活了」的是 --tc-focus-shadow：一层 3px 的淡晕 +
+ *     一层下投影，把输入面「抬起来」—— 这是聚焦的视觉语义（东西被拿起
+ *     来了），而不是「被标红了」（A30 的用户原话是「点一下输入框就套一圈
+ *     黑框」，那次的修法是一路压到没有任何反馈，又走到了另一个极端）；
+ *   · 没有任何品牌色参与，所以也不会和按钮的蓝抢注意力。
+ *
+ * 用法：删掉内联的 backgroundColor / border / outline，改挂这个 class。
+ * ⚠️ 不要在内联样式里再写 border —— 内联优先级高于 class，会把焦点态
+ *    的描边变化盖回去（这种失效没有报错，只是「聚焦时看起来没反应」）。 */
+.tc-input {
+  background-color: var(--td-bg-color-container);
+  border: 1px solid var(--tc-edge);
+  border-radius: var(--td-radius-default);
+  color: var(--td-text-color-primary);
+  outline: none;
+  transition:
+    box-shadow var(--duration-fast) var(--ease-tencent),
+    border-color var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-input:focus {
+  border-color: var(--tc-edge-strong);
+  box-shadow: var(--tc-focus-shadow);
+}
+
+.tc-input::placeholder {
+  color: var(--td-text-color-placeholder);
+}
+
 /* 按下的一瞬间：比选中再深一档。这一档是 --tc-fill-pressed 的唯一使用者 ——
    三档里若没有它，pressed 就成了一个没人引用的死令牌。 */
 .tc-list-item:active:not(.is-active) {
@@ -1288,7 +1355,47 @@ h4 {
   --tc-glass-highlight: rgba(255, 255, 255, 0.9);
   /* 外发光用中性灰，不要用 slate 蓝灰 —— verify:tokens 会扫「全 DOM 有没有
      蓝色渲染色」，带蓝的投影会让那条断言失败（而且深灰更不抢主题色） */
-  --tc-glass-shadow: var(--shadow-float), 0 0 24px rgba(0, 0, 0, 0.06);
+  --tc-glass-shadow: var(--tc-dialog-shadow), 0 0 24px rgba(0, 0, 0, 0.06);
+
+  /* ── A115：弹窗的「立体透明阴影」────────────────────────────────────
+   *
+   * 用户原话「对弹窗设计立体透明阴影效果」。改之前是 `--shadow-float`
+   * 两段（0 12px 32px + 0 2px 8px）加一圈 24px 外发光 —— 单看是「有影」，
+   * 但两个浮层并排、或浮层压在消息上时读不出「这一层比那一层高」，
+   * 因为整套影子只有一种密度，没有近深远淡的层次。
+   *
+   * 立体感由三件事叠出来，缺一不可：
+   *
+   *   ① **四层、逐层放宽**。真实光照下影子分四段：接触影（贴着面板，
+   *      最紧最深）、本影（主体，决定「浮了多高」）、环境影（又宽又淡）、
+   *      远景影（几乎只是把面板和背景隔开）。一段式的 `0 12px 32px`
+   *      只有本影，所以看着像贴纸而不是浮起。
+   *   ② **方向一致**。光源在上，四层的 Y 偏移全是正的；任何一层用负 Y
+   *      都会让面板像从底下被照亮，立体感当场反过来。
+   *   ③ **全部半透明**。层与层用 alpha 而不是实色黑，重叠处自然加深，
+   *      不会在弹窗四角积成一圈死黑；这也是「透明阴影」的字面意思。
+   *
+   * 步长是按「白底上相邻两层差 6~10 个 RGB 级」定的：小于 6 级在普通屏上
+   * 四层会糊成一团，大于 12 级环境影会变成一圈可见的灰边。
+   *
+   * ⚠️ 改这些数必须同步跑 verify:overlay（它量的是底色 alpha 与
+   *    backdrop-filter，不吃这套影子，但会抓「为了加阴影把浮层改回实色」）
+   *    与 verify:surface（它扫全页有没有人拿投影当边框用）。 */
+  --tc-dialog-shadow:
+    /* 接触影：1px，最紧 */
+    0 1px 2px rgba(0, 0, 0, 0.1),
+    /* 本影：阴影主体 */
+    0 5px 12px -3px rgba(0, 0, 0, 0.12),
+    /* 环境影：宽而淡 */
+    0 16px 40px -10px rgba(0, 0, 0, 0.16),
+    /* 远景影：只负责「隔开」 */
+    0 32px 64px -24px rgba(0, 0, 0, 0.1);
+  /* 玻璃的「厚度」：顶边受光、底边收光。
+     只有顶边一条（改之前 .tc-glass 的做法）读作「发亮」；补上底边之后
+     才读作「一块有厚度的材料」—— 这是立体感最关键的一笔，
+     而它不占任何布局空间，只是两条 inset 线。 */
+  --tc-dialog-edge-top: rgba(255, 255, 255, 0.9);
+  --tc-dialog-edge-bottom: rgba(0, 0, 0, 0.06);
 }
 
 :root.dark {
@@ -1304,7 +1411,19 @@ h4 {
   --tc-glass-saturate: 160%;
   --tc-glass-highlight: rgba(255, 255, 255, 0.1);
   /* 深色下外发光换成黑：让面板边缘「沉」下去半层，而不是亮出一圈光边 */
-  --tc-glass-shadow: var(--shadow-float), 0 0 28px rgba(0, 0, 0, 0.35);
+  --tc-glass-shadow: var(--tc-dialog-shadow), 0 0 28px rgba(0, 0, 0, 0.35);
+
+  /* A115：深色下四层全部加重 —— 深底上的淡影会被直接吃掉，
+     `0 16px 40px` 在浅色下是 16% 黑，在深色下要 50% 才浮得起来。
+     两条厚度边也反过来：顶边只留 10% 白（再亮就是一圈发光），
+     底边压 30% 黑（材料的下缘确实不透光）。 */
+  --tc-dialog-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.5),
+    0 5px 12px -3px rgba(0, 0, 0, 0.45),
+    0 16px 40px -10px rgba(0, 0, 0, 0.5),
+    0 32px 64px -24px rgba(0, 0, 0, 0.4);
+  --tc-dialog-edge-top: rgba(255, 255, 255, 0.1);
+  --tc-dialog-edge-bottom: rgba(0, 0, 0, 0.3);
 }
 
 /* 用法：把原位上的 `backgroundColor: var(--*-container)` + `border` 内联样式
@@ -1317,6 +1436,49 @@ h4 {
   box-shadow: var(--tc-glass-shadow), inset 0 1px 0 var(--tc-glass-highlight);
   -webkit-backdrop-filter: blur(var(--tc-glass-blur)) saturate(var(--tc-glass-saturate));
   backdrop-filter: blur(var(--tc-glass-blur)) saturate(var(--tc-glass-saturate));
+}
+
+/* ── A115：弹窗（带遮罩的模态层）────────────────────────────────────
+ *
+ * 与 `.tc-glass` 的差别只在**厚度**：下拉、悬停名片这些「跟着指针走」的
+ * 浮层贴着一块具体的锚点，不需要材料感；而模态弹窗是整屏唯一的主角，
+ * 背后压着一层遮罩，用户期待它是一块「搁在界面上方的实体」。
+ *
+ * 所以这里在玻璃三件套之外补两条 inset 线（顶边受光 / 底边收光，
+ * 见 --tc-dialog-edge-* 的说明）。它们不占布局空间，却决定了这块玻璃
+ * 读作「发亮的塑料片」还是「有厚度的一块材料」。
+ *
+ * 遮罩本身也一起收在这里：`--tc-mask-soft` 是「还能看见背后」的那一档，
+ * 配半透明底才有意义 —— 实色底加深遮罩只会让界面变黑一块。 */
+.tc-dialog {
+  background-color: var(--tc-glass-bg);
+  border: 1px solid var(--tc-glass-border);
+  box-shadow:
+    var(--tc-dialog-shadow),
+    inset 0 1px 0 var(--tc-dialog-edge-top),
+    inset 0 -1px 0 var(--tc-dialog-edge-bottom);
+  -webkit-backdrop-filter: blur(var(--tc-glass-blur)) saturate(var(--tc-glass-saturate));
+  backdrop-filter: blur(var(--tc-glass-blur)) saturate(var(--tc-glass-saturate));
+}
+
+/* A115：TDesign Dialog（动态工作流弹窗）也吃同一套立体透明阴影。
+   `!important` 是必要的 —— TDesign 的 `.t-dialog` 自己写了实色底与
+   `--td-shadow-2`，优先级与这里同级，不加 important 会被它盖掉。
+   遮罩换成 `--tc-mask-soft`：TDesign 默认那层 50% 黑配上半透明面板，
+   会让整个弹窗区域比周围暗一块，立体感反而没了。 */
+.workflow-dialog .t-dialog {
+  background-color: var(--tc-glass-bg) !important;
+  border: 1px solid var(--tc-glass-border) !important;
+  box-shadow:
+    var(--tc-dialog-shadow),
+    inset 0 1px 0 var(--tc-dialog-edge-top),
+    inset 0 -1px 0 var(--tc-dialog-edge-bottom) !important;
+  -webkit-backdrop-filter: blur(var(--tc-glass-blur)) saturate(var(--tc-glass-saturate)) !important;
+  backdrop-filter: blur(var(--tc-glass-blur)) saturate(var(--tc-glass-saturate)) !important;
+}
+
+.workflow-dialog .t-dialog__mask {
+  background-color: var(--tc-mask-soft) !important;
 }
 
 /* =====================================================================
