@@ -10,6 +10,7 @@
  */
 
 import { AGENT_DEFS, findDef, eventSourceOf } from './definitions.js';
+import type { AgentDefinition } from './definitions.js';
 import { createProvider, AcpAdapter } from './adapters/index.js';
 import { familyHintsFor } from './familyHints.js';
 import { installEnv } from './installEnv.js';
@@ -159,6 +160,39 @@ class AgentRegistry {
 
   getProvider(id: string): AgentProvider | undefined {
     return this.providers.get(id);
+  }
+
+  /**
+   * 注册一条用户自建 Agent（A114）。
+   *
+   * 为什么是运行时方法而不是构造函数里遍历：registry 是模块级单例，
+   * **在 import 时就构造完了**，而自建 Agent 的定义来自
+   * `data/custom-agents.json`（要读盘）。启动时由 server/index.ts 逐个调，
+   * 设置页新建后也调同一个方法 —— 不必重启应用就能用上。
+   *
+   * 只往 `providers` 里加，**不**主动探测：探测是有副作用的（要走一次网络），
+   * 而 `/api/agents` 冷启动那条路本来就是「后台探 + 本次按缓存返回」。
+   * 由调用方决定要不要立刻 `probeOne(id, true)`。
+   */
+  registerCustom(def: AgentDefinition): void {
+    const id = def.descriptor.id;
+    if (this.providers.has(id)) return; // 幂等：重复注册不覆盖已有实例
+    try {
+      this.providers.set(id, createProvider(def));
+      // 新条目没有探测记录，状态给 unknown 而不是沿用上一次的旧状态
+      this.statuses.delete(id);
+      this.probedAt.delete(id);
+    } catch (err) {
+      console.error(`[Registry] 注册自建 Agent ${id} 失败:`, (err as Error).message);
+    }
+  }
+
+  /** 注销一条自建 Agent。删配置时调，避免删完还能在名册里点到它 */
+  unregisterCustom(id: string): void {
+    this.providers.delete(id);
+    this.statuses.delete(id);
+    this.probedAt.delete(id);
+    this.inflight.delete(id);
   }
 
   /**

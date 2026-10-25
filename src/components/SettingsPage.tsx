@@ -459,7 +459,18 @@ export function SettingsPage({
               type="button"
               onClick={onClose}
               className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-[var(--tc-hover-chrome)]"
-              style={{ color: 'var(--td-text-color-secondary)' }}
+              style={{
+                color: 'var(--td-text-color-secondary)',
+                // A114（用户反馈）：「设置页右上角的关闭按钮往右上角适当调整，
+                // 现在的位置不协调」。实测原位置是距弹窗顶 22px、右侧 25px ——
+                // 它跟着 `actionsAlign="title"` 与「设置」标题行对齐，结果是
+                // 悬在标题旁边、离 16px 圆角还有一段距离：既不像「角落里的
+                // 关闭键」，也没和任何东西真正对齐。
+                // 弹窗圆角 16px，把按钮收进 (14, 16) 就落在圆角弧线的顺势位置。
+                // 用 transform 而不是改 PanelHeader 的 padding：那个组件还有
+                // 通讯录、会话头部两个消费方，它们的布局不该被设置弹窗带走。
+                transform: 'translate(9px, -8px)',
+              }}
               aria-label="关闭设置"
               data-settings-close
             >

@@ -406,6 +406,11 @@ export interface RegisteredAgent {
   name: string;
   vendor?: string;
   kind: AgentKind;
+  /**
+   * 用户自建 Agent（A114）。名册页据此给「删除」入口。
+   * 与后端 `server/agents/types.ts` 的 `AgentDescriptor.custom` 同源。
+   */
+  custom?: boolean;
   capabilities: AgentCapability[];
   /**
    * 过程能力清单（A111）。缺省（undefined）= 后端没声明，界面按「未知」处理，

@@ -2241,8 +2241,30 @@ export const INSTALL_HOSTS = [
 ] as const;
 
 /** 按 id 快速查找 */
+/**
+ * 用户自建 Agent 的定义表（A114）。
+ *
+ * 启动时由 `server/index.ts` 调 `registerCustomDefs()` 灌入。之所以不并进
+ * `AGENT_DEFS`：那份是**编译期常量**，而自建 Agent 是运行时从
+ * `data/custom-agents.json` 读出来的 —— 用户可以随时增删，改完还要能热生效
+ * （不必重启应用）。合成一份新数组等于每次增删都重新分配，而注册表那边
+ * 也要跟着重建 Provider，反而不如显式注册。
+ */
+let customDefs: AgentDefinition[] = [];
+
+/** 灌入自建 Agent 定义。重复调用以最后一次为准（设置页增删后重新灌） */
+export function registerCustomDefs(defs: AgentDefinition[]): void {
+  customDefs = defs;
+}
+
+/** 内置 + 自建。需要「全部 Agent」的地方用它，不要直接遍历 AGENT_DEFS */
+export function allAgentDefs(): AgentDefinition[] {
+  return [...AGENT_DEFS, ...customDefs];
+}
+
 export function findDef(id: string): AgentDefinition | undefined {
-  return AGENT_DEFS.find(d => d.descriptor.id === id);
+  // 自建在前：它的 id 带 `custom-` 前缀，不可能与内置条目撞名
+  return customDefs.find(d => d.descriptor.id === id) ?? AGENT_DEFS.find(d => d.descriptor.id === id);
 }
 
 /**

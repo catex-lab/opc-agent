@@ -93,7 +93,9 @@
     "verify:a106": "tsx scripts/verify-a106-cli-upgrade.ts",
     "verify:a107": "tsx scripts/verify-a107-session-pool.ts",
     "verify:a111": "tsx scripts/verify-a111-raw-passthrough.ts",
-    "verify:logo": "node scripts/verify-logo.mjs"
+    "verify:logo": "node scripts/verify-logo.mjs",
+    "verify:a114": "node scripts/verify-a114-custom-agent.mjs",
+    "verify:a114-ui": "node scripts/verify-a114-ui.mjs"
   },
   "dependencies": {
     "@qoder-ai/qoder-agent-sdk": "^1.0.55",

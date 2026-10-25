@@ -290,6 +290,17 @@ export interface AgentDescriptor {
   vendor?: string;
   /** 接入方式 */
   kind: AgentKind;
+  /**
+   * 用户自建 Agent（A114）。
+   *
+   * 名册页据此给出「删除」入口，并把 Key 输入框藏起来（自建 Agent 的 Key
+   * 在「登录配置」分区管，创建对话框里只填一次）。
+   *
+   * 为什么不按 id 前缀（`custom-`）判：前缀是实现细节，用户看不见；
+   * 而界面要区分「内置收录」与「用户自己加的」，这是个**产品语义**，
+   * 该由描述层显式声明。
+   */
+  custom?: boolean;
   /** 能力标签 */
   capabilities: AgentCapability[];
   /** 细化的任务技能；缺省时由通用能力标签派生兼容技能 */

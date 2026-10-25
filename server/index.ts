@@ -22,7 +22,14 @@ import {
 } from "./db.js";
 import { registry } from "./agents/registry.js";
 import { scoreAgentSkills } from "./agents/types.js";
-import { findDef } from "./agents/definitions.js";
+import { findDef, registerCustomDefs } from "./agents/definitions.js";
+import {
+  createCustomSpec,
+  customSpecToDefinition,
+  deleteCustomSpec,
+  loadCustomSpecs,
+  normalizeCustomInput,
+} from "./agents/customAgents.js";
 import {
   getImageProvider,
   imageProvidersStatus,
@@ -90,12 +97,23 @@ import type { ModelOption } from "./agents/modelCatalog.js";
 import { getScenario } from "../shared/scenarios.js";
 
 /**
- * 把应用内保存的 Agent 凭据注入进程环境。
+ * 注册用户自建 Agent，再把应用内保存的凭据注入进程环境。
+ *
+ * **自建注册必须在 loadAgentCredentials() 之前**：那条路要按
+ * `findDef(id)?.credential` 找每条 Agent 的变量名，而自建 Agent 的定义
+ * 来自 data/custom-agents.json，不先注册进去就找不到 —— 冷启动那一轮
+ * 探测会把用户刚建好的 Agent 判成「缺 Key」。
  *
  * **必须在任何探测之前**（registry 的首次探测发生在启动后台任务里）：
  * 否则冷启动那一轮会按「没有 Key」判成 needs-auth，用户得等 TTL 过期或
  * 手动刷新才能看到真实状态。
  */
+{
+  const defs = loadCustomSpecs().map(customSpecToDefinition);
+  registerCustomDefs(defs);
+  for (const def of defs) registry.registerCustom(def);
+  console.log(`[CustomAgents] 已注册 ${defs.length} 个自建 Agent`);
+}
 loadAgentCredentials();
 
 const app = express();
@@ -416,6 +434,68 @@ app.post("/api/agents/probe", async (req, res) => {
   } catch (error: any) {
     console.error("[Agents] Probe error:", error);
     res.status(500).json({ error: error?.message || "探测失败" });
+  }
+});
+
+// ============= 用户自建 Agent（A114）=============
+// ⚠️ 这三条必须排在 `/api/agents/:agentId` **之前**注册：Express 按注册顺序
+// 匹配，`:agentId` 会把 "custom" 当成一个 agent id 吃掉，返回 404。
+// 只列定义、不回传 Key —— 列表接口不该带密钥出门。
+
+app.get("/api/agents/custom", async (_req, res) => {
+  try {
+    res.json({ agents: loadCustomSpecs() });
+  } catch (error: any) {
+    console.error("[CustomAgents] List error:", error);
+    res.status(500).json({ error: error?.message || "获取自建 Agent 失败" });
+  }
+});
+
+app.post("/api/agents/custom", async (req, res) => {
+  try {
+    const norm = normalizeCustomInput(req.body);
+    if (!norm.ok) return res.status(400).json({ error: norm.error });
+    const apiKey = String((req.body as any)?.apiKey ?? "").trim();
+    if (!apiKey) return res.status(400).json({ error: "请填写 API Key" });
+
+    const spec = createCustomSpec(norm.value);
+    const def = customSpecToDefinition(spec);
+    // 先把定义注册进 definitions，**再**存 Key：saveCredential() 内部要按
+    // `findDef(id)?.credential` 找变量名，定义还没注册就找不到，会抛
+    // 「该 Agent 不支持在应用内配置凭据」—— 顺序反了创建必然失败。
+    registerCustomDefs(loadCustomSpecs().map(customSpecToDefinition));
+    registry.registerCustom(def);
+    // Key 走既有凭据存储：一份只存定义、一份只存密钥，设置页「登录配置」
+    // 因此能直接换 Key，不必删掉重建。saveCredential 内部会顺手把它注入
+    // process.env，所以紧接着的探测立刻就能看到「已配置」。
+    saveCredential(spec.id, { key: apiKey });
+    // 建完立刻探一次：用户下一步就是去点这个 Agent，等 5 分钟 TTL 或手动
+    // 刷新才看到「缺 Key / 已就绪」会很困惑。探测只做一次网络往返，不贵。
+    const agent = await registry.probeOne(spec.id, true);
+    res.json({ agent, id: spec.id });
+  } catch (error: any) {
+    console.error("[CustomAgents] Create error:", error);
+    res.status(500).json({ error: error?.message || "创建自建 Agent 失败" });
+  }
+});
+
+app.delete("/api/agents/custom/:agentId", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    // 只允许删自建条目：拿一个内置 id 来删必须失败，否则用户能删掉 codex
+    if (!agentId.startsWith("custom-")) {
+      return res.status(400).json({ error: "只能删除自建 Agent" });
+    }
+    const removed = deleteCustomSpec(agentId);
+    if (!removed) return res.status(404).json({ error: "自建 Agent 不存在" });
+    // 凭据与内存态一起清：只删定义会让 Key 留在 agent-credentials.json 里
+    clearCredential(agentId);
+    registry.unregisterCustom(agentId);
+    registerCustomDefs(loadCustomSpecs().map(customSpecToDefinition));
+    res.json({ ok: true, id: agentId });
+  } catch (error: any) {
+    console.error("[CustomAgents] Delete error:", error);
+    res.status(500).json({ error: error?.message || "删除自建 Agent 失败" });
   }
 });
 

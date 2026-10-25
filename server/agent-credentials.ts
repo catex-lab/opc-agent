@@ -29,7 +29,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { AGENT_DEFS, findDef } from './agents/definitions.js';
+import { allAgentDefs, findDef } from './agents/definitions.js';
 import { dataDirPath } from './paths.js';
 
 /** 落盘结构：agentId → { key, baseUrl } */
@@ -169,7 +169,10 @@ function viewOf(agentId: string): CredentialView | null {
 
 /** 全部「可在应用内配置凭据」的 Agent（设置页据此渲染） */
 export function listCredentials(): CredentialView[] {
-  return AGENT_DEFS.map(d => viewOf(d.descriptor.id)).filter(
+  // A114：用 allAgentDefs() 而不是 AGENT_DEFS —— 用户自建 Agent 的 Key
+  // 也归这份存储管（见 agents/customAgents.ts 顶部说明），不出现在这里
+  // 用户就没有地方换 Key，只能删掉重建。
+  return allAgentDefs().map(d => viewOf(d.descriptor.id)).filter(
     (v): v is CredentialView => v !== null
   );
 }

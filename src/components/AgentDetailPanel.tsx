@@ -1,4 +1,5 @@
-import { ChevronLeft, MessageSquarePlus } from 'lucide-react';
+import { ChevronLeft, MessageSquarePlus, Trash2 } from 'lucide-react';
+import { useState } from 'react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentDetailSections } from './AgentDetailSections';
 import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
@@ -13,6 +14,8 @@ interface AgentDetailPanelProps {
   onReprobe?: () => void;
   /** 跳设置页对应凭据行（A71，`method:'key'` 用） */
   onOpenCredential?: (agentId: string) => void;
+  /** 删除自建 Agent（A114）。只有 `agent.custom` 为真时才出现 */
+  onDeleteCustom?: (agentId: string) => void;
 }
 
 /**
@@ -42,10 +45,14 @@ export function AgentDetailPanel({
   onSelectAgent,
   onReprobe,
   onOpenCredential,
+  onDeleteCustom,
 }: AgentDetailPanelProps) {
   const avail = agent.status.availability;
   const meta = AVAILABILITY_META[avail];
   const canChat = avail === 'ready';
+  // A114：自建 Agent 才有删除。内置条目是编译进应用的，删了也回不来。
+  const canDelete = !!agent.custom && !!onDeleteCustom;
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   return (
     <div
@@ -161,6 +168,55 @@ export function AgentDetailPanel({
             <p className="mt-2 text-center text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
               {agent.status.message || `${availabilityLabelOf(agent)} · 需要先完成登录或修复`}
             </p>
+          )}
+
+          {/* A114：删除自建 Agent。两步确认（点一次出确认条，再点一次才真删）——
+              删除不可恢复，而它紧挨着「发消息」，误触一次就没了太容易。
+              删掉的只是定义与 Key，**不会**动这个 Agent 参与过的会话记录。 */}
+          {canDelete && (
+            <div className="mt-3 flex justify-center">
+              {confirmDelete ? (
+                <div
+                  className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-caption"
+                  style={{
+                    color: 'var(--td-error-color)',
+                    backgroundColor: 'var(--td-error-color-light)',
+                  }}
+                  data-custom-delete-confirm
+                >
+                  <span>删除后不可恢复，会话记录会保留</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDeleteCustom?.(agent.id);
+                      setConfirmDelete(false);
+                    }}
+                    className="font-medium underline"
+                    data-custom-delete-ok
+                  >
+                    确认删除
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(false)}
+                    style={{ color: 'var(--td-text-color-secondary)' }}
+                  >
+                    取消
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                  style={{ color: 'var(--td-text-color-placeholder)' }}
+                  data-custom-delete
+                >
+                  <Trash2 size={13} />
+                  删除这个自建 Agent
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>

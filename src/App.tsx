@@ -509,6 +509,33 @@ function AppContent() {
     navigate(back && back !== '/settings' ? back : '/');
   }, [navigate]);
 
+  /**
+   * 删除一个自建 Agent（A114）。
+   *
+   * 后端会一并清掉定义、Key 与内存态。删完必须重拉名册，否则通讯录里
+   * 还挂着这一条，点进去又是 404。detailAgent 也一并关掉 —— 它引用的
+   * 就是刚被删掉的那个对象。
+   */
+  const handleDeleteCustomAgent = useCallback(
+    async (agentId: string) => {
+      try {
+        const res = await fetch(`/api/agents/custom/${encodeURIComponent(agentId)}`, {
+          method: 'DELETE',
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          MessagePlugin.warning((data as { error?: string }).error || '删除失败');
+          return;
+        }
+        setDetailAgentId(null);
+        await registry.load();
+      } catch (err) {
+        MessagePlugin.warning((err as Error).message || '删除失败');
+      }
+    },
+    [registry]
+  );
+
   // Esc 关闭设置弹窗。弹窗的键盘出口是必备项 —— 鼠标在滑杆上时，
   // 用户最直觉的动作是「按 Esc」，而不是把指针移到右上角那个 × 上。
   useEffect(() => {
@@ -832,6 +859,7 @@ function AppContent() {
                 onSelectGroup={handleSelectSession}
                 compact={compact}
                 onOpenCredential={handleOpenCredential}
+                onAgentsChanged={registry.load}
               />
             ))}
 
@@ -862,6 +890,7 @@ function AppContent() {
                     onSelectAgent={setDetailAgentId}
                     onReprobe={registry.probe}
                     onOpenCredential={handleOpenCredential}
+                    onDeleteCustom={handleDeleteCustomAgent}
                   />
                 ) : currentSession ? (
                   /* A103：gap 让「聊天列 / 工作区」之间留缝；两块各自圆角，
