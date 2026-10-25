@@ -128,6 +128,29 @@ db.exec(`
     created_at TEXT NOT NULL,
     last_opened_at TEXT NOT NULL
   );
+
+  -- 项目任务（A119）：项目详情里那张「任务」面板的落点。
+  --
+  -- 为什么挂在**项目**上而不是会话上：任务是「这个仓库还要做什么」，
+  -- 天然跨会话 —— 一条任务往往横跨好几轮对话。绑到会话上会随会话删除
+  -- 一起消失，而且「同一个任务在两轮对话里各记一遍」几乎是必然的。
+  --
+  -- status 只有三档（todo / doing / done）。任务是「一眼看清还剩什么」，
+  -- 档位一多就变成另一个待办 App，维护成本上去了、没人填。
+  --
+  -- 外键 ON DELETE CASCADE：删项目时任务跟着走（PRAGMA foreign_keys
+  -- 在本文件开头已开），不留孤儿行。
+  CREATE TABLE IF NOT EXISTS project_tasks (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'todo',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_project_tasks_project
+    ON project_tasks(project_id, created_at);
 `);
 
 /**
@@ -402,6 +425,97 @@ export function deleteProject(id: string): boolean {
   db.prepare('UPDATE sessions SET project_id = NULL WHERE project_id = ?').run(id);
   const r = db.prepare('DELETE FROM projects WHERE id = ?').run(id);
   return toNumber(r.changes) > 0;
+}
+
+// ── 项目任务（A119）──────────────────────────────────────────────────────
+
+/** 任务状态三档。与 project_tasks.status 的取值一一对应。 */
+export type ProjectTaskStatus = 'todo' | 'doing' | 'done';
+
+export interface DbProjectTask {
+  id: string;
+  project_id: string;
+  title: string;
+  status: ProjectTaskStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * 列表顺序：未完成在前、完成沉底，同档内按创建时间正序。
+ *
+ * 为什么在 SQL 里排而不是前端排：`status` 是文本，'doing' < 'done' < 'todo'
+ * 的字典序恰好不是业务顺序。用 CASE 显式给出优先级，前端拿到的就是终态 ——
+ * 否则「列表栏和详情页各排一次」迟早有一处漏改。
+ */
+const TASK_ORDER_SQL = `
+  ORDER BY CASE status WHEN 'doing' THEN 0 WHEN 'todo' THEN 1 ELSE 2 END,
+           created_at ASC
+`;
+
+export function listProjectTasks(projectId: string): DbProjectTask[] {
+  return db
+    .prepare(`SELECT * FROM project_tasks WHERE project_id = ? ${TASK_ORDER_SQL}`)
+    .all(projectId) as unknown as DbProjectTask[];
+}
+
+export function getProjectTask(id: string): DbProjectTask | undefined {
+  return db.prepare('SELECT * FROM project_tasks WHERE id = ?').get(id) as unknown as
+    | DbProjectTask
+    | undefined;
+}
+
+export function createProjectTask(projectId: string, title: string): DbProjectTask {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO project_tasks (id, project_id, title, status, created_at, updated_at)
+     VALUES (?, ?, ?, 'todo', ?, ?)`
+  ).run(id, projectId, title, now, now);
+  return getProjectTask(id)!;
+}
+
+/**
+ * 更新任务。只认 `title` / `status` 两个字段 —— 状态必须是那三档之一。
+ *
+ * 非法 status 一律**拒绝并返回 undefined**，而不是静默改成 'todo'：
+ * 静默纠正会让前端一个写错的按钮看起来「点了有反应」，实际把任务
+ * 重置了，最难查的那种。
+ */
+export function updateProjectTask(
+  id: string,
+  updates: { title?: string; status?: string }
+): DbProjectTask | undefined {
+  const fields: string[] = [];
+  const values: Array<string> = [];
+
+  if (typeof updates.title === 'string' && updates.title.trim()) {
+    fields.push('title = ?');
+    values.push(updates.title.trim());
+  }
+  if (updates.status !== undefined) {
+    if (!isProjectTaskStatus(updates.status)) return undefined;
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (fields.length === 0) return getProjectTask(id);
+
+  fields.push('updated_at = ?');
+  values.push(new Date().toISOString());
+  values.push(id);
+
+  const r = db.prepare(`UPDATE project_tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  if (toNumber(r.changes) === 0) return undefined;
+  return getProjectTask(id);
+}
+
+export function deleteProjectTask(id: string): boolean {
+  const r = db.prepare('DELETE FROM project_tasks WHERE id = ?').run(id);
+  return toNumber(r.changes) > 0;
+}
+
+export function isProjectTaskStatus(v: unknown): v is ProjectTaskStatus {
+  return v === 'todo' || v === 'doing' || v === 'done';
 }
 
 /**

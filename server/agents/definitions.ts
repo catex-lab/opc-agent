@@ -1984,17 +1984,52 @@ const RAW_DEFS: AgentDefinition[] = [
       icon: 'trae',
       command: 'traecli',
       installHint:
-        'TraeCode CLI（traecli）由 Trae 官方分发，需企业版旗舰套餐；安装方式见 docs.trae.cn，装完运行 traecli login',
+        'TraeCode CLI（traecli）由 Trae 官方分发，需企业版旗舰套餐；安装方式见 docs.trae.cn，装完运行 traecli login。注意：装了 Trae IDE 不等于装了它 —— IDE 附带的 `trae-cn` 只是 IDE 启动器，不能当 Agent 用',
     },
     cli: {
-      // A105：国内版装出来的命令名是 **`trae-cn`**（`E:\AI\Trae CN\bin\trae-cn.cmd`，
-      // 已在 PATH 里），官方文档写的 `traecli` 在本机不存在。两个都列，
-      // 谁在就用谁 —— 只写文档名会把装好的用户判成「未安装」（实测踩过）。
-      bin: ['trae-cn', 'traecli'],
       /**
-       * ⚠️ 本机装有 Trae CN 国内版（2026-10-24 实读 `bin/trae-cn.cmd`，
-       * `--version` 实测返回 1.107.1），但**没有实跑过 `exec`**，
-       * 所以事件结构只核到「官方文档写了」，没有一条是实跑验证过的。
+       * A119：**只列 `traecli`**，不再列 `trae-cn`。
+       *
+       * A105 曾经把 `trae-cn` 也列进来，理由是「国内版装出来就叫这个，
+       * 只写文档名会把装好的用户判成未安装」。那个判断错了 ——
+       * `trae-cn` 是 **Trae IDE 自带的 VS Code 官方垫片**，不是 agent CLI：
+       *
+       *   E:\AI\Trae CN\bin\trae-cn.cmd
+       *     @echo off
+       *     set ELECTRON_RUN_AS_NODE=1
+       *     "%~dp0..\Trae CN.exe" "%~dp0..\resources\app\out\cli.js" %*
+       *
+       * `resources/app/out/cli.js` 就是 VS Code 的 `code` 命令，只认
+       * version / status / tunnel / serve-web / install-extension /
+       * locate-extension / open-url —— **没有 `exec`**；它的参数语义是
+       * 「要打开的路径」（`--help` 第一行就是
+       * `Usage: trae-cn.exe [options] [paths...]`）。
+       *
+       * 于是 `trae-cn exec --json --skip-git-repo-check -C <dir> "hi"`
+       * 不报错，而是把 `exec` 当成文件夹路径 **拉起 IDE 窗口**：
+       * 子进程变成 GUI，stdout 永不产出，界面一直转圈到 8 分钟超时。
+       * 用户看到的现象是「跟 Trae 对话会弹出 Trae 自己的应用」。
+       *
+       * 顺带纠正 A105 的另一处误判：`trae-cn --version` 返回的 `1.107.1`
+       * 是 **Trae CN IDE 的版本**，不是 traecli 的。拿它当「CLI 已装好」
+       * 的证据，等于用 IDE 的版本号证明 CLI 存在。
+       *
+       * 真正的 `traecli` 由 Trae 官方单独分发（企业版旗舰套餐），本机
+       * 没有安装（`~/.trae` / `~/.trae-cn` 都是 IDE 配置目录，不含 CLI）。
+       * 所以这条现在会如实显示「未安装」并给出安装指引 —— 比假装就绪、
+       * 一调用就弹窗好得多。
+       *
+       * 另加一道保险：probe.ts 的 `isIdeLauncher()` 会在探测阶段拦住
+       * 「ELECTRON_RUN_AS_NODE + resources/app/out/cli.js」这种 IDE 启动器
+       * 形态，即便日后又有人把某个 IDE 的垫片名写进 bin，也接不进来。
+       */
+      bin: ['traecli'],
+      /**
+       * ⚠️ **没有任何一条是实跑验证过的** —— 本机没有 `traecli`，
+       * 上面列的事件结构全部来自官方文档，不是实测。
+       * （A105 曾写「本机装有 Trae CN、`--version` 返回 1.107.1」，
+       *  那个结论在 A119 被推翻：返回版本号的是 IDE，不是 CLI。）
+       *
        * 依据：docs.trae.cn/cli_command-line-parameters
        * （2026-10-22 实读），逐条对应：
        *   `traecli exec [选项] [PROMPT]`  非交互运行
@@ -2005,8 +2040,9 @@ const RAW_DEFS: AgentDefinition[] = [
        *   `--permission-mode <MODE>`      default / auto / bypass_permissions
        *   `-y/--yolo`                     跳过全部确认且不沙箱（危险）
        *   `--skip-git-repo-check`         允许在非 git 仓库里跑
-       * 装好之后第一件事：跑 `trae-cn exec --json "say hi"` 看真实事件结构，
+       * 装好之后第一件事：跑 `traecli exec --json "say hi"` 看真实事件结构，
        * 再回来核对 createMapper 是否对得上。
+       * 别用 `trae-cn` 试 —— 那是 IDE 的垫片，只会弹窗口（见上面的 bin 注释）。
        */
       buildArgs: (prompt, ctx) => {
         const args = ['exec', '--json', '--skip-git-repo-check'];
@@ -2099,10 +2135,14 @@ const INSTALL_INFO: Record<string, AgentInstall> = {
     method: 'installer',
     url: 'https://www.trae.com.cn/',
     requires: 'none',
-    note: '装 Trae IDE 后在 IDE 内安装命令行工具；traecli 需企业版旗舰套餐，装完运行 traecli login',
+    // A119：这条 note 以前写的是「装 Trae IDE 后在 IDE 内安装命令行工具」，
+    // 读起来像「装完 IDE 就有 CLI」—— 实际不是：IDE 附带的 `trae-cn` 是
+    // VS Code 系 IDE 启动器（参数是「要打开的路径」），`traecli exec` 这种
+    // agent 用法它会当成路径去开窗口。真正的 traecli 是另一件独立分发物。
+    note: 'Trae IDE 本身不含 agent CLI：需另装 traecli（企业版旗舰套餐），装完运行 traecli login',
     checkedAt: CHECKED,
     checkedFrom:
-      'trae.com.cn 官网实读（2026-10-22，标题 TRAE｜你的 AI 开发工程师）；CLI 参数与套餐限制见 docs.trae.cn/cli_command-line-parameters',
+      'trae.com.cn 官网实读（2026-10-22，标题 TRAE｜你的 AI 开发工程师）；CLI 参数与套餐限制见 docs.trae.cn/cli_command-line-parameters；A119 本机实读 bin/trae-cn.cmd 与 resources/app/out/cli.js 确认其为 IDE 启动器',
   },
 
   // ── npm 全局包：要求本机有 Node ──────────────────────────────

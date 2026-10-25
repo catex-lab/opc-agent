@@ -60,6 +60,10 @@ function App() {
     <Routes>
       <Route path="/" element={<AppContent />} />
       <Route path="/chat/:sessionId" element={<AppContent />} />
+      {/* A119：项目视图的深链。`/projects` = 只开列表栏、没选项目；
+          `/projects/:projectId` = 连详情一起打开。刷新与前进/后退都能还原。 */}
+      <Route path="/projects" element={<AppContent />} />
+      <Route path="/projects/:projectId" element={<AppContent />} />
       <Route path="/settings" element={<AppContent />} />
     </Routes>
   );
@@ -67,11 +71,27 @@ function App() {
 
 function AppContent() {
   const navigate = useNavigate();
-  const { sessionId: urlSessionId } = useParams<{ sessionId: string }>();
+  const { sessionId: urlSessionId, projectId: urlProjectId } = useParams<{
+    sessionId?: string;
+    projectId?: string;
+  }>();
   const location = useLocation();
   const isSettingsPage = location.pathname === '/settings';
+  /**
+   * A119：当前是不是停在项目视图。
+   *
+   * 判据是**路径前缀**而不是 `urlProjectId` 是否存在：`/projects`（没选具体
+   * 项目）也属于项目视图，只看 projectId 会把这一档漏掉，刷新后退回聊天栏。
+   */
+  const isProjectsPath =
+    location.pathname === '/projects' || location.pathname.startsWith('/projects/');
 
-  const [nav, setNav] = useState<NavKey>('chats');
+  /**
+   * A117 起主导航只有状态、没有 URL，于是「切到项目栏再刷新」会掉回聊天视图。
+   * A119 补上深链后，初始值直接从 URL 还原 —— 用惰性初始化而不是挂载后再
+   * effect 改一遍，是为了避免首帧先渲染聊天栏、下一帧才换成项目栏的闪动。
+   */
+  const [nav, setNav] = useState<NavKey>(() => (isProjectsPath ? 'projects' : 'chats'));
 
   /**
    * A117：项目视图的状态。
@@ -87,7 +107,9 @@ function AppContent() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    () => urlProjectId ?? null
+  );
 
   const fetchProjects = useCallback(async () => {
     setProjectsLoading(true);
@@ -339,6 +361,42 @@ function AppContent() {
     }
   }, [urlSessionId, isSettingsPage, currentSessionId, setCurrentSessionId]);
 
+  /**
+   * A119：URL → 项目视图状态的同步（深链的另一半）。
+   *
+   * 深链要**双向**才成立：`handleSelectProject` 负责 state → URL，这里负责
+   * URL → state（刷新、前进/后退、直接粘一个链接进来）。只做单向的话，
+   * 浏览器后退会退到上一个项目，界面却停在原地。
+   *
+   * 清空分支（`/projects` 而没有 projectId）是必须的：从 `/projects/A`
+   * 退到 `/projects` 时若不清，右侧会继续挂着 A 的详情 —— URL 说没选、
+   * 界面说选了。
+   */
+  useEffect(() => {
+    if (!isProjectsPath) return;
+    setNav('projects');
+    setDetailAgentId(null);
+    if (urlProjectId && urlProjectId !== selectedProjectId) {
+      setSelectedProjectId(urlProjectId);
+    } else if (!urlProjectId && selectedProjectId) {
+      setSelectedProjectId(null);
+    }
+  }, [isProjectsPath, urlProjectId, selectedProjectId]);
+
+  /**
+   * A119：深链里的项目已经不存在（被删掉）时，把 URL 收回 `/projects`。
+   *
+   * 必须在「列表确实拉过一轮」之后再判断：首帧 `projects` 还是空数组，
+   * 直接比会把一个完全合法的深链误判成失效，用户刷新一下就被踢回列表。
+   * 所以三个前置条件缺一不可 —— 在加载中、拉取报错、列表为空，一律不判。
+   */
+  useEffect(() => {
+    if (!isProjectsPath || !urlProjectId) return;
+    if (projectsLoading || projectsError || projects.length === 0) return;
+    if (projects.some(p => p.id === urlProjectId)) return;
+    navigate('/projects', { replace: true });
+  }, [isProjectsPath, urlProjectId, projects, projectsLoading, projectsError, navigate]);
+
   // 打开会话即标记已读（驱动未读红点）
   useEffect(() => {
     if (currentSessionId) markSessionRead(currentSessionId);
@@ -438,6 +496,23 @@ function AppContent() {
   );
 
   /**
+   * A119：选中一个项目 —— 状态与 URL 一起改。
+   *
+   * 为什么不在 effect 里由 state 反推 URL：那样「点一下多一条历史记录」和
+   * 「state 被别处改（比如刚添加完项目）也顺带改 URL」会混在一起，出问题时
+   * 分不清是谁触发的。这里显式成对调用，因果一眼可见。
+   *
+   * `null` = 回到「项目栏但没选具体项目」，对应 `/projects`。
+   */
+  const handleSelectProject = useCallback(
+    (projectId: string | null) => {
+      setSelectedProjectId(projectId);
+      navigate(projectId ? `/projects/${projectId}` : '/projects');
+    },
+    [navigate]
+  );
+
+  /**
    * A117：添加项目。
    *
    * 两个入口合一：不传 `cwd` 时开原生目录对话框（Electron），传了就按手输
@@ -461,14 +536,14 @@ function AppContent() {
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || '添加项目失败');
       await fetchProjects();
-      if (j.project?.id) setSelectedProjectId(j.project.id);
+      if (j.project?.id) handleSelectProject(j.project.id);
       MessagePlugin.success(`已添加项目「${j.project?.name ?? dir}」`);
     } catch (e: any) {
       // 目录不存在是这里最常见的失败（后端 validateDirectory 会拦），
       // 必须把后端那句话原样给用户 —— 它带着具体路径，比「添加失败」有用得多。
       MessagePlugin.error(e?.message || '添加项目失败');
     }
-  }, [fetchProjects]);
+  }, [fetchProjects, handleSelectProject]);
 
   /** 在项目下开新会话：cwd 一起带上，后端会按 cwd 自动绑到同一个项目（A98） */
   const handleNewSessionInProject = useCallback(
@@ -525,11 +600,14 @@ function AppContent() {
       // 会话的 project_id 已被后端置空 —— 本地那份也要跟着清，否则项目
       // 视图里还能看见已经解绑的会话（要等下一次 fetchSessions 才消失）
       setSessions(prev => prev.map(s => (s.projectId === project.id ? { ...s, projectId: undefined } : s)));
+      // A119：选中态与 URL 一起收。只清 state 的话，深链同步的 effect 会
+      // 拿 URL 里的旧 id 把它写回去（URL 说还选着、库里已经没有这个项目）。
+      if (selectedProjectId === project.id) handleSelectProject(null);
       MessagePlugin.success(`已移除「${project.name}」`);
     } catch (e: any) {
       MessagePlugin.error(e?.message || '移除项目失败');
     }
-  }, [fetchProjects, setSessions]);
+  }, [fetchProjects, setSessions, selectedProjectId, handleSelectProject]);
 
   /**
    * A33 分支：把「截至这条消息」的会话复制成一个新会话并跳过去。
@@ -577,7 +655,18 @@ function AppContent() {
     registry.probe();
   }, [navigate, registry.probe, setCurrentSessionId]);
 
-  /** 从通讯录发起一对一对话：先建一个空的本地会话，首条消息发出时后端落库 */
+  /**
+   * 从通讯录发起一对一对话：先建一个空的本地会话，首条消息发出时后端落库。
+   *
+   * A119：这个空壳会话**就是「新建对话页」的载体** —— 内容区只在
+   * `currentSession` 存在时才渲染 ChatPage，而 ChatPage 在「会话为空」时
+   * 整页渲染 NewChatView。所以「先建空壳」不是冗余动作，是进入新建页的
+   * 唯一路径（项目详情里的「新建会话」同理）。
+   *
+   * 由此带来一个必须一起修的约束：空壳会话绑的 Agent 才是**事实**，
+   * 新建页里那张 Agent 卡片的高亮/预览必须跟着它走，不能各说各话。
+   * 见 ChatPage 的 `draftAgentId` 与 `onRebindAgent`。
+   */
   const handleStartChatWith = useCallback(
     (agentId: string) => {
       // 从资料页点「发消息」时，资料页要让位给会话
@@ -610,6 +699,50 @@ function AppContent() {
   );
 
   /**
+   * A119：给「还没发过消息的空壳会话」换 Agent。
+   *
+   * 场景：通讯录点「发消息」→ 建了绑 Agent A 的空壳会话 → 落在新建页 →
+   * 用户改主意想用 B。早先那张卡片点了没有任何效果（新建页的选中态读的是
+   * 它自己那份 state，跟会话绑的 agentId 是两回事），是个假控件。
+   *
+   * 只由 ChatPage 在「会话一条消息都没有」时调用 —— 聊过一半换 Agent
+   * 语义上说不通：历史消息是前一个 Agent 的上下文，换掉等于换了个会话
+   * 却留着别人的对话记录。
+   *
+   * 落库与否分开处理：本地空壳只改内存（首条消息会带着新 agentId 落库，
+   * 那时后端才第一次见到这个会话），已经存在于服务端的空会话走 PATCH。
+   * 后者真的会发生：清空聊天记录后会话仍在库里、消息数归零，新建页会
+   * 重新出现。
+   */
+  const handleRebindAgent = useCallback(
+    (agentId: string) => {
+      if (!currentSessionId) return;
+      const target = sessions.find(s => s.id === currentSessionId);
+      if (!target) return;
+
+      const nextAgent = registry.getAgent(agentId);
+      const prevAgent = target.agentId ? registry.getAgent(target.agentId) : undefined;
+      // 标题还是「新对话」或上一个 Agent 的名字时，跟着换成新 Agent 的名字；
+      // 用户自己起过名就一个字都别动。
+      const autoTitle = !target.title || target.title === '新对话' || target.title === prevAgent?.name;
+
+      updateSession(currentSessionId, {
+        agentId,
+        ...(autoTitle && nextAgent?.name ? { title: nextAgent.name } : {}),
+      });
+
+      if (!target.isLocal) {
+        void fetch(`/api/sessions/${currentSessionId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentId }),
+        });
+      }
+    },
+    [currentSessionId, sessions, registry, updateSession]
+  );
+
+  /**
    * 切换主导航。
    *
    * ## 为什么这里要**同步**清掉当前会话（2026-10-18 修卡顿）
@@ -635,11 +768,18 @@ function AppContent() {
     setDetailAgentId(null);
     // A117：「项目」与通讯录同理 —— 它占的是列表栏，右侧换成项目详情。
     // 不清会话的话，切到项目栏的第一帧右侧还会挂着 ChatPage（同上那段代价）。
-    if (key === 'contacts' || key === 'projects' || isSettingsPage) {
+    if (key === 'contacts' || isSettingsPage) {
       setCurrentSessionId(null);
       navigate('/');
+    } else if (key === 'projects') {
+      // A119：项目栏有自己的 URL，不能再走 `navigate('/')`（那会让刷新退回
+      // 聊天视图）。用**当前选中**的项目拼路径而不是固定跳 `/projects`：
+      // 从聊天栏切回来时用户多半还想接着看刚才那个项目，清掉选中等于每次
+      // 都逼他重新点一遍。
+      setCurrentSessionId(null);
+      navigate(selectedProjectId ? `/projects/${selectedProjectId}` : '/projects');
     }
-  }, [navigate, isSettingsPage, setCurrentSessionId]);
+  }, [navigate, isSettingsPage, setCurrentSessionId, selectedProjectId]);
 
   /**
    * A37：设置从「整页路由」改成「弹窗」。
@@ -1046,7 +1186,7 @@ function AppContent() {
                 loading={projectsLoading}
                 error={projectsError}
                 selectedId={selectedProjectId}
-                onSelect={setSelectedProjectId}
+                onSelect={handleSelectProject}
                 onAdd={handleAddProject}
                 onRefresh={fetchProjects}
                 compact={compact}
@@ -1094,7 +1234,7 @@ function AppContent() {
                       onNewSession={handleNewSessionInProject}
                       onRename={handleRenameProject}
                       onDelete={handleDeleteProject}
-                      onBack={compact ? () => setSelectedProjectId(null) : undefined}
+                      onBack={compact ? () => handleSelectProject(null) : undefined}
                       compact={compact}
                     />
                   ) : (
@@ -1221,6 +1361,8 @@ function AppContent() {
                         // 分支该切到哪都说不清（如实隐藏而不是给个含糊的动作）。
                         onRegenerate={!(currentSession?.kind === 'group') ? regenerate : undefined}
                         onBranch={!(currentSession?.kind === 'group') ? handleBranch : undefined}
+                        // A119：空壳会话换 Agent（新建页的 Agent 卡片）
+                        onRebindAgent={handleRebindAgent}
                       />
                     </Suspense>
                     </div>

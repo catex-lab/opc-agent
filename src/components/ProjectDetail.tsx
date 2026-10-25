@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FolderKanban, FolderOpen, Pencil, Trash2, MessageSquarePlus, Brain,
   Check, X, ChevronDown, ChevronLeft,
+  Circle, CircleDot, CheckCircle2, Plus, ListTodo,
 } from 'lucide-react';
-import type { Project, Session, RegisteredAgent } from '../types';
+import type { Project, ProjectTask, ProjectTaskStatus, Session, RegisteredAgent } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
 import { revealInFolder, hasNativeDialogs } from '../workspace';
 
@@ -71,6 +72,101 @@ export function ProjectDetail({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
 
+  /* ── 项目任务（A119）────────────────────────────────────────────
+   *
+   * 数据在这里自己拉，不提升到 App：任务只被这一屏用，提到 App 会让
+   * 「projects 列表」和「当前项目的任务」两套数据混在一个状态里，切换项目
+   * 时还得手动清，反而更容易出「切过去了还显示上一个项目的任务」。
+   *
+   * 每次 project.id 变化都重拉（而不是本地缓存各项目的任务）：任务量小、
+   * 一次请求几百字节，缓存带来的失效判断比请求本身更贵。
+   */
+  const [tasks, setTasks] = useState<ProjectTask[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksError, setTasksError] = useState<string | null>(null);
+  const [draftTask, setDraftTask] = useState('');
+
+  const fetchTasks = useCallback(async () => {
+    setTasksLoading(true);
+    setTasksError(null);
+    try {
+      const r = await fetch(`/api/projects/${project.id}/tasks`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `读取任务失败（${r.status}）`);
+      setTasks(
+        (j.tasks ?? []).map((t: any) => ({
+          id: t.id,
+          projectId: t.project_id,
+          title: t.title,
+          status: t.status,
+          createdAt: t.created_at,
+          updatedAt: t.updated_at,
+        }))
+      );
+    } catch (e: any) {
+      setTasksError(e?.message || '读取任务失败');
+    } finally {
+      setTasksLoading(false);
+    }
+  }, [project.id]);
+
+  useEffect(() => {
+    void fetchTasks();
+  }, [fetchTasks]);
+
+  /** 写操作统一走这里：失败只把错误显示在面板里，不清空已有列表 */
+  const mutateTask = useCallback(
+    async (path: string, init: RequestInit, fallback: string) => {
+      try {
+        const r = await fetch(path, {
+          headers: { 'Content-Type': 'application/json' },
+          ...init,
+        });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          throw new Error(j?.error || fallback);
+        }
+        setTasksError(null);
+        await fetchTasks();
+        return true;
+      } catch (e: any) {
+        setTasksError(e?.message || fallback);
+        return false;
+      }
+    },
+    [fetchTasks]
+  );
+
+  const addTask = async () => {
+    const title = draftTask.trim();
+    if (!title) return;
+    // 先清输入框再发：成功与否都该让用户马上能接着敲下一条，
+    // 失败时错误显示在列表上方，原文也不会丢（要重试就再敲一次）
+    const ok = await mutateTask(
+      `/api/projects/${project.id}/tasks`,
+      { method: 'POST', body: JSON.stringify({ title }) },
+      '添加任务失败'
+    );
+    if (ok) setDraftTask('');
+  };
+
+  const cycleTask = (task: ProjectTask) => {
+    // 三档循环：待办 → 进行中 → 已完成 → 待办。
+    // 为什么是循环而不是复选框：只有两档表达不了「正在做」，
+    // 而「正在做」恰恰是任务面板最该一眼看出来的信息。
+    const next: ProjectTaskStatus =
+      task.status === 'todo' ? 'doing' : task.status === 'doing' ? 'done' : 'todo';
+    void mutateTask(
+      `/api/tasks/${task.id}`,
+      { method: 'PATCH', body: JSON.stringify({ status: next }) },
+      '更新任务失败'
+    );
+  };
+
+  const removeTask = (task: ProjectTask) => {
+    void mutateTask(`/api/tasks/${task.id}`, { method: 'DELETE' }, '删除任务失败');
+  };
+
   // 换项目时收起所有临时状态 —— 否则切到另一个项目会带着上一个的输入框
   useEffect(() => {
     setRenaming(false);
@@ -108,6 +204,7 @@ export function ProjectDetail({
 
   const mem = project.memory;
   const memPct = mem && mem.coreBudget > 0 ? Math.min(100, Math.round((mem.coreTokens / mem.coreBudget) * 100)) : 0;
+  const doneCount = tasks.filter(t => t.status === 'done').length;
 
   return (
     <div
@@ -355,6 +452,138 @@ export function ProjectDetail({
             </div>
           </div>
         )}
+
+        {/* ── 项目任务（A119）───────────────────────────────────────
+            放在记忆条与会话列表之间：任务是「接下来要做什么」，比「翻旧会话」
+            更需要被看见。列表栏里看不出任务状态，所以这块不做折叠 ——
+            折叠等于默认藏起来，而它本来就是这一页的主内容之一。 */}
+        <div className="mb-5" data-project-tasks>
+          <div className="mb-2 flex items-baseline justify-between gap-2">
+            <h2 className="flex items-center gap-1.5 text-body-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+              <ListTodo size={15} style={{ color: 'var(--td-text-color-secondary)' }} />
+              任务
+            </h2>
+            <span
+              className="text-caption tabular-nums"
+              style={{ color: 'var(--td-text-color-secondary)' }}
+              data-project-task-progress
+            >
+              {tasks.length === 0 ? '暂无' : `${doneCount}/${tasks.length} 已完成`}
+            </span>
+          </div>
+
+          {/* 新增。用表单而不是裸 input：回车提交是浏览器的原生行为，
+              自己监听 keydown 在中文输入法下会误触（候选词确认也发 Enter）。 */}
+          <form
+            className="mb-2 flex items-center gap-2"
+            onSubmit={e => {
+              e.preventDefault();
+              void addTask();
+            }}
+          >
+            <input
+              value={draftTask}
+              onChange={e => setDraftTask(e.target.value)}
+              placeholder="加一条任务，回车确认"
+              data-project-task-input
+              className="min-w-0 flex-1 rounded-lg px-3 py-1.5 text-body outline-none"
+              style={{
+                backgroundColor: 'var(--td-bg-color-component)',
+                color: 'var(--td-text-color-primary)',
+                border: '1px solid transparent',
+              }}
+            />
+            <button
+              type="submit"
+              disabled={!draftTask.trim()}
+              data-project-task-add
+              className="flex h-8 shrink-0 items-center gap-1 rounded-lg px-3 text-caption transition-colors disabled:opacity-40"
+              style={{
+                backgroundColor: 'var(--td-brand-color-light)',
+                color: 'var(--td-brand-color)',
+              }}
+            >
+              <Plus size={13} />
+              添加
+            </button>
+          </form>
+
+          {/* 读失败 / 写失败都在这里说一句。不把列表清空 ——
+             一次写入失败不该让人以为任务全没了。 */}
+          {tasksError && (
+            <p className="mb-2 text-caption" style={{ color: 'var(--td-error-color)' }} data-project-task-error>
+              {tasksError}
+            </p>
+          )}
+
+          {tasks.length === 0 ? (
+            <p
+              className="rounded-xl px-4 py-6 text-center text-caption"
+              style={{ border: '1px dashed var(--tc-edge)', color: 'var(--td-text-color-placeholder)' }}
+              data-project-task-empty
+            >
+              {tasksLoading ? '正在读取任务…' : '还没有任务。记下这个项目接下来要做什么'}
+            </p>
+          ) : (
+            <ul data-project-task-list>
+              {tasks.map(t => {
+                const done = t.status === 'done';
+                const doing = t.status === 'doing';
+                const Icon = done ? CheckCircle2 : doing ? CircleDot : Circle;
+                const label = done ? '已完成' : doing ? '进行中' : '待办';
+                return (
+                  <li
+                    key={t.id}
+                    className="group mb-1 flex items-center gap-2.5 rounded-xl px-3 py-2 transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                    data-project-task-row={t.id}
+                    data-task-status={t.status}
+                  >
+                    {/* 状态按钮：点一下推进一档。title 写清「点它会变成什么」，
+                        否则用户看不出这是可点的（一个空心圆太像装饰）。 */}
+                    <button
+                      type="button"
+                      onClick={() => cycleTask(t)}
+                      title={`${label} · 点击改为「${done ? '待办' : doing ? '已完成' : '进行中'}」`}
+                      aria-label={`任务状态：${label}`}
+                      data-project-task-toggle
+                      className="shrink-0"
+                      style={{
+                        color: done
+                          ? 'var(--td-success-color)'
+                          : doing
+                            ? 'var(--td-brand-color)'
+                            : 'var(--td-text-color-placeholder)',
+                      }}
+                    >
+                      <Icon size={17} />
+                    </button>
+                    <span
+                      className="min-w-0 flex-1 truncate text-body"
+                      style={{
+                        color: done ? 'var(--td-text-color-secondary)' : 'var(--td-text-color-primary)',
+                        textDecoration: done ? 'line-through' : 'none',
+                      }}
+                      data-project-task-title
+                    >
+                      {t.title}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeTask(t)}
+                      title="删除任务"
+                      aria-label="删除任务"
+                      data-project-task-delete
+                      className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+                      style={{ color: 'var(--td-text-color-placeholder)' }}
+                    >
+                      <X size={14} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
 
         {/* 会话列表 */}
         <div className="mb-2 flex items-baseline justify-between">

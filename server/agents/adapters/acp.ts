@@ -23,6 +23,7 @@ import {
   findExecutable,
   resolveAnyLaunchTarget,
   isUnresolvedShim,
+  isIdeLauncher,
   expandPath,
   type LaunchTarget,
 } from '../probe.js';
@@ -220,6 +221,14 @@ export class AcpAdapter implements AgentProvider {
       this.target = resolveAnyLaunchTarget(binPath);
       if (isUnresolvedShim(this.target, binPath)) {
         throw new Error('无法解析 ACP 启动垫片（不退回 shell 执行）');
+      }
+      // A119：IDE 启动器守卫。ACP 是长连接，接错目标不会「报错」而是
+      // 拉起一个 IDE 窗口然后 stdin 永远等不到 initialize 应答 ——
+      // 表现成握手超时，比 CLI 那边更难定位。见 isIdeLauncher()。
+      if (isIdeLauncher(this.target)) {
+        throw new Error(
+          `${binPath} 是 IDE 的命令行入口，不是 ACP agent（它会拉起 IDE 窗口而不是走 stdio 协议）`
+        );
       }
 
       const child = spawn(this.target.command, this.target.prefixArgs, {

@@ -12,13 +12,18 @@ import * as db from "./db.js";
 // 这些一次性调用上只是噪音）；`import * as db` 仍然保留给既有调用点。
 import {
   backfillSessionProjects,
+  createProjectTask,
   deleteProject,
+  deleteProjectTask,
   getOrCreateProject,
   getProject,
   getProjectByPath,
   getSessionProject,
+  isProjectTaskStatus,
+  listProjectTasks,
   listProjects,
   renameProject,
+  updateProjectTask,
 } from "./db.js";
 import { registry } from "./agents/registry.js";
 import { scoreAgentSkills } from "./agents/types.js";
@@ -906,9 +911,22 @@ app.post("/api/sessions", (req, res) => {
 app.patch("/api/sessions/:sessionId", (req, res) => {
   try {
     const { sessionId } = req.params;
-    const { title, model, orchestration, agentIds, cwd, reasoningEffort, scenarioId, systemPrompt, pinned } = req.body;
+    const { title, model, orchestration, agentIds, cwd, reasoningEffort, scenarioId, systemPrompt, pinned, agentId } = req.body;
 
     const updates: Parameters<typeof db.updateSession>[1] = { title, model };
+    /**
+     * A119：空会话换 Agent。
+     *
+     * 前端只在一个场景下用它：通讯录「发消息」建出来的空壳会话（或清空过
+     * 记录、消息数归零的会话）落在新建页，用户改主意点了另一张 Agent 卡片。
+     *
+     * 这里**不检查消息数** —— 「能不能换」是产品策略，由前端按「会话是否
+     * 为空」决定；后端只负责如实执行。真要在这里拦，就得为一个本可以
+     * 单向收敛的规则在两层各写一遍，将来只会漂移。
+     * 群聊也不会走到这里：前端的新建页对群聊根本不渲染（成员由 agentIds
+     * 管，改 agent_id 不改变任何实际行为，只会留下一条对不上的记录）。
+     */
+    if (typeof agentId === 'string' && agentId) updates.agent_id = agentId;
     // 群聊头部可以随时改编排模式与成员，这里一并支持
     if (typeof orchestration === 'string') updates.orchestration = orchestration;
     if (Array.isArray(agentIds)) {
@@ -1877,9 +1895,64 @@ app.patch("/api/projects/:id", (req, res) => {
 });
 
 app.delete("/api/projects/:id", (req, res) => {
-  // 只删项目行并解绑会话，**不删记忆文件** —— 那是用户的真实内容
+  // 只删项目行并解绑会话，**不删记忆文件** —— 那是用户的真实内容。
+  // 项目任务会被外键级联删掉（PRAGMA foreign_keys 已开）：任务是「这个项目
+  // 还要做什么」，项目没了它就没有归属，留着只会变成查不到的孤儿行。
   if (!deleteProject(req.params.id)) {
     res.status(404).json({ error: "项目不存在" });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+// ── 项目任务（A119）──────────────────────────────────────────────────────
+//
+// 挂在项目下而不是会话下：任务跨会话存在，绑会话会随会话删除一起消失。
+// 状态三档 todo / doing / done，非法值一律 400 —— 见 updateProjectTask 的注释。
+
+app.get("/api/projects/:id/tasks", (req, res) => {
+  // 项目不存在时给 404 而不是空数组：空数组会让界面显示「还没有任务」，
+  // 用户以为自己删光了，实际是深链指向了一个已删的项目。
+  if (!getProject(req.params.id)) {
+    res.status(404).json({ error: "项目不存在" });
+    return;
+  }
+  res.json({ tasks: listProjectTasks(req.params.id) });
+});
+
+app.post("/api/projects/:id/tasks", (req, res) => {
+  const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+  if (!title) {
+    res.status(400).json({ error: "任务内容不能为空" });
+    return;
+  }
+  if (!getProject(req.params.id)) {
+    res.status(404).json({ error: "项目不存在" });
+    return;
+  }
+  res.json({ task: createProjectTask(req.params.id, title) });
+});
+
+app.patch("/api/tasks/:taskId", (req, res) => {
+  const { title, status } = req.body ?? {};
+  if (status !== undefined && !isProjectTaskStatus(status)) {
+    res.status(400).json({ error: `无效的任务状态：${String(status)}` });
+    return;
+  }
+  const task = updateProjectTask(req.params.taskId, {
+    title: typeof title === "string" ? title : undefined,
+    status,
+  });
+  if (!task) {
+    res.status(404).json({ error: "任务不存在" });
+    return;
+  }
+  res.json({ task });
+});
+
+app.delete("/api/tasks/:taskId", (req, res) => {
+  if (!deleteProjectTask(req.params.taskId)) {
+    res.status(404).json({ error: "任务不存在" });
     return;
   }
   res.json({ ok: true });

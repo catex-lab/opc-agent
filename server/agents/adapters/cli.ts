@@ -24,6 +24,7 @@ import {
   findExecutable,
   resolveAnyLaunchTarget,
   isUnresolvedShim,
+  isIdeLauncher,
   probeVersion,
   expandPath,
   shortcutInstallRoot,
@@ -300,6 +301,31 @@ export class CliAdapter implements AgentProvider {
         installed: true,
         binaryPath: binPath,
         message: `${this.target.problem}。${this.def.descriptor.installHint ?? ''}`.trim(),
+        probedAt: now,
+      };
+      return this.status;
+    }
+
+    /**
+     * A119：把 IDE 启动器当 agent CLI 的守卫 —— 判据与理由见 isIdeLauncher()。
+     *
+     * 必须在 `probeVersion` **之前**拦：这类目标能起来、也能正常吐出 IDE 的
+     * 版本号，跑完版本探测只会得到「就绪」这个错误结论。等真发消息时才发现，
+     * 代价是用户看着界面转圈 8 分钟、桌面上凭空多出一个 IDE 窗口。
+     *
+     * 状态给 `unsupported`（语义就是「本机形态无法无头调用」），而不是
+     * not-installed —— 文件确实在，只是它不是我们要的东西；把它报成
+     * 「未安装」会让用户去重装一个已经装好的程序。
+     */
+    if (isIdeLauncher(this.target)) {
+      this.status = {
+        availability: 'unsupported',
+        installed: true,
+        binaryPath: binPath,
+        message:
+          `找到的是 ${this.def.descriptor.name} 的 IDE 命令行入口（${this.target.displayPath}），` +
+          `不是 agent CLI：它把参数当成「要打开的路径」，调用时会直接拉起 IDE 窗口。` +
+          `${this.def.descriptor.installHint ?? ''}`.trim(),
         probedAt: now,
       };
       return this.status;

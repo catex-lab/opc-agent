@@ -30,10 +30,17 @@ export interface LaunchTarget {
   /**
    * 启动前必须注入的环境变量。
    *
-   * Trae CN 的 `trae-cn.cmd` 是 `set ELECTRON_RUN_AS_NODE=1` 后用
-   * **Electron 主程序**跑 `cli.js` —— 少了这个变量它就以 GUI 模式启动，
-   * 一个窗口挂在后台，stdout 永远不出东西。这类「垫片里 set 的环境变量」
-   * 属于启动目标的一部分，不能丢。
+   * 这类垫片的典型形态（本机实读 Trae CN 的 `trae-cn.cmd`）：
+   *
+   *   set ELECTRON_RUN_AS_NODE=1
+   *   "%~dp0..\Trae CN.exe" "%~dp0..\resources\app\out\cli.js" %*
+   *
+   * 即用 **Electron 主程序**当 node 解释器去跑一个 cli.js。少了这个变量它
+   * 就以 GUI 模式启动，一个窗口挂在后台，stdout 永远不出东西。
+   * 这类「垫片里 set 的环境变量」属于启动目标的一部分，不能丢。
+   *
+   * ⚠️ 但能解析出这种目标 ≠ 该接它：`resources/app/out/cli.js` 是 VS Code
+   * 系 **IDE 的** 命令行入口，不是 agent CLI。见 `isIdeLauncher()`。
    */
   env?: Record<string, string>;
   /**
@@ -581,6 +588,47 @@ export function resolveElectronNodeShim(binPath: string): LaunchTarget | null {
     displayPath: binPath,
     env: { ELECTRON_RUN_AS_NODE: '1' },
   };
+}
+
+/**
+ * 判断一个启动目标是不是「Electron 应用自带的 IDE 启动器」（A119）。
+ *
+ * ## 为什么需要这道守卫
+ *
+ * Trae CN 的 `bin/trae-cn.cmd` 是 VS Code 的官方垫片，跑的是
+ * `resources/app/out/cli.js` —— 那是 **IDE 的命令行入口**（即 `code` 命令），
+ * 只认 version / status / tunnel / serve-web / install-extension /
+ * locate-extension / open-url，**没有任何 agent 子命令**。它的参数语义是
+ * 「要打开的路径」（`--help` 里写着 `Usage: trae-cn.exe [options] [paths...]`）。
+ *
+ * 于是 `xxx exec --json "hi"` 不报错，而是把 `exec` 当成文件夹路径
+ * **拉起 IDE 窗口**：子进程变成 GUI，stdout 永不产出，界面一直转圈到
+ * 8 分钟超时。用户看到的现象是「跟某个 Agent 对话会弹出它自己的应用」。
+ *
+ * 这类目标最坑的地方是**它能起来、也能报版本号** —— 任何只看「命令在不在、
+ * `--version` 有没有输出」的探测都会判成就绪，直到真调用才暴露。
+ *
+ * ## 判据（两条同时命中）
+ *
+ *   ① 启动目标带 `ELECTRON_RUN_AS_NODE=1`（Electron 被当 node 解释器用）
+ *   ② 入口脚本落在 `<任意目录>/resources/app/out/cli.js`
+ *
+ * 这两条合起来只有 VS Code 系（含 Trae / Cursor / Antigravity 等 fork）的
+ * IDE 自带 CLI 满足。真正的 agent CLI 即使是 Electron 壳，入口也不会是
+ * `resources/app/out/cli.js` 这个位置。
+ *
+ * ## 为什么不用「跑 `--help` 看有没有 `[paths...]`」
+ *
+ * 那要给**每个** Agent 多起一个子进程，而 `--help` 在个别 CLI 上可能进交互
+ * 模式一直挂着（只能等超时）。这里的判据是纯静态的：零成本、零副作用，
+ * 也不需要把「帮用户判断这是什么东西」这件事交给对方程序自己回答。
+ */
+export function isIdeLauncher(target: LaunchTarget): boolean {
+  if (target.env?.ELECTRON_RUN_AS_NODE !== '1') return false;
+  const entry = target.prefixArgs[0];
+  if (!entry) return false;
+  const norm = entry.replace(/\\/g, '/').toLowerCase();
+  return /\/resources\/app\/out\/cli\.(?:c|m)?js$/.test(norm);
 }
 
 /**

@@ -116,6 +116,20 @@ interface ChatPageProps {
   onRegenerate?: (message: Message) => void;
   /** A33：从这条消息处分支出一个新会话（同上，群聊不传） */
   onBranch?: (message: Message) => void;
+  /**
+   * A119：给「还没发过消息的空壳会话」换 Agent。
+   *
+   * 为什么需要它：内容区只在 `currentSession` 存在时才渲染 ChatPage，
+   * 而空会话整页渲染的就是 NewChatView —— 所以「通讯录点发消息」这类
+   * 入口会**先建一条绑好 Agent 的空壳会话**再跳进来。此时新建页里那张
+   * Agent 卡片若只改自己的本地 state，点下去什么都不会发生（真正决定
+   * 用哪个 Agent 的是会话的 `agentId`），是个假控件。
+   *
+   * 只在该会话**一条消息都没有**时才会被调用 —— 聊过一半换 Agent 语义上
+   * 说不通：历史消息是前一个 Agent 的上下文。
+   * 不传 = 新建页的 Agent 卡片只做展示（调用方没接落库时的降级）。
+   */
+  onRebindAgent?: (agentId: string) => void;
   /** 单栏（窄屏）模式下返回列表；宽屏不传 */
   onBack?: () => void;
 }
@@ -166,6 +180,7 @@ export function ChatPage({
   onDelete,
   onRegenerate,
   onBranch,
+  onRebindAgent,
   onBack,
 }: ChatPageProps) {
   const navigate = useNavigate();
@@ -471,6 +486,41 @@ export function ChatPage({
   /** 消息还在路上：占位骨架，不做任何「换一整屏」的动作 */
   const showMessagesSkeleton = !!currentSession && !showNewChatView && !messagesLoaded;
 
+  /**
+   * A119：新建页该高亮哪个 Agent —— 空会话以**会话自身**为准。
+   *
+   * 背景：进入新建页的唯一路径是先建一条空壳会话（见 App 的
+   * handleStartChatWith / handleNewSessionInProject），Agent 在那时就已经
+   * 绑在会话上了。而 NewChatView 的选中态读的是 `newChatAgentId`
+   * （默认 `'default'`）。两条来源不一致时，界面指着 default、实际发出去
+   * 却用会话的 agentId —— 用户看到的是「从 A 的资料页点了发消息，结果在
+   * 跟 default 聊」，而消息其实进了 A 的会话。
+   *
+   * 所以：会话为空 → 用会话的 agentId；没有会话时退回本地 state
+   * （保留给「内容区将来改成无会话也渲染新建页」的可能）。
+   * 首条消息发出后 `messages.length > 0`，这里立刻退回本地 state。
+   */
+  const draftAgentId =
+    currentSession && currentSession.messages.length === 0 ? currentSession.agentId : undefined;
+  const effectiveNewChatAgentId = draftAgentId ?? newChatAgentId;
+
+  /**
+   * A119：新建页里点 Agent 卡片。
+   *
+   * 本地 state 与空壳会话**两处都要改**：前者管界面高亮，后者才真正决定
+   * 用谁（useChat 里 `currentAgentId = currentSession?.agentId`）。
+   * 只改前者 = 假控件；只改后者 = 高亮要等一次无关重渲染才跟上。
+   */
+  const handleSelectNewChatAgent = useCallback(
+    (agentId: string) => {
+      setNewChatAgentId(agentId);
+      if (currentSession && currentSession.messages.length === 0) {
+        onRebindAgent?.(agentId);
+      }
+    },
+    [currentSession, onRebindAgent]
+  );
+
   // 指定模式下的提示：不 @ 任何人就没人会被唤醒
   const mentionHint =
     orchestration === 'mention' && groupMembers.length > 1
@@ -584,14 +634,14 @@ export function ChatPage({
                 agents={agents}
                 models={models}
                 selectedModel={selectedModel}
-                newChatAgentId={newChatAgentId}
+                newChatAgentId={effectiveNewChatAgentId}
                 newChatCwd={newChatCwd}
                 newChatReasoning={newChatReasoning}
                 newChatPermissionMode={permissionMode}
                 scenarios={SCENARIOS}
                 selectedScenarioId={newChatScenarioId}
                 onSelectModel={onModelChange}
-                onSelectAgent={setNewChatAgentId}
+                onSelectAgent={handleSelectNewChatAgent}
                 onSetCwd={setNewChatCwd}
                 // A62：新对话也能先定档位。模型没有档位表时 NewChatView
                 // 内部不渲染这颗下拉，这里传了也不会显示

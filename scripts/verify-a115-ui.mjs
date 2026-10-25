@@ -467,7 +467,13 @@ console.log('\n[5] 群头像：会话列表 / 群聊头部 / 通讯录读同一�
   //   2) 会话列表的群行也是 GroupAvatar，不区分的话命中哪一颗全看 DOM 顺序。
   //      区分办法：只有头部传了 title（= 群名），列表行不传。
   await page.locator('.tc-list-item').filter({ hasText: '三剑客' }).click();
-  await page.waitForTimeout(900);
+  // A119：原来这里是 `waitForTimeout(900)` 再查一次。固定等待在机器忙的时候
+  // 会假失败（本轮回归就红过一次，而单独重跑三次全绿）—— 群头像其实在
+  // 点击后 10ms 内就挂上了，900ms 只是在赌 CI 不卡。改成等元素出现，
+  // 断言本身一个字没放松：等不到照样红，只是不再因为机器慢而红。
+  await page
+    .waitForSelector('[data-group-avatar][aria-label="三剑客"]', { timeout: 8000 })
+    .catch(() => null);
   const headerAvatar = await page.evaluate(() => {
     const av = document.querySelector('[data-group-avatar][aria-label="三剑客"]');
     return av?.getAttribute('data-group-avatar') ?? null;

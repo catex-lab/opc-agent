@@ -273,6 +273,18 @@ export interface Project {
   memory: ProjectMemoryStats | null;
 }
 
+/** A119：项目任务。挂在项目上而不是会话上 —— 任务天然跨会话。 */
+export type ProjectTaskStatus = 'todo' | 'doing' | 'done';
+
+export interface ProjectTask {
+  id: string;
+  projectId: string;
+  title: string;
+  status: ProjectTaskStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** A117：项目记忆统计，与 server/memory.ts 的 ProjectMemoryStats 同形 */
 export interface ProjectMemoryStats {
   key: string;

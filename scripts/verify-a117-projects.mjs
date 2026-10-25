@@ -170,6 +170,10 @@ async function newPage({ dark = false, viewport = { width: 1440, height: 900 }, 
       }
       return json({ projects: state.projects });
     }
+    // A119：项目任务。详情页挂载时会拉一次；这个脚本不验任务面板，
+    // 但必须给一个合法响应 —— 否则详情页会顶出一条红色的读取失败。
+    if (/\/api\/projects\/[^/?]+\/tasks/.test(url)) return json({ tasks: [] });
+
     const projMatch = url.match(/\/api\/projects\/([^/?]+)/);
     if (projMatch) {
       const id = projMatch[1];
