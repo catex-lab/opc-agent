@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Search, ChevronDown, ChevronRight, Users, X, Check } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { useAgentRemarks } from '../agentRemarks';
-import { AVAILABILITY_META, type RegisteredAgent, type Session } from '../types';
+import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
 
 interface NewGroupDialogProps {
   open: boolean;
@@ -328,7 +328,7 @@ export function NewGroupDialog({
                           {/* 不可用的如实标出来 —— 拉进群也只会得到一条失败回复 */}
                           {a.status.availability !== 'ready' && (
                             <span className="shrink-0 text-caption" style={{ color: meta.color }}>
-                              {meta.label}
+                              {availabilityLabelOf(a)}
                             </span>
                           )}
                         </button>

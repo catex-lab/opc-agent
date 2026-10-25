@@ -297,8 +297,14 @@ export interface PermissionResponse {
 
 // ============= Agent 注册表（来自 /api/agents） =============
 
-/** 接入方式，决定后端用哪个适配器 */
-export type AgentKind = 'sdk' | 'cli' | 'acp' | 'mock';
+/**
+ * 接入方式，决定后端用哪个适配器
+ *
+ * `http` 曾经漏在这个联合里（后端 `server/agents/types.ts` 的 AgentKind 有它）：
+ * 前端拿到 `kind:'http'` 只是被类型系统当成「不可能的值」，运行时照样传进来，
+ * 于是任何按 kind 分支的逻辑都会把豆包 / Kimi 开放平台当成默认分支。
+ */
+export type AgentKind = 'sdk' | 'cli' | 'acp' | 'http' | 'mock';
 
 /** 能力标签，即 Agent 资料页上的「擅长领域」 */
 export type AgentCapability = 'chat' | 'code' | 'write' | 'tools' | 'image' | 'search';
@@ -547,3 +553,24 @@ export const AVAILABILITY_META: Record<
   unsupported: { label: '不可用', color: '#8B8B8B', dot: '#C6C6C6' },
   unknown: { label: '未探测', color: '#8B8B8B', dot: '#C6C6C6' },
 };
+
+/**
+ * 名册 / 资料页上那个「状态词」（A112）。
+ *
+ * 为什么不直接用 `AVAILABILITY_META[..].label`：`needs-auth` 的中文写成
+ * 「未登录」，这个词只对**真的需要登录**的接入方式成立。HTTP 类（豆包、
+ * Kimi 开放平台）压根没有「登录」这个动作 —— 它们要的是一份 API Key。
+ * 用户在豆包 App、Kimi 桌面版里登录一百次，也不会让名册这一行变绿；
+ * 而名册偏偏写着「未登录」，等于指着一个不存在的动作让他反复重试。
+ *
+ * 所以按 kind 分开说：http → 「缺 Key」，其余保持「未登录」。
+ * （gemini 那种 cli + OAuth 的，说「未登录」是对的，不改。）
+ */
+export function availabilityLabelOf(agent: {
+  kind: AgentKind;
+  status: { availability: AgentAvailability };
+}): string {
+  const { availability } = agent.status;
+  if (availability === 'needs-auth' && agent.kind === 'http') return '缺 Key';
+  return AVAILABILITY_META[availability].label;
+}

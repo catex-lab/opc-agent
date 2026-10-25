@@ -64,13 +64,15 @@ const AGENTS = [
     status: { availability: 'ready', version: '0.42.0' },
   },
   {
-    id: 'doubao', name: '豆包 MarsCode', vendor: '字节跳动', kind: 'cli', icon: 'doubao',
+    id: 'doubao', name: '豆包 MarsCode', vendor: '字节跳动', kind: 'http', icon: 'doubao',
     color: '#1E37FC', description: '中文代码补全与解释',
     capabilities: ['chat', 'code'],
     // A111：空数组 = 「确实一条过程能力都没有」，界面要把七项全标成不支持。
     // 与「字段缺失（不知道）」是两回事，两种状态都得有夹具才测得出差别。
     eventCapabilities: [],
-    status: { availability: 'needs-setup', version: '1.2.0' },
+    // A112：kind:'http' + needs-auth 是「缺 Key」而不是「未登录」的那一支。
+    // 必须留一条这样的夹具 —— 否则「未登录」这个错词永远没人守。
+    status: { availability: 'needs-auth', version: '1.2.0' },
   },
 ];
 
@@ -279,6 +281,8 @@ await ctx.route('**/api/**', async route => {
 
 const page = await ctx.newPage();
 const errors = [];
+/** 断言失败（不是控制台错误）。攒到最后统一 exit 1 —— 只打 ❌ 不退出等于没守 */
+const failures = [];
 page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
 page.on('pageerror', e => errors.push(String(e)));
 
@@ -325,6 +329,20 @@ await goContacts();
 await shot('light-contacts');
 await goContacts({ dark: true });
 await shot('dark-contacts');
+
+/**
+ * A112：名册上的状态词必须按接入方式分开说。
+ *
+ * `needs-auth` 的中文原本一律写「未登录」，但 HTTP 类（豆包、Kimi 开放平台）
+ * 压根没有「登录」这个动作 —— 用户在豆包 App / Kimi 桌面版里登录一百次也不会
+ * 让这一行变绿。名册写「未登录」，等于指着一个不存在的动作让他反复重试。
+ * 夹具里 doubao 是 `kind:'http' + needs-auth`，专守这一支。
+ */
+await goContacts();
+const doubaoRow = await page.locator('[data-agent-row="doubao"]').first().innerText();
+const labelOk = doubaoRow.includes('缺 Key');
+if (!labelOk) failures.push(`http 类状态词应为「缺 Key」，实际：${doubaoRow.replace(/\s+/g, ' ')}`);
+console.log(labelOk ? '  ✓ http 类未就绪标「缺 Key」而不是「未登录」' : '  ❌ http 类状态词仍是「未登录」');
 
 /**
  * Agent 资料页的过程能力清单（A111）。
@@ -538,4 +556,12 @@ if (errors.length) {
 
 await browser.close();
 server.close();
+
+if (failures.length) {
+  console.log(`\n❌ 断言失败 ${failures.length} 条：`);
+  for (const f of failures) console.log('   ' + f);
+  console.log('\n渲染自检完成（有失败）');
+  process.exit(1);
+}
+
 console.log('\n渲染自检完成');

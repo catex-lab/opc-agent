@@ -7,6 +7,7 @@ import {
   EVENT_CAPABILITY_ORDER,
   REGION_META,
   SURFACE_META,
+  availabilityLabelOf,
   type RegisteredAgent,
 } from '../types';
 
@@ -157,8 +158,8 @@ export function AgentDetailSections({
           <DetailRow
             label="状态"
             // 没上报 message 时退回可用性标签 —— 标签文案只有
-            // AVAILABILITY_META 一个来源，不在这里再抄一份
-            value={agent.status.message || AVAILABILITY_META[agent.status.availability].label}
+            // availabilityLabelOf 一个来源，不在这里再抄一份
+            value={agent.status.message || availabilityLabelOf(agent)}
           />
           {/* 需要登录时给一个一键入口。
               地址由探测以结构化字段给出，不从文案里抠 URL；

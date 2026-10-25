@@ -6,6 +6,7 @@ import { useAgentRemarks } from '../agentRemarks';
 import {
   AVAILABILITY_META,
   CAPABILITY_META,
+  availabilityLabelOf,
   type RegisteredAgent,
 } from '../types';
 
@@ -42,6 +43,10 @@ const KIND_LABEL: Record<RegisteredAgent['kind'], string> = {
   sdk: 'CodeBuddy SDK',
   cli: 'CLI 子进程',
   acp: 'ACP 协议',
+  // http 一直是漏的（AgentKind 联合里没它，所以类型检查从不报）。
+  // 后果是豆包 / Kimi 开放平台的名片上「接入方式」那一行是空的 ——
+  // 而它们恰好是最需要说清「没有本地进程、只是一次 HTTP 调用」的两条。
+  http: 'HTTP 直连',
   mock: '模拟通道',
 };
 
@@ -213,7 +218,7 @@ export function AgentHoverCard({ agent, onViewDetail, children }: AgentHoverCard
                     style={{ backgroundColor: meta.dot }}
                   />
                   <span className="text-secondary" style={{ color: meta.color }}>
-                    {meta.label}
+                    {availabilityLabelOf(agent)}
                   </span>
                   {agent.status.version && (
                     <span className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>

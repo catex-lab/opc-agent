@@ -1,7 +1,7 @@
 import { ChevronLeft, MessageSquarePlus } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentDetailSections } from './AgentDetailSections';
-import { AVAILABILITY_META, type RegisteredAgent } from '../types';
+import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
 
 interface AgentDetailPanelProps {
   agent: RegisteredAgent;
@@ -104,7 +104,7 @@ export function AgentDetailPanel({
             )}
             <div className="mt-2 flex items-center gap-1.5 text-body" style={{ color: meta.color }}>
               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta.dot }} />
-              {meta.label}
+              {availabilityLabelOf(agent)}
             </div>
           </div>
 
@@ -159,7 +159,7 @@ export function AgentDetailPanel({
               才退回这句通用说明。 */}
           {!canChat && (
             <p className="mt-2 text-center text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              {agent.status.message || `${meta.label} · 需要先完成登录或修复`}
+              {agent.status.message || `${availabilityLabelOf(agent)} · 需要先完成登录或修复`}
             </p>
           )}
         </div>

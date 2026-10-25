@@ -36,7 +36,7 @@ import {
   setGroupRemark,
 } from '../sessionFlags';
 import { useAgentRemarks, setAgentRemark } from '../agentRemarks';
-import { AVAILABILITY_META, type RegisteredAgent, type Session } from '../types';
+import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
 
 const LAST_READ_KEY = 'opc:lastRead';
 
@@ -441,7 +441,7 @@ export function ConversationList({
                       className="mt-1 inline-block text-caption"
                       style={{ color: AVAILABILITY_META[agent.status.availability].color }}
                     >
-                      {AVAILABILITY_META[agent.status.availability].label}
+                      {availabilityLabelOf(agent)}
                     </span>
                   )}
                 </div>

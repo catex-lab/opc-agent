@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Search, Users, X, UserPlus, UserMinus, Plus 
 import { AgentAvatar } from './AgentAvatar';
 import { AgentHoverCard } from './AgentHoverCard';
 import { MENU_ITEM_SM_CLASS } from './menuItem';
-import { AVAILABILITY_META, type RegisteredAgent } from '../types';
+import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
 
 /**
  * 群聊右侧成员栏。
@@ -293,7 +293,7 @@ export function GroupMemberPanel({ members, allAgents, onMembersChange }: GroupM
                       下次编排时会因为它不可用而整轮失败，不如先说明 */}
                   {agent.status.availability !== 'ready' && (
                     <span className="shrink-0 text-caption" style={{ color: AVAILABILITY_META[agent.status.availability].color }}>
-                      {AVAILABILITY_META[agent.status.availability].label}
+                      {availabilityLabelOf(agent)}
                     </span>
                   )}
                   <Plus size={12} className="shrink-0" style={{ color: 'var(--td-text-color-placeholder)' }} />
@@ -346,7 +346,7 @@ export function GroupMemberPanel({ members, allAgents, onMembersChange }: GroupM
                 </span>
                 {!ready && (
                   <span className="shrink-0 text-caption" style={{ color: meta.color }}>
-                    {meta.label}
+                    {availabilityLabelOf(member)}
                   </span>
                 )}
                 {/* 移出。A35（用户反馈）：**常驻可见**（45% 对比），悬停整行

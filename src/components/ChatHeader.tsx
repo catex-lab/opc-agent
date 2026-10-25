@@ -5,7 +5,7 @@ import { AgentDetailModal } from './AgentDetailModal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { WorkspaceBadge } from './WorkspaceBadge';
 import { MENU_ITEM_TEXT_CLASS } from './menuItem';
-import { AVAILABILITY_META, type RegisteredAgent } from '../types';
+import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
 import type { ScenarioTemplate } from '../scenarios';
 import { useAgentRemarks } from '../agentRemarks';
 
@@ -118,10 +118,10 @@ export function ChatHeader({
             <span
               className="flex items-center gap-1 text-secondary"
               style={{ color: meta.color }}
-              title={agent?.status.message || meta.label}
+              title={agent?.status.message || (agent ? availabilityLabelOf(agent) : meta.label)}
             >
               <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: meta.dot }} />
-              {meta.label}
+              {agent ? availabilityLabelOf(agent) : meta.label}
             </span>
           ) : (
             <span className="text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentDetailSections } from './AgentDetailSections';
-import { AVAILABILITY_META, type RegisteredAgent } from '../types';
+import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
 
 interface AgentDetailModalProps {
   agent: RegisteredAgent | undefined;
@@ -107,7 +107,7 @@ export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps
                 className="h-1.5 w-1.5 shrink-0 rounded-full"
                 style={{ backgroundColor: meta.dot }}
               />
-              <span style={{ color: meta.color }}>{meta.label}</span>
+              <span style={{ color: meta.color }}>{availabilityLabelOf(agent)}</span>
               {agent.vendor && (
                 <span
                   className="truncate"

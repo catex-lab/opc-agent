@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { RefreshCw, X } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { InstallCard } from './InstallCard';
-import { AVAILABILITY_META, type InstallMethod, type RegisteredAgent } from '../types';
+import { AVAILABILITY_META, availabilityLabelOf, type InstallMethod, type RegisteredAgent } from '../types';
 
 /**
  * 「获取 Agent」清单页（A71）。
@@ -253,7 +253,7 @@ export function GetAgentsDialog({
                           className="shrink-0 text-[11px]"
                           style={{ color: meta.color }}
                         >
-                          {meta.label}
+                          {availabilityLabelOf(a)}
                         </span>
                       </div>
                       <InstallCard

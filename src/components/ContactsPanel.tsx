@@ -26,7 +26,7 @@ import {
 } from './columnHeader';
 import { NewGroupDialog } from './NewGroupDialog';
 import { MENU_ITEM_CLASS } from './menuItem';
-import { AVAILABILITY_META, REGION_META, type RegisteredAgent, type Session } from '../types';
+import { AVAILABILITY_META, REGION_META, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
 
 interface ContactsPanelProps {
   agents: RegisteredAgent[];
@@ -636,7 +636,7 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
           className="shrink-0 text-caption"
           style={{ color: AVAILABILITY_META[agent.status.availability].color }}
         >
-          {AVAILABILITY_META[agent.status.availability].label}
+          {availabilityLabelOf(agent)}
         </span>
       )}
     </>
