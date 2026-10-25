@@ -337,10 +337,21 @@ class AgentRegistry {
     return eventSourceOf(findDef(id));
   }
 
-  /** 进程退出时清理长驻子进程 */
+  /**
+   * 进程退出时清理长驻子进程。
+   *
+   * 以前只认 AcpAdapter（那时候唯一会跨轮活着的就是 ACP 的 python 进程）。
+   * A107 给 SDK 适配器加了常驻 CLI 会话池，同一个钩子必须覆盖到它 ——
+   * 否则退出应用会在后台留下最多 3 个 node 进程。所以改成按可选方法调用，
+   * 新适配器只要实现 dispose() 就自动被回收，不必回来改这里。
+   */
   disposeAll(): void {
     for (const [, provider] of this.providers) {
-      if (provider instanceof AcpAdapter) provider.dispose();
+      try {
+        provider.dispose?.();
+      } catch (err) {
+        console.error('[Registry] dispose 失败:', (err as Error).message);
+      }
     }
   }
 }

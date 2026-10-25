@@ -622,7 +622,8 @@ export class CliAdapter implements AgentProvider {
       const decision = await this.replies.register(
         requestId,
         () => ({ behavior: 'deny', message: '权限请求超时' }),
-        PERMISSION_TIMEOUT
+        PERMISSION_TIMEOUT,
+        ctx.sessionId
       );
       if (decision.behavior === 'allow') {
         respond({ behavior: 'allow', updatedInput: ask.input });
@@ -835,8 +836,9 @@ export class CliAdapter implements AgentProvider {
         terminateGracefully(child, TERM_GRACE_MS);
       }
       this.running.delete(ctx.sessionId);
-      // A106：双向模式的待答复权限请求随之作废（前端不等了）
-      this.replies.clear();
+      // A106：双向模式的待答复权限请求随之作废（前端不等了）。
+      // A108：只作废本会话的 —— 同一 Agent 可能同时在别的会话里等答复
+      this.replies.clear(ctx.sessionId);
     }
   }
 

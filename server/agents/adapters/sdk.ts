@@ -233,7 +233,10 @@ export class SdkAdapter implements AgentProvider {
 
     const abort = () => {
       aborted = true;
-      this.replies.clear();
+      // 只清本会话的待答复项。这张表是**整个适配器共享**的，早先无条件
+      // clear() 会把别的会话正在等的权限弹窗一起清掉 —— 而清掉之后那个
+      // Promise 永远不兑现（见 PendingReplies.clear 的注释），那一轮就静默挂死。
+      this.replies.clear(sessionId);
       // A107：中断 CLI 侧正在跑的这一轮（interrupt 控制请求）。
       // 进程不杀 —— 留给下一条消息复用，这才是池子的意义。
       // 身份牌比对不能省：同一会话的轮次是排队跑的，abort 这一轮时
@@ -311,7 +314,9 @@ export class SdkAdapter implements AgentProvider {
       const decision = await this.replies.register(
         requestId,
         () => ({ behavior: 'deny', message: '权限请求超时' }) as PermissionDecision,
-        PERMISSION_TIMEOUT
+        PERMISSION_TIMEOUT,
+        // 归属到会话：别的会话收尾时不能把我的待答复项清掉
+        sessionId
       );
 
       if (decision.behavior === 'allow') {
@@ -348,8 +353,11 @@ export class SdkAdapter implements AgentProvider {
       yield { type: 'error', message: (err as Error).message || String(err) };
     } finally {
       unlinkAbort();
-      this.replies.clear();
-      this.active.delete(sessionId);
+      this.replies.clear(sessionId);
+      // 身份比对：同一会话的第二条消息可能在第一条还没结束时就已经
+      // 覆盖了 active 里的中止器。无条件 delete 会把**新那一条**的中止入口
+      // 抹掉，用户点停止就毫无反应（群聊/连发时很容易踩到）。
+      if (this.active.get(sessionId)?.abort === abort) this.active.delete(sessionId);
     }
   }
 
@@ -360,6 +368,23 @@ export class SdkAdapter implements AgentProvider {
 
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {
     return this.replies.settle(requestId, decision);
+  }
+
+  /**
+   * 进程退出时回收常驻 CLI 进程。
+   *
+   * 为什么必须有：A107 把「每条消息一个短命进程」换成了「每会话一个常驻
+   * 进程」，退出应用时如果没人关，那些进程就会挂在后台（每个 ≈24MB + 一个
+   * node），Windows 上父进程退出不会连带杀子进程。以前没有这个问题，是因为
+   * one-shot 的进程在 result 后就被 SDK 自己关掉了。
+   */
+  dispose(): void {
+    if (this.sweepTimer) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
+    }
+    for (const key of [...this.pool.keys()]) this.closeEntry(key);
+    this.replies.clear();
   }
 
   // ============= A107：池路径 =============
@@ -519,13 +544,11 @@ export class SdkAdapter implements AgentProvider {
       // 被杀（stdout 直接关闭）。不报出来就会像以前一样「发了消息没响应」。
       if (!shouldAbort()) {
         this.closeEntry(ctx.sessionId, entry);
-        // 必须 push 一条 error 事件再 close，不能只用 queue.fail()：
-        // AsyncQueue.fail() 先设 failure 再 close()，而 close() 会把「已经在
-        // waiters 里挂着的消费者」用 {done:true} 唤醒（channel.ts 的 next()
-        // 里 items 为空时先返回 failure，但消费者此刻已经在等，拿到的是 done）
-        // ——于是 failure 永远没人读到，消费者看到的是「静默成功」，正是 A107
-        // 要治的病。push 走的是 waiters.shift()→resolve(item)，消费者先拿到
-        // error 事件，再下一轮 next() 才看到 closed→done。
+        // 这里 push 一条 error 事件再 close，而不是 queue.fail()：
+        // A107 当时是因为 fail() 会把错误吞掉才绕开的（close() 用 {done:true}
+        // 唤醒挂起的消费者，failure 没人读）。A108 已把 fail() 修成「直接
+        // reject 给挂起者」，两条路都能送到；仍然选 push+close，是因为这条
+        // 错误的措辞要由我们自己定，且不想让它经过 send() 的 catch 再包一层。
         queue.push({ type: 'error', message: 'CLI 进程提前结束，本轮未返回结果' });
         queue.close();
         return;
@@ -576,17 +599,29 @@ export class SdkAdapter implements AgentProvider {
 
       const st: TurnState = { currentToolId: null, openTools: [], started };
       let failed: Error | null = null;
+      let sawResult = false;
       for await (const msg of stream) {
         if (shouldAbort()) break;
         const outcome = mapSdkMessage(msg as Record<string, unknown>, ctx, queue, st);
-        if (outcome === 'result') break;
+        if (outcome === 'result') { sawResult = true; break; }
         if (outcome === 'error') {
+          // 错误事件 mapSdkMessage 已经推给前端了，这里只记一下别再 fail 一遍，
+          // 否则消费者会收到两条 error（一条事件 + 一条异常）
           failed = new Error(String((msg as { error?: unknown }).error ?? 'CLI 返回错误'));
           break;
         }
       }
-      if (failed) queue.fail(failed);
-      else queue.close();
+      if (failed) {
+        queue.close();
+        return;
+      }
+      // 回退路径同样要有崩溃检测：流没给出 result 就结束、又不是被 abort，
+      // 等于 CLI 提前死了。以前这里直接 close()，前端看到的是「正常结束」，
+      // 和 A107 治的「发了消息没响应」是同一个病。
+      if (!sawResult && !shouldAbort()) {
+        queue.push({ type: 'error', message: 'CLI 进程提前结束，本轮未返回结果' });
+      }
+      queue.close();
     } catch (err) {
       queue.fail(err instanceof Error ? err : new Error(String(err)));
     }

@@ -520,6 +520,11 @@ export interface AgentProvider {
    * @returns 是否命中了待处理的请求
    */
   resolvePermission?(requestId: string, decision: PermissionDecision): boolean;
+  /**
+   * 进程退出时回收本适配器持有的长驻资源（子进程 / 定时器）。
+   * 只有会「跨轮存活」的适配器需要实现 —— 目前是 ACP 与 SDK 会话池。
+   */
+  dispose?(): void;
 }
 
 /** 前端对权限请求的答复 */

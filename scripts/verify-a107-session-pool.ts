@@ -12,12 +12,19 @@
  * OPC_CODEBUDDY_CLI 指向它，所以不起真 CLI 也能跑通池逻辑。
  *
  * 跳过 L3：设 A107_SKIP_L3=1（L3 起真服务端，CI/沙箱里可能受限）。
+ *
+ * A108 补充（同一套桩与适配器）：
+ * - L1b 队列/权限表的**兑现语义**：fail() 必须把错误送到挂起的消费者；
+ *   PendingReplies.clear() 必须用兜底答复兑现，不能留永久挂起的 Promise
+ * - L2-11 CLI 返回 is_error 结果时前端要收到 error（以前静默结束）
+ * - L2-12 dispose() 要回收常驻进程（以前退出应用会留下孤儿 node 进程）
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { configKeyOf, configDiff } from '../server/agents/adapters/sdk.js';
 import { SdkAdapter } from '../server/agents/adapters/sdk.js';
+import { AsyncQueue, PendingReplies } from '../server/agents/channel.js';
 import type { SendContext } from '../server/agents/types.js';
 
 // ============= 基础设施 =============
@@ -70,6 +77,121 @@ function l1() {
   say('configKeyOf 确定性', k1 === k6);
 }
 
+// ============= L1b：队列 / 权限表的兑现语义（A108） =============
+
+/** 给「可能永远不兑现」的 Promise 加个观察窗，避免脚本自己挂住 */
+async function settleWithin<T>(p: Promise<T>, ms: number) {
+  let timer: NodeJS.Timeout;
+  const deadline = new Promise<'__deadline__'>(resolve => {
+    timer = setTimeout(() => resolve('__deadline__'), ms);
+  });
+  try {
+    return await Promise.race([p.then(v => ({ kind: 'value' as const, v })), deadline.then(() => ({ kind: 'deadline' as const }))]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
+async function l1b() {
+  console.log('\n=== A107-1b 队列/权限表兑现语义（A108） ===');
+
+  // ---- 1. fail() 时消费者已挂起：错误必须送到（旧实现是静默 done） ----
+  {
+    const q = new AsyncQueue<string>();
+    const it = q[Symbol.asyncIterator]();
+    const parked = it.next();
+    q.fail(new Error('boom'));
+    let caught = '';
+    try {
+      await parked;
+    } catch (e) {
+      caught = (e as Error).message;
+    }
+    say('1b-1 fail() 送到已挂起的消费者', caught === 'boom', caught || '❌ 静默结束');
+  }
+
+  // ---- 2. fail() 早于 next()：仍然要抛 ----
+  {
+    const q = new AsyncQueue<string>();
+    q.fail(new Error('boom2'));
+    let caught = '';
+    try {
+      await q[Symbol.asyncIterator]().next();
+    } catch (e) {
+      caught = (e as Error).message;
+    }
+    say('1b-2 fail() 早于 next() 也抛错', caught === 'boom2', caught || '❌ 静默结束');
+  }
+
+  // ---- 3. 错误只报一次：reject 之后不能留一份 failure 让下一次 next() 再抛 ----
+  {
+    const q = new AsyncQueue<string>();
+    const it = q[Symbol.asyncIterator]();
+    const parked = it.next();
+    q.fail(new Error('once'));
+    try { await parked; } catch { /* 预期 */ }
+    const second = await settleWithin(it.next(), 200);
+    say('1b-3 同一个错误不重复上报', second.kind === 'value' && (second.v as { done?: boolean }).done === true);
+  }
+
+  // ---- 4. 正常路径不受影响：push + close ----
+  {
+    const q = new AsyncQueue<string>();
+    const it = q[Symbol.asyncIterator]();
+    const parked = it.next();
+    q.push('event');
+    q.close();
+    const first = await parked;
+    const second = await it.next();
+    say(
+      '1b-4 push + close 正常送达',
+      first.done === false && first.value === 'event' && second.done === true
+    );
+  }
+
+  // ---- 5. PendingReplies.clear() 必须兑现（旧实现让 Promise 永久挂起） ----
+  {
+    const r = new PendingReplies<{ behavior: string }>();
+    const p = r.register('req-clear', () => ({ behavior: 'deny(clear)' }), 0);
+    r.clear();
+    const out = await settleWithin(p, 300);
+    say(
+      '1b-5 clear() 用兜底答复兑现',
+      out.kind === 'value' && (out.v as { behavior: string }).behavior === 'deny(clear)',
+      out.kind === 'deadline' ? '❌ 永久挂起' : ''
+    );
+  }
+
+  // ---- 6. clear(scope) 只清自己的会话 ----
+  {
+    const r = new PendingReplies<{ behavior: string }>();
+    const pa = r.register('req-a', () => ({ behavior: 'deny(a)' }), 0, 'sess-A');
+    const pb = r.register('req-b', () => ({ behavior: 'deny(b)' }), 0, 'sess-B');
+    r.clear('sess-A');
+    const ra = await settleWithin(pa, 300);
+    const rb = await settleWithin(pb, 300);
+    say(
+      '1b-6 clear(scope) 不误伤别的会话',
+      ra.kind === 'value' && rb.kind === 'deadline',
+      `A=${ra.kind} B=${rb.kind}`
+    );
+    // 收尾：把 B 兑现掉，避免脚本退出时留挂起 Promise
+    say('1b-6 前端答复仍可命中本会话', r.settle('req-b', { behavior: 'allow' }) === true);
+  }
+
+  // ---- 7. 超时兜底仍然工作（且不会重复兑现） ----
+  {
+    const r = new PendingReplies<{ behavior: string }>();
+    const p = r.register('req-t', () => ({ behavior: 'deny(timeout)' }), 120);
+    const out = await settleWithin(p, 600);
+    const after = r.settle('req-t', { behavior: 'allow' });
+    say(
+      '1b-7 超时兜底兑现且不可二次兑现',
+      out.kind === 'value' && (out.v as { behavior: string }).behavior === 'deny(timeout)' && after === false
+    );
+  }
+}
+
 // ============= 桩 CLI（运行时写入 .cjs） =============
 
 const STUB_CODE = `
@@ -90,6 +212,7 @@ const cfg = {
   hang: process.env.STUB_HANG === '1',
   crashOn: Number(process.env.STUB_CRASH_ON || 0),
   emitError: process.env.STUB_EMIT_ERROR === '1',
+  errorResult: process.env.STUB_ERROR_RESULT === '1',
 };
 
 log({ event: 'start', pid: process.pid, sessionId, resumeId, permMode, model, argv });
@@ -142,6 +265,14 @@ rl.on('line', (line) => {
 async function respond(text, n) {
   if (cfg.emitError) {
     send({ type: 'error', error: 'stub-boom' });
+    return;
+  }
+  // A108：让 SDK 走「结果本身是错误」这条真实路径 ——
+  // lib/session.js 的 stream() 见到 is_error + errors 会**先抛 ExecutionError**
+  // 而不是把 result yield 出来，于是落到适配器的 catch 分支。
+  // 这条分支以前调 queue.fail()，而 fail() 会把错误吞掉（消费者看到静默结束）。
+  if (cfg.errorResult) {
+    send({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['stub-fail'], duration_ms: 1, session_id: sessionId, cost: 0 });
     return;
   }
   // 挂起场景：收到用户消息后不再回任何东西，直到收到 interrupt 控制请求
@@ -275,6 +406,39 @@ async function l2() {
   say('2-10 cwd 变：起2个进程', starts(log10).length === 2);
   const secondStart = log10.filter((l) => l.event === 'start')[1] as { resumeId?: string } | undefined;
   say('2-10 cwd 变：第2个进程带 --resume', typeof secondStart?.resumeId === 'string' && secondStart.resumeId.length > 0);
+
+  // ---- 2-11 结果本身是错误 → 必须报出来，不能静默结束 ----
+  console.log('[A107] → 2-11 错误结果不再静默');
+  clearLog();
+  process.env.STUB_ERROR_RESULT = '1';
+  const ev11 = await drain(adapter.send(ctx({ sessionId: 'l2-11', prompt: 'fail' })));
+  delete process.env.STUB_ERROR_RESULT;
+  say('2-11 is_error 结果被 surface', ev11.some((e) => e.type === 'error'), `events=${ev11.map((e) => e.type).join(',')}`);
+  say('2-11 不会假装成功（无 done）', !ev11.some((e) => e.type === 'done'));
+
+  // ---- 2-12 dispose() 回收常驻进程 ----
+  console.log('[A107] → 2-12 退出回收');
+  clearLog();
+  const ev12 = await drain(adapter.send(ctx({ sessionId: 'l2-12', prompt: 'alive' })));
+  say('2-12 前置：这条有回复', ev12.some((e) => e.type === 'text'));
+  const alivePids = starts(readLog()).map((l) => Number(l.pid)).filter((n) => Number.isFinite(n));
+  const isAlive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  say('2-12 前置：进程还活着', alivePids.length > 0 && alivePids.every(isAlive), `pids=${alivePids.join(',')}`);
+  adapter.dispose();
+  // 进程退出是异步的，给它 3 秒
+  for (let i = 0; i < 30 && alivePids.some(isAlive); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  say('2-12 dispose() 后进程已退出', !alivePids.some(isAlive), `pids=${alivePids.join(',')}`);
+  const pool = (adapter as unknown as { pool: Map<string, unknown> }).pool;
+  say('2-12 dispose() 后池已清空', pool.size === 0, `size=${pool.size}`);
 }
 
 async function drain(gen: AsyncIterable<Record<string, unknown>>) {
@@ -402,6 +566,7 @@ say = (label: string, ok: boolean, detail?: string) => {
 (async () => {
   try {
     l1();
+    await l1b();
     await l2();
     if (process.env.A107_SKIP_L3 === '1') {
       console.log('\n=== A107-3 跳过（A107_SKIP_L3=1） ===');

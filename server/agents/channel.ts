@@ -10,9 +10,14 @@
  *        └──────── 用户答复（permission） ◀───────────┘
  */
 
+interface Waiter<T> {
+  resolve: (r: IteratorResult<T>) => void;
+  reject: (err: Error) => void;
+}
+
 export class AsyncQueue<T> implements AsyncIterable<T> {
   private items: T[] = [];
-  private waiters: Array<(r: IteratorResult<T>) => void> = [];
+  private waiters: Waiter<T>[] = [];
   private closed = false;
   private failure: Error | null = null;
 
@@ -20,7 +25,7 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
   push(item: T): void {
     if (this.closed) return;
     const waiter = this.waiters.shift();
-    if (waiter) waiter({ value: item, done: false });
+    if (waiter) waiter.resolve({ value: item, done: false });
     else this.items.push(item);
   }
 
@@ -30,13 +35,38 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
     this.closed = true;
     const waiters = this.waiters;
     this.waiters = [];
-    for (const w of waiters) w({ value: undefined as never, done: true });
+    for (const w of waiters) w.resolve({ value: undefined as never, done: true });
   }
 
-  /** 异常结束：先排空已入队的元素，再抛出错误。 */
+  /**
+   * 异常结束。
+   *
+   * ⚠️ 这里**必须把错误直接 reject 给已经在等的人**，不能只「设 failure 再
+   * close()」。踩过的坑（A108）：close() 会把 waiters 里的消费者用
+   * `{done:true}` 唤醒，而 `next()` 只有在 items 为空**且没人挂起**时才读
+   * failure —— 消费者恰恰就是挂起的那一方，于是 failure 永远没人读，调用方
+   * 看到的是「流正常结束」。表现就是「Agent 报错了，但界面上什么都没有，
+   * 这条回复被当成成功落库」。实测两种时序：
+   *   - 消费者已挂起（最常见）→ 错误被吞，静默结束；
+   *   - 消费者还没挂起 → 下一次 next() 才 reject。
+   * 时序相关的行为是最难查的那类，所以这里统一成「错误一定送到」。
+   */
   fail(err: Error): void {
+    if (this.closed) {
+      // 已经结束过：留一份 failure 给还在排空 items 的消费者，别丢
+      this.failure = err;
+      return;
+    }
+    this.closed = true;
+    const waiters = this.waiters;
+    this.waiters = [];
+    if (waiters.length > 0) {
+      // 有人正在等：直接把错误交到它手里。
+      // 不再留 failure —— 否则它下一次 next() 会再抛一次，调用方看到两条错误。
+      for (const w of waiters) w.reject(err);
+      return;
+    }
     this.failure = err;
-    this.close();
   }
 
   get isClosed(): boolean {
@@ -58,8 +88,8 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
         if (this.closed) {
           return Promise.resolve({ value: undefined as never, done: true });
         }
-        return new Promise<IteratorResult<T>>(resolve => {
-          this.waiters.push(resolve);
+        return new Promise<IteratorResult<T>>((resolve, reject) => {
+          this.waiters.push({ resolve, reject });
         });
       },
       // 消费方提前 break 时调用：丢弃剩余数据
@@ -98,22 +128,39 @@ export function linkAbort(
 /**
  * 一次性答复的挂起表。用于 permission_request：
  * 先登记一个待兑现的 Promise，等前端 POST 回来再 resolve。
+ *
+ * ⚠️ 核心约束：**登记过的 Promise 必须被兑现**，无论走的是「前端答复」
+ * 「超时」还是「会话收尾时清理」。早先的 `clear()` 只做 `map.clear()`，
+ * 而超时兜底又用 `map.has(id)` 当守卫 —— 清掉之后守卫永远为假，于是那个
+ * Promise 永远挂着（A108 实测：clear 后既不 resolve 也不 reject，等 1 秒
+ * 依然 pending）。后果是 canUseTool 永不返回、CLI 侧永远等一句权限答复、
+ * 这一轮既不出结果也不报错，正是「发了消息没响应」的形态。
  */
 export class PendingReplies<D> {
-  private map = new Map<string, (decision: D) => void>();
+  private map = new Map<
+    string,
+    { resolve: (d: D) => void; fallback?: () => D; scope?: string }
+  >();
 
-  /** 登记一个待答复项，返回一个「等用户决定」的 Promise */
-  register(id: string, onTimeout?: () => D, timeoutMs = 5 * 60 * 1000): Promise<D> {
+  /**
+   * 登记一个待答复项，返回一个「等用户决定」的 Promise。
+   *
+   * @param onTimeout 兜底答复（超时 / 被 clear 时都用它兑现），
+   *                  不传的话调用方可能拿到 undefined —— 请务必传。
+   * @param scope     归属（一般传会话 id）。`clear(scope)` 只清同一归属的项，
+   *                  避免 A 会话收尾顺手把 B 会话正在等的弹窗清掉。
+   */
+  register(id: string, onTimeout?: () => D, timeoutMs = 5 * 60 * 1000, scope?: string): Promise<D> {
     return new Promise<D>(resolve => {
-      const settle = (d: D) => {
-        this.map.delete(id);
-        resolve(d);
-      };
-      this.map.set(id, settle);
+      this.map.set(id, { resolve, fallback: onTimeout, scope });
 
       if (timeoutMs > 0) {
         const timer = setTimeout(() => {
-          if (this.map.has(id)) settle(onTimeout ? onTimeout() : (undefined as D));
+          // 走同一个兑现口：先摘表再兑现，避免与 settle/clear 重复兑现
+          const entry = this.map.get(id);
+          if (!entry) return;
+          this.map.delete(id);
+          entry.resolve(entry.fallback ? entry.fallback() : (undefined as D));
         }, timeoutMs);
         // 不要因为这个定时器把进程吊住
         timer.unref?.();
@@ -123,15 +170,24 @@ export class PendingReplies<D> {
 
   /** 前端答复到达 */
   settle(id: string, decision: D): boolean {
-    const fn = this.map.get(id);
-    if (!fn) return false;
-    fn(decision);
+    const entry = this.map.get(id);
+    if (!entry) return false;
+    this.map.delete(id);
+    entry.resolve(decision);
     return true;
   }
 
-  /** 会话中止时清理，避免永久挂起 */
-  clear(): void {
-    this.map.clear();
+  /**
+   * 收尾清理：**用兜底答复兑现**，不是静默丢弃。
+   *
+   * @param scope 只清这个归属的；不传 = 全清（历史调用点行为不变）
+   */
+  clear(scope?: string): void {
+    for (const [id, entry] of [...this.map]) {
+      if (scope !== undefined && entry.scope !== scope) continue;
+      this.map.delete(id);
+      entry.resolve(entry.fallback ? entry.fallback() : (undefined as D));
+    }
   }
 
   get size(): number {

@@ -394,7 +394,9 @@ export class QoderSdkAdapter implements AgentProvider {
 
     const abort = () => {
       aborted = true;
-      this.replies.clear();
+      // 只清本会话的待答复项：这张表是适配器级共享的，无条件 clear 会把
+      // 同一 Agent 在另一个会话里正等着的权限弹窗一起作废（A108）
+      this.replies.clear(sessionId);
       queue.close();
     };
     this.active.set(sessionId, { abort });
@@ -515,8 +517,9 @@ export class QoderSdkAdapter implements AgentProvider {
       yield { type: 'error', message };
     } finally {
       unlinkAbort();
-      this.replies.clear();
-      this.active.delete(sessionId);
+      this.replies.clear(sessionId);
+      // 身份比对：同会话的第二条消息可能已经覆盖了 active 里的中止器
+      if (this.active.get(sessionId)?.abort === abort) this.active.delete(sessionId);
     }
   }
 
@@ -684,7 +687,8 @@ export class QoderSdkAdapter implements AgentProvider {
       const decision = await this.replies.register(
         requestId,
         () => ({ behavior: 'deny', message: '权限请求超时' }) as PermissionDecision,
-        PERMISSION_TIMEOUT
+        PERMISSION_TIMEOUT,
+        ctx.sessionId
       );
 
       if (decision.behavior === 'allow') {
