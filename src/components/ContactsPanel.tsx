@@ -247,6 +247,10 @@ export function ContactsPanel({
         style={{
           backgroundColor: 'var(--tc-surface-chrome)',
           borderBottom: '1px solid var(--tc-divider)',
+          // A110：与 ConversationList 栏头同因同治 —— 铺满栏宽的不透明块
+          // 会把父容器的圆角直角填平（父级 overflow 是 visible，不裁剪）。
+          // 详见 ConversationList.tsx 里那段注释。
+          borderRadius: 'var(--tc-column-radius) var(--tc-column-radius) 0 0',
         }}
       >
         <div className={SEARCH_ROW_CLASS}>

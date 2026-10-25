@@ -220,6 +220,20 @@ export function ConversationList({
         style={{
           backgroundColor: 'var(--tc-surface-chrome)',
           borderBottom: '1px solid var(--tc-divider)',
+          // A110：栏头必须自己带顶部圆角。
+          //
+          // 这一栏的父容器有 `border-radius: var(--tc-column-radius)`，但父级
+          // `overflow` 是默认的 visible —— 它不裁剪子元素。而栏头从父容器的
+          // 左上角起、铺满整个栏宽、底色又不透明，于是它那两个**直角**正好
+          // 盖在父容器的圆角上，把圆角「填平」了：量出来父级 radius 是 8px，
+          // 屏幕上看到的却是直角。
+          //
+          // 导航条（NavRail）没这个毛病，因为它的子元素是按钮、不铺满，
+          // 圆角自然露得出来 —— 这正是「左一栏是圆的、左二栏是方的」观感来源。
+          //
+          // 不给父容器加 `overflow: hidden`：会话栏里有绝对定位的「新建」菜单
+          // 和右键菜单，一旦裁剪就会被切掉（菜单 `top-full` 正好在栏头下沿之外）。
+          borderRadius: 'var(--tc-column-radius) var(--tc-column-radius) 0 0',
         }}
       >
         {/* A84：底色收进 SEARCH_PILL_CLASS（常态透明、hover/聚焦才浮现）。
