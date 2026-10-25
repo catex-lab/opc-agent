@@ -253,6 +253,30 @@ try {
     JSON.stringify(codexEnv ?? null)
   );
 
+  // A111：过程能力清单必须随 /api/agents 下发到打包版。
+  // 为什么要在**打包产物**上验：清单本身在 definitions.ts 里，源码态一定对；
+  // 但资料页的「过程能力」区块完全依赖这个字段被序列化出来 —— 一旦
+  // `AgentInfo extends AgentDescriptor` 这层被 esbuild 的 tree-shaking 或某个
+  // 手写的 toJSON 截断，源码测试全绿、装完打开却是一块空白。
+  // 这里同时钉住语义分层：`[]` 是「确实没有」（http 类），不是「字段丢了」。
+  ok(
+    agents.every(a => Array.isArray(a.eventCapabilities)),
+    '每个 Agent 都带 eventCapabilities 数组（A111 清单已进包）',
+    `${agents.filter(a => Array.isArray(a.eventCapabilities)).length}/${agents.length}`
+  );
+  const httpAgents = agents.filter(a => a.kind === 'http');
+  ok(
+    httpAgents.length > 0 && httpAgents.every(a => a.eventCapabilities.length === 0),
+    'http 类的清单是空数组（确实没有过程能力，不是字段缺失）',
+    httpAgents.map(a => `${a.id}:${a.eventCapabilities.length}`).join(',')
+  );
+  const wbCaps = agents.find(a => a.id === 'workbuddy')?.eventCapabilities ?? [];
+  ok(
+    wbCaps.includes('thinking') && wbCaps.includes('permission'),
+    'workbuddy 的清单含 thinking / permission（A111 修掉「清单撒谎」的回归护栏）',
+    wbCaps.join(',')
+  );
+
   console.log('\n[3] P4-1 会话三字段落库');
   const created = await post(first.port, '/api/sessions', {
     title: 'P5 冒烟会话',
