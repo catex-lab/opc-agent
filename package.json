@@ -55,7 +55,7 @@
     "verify:package": "node scripts/verify-package.mjs",
     "verify:native-theme": "node scripts/verify-native-theme.mjs",
     "verify:window-glass": "node scripts/verify-window-glass.mjs",
-    "verify:ui": "npm run build && npm run verify:event-model && npm run verify:runhub && npm run verify:tokens && npm run verify:theme && npm run verify:responsive && npm run verify:render && npm run verify:modelgate && npm run verify:groupchat && npm run verify:qq-ui && npm run verify:header-contacts && npm run verify:im-refine && npm run verify:a25 && npm run verify:surface && npm run verify:overlay && npm run verify:a28 && npm run verify:a30 && npm run verify:a33-branch && npm run verify:a34 && npm run verify:a35 && npm run verify:a36 && npm run verify:a37 && npm run verify:a38 && npm run verify:a39 && npm run verify:a40 && npm run verify:a41 && npm run verify:a42 && npm run verify:credentials && npm run verify:scenario-ui && npm run verify:image-ui && npm run verify:package && npm run verify:p6-ui && npm run verify:p7-ui && npm run verify:qoder-sdk && npm run verify:a75 && npm run verify:a83 && npm run verify:a84 && npm run verify:a85 && npm run verify:a102 && npm run verify:a105 && npm run verify:native-theme && npm run verify:window-glass && npm run verify:a113-ui && npm run verify:a114 && npm run verify:a114-ui && npm run verify:a115-identity && npm run verify:a115-ui && npm run verify:a116-ui && npm run verify:a117-projects",
+    "verify:ui": "npm run build && npm run verify:event-model && npm run verify:runhub && npm run verify:tokens && npm run verify:theme && npm run verify:responsive && npm run verify:render && npm run verify:modelgate && npm run verify:groupchat && npm run verify:qq-ui && npm run verify:header-contacts && npm run verify:im-refine && npm run verify:a25 && npm run verify:surface && npm run verify:overlay && npm run verify:a28 && npm run verify:a30 && npm run verify:a33-branch && npm run verify:a34 && npm run verify:a35 && npm run verify:a36 && npm run verify:a37 && npm run verify:a38 && npm run verify:a39 && npm run verify:a40 && npm run verify:a41 && npm run verify:a42 && npm run verify:credentials && npm run verify:scenario-ui && npm run verify:image-ui && npm run verify:package && npm run verify:p6-ui && npm run verify:p7-ui && npm run verify:qoder-sdk && npm run verify:a75 && npm run verify:a83 && npm run verify:a84 && npm run verify:a85 && npm run verify:a102 && npm run verify:a105 && npm run verify:native-theme && npm run verify:window-glass && npm run verify:a113-ui && npm run verify:a114 && npm run verify:a114-ui && npm run verify:a115-identity && npm run verify:a115-ui && npm run verify:a116-ui && npm run verify:a117-projects && npm run verify:a118-overlay-dismiss",
     "verify:usage": "tsx scripts/verify-usage-stats.ts",
     "verify:p6-ui": "node scripts/verify-p6-ui.mjs",
     "verify:p7-ui": "node scripts/verify-p7-ui.mjs",
@@ -101,7 +101,8 @@
     "verify:a115-ui": "node scripts/verify-a115-ui.mjs",
     "verify:a115": "npm run verify:a115-identity && npm run verify:a115-ui",
     "verify:a116-ui": "node scripts/verify-a116-ui.mjs",
-    "verify:a117-projects": "node scripts/verify-a117-projects.mjs"
+    "verify:a117-projects": "node scripts/verify-a117-projects.mjs",
+    "verify:a118-overlay-dismiss": "node scripts/verify-a118-overlay-dismiss.mjs"
   },
   "dependencies": {
     "@qoder-ai/qoder-agent-sdk": "^1.0.55",

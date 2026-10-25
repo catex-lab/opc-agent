@@ -229,15 +229,18 @@ export function GroupSettingsPanel({
   }, [open, onClose]);
 
   // 群消息设置下拉：点空白收起（details 元素不会自动收，这里同样要手动补）
+  //
+  // A118：用 pointerdown 而非 click —— 输入框（t-chat-sender 的 shadow）
+  // 会吞掉 mousedown / click，点输入框关不掉这个下拉。见 WorkspaceBadge。
   useEffect(() => {
     if (!notifyOpen) return;
-    const onClick = (e: MouseEvent) => {
+    const onDown = (e: PointerEvent) => {
       if (notifyRef.current && !notifyRef.current.contains(e.target as Node)) {
         setNotifyOpen(false);
       }
     };
-    document.addEventListener('click', onClick);
-    return () => document.removeEventListener('click', onClick);
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
   }, [notifyOpen]);
 
   /**
@@ -252,7 +255,9 @@ export function GroupSettingsPanel({
    */
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
+    // A118：pointerdown 而非 mousedown —— 输入框（t-chat-sender 的 shadow）
+    // 会吞掉 mousedown / click，导致「点输入框关不掉这个面板」。
+    const onDown = (e: PointerEvent) => {
       const t = e.target as Element | null;
       if (!t) return;
       if (wrapRef.current?.contains(t)) return;
@@ -260,8 +265,8 @@ export function GroupSettingsPanel({
       if (document.querySelector('[data-confirm-dialog]')) return;
       onClose();
     };
-    document.addEventListener('mousedown', onDown, true);
-    return () => document.removeEventListener('mousedown', onDown, true);
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
   }, [open, onClose]);
 
   if (!mounted) return null;

@@ -81,16 +81,23 @@ export function ChatHeader({
     if (moreRef.current) moreRef.current.open = false;
   };
 
-  // details 元素不会自动在点击空白处收起，需要手动补
+  /**
+   * details 元素不会自动在点击空白处收起，需要手动补。
+   *
+   * ⚠️ 必须用 `pointerdown`，不能用 `click`（A118）：输入框
+   * `<t-chat-sender>` 是 shadow DOM，它在内部把 mousedown / click 吃掉了
+   * （实测点 textarea 时 document 只收到 pointerdown / focusin / pointerup），
+   * 用 click 的话「点输入框关不掉菜单」。完整实测见 WorkspaceBadge 的注释。
+   */
   useEffect(() => {
-    const onClick = (e: MouseEvent) => {
+    const onDown = (e: PointerEvent) => {
       const el = moreRef.current;
       if (el?.open && !el.contains(e.target as Node)) {
         el.open = false;
       }
     };
-    document.addEventListener('click', onClick);
-    return () => document.removeEventListener('click', onClick);
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
   }, []);
 
   return (

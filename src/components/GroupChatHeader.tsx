@@ -347,14 +347,17 @@ function ModePicker({
   const detailsRef = useRef<HTMLDetailsElement>(null);
 
   useEffect(() => {
-    const onClick = (e: MouseEvent) => {
+    // A118：用 pointerdown 而非 click —— 输入框（t-chat-sender 的 shadow）
+    // 会吞掉 mousedown / click，导致「点输入框关不掉这个下拉」。
+    // 实测与完整说明见 WorkspaceBadge。
+    const onDown = (e: PointerEvent) => {
       const el = detailsRef.current;
       if (el?.open && !el.contains(e.target as Node)) {
         el.open = false;
       }
     };
-    document.addEventListener('click', onClick);
-    return () => document.removeEventListener('click', onClick);
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
   }, []);
 
   return (

@@ -69,7 +69,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   }, [x, y]);
 
   useEffect(() => {
-    const onPointerDown = (e: MouseEvent) => {
+    const onPointerDown = (e: PointerEvent) => {
       if (!ref.current?.contains(e.target as Node)) onClose();
     };
     const onKeyDown = (e: KeyboardEvent) => {
@@ -79,12 +79,17 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       }
     };
     // 滚动或改窗口大小后菜单会和「它指向的那一行」错位，直接关掉最干脆
-    document.addEventListener('mousedown', onPointerDown, true);
+    //
+    // A118：用 pointerdown 而不是 mousedown —— 输入框（t-chat-sender 的
+    // shadow）会把 mousedown / click 吃掉，用 mousedown 的话「点输入框
+    // 关不掉菜单」。pointerdown 能穿出 shadow，且比 mousedown 更早。
+    // 用 capture 是因为菜单项自己也可能 stopPropagation。
+    document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('keydown', onKeyDown);
     window.addEventListener('resize', onClose);
     window.addEventListener('scroll', onClose, true);
     return () => {
-      document.removeEventListener('mousedown', onPointerDown, true);
+      document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', onClose);
       window.removeEventListener('scroll', onClose, true);

@@ -82,18 +82,34 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
     };
   }, [open, recentLoaded]);
 
-  // details 不会自动在点击空白处收起（与 ChatHeader 的 ⋯ 同一手法）
+  /**
+   * 点面板以外的地方收起。
+   *
+   * ## 为什么监听 `pointerdown` 而不是 `click`（A118 用户反馈）
+   *
+   * 用户原话：「切换新工作区后，我点击输入框，工作区弹窗没有关闭」。
+   *
+   * 根因不在这个面板，在**输入框**：TDesign 的 `<t-chat-sender>` 是 shadow
+   * DOM，它在内部把 `mousedown` / `click` 吃掉了 —— 实测点它的 textarea 时，
+   * document 上只收到 `pointerdown` / `focusin` / `pointerup`，**没有 click、
+   * 连 mousedown 都没有**（浏览器因为 mousedown 被 preventDefault 而不生成
+   * click）。所以「点空白处关闭」在输入框这个最常点的地方完全失效，
+   * 而点消息区、点列表栏都是好的 —— 这种「大部分地方正常」最容易漏测。
+   *
+   * `pointerdown` 能穿出 shadow（实测），而且它比 click 更早：按下即收，
+   * 手感也更接近原生下拉。判断仍用 `contains`，点面板内部不受影响。
+   */
   useEffect(() => {
     if (!open) return;
-    const onClick = (e: MouseEvent) => {
+    const onDown = (e: PointerEvent) => {
       const el = rootRef.current;
       if (el?.open && !el.contains(e.target as Node)) {
         el.open = false;
         setOpen(false);
       }
     };
-    document.addEventListener('click', onClick);
-    return () => document.removeEventListener('click', onClick);
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
   }, [open]);
 
   const handlePick = async () => {
