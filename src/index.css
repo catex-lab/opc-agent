@@ -2822,7 +2822,10 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  color: var(--td-text-color-primary);
+  /* A113：降一档。容器色是兜底 —— shadow 里 ::part 覆盖不到的零星文本
+     （例如错误提示、备注行）会继承它，若这里仍是 primary，那些文字会比
+     正文还重，在一片灰里特别跳。 */
+  color: var(--td-text-color-secondary);
   /* A34：长代码行不再把整列撑宽 —— 列本身已有 min-w-0，
      这里再把答案块钉在父宽度内，并允许超长串断行。 */
   min-width: 0;
@@ -3086,9 +3089,10 @@ html[data-opc-glass='1'] t-chat-sender {
    无法分别选中；下面的取色策略因此保证两者共用同一底色时都成立。
    ===================================================================== */
 .chat-markdown {
-  color: var(--td-text-color-primary);
-  /* 长回答优先阅读：略宽于 A4 正文但限制行长，降低横向扫读成本。 */
-  line-height: 1.72;
+  color: var(--td-text-color-secondary);
+  /* 长回答优先阅读：略宽于 A4 正文但限制行长，降低横向扫读成本。
+     A113：跟随正文降到 1.75（见下面 md_p 段的说明）。 */
+  line-height: 1.75;
   /* A34：shadow 宿主也不能成为「撑宽整列」的源头 */
   min-width: 0;
   max-width: 100%;
@@ -3102,18 +3106,34 @@ html[data-opc-glass='1'] t-chat-sender {
   --md-code-border: rgba(255, 255, 255, 0.1);
 }
 
-/* 正文段落：统一正文字阶，避免段落与列表在 TDesign 默认样式下跳号。 */
+/* 正文段落：统一正文字阶，避免段落与列表在 TDesign 默认样式下跳号。
+ *
+ * A113：用户反馈「正文太大、颜色太深，跟整个页面不协调」。改三处：
+ *   1. **字号 15px → 14px**。15px 是「文档正文」的量级，而这里是 IM 消息流，
+ *      周围（会话列表、时间戳、操作行）都是 12–13px，15px 显得独占一层。
+ *      14px 与输入框的 15px 也拉开了「我打的」和「它回的」的层级差。
+ *   2. **颜色 primary → secondary**（浅色 #171717 → #737373 一档的灰）。
+ *      整篇 #171717 在浅色界面里是一块最重的墨，长回答尤其压抑；
+ *      引用块本来就用 secondary，正文却用 primary，两者反而不一致。
+ *      标题仍保留 primary —— 层级靠「重色 + 大字」给，正文让出来。
+ *   3. **行高 1.72 → 1.75**。字号降了，行高要略补，否则 14px 密成一团。 */
 .chat-markdown t-chat-md-content::part(md_p),
 .chat-markdown t-chat-md-content::part(md_span),
 .chat-markdown t-chat-md-content::part(md_li),
 .chat-markdown t-chat-md-content::part(md_ul),
 .chat-markdown t-chat-md-content::part(md_ol) {
-  font-size: 15px;
-  line-height: 1.72;
-  color: var(--td-text-color-primary);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--td-text-color-secondary);
 }
 
-/* 正文标题层次：信息结构靠字号与留白建立，避免整篇回答变成同一灰度的长段落。 */
+/* 正文标题层次：信息结构靠字号与留白建立，避免整篇回答变成同一灰度的长段落。
+ *
+ * A113：标题阶梯整体下调一档。原来是 22/19/17/15，配 15px 正文时间距还说得过去，
+ * 但正文降到 14px 之后 h1 的 22px 就成了一整篇里唯一的巨物，用户原话「排版很乱」。
+ * 现在是 18/16/15/14 —— 与正文的比值从 1.47 降到 1.29，层级还在但不抢戏。
+ * 留白也收紧：标题前的空隙比标题本身还大时，视觉上就是「散」。注意标题现在
+ * 只留底边距（0.45em），顶距由上一个块的底边距提供 —— 见下面 md_p 段的说明。 */
 .chat-markdown t-chat-md-content::part(md_h1),
 .chat-markdown t-chat-md-content::part(md_h2),
 .chat-markdown t-chat-md-content::part(md_h3),
@@ -3121,16 +3141,51 @@ html[data-opc-glass='1'] t-chat-sender {
   color: var(--td-text-color-primary);
   font-weight: 650;
   line-height: 1.4;
-  margin: 1.35em 0 0.55em;
+  /* 只留下边距：见下面 md_p 段的说明（::part() 后面不能接 :first-child） */
+  margin: 0 0 0.45em;
 }
 
-.chat-markdown t-chat-md-content::part(md_h1) { font-size: 22px; }
-.chat-markdown t-chat-md-content::part(md_h2) { font-size: 19px; }
-.chat-markdown t-chat-md-content::part(md_h3) { font-size: 17px; }
-.chat-markdown t-chat-md-content::part(md_h4) { font-size: 15px; }
+.chat-markdown t-chat-md-content::part(md_h1) { font-size: 18px; }
+.chat-markdown t-chat-md-content::part(md_h2) { font-size: 16px; }
+.chat-markdown t-chat-md-content::part(md_h3) { font-size: 15px; }
+.chat-markdown t-chat-md-content::part(md_h4) { font-size: 14px; }
 
+/* A113：间距改成**只留下外边距**（margin: 0 0 X），不再给任何块加 margin-top。
+ *
+ * 这里踩过一个静默失效的坑，值得写清楚：原本写的是
+ *   `.chat-markdown t-chat-md-content::part(md_p):first-child { margin-top: 0 }`
+ * 想把「消息里第一个块」的顶部外边距消掉（否则正文第一行与头部行之间凭空多出
+ * 0.6em，长会话里就是用户说的「没有视觉对齐」）。**这条规则从未生效过** ——
+ * 浏览器把整条规则当非法选择器丢掉了，cssRules 里根本找不到它，控制台也不报错。
+ *
+ * 根因：CSS Scoping 规范只允许「非树结构」伪类跟在 ::part() 后面。
+ * 实测（Chrome 144，最小复现）：
+ *   ::part(p):hover / :focus-within            → 保留并生效
+ *   ::part(p):first-child / :last-child /
+ *   :only-child / :nth-child() / :first-of-type /
+ *   :not()                                      → **整条规则被丢弃**
+ * 原因大概是这些伪类的语义依赖「元素在树里的位置」，而 shadow 内部结构对
+ * 外部文档是不可见的，选了也没法保证。结论：**::part() 后面只能接 UI 状态伪类**。
+ *
+ * 所以换个不需要选中「第一个块」的办法：把所有块的 margin-top 都置 0，
+ * 块间距一律由**前一个块的 margin-bottom** 提供。副作用只有两个，都可接受：
+ *   · 标题前的空隙从 1.1em 收到 0.6em（取上一个块的底边距）；
+ *   · 最后一个块尾部多 0.6em —— 改之前也是这样，不是新增的。
+ * 兄弟边距在常规流里会折叠（取较大者），即使容器是 flex 不折叠，
+ * 结果也同样是 0.6em，所以这个写法对两种布局都成立。 */
 .chat-markdown t-chat-md-content::part(md_p) {
-  margin: 0.72em 0;
+  margin: 0 0 0.6em;
+}
+
+/* 列表：默认的 ul/ol 上下 margin 与段落叠加会忽大忽小，这里统一收到一档 */
+.chat-markdown t-chat-md-content::part(md_ul),
+.chat-markdown t-chat-md-content::part(md_ol) {
+  margin: 0 0 0.5em;
+  padding-left: 1.35em;
+}
+
+.chat-markdown t-chat-md-content::part(md_li) {
+  margin: 0 0 0.2em;
 }
 
 /* 代码块容器 */
@@ -3139,7 +3194,7 @@ html[data-opc-glass='1'] t-chat-sender {
   border: 1px solid var(--md-code-border);
   border-radius: var(--td-radius-medium);
   padding: 12px 14px;
-  margin: 12px 0;
+  margin: 0 0 12px;
   max-width: 100%;
   overflow-x: auto;
 }
@@ -3148,10 +3203,13 @@ html[data-opc-glass='1'] t-chat-sender {
    这里不再保留 [data-wrap] 规则 —— 默认（块内横向滚动）即唯一行为。 */
 
 /* code：行内与块内共用。底色与代码块容器取同一值，
-   于是「行内是浅色小片、块内填满容器」两种情况都成立且无接缝。 */
+   于是「行内是浅色小片、块内填满容器」两种情况都成立且无接缝。
+   A113：字号从 --text-body(16px) 降到 13px —— 原来比正文还大半号，
+   行内 code 在句子里格外跳。 */
 .chat-markdown t-chat-md-content::part(md_code) {
   font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: var(--text-body);
+  font-size: 13px;
+  line-height: 1.6;
   color: var(--td-text-color-primary);
   background-color: var(--md-code-bg);
   border-radius: var(--td-radius-small);
@@ -3166,7 +3224,7 @@ html[data-opc-glass='1'] t-chat-sender {
 .chat-markdown t-chat-md-content::part(md_blockquote) {
   border-left: 3px solid var(--td-brand-color);
   padding-left: 12px;
-  margin: 12px 0;
+  margin: 0 0 12px;
   color: var(--td-text-color-secondary);
   line-height: 1.68;
 }
@@ -3181,15 +3239,17 @@ html[data-opc-glass='1'] t-chat-sender {
 .chat-markdown t-chat-md-content::part(md_table) {
   border-collapse: collapse;
   width: 100%;
-  margin: 12px 0;
+  margin: 0 0 12px;
 }
 
 .chat-markdown t-chat-md-content::part(md_th),
 .chat-markdown t-chat-md-content::part(md_td) {
   border: 1px solid var(--td-component-stroke);
-  padding: 8px 12px;
+  padding: 7px 11px;
   text-align: left;
-  font-size: var(--text-body-lg);
+  /* A113：跟随正文降到 14px（原 --text-body-lg 16px）*/
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .chat-markdown t-chat-md-content::part(md_th) {

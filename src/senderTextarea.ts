@@ -26,6 +26,8 @@
  * · 组件是异步挂载的，所以带 100ms × 30 次的有限重试；拿不到就静默放弃，
  *   不回退成「字号没改但界面坏了」—— 最坏情况就是维持 TDesign 默认 16px。
  */
+import { findSenderTextarea } from './senderEdit';
+
 const MARK = 'data-opc-sender-type';
 /** 与正文段落一致（index.css 的 md_p） */
 const FONT_SIZE = 15;
@@ -33,24 +35,7 @@ const FONT_SIZE = 15;
 const LINE_HEIGHT = 22;
 
 function findTextarea(): HTMLTextAreaElement | null {
-  const sender = document.querySelector('t-chat-sender');
-  if (!sender?.shadowRoot) return null;
-
-  const dig = (root: ShadowRoot, depth: number): HTMLTextAreaElement | null => {
-    if (depth > 4) return null;
-    const direct = root.querySelector('textarea');
-    if (direct) return direct as HTMLTextAreaElement;
-    for (const el of root.querySelectorAll('*')) {
-      const sr = (el as HTMLElement).shadowRoot;
-      if (sr) {
-        const found = dig(sr, depth + 1);
-        if (found) return found;
-      }
-    }
-    return null;
-  };
-
-  return dig(sender.shadowRoot, 0);
+  return findSenderTextarea();
 }
 
 export function applySenderTypography(): () => void {

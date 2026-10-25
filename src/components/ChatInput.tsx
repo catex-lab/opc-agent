@@ -1,7 +1,8 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Select, Tooltip } from 'tdesign-react';
+import { Select, Tooltip, MessagePlugin } from 'tdesign-react';
 import { ChatSender } from '@tdesign-react/chat';
+import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ChevronDownIcon, LockOnIcon, LockOffIcon, EditIcon, TaskIcon } from 'tdesign-icons-react';
 import {
   Paperclip,
@@ -14,6 +15,14 @@ import {
   // A62：思考强度下拉的前缀图标。与附件菜单同一套图标体系（lucide），
   // 和权限模式的 tdesign 图标粗细才一致。
   Brain,
+  // A113：输入框右键菜单的图标。仍走 lucide —— 与附件菜单同一套粗细。
+  Undo2,
+  Redo2,
+  Scissors,
+  Copy,
+  ClipboardPaste,
+  TextCursorInput,
+  Eraser,
 } from 'lucide-react';
 import { Model, PermissionMode, RegisteredAgent } from '../types';
 import { IMAGE_SIZES, IMAGE_SIZE_LABELS, IMAGE_MODELS } from '../imageOptions';
@@ -23,6 +32,8 @@ import { MENU_ITEM_SM_CLASS } from './menuItem';
 // A93：输入框字号对齐正文。CSS 穿不过 TDesign 的两层 shadow，只能往那层
 // shadow root 里注入样式表 —— 为什么以及踩过哪些坑，见该文件开头。
 import { applySenderTypography } from '../senderTextarea';
+// A113：输入框右键菜单的执行体。穿透两层 shadow 找 textarea、下编辑命令。
+import { senderEdit } from '../senderEdit';
 
 interface ChatInputProps {
   inputValue: string;
@@ -431,6 +442,40 @@ export function ChatInput({
   // A93：输入框字号 16px → 15px（与正文 md_p 一致）。
   // 为什么只能这么做、为什么 CSS 的三条路都不通，见 src/senderTextarea.ts。
   useEffect(() => applySenderTypography(), []);
+
+  /* ── A113：输入框右键菜单 ────────────────────────────────────────────
+   *
+   * 用户要求「输入框内要支持右键弹窗的完整功能」。之所以必须自己做一份菜单，
+   * 而不是靠浏览器原生：那一棵 textarea 在两层 shadow root 里，Chromium 对
+   * shadow 内可编辑元素的原生菜单**不总是完整**（打包版实测没有「粘贴」）。
+   *
+   * 三条边界：
+   *  1. **只拦输入框内的右键**。点附件、点权限模式、点别处，一律放行原生菜单
+   *     —— 用 composedPath 找 textarea，不靠坐标猜。
+   *  2. 菜单项失败要说话。读不到剪贴板 / 没有选中内容时给一行提示，否则用户
+   *     只会觉得「点了没反应」，然后反复点。
+   *  3. 撤销/重做走 execCommand：浏览器自己维护 undo 栈，自己拼插入逻辑会把
+   *     用户的撤销历史打碎。 */
+  const [editMenu, setEditMenu] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const el = chatSenderRef.current as HTMLElement | null;
+    if (!el?.addEventListener) return;
+    const onContextMenu = (e: MouseEvent) => {
+      const path = e.composedPath();
+      const inTextarea = path.some(n => n instanceof HTMLTextAreaElement);
+      if (!inTextarea) return;
+      e.preventDefault();
+      setEditMenu({ x: e.clientX, y: e.clientY });
+    };
+    el.addEventListener('contextmenu', onContextMenu);
+    return () => el.removeEventListener('contextmenu', onContextMenu);
+  }, []);
+
+  const runEdit = useCallback(async (action: Parameters<typeof senderEdit>[0]) => {
+    const r = await senderEdit(action);
+    if (!r.ok && r.note) MessagePlugin.warning(r.note);
+  }, []);
 
   /** 把附件路径拼进消息正文：Agent 拿到的是可直接读的绝对路径 */
   const withAttachments = useCallback(
@@ -1078,6 +1123,37 @@ export function ChatInput({
           </div>
         </ChatSender>
       </div>
+
+      {/* A113：输入框右键菜单。分组按「改内容 / 搬内容 / 清空」三段 ——
+          与系统编辑菜单的顺序一致，用户不用重新学。 */}
+      {editMenu && (
+        <ContextMenu
+          x={editMenu.x}
+          y={editMenu.y}
+          onClose={() => setEditMenu(null)}
+          items={[
+            { key: 'undo', label: '撤销', icon: <Undo2 size={14} />, onSelect: () => void runEdit('undo') },
+            { key: 'redo', label: '重做', icon: <Redo2 size={14} />, onSelect: () => void runEdit('redo') },
+            { key: 'cut', label: '剪切', icon: <Scissors size={14} />, onSelect: () => void runEdit('cut'), divider: true },
+            { key: 'copy', label: '复制', icon: <Copy size={14} />, onSelect: () => void runEdit('copy') },
+            { key: 'paste', label: '粘贴', icon: <ClipboardPaste size={14} />, onSelect: () => void runEdit('paste') },
+            {
+              key: 'selectall',
+              label: '全选',
+              icon: <TextCursorInput size={14} />,
+              onSelect: () => void runEdit('selectAll'),
+              divider: true,
+            },
+            {
+              key: 'clear',
+              label: '清空输入框',
+              icon: <Eraser size={14} />,
+              danger: true,
+              onSelect: () => void runEdit('clear'),
+            },
+          ] satisfies ContextMenuItem[]}
+        />
+      )}
     </div>
   );
 }

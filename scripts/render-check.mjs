@@ -15,7 +15,7 @@
  *      验证 delta 不会闷在内存里出不来
  */
 import { createServer } from 'node:http';
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile, readdir, mkdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
 
@@ -544,6 +544,134 @@ if (await panel.count()) {
 
   await go('/chat/s5', { dark: true });
   if (await page.locator('[aria-label="工作区文件"]').count()) await shot('dark-workspace');
+}
+
+// ── E. 正文排版（A113）────────────────────────────────────────────────
+// 用户反馈「正文字号太大、颜色太深、排版乱、没有视觉对齐」。
+// 字号和颜色都活在 **shadow DOM 里**（t-chat-md-content 的 shadow root），
+// 在页面上下文里 getComputedStyle 拿不到 —— 必须在宿主元素上取
+// `shadowRoot`，再对里面的 `[part*=md_p]` 量。这里逐项断言，而不是靠肉眼看截图。
+console.log('\n[E] 正文排版（字号 / 颜色 / 首块上留白）');
+
+// E-0. ::part() 静默丢规则守卫（A113 踩过的坑）
+// CSS Scoping 只允许「非树结构」伪类跟在 ::part() 后面。一旦写了
+// `::part(x):first-child` / `:last-child` / `:nth-child()` / `:not()` 之类，
+// 浏览器会**整条规则当非法选择器丢掉** —— cssRules 里查不到，控制台不报错，
+// 页面只是「没效果」。这种失败用 tsc 和肉眼看截图都发现不了，只能扫产物。
+try {
+  const cssFiles = (await readdir(join(DIST, 'assets'))).filter(f => f.endsWith('.css'));
+  const badPart = [];
+  for (const f of cssFiles) {
+    const css = await readFile(join(DIST, 'assets', f), 'utf8');
+    const hits = css.match(/::part\([^)]*\)\s*:(?:first-child|last-child|only-child|nth-child|nth-of-type|first-of-type|last-of-type|only-of-type|not)\b/g);
+    if (hits) badPart.push(...hits.map(h => `${f} → ${h}`));
+  }
+  if (badPart.length) {
+    failures.push(`::part() 后接了树结构伪类（整条规则会被浏览器丢弃）：${badPart.join('；')}`);
+    console.log(`  ❌ ::part() 后接非法伪类 ${badPart.length} 处：${badPart.join('；')}`);
+  } else {
+    console.log('  ✓ ::part() 选择器无静默丢规则');
+  }
+} catch (e) {
+  console.log('  ⚠️ ::part() 守卫异常：' + String(e).slice(0, 160));
+}
+
+try {
+  await go('/chat/s1');
+  await page.fill('textarea', '排版检查');
+  await page.press('textarea', 'Enter');
+  await page.waitForTimeout(2600);
+  if ((await page.locator('text=已定位问题').count()) === 0) {
+    await page.locator('.t-chat-sender__send-btn, [class*="send-btn"]').last().click().catch(() => {});
+    await page.waitForTimeout(2600);
+  }
+
+  const typo = await page.evaluate(() => {
+    // 取**最后一条**消息的正文：页面上还有静态夹具消息，第一条往往是带标题的
+    // 旧消息，量它等于量错了对象（首段的 margin-top 会因为前面有个 h2 而合法地
+    // 非 0，于是误判「:first-child 没生效」）。
+    const hosts = document.querySelectorAll('.chat-markdown t-chat-md-content');
+    const host = hosts[hosts.length - 1];
+    const sr = host?.shadowRoot;
+    if (!sr) return null;
+    const pick = (sel) => {
+      const el = sr.querySelector(sel);
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return {
+        fontSize: parseFloat(cs.fontSize),
+        color: cs.color,
+        lineHeight: cs.lineHeight,
+        marginTop: parseFloat(cs.marginTop),
+        first: !el.previousElementSibling,
+        tag: el.tagName.toLowerCase(),
+      };
+    };
+    // secondary 的**浏览器解析值**。令牌在 :root 上是十六进制（#737373），
+    // 而 getComputedStyle 返回 rgb() —— 拿两者直接比永远是 false（踩过：
+    // 明明改对了色却报红）。所以在页面里造一个探针元素，让浏览器自己算一遍。
+    const probeEl = document.createElement('span');
+    probeEl.style.color = 'var(--td-text-color-secondary)';
+    document.body.appendChild(probeEl);
+    const secondary = getComputedStyle(probeEl).color;
+    probeEl.remove();
+    // 顺便把**所有**消息里出现过的 part 名收一遍。这里纠正一个此前的误判：
+    // md_li / md_ul / md_ol **确实存在**，只是只有含列表的那条消息里才有，
+    // 早先拿「页面第一条消息」去量，自然一个列表 part 都看不到。
+    const allParts = new Set();
+    for (const h of hosts) {
+      for (const el of h.shadowRoot?.querySelectorAll('*') ?? []) {
+        const part = el.getAttribute('part');
+        if (part) allParts.add(part);
+      }
+    }
+    return {
+      secondary,
+      parts: [...allParts],
+      p: pick('[part~="md_p"]'),
+      pAll: Array.from(sr.querySelectorAll('[part~="md_p"]')).map(el => parseFloat(getComputedStyle(el).fontSize)),
+      li: pick('[part~="md_li"]'),
+      span: pick('[part~="md_span"]'),
+      h2: pick('[part~="md_h2"]'),
+      code: pick('[part~="md_code"]'),
+      dump: Array.from(sr.querySelectorAll('*'))
+        .slice(0, 14)
+        .map(el => `${el.tagName.toLowerCase()}[${el.getAttribute('part') ?? '-'}] first=${!el.previousElementSibling}`),
+    };
+  });
+
+  if (!typo) {
+    failures.push('拿不到正文 shadow root，排版用例无法验证');
+    console.log('  ❌ 拿不到正文 shadow root');
+  } else {
+    console.log(`  [调试] parts=${typo.parts.join(',')} | 首元素=${typo.firstPart}`);
+    console.log('  [调试] 结构:\n' + (typo.dump ?? []).map(d => '      ' + d).join('\n'));
+    const expectColor = typo.secondary;
+    const checks = [
+      // 14px：原来 15px 在 12–13px 的界面里独占一层
+      [typo.p && typo.p.fontSize === 14, '正文 14px', typo.p && `${typo.p.fontSize}px`],
+      // 全文统一：段落与列表不能一个 14 一个 15
+      [typo.pAll.every(s => s === 14), '段落字号全文统一', typo.pAll.join('/')],
+      [typo.li && typo.li.fontSize === 14, '列表项 14px', typo.li && `${typo.li.fontSize}px`],
+      // 颜色降到 secondary：浅色 #737373 / 深色 #a3a3a3
+      [!!typo.p && typo.p.color === expectColor, '正文用 secondary 色（不是最黑的那档）', `${typo.p?.color} vs ${expectColor}`],
+      // 首块上留白为 0：头部行与正文顶端要对齐。
+      // 实现方式见 index.css：不能用 ::part(md_p):first-child（那条选择器会被
+      // 浏览器整条丢弃），改成「所有块 margin-top 一律为 0」，所以这条对
+      // 任何段落都成立。附带断言 first 是为了证明量到的确实是首块。
+      [typo.p && typo.p.marginTop === 0, '正文无顶部外边距（与头部行对齐）', `${typo.p?.marginTop}px`],
+      [typo.p && typo.p.first, '量到的确实是首块', typo.p?.first ? '是' : '否'],
+      [typo.li && typo.li.marginTop === 0, '列表项无顶部外边距', typo.li && `${typo.li.marginTop}px`],
+      [typo.code && typo.code.fontSize === 13, '行内 code 13px', typo.code && `${typo.code.fontSize}px`],
+    ];
+    for (const [ok, label, detail] of checks) {
+      if (!ok) failures.push(`${label}（实际 ${detail}）`);
+      console.log(ok ? `  ✓ ${label}  [${detail}]` : `  ❌ ${label}  [${detail}]`);
+    }
+    await shot('light-typography');
+  }
+} catch (e) {
+  console.log('  ⚠️ 排版用例异常：' + String(e).slice(0, 160));
 }
 
 // ── 汇总 ────────────────────────────────────────────────────────────────

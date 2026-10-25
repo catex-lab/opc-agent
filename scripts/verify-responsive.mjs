@@ -110,9 +110,13 @@ let r = await read();
 // ② 列表栏必须与它们不同（相同 = 两栏又并回一档，A92 修的层次没了）。
 record('宽屏 标题栏与导航条同色（rail）', r.titlebarBg, r.navBg);
 record('宽屏 列表栏仍是 chrome（与框架分档）', r.columnBg !== r.titlebarBg ? 'chrome' : '同色', 'chrome');
-// 会话头部已改成内容面（与消息区同色，QQ 的做法）——
-// 它不再属于「框架」，所以这条断言比的是 main 而不是 nav。
-record('宽屏 主区头部与消息区同色（内容面）', r.headerBgs[1], r.mainBg);
+// A103（用户要求）把会话头部从 content 改回了 chrome：消息列表栏与会话头部
+// 同为 #f5f5f5，两栏标题落在同一条色带上；消息区仍是白色，靠圆角（A103）和
+// 那道 6px 的缝分出层次。所以这里不再比 main，改守「头部 == 列表栏、且 != 消息区」。
+// （这条断言早先写的是「头部与消息区同色」，A103 之后就成了陈旧期望 ——
+//  界面按用户要求改了，期望表没跟上，于是长期假红。）
+record('宽屏 会话头部与列表栏同色（chrome）', r.headerBgs[1], r.columnBg);
+record('宽屏 会话头部与消息区不同色（内容面独立）', r.headerBgs[1] !== r.mainBg ? '不同' : '同色', '不同');
 record('宽屏 导航条 56px', r.navWidth, 56);
 record('宽屏 列表与内容同时在 DOM', String(r.columnInDom && r.mainInDom), 'true');
 record('宽屏 没有返回键', r.backBtn, 0);

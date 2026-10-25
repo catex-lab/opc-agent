@@ -378,11 +378,15 @@ function UserMessageActions({
  *
  * 修法三条：
  *  1. 矩形按「range → clientRects → 端点元素框」逐级兜底，并带上精度标记；
- *     拿不到精确矩形时改用**指针坐标**定位（拖选过程中 mousemove 持续更新）；
+ *     拿不到精确矩形时改用**指针坐标**定位（松手 / 右键都自带坐标）；
  *  2. `selectionchange` 不再负责定位，只负责「选区没了就收起」。定位交给
- *     mousemove / mouseup / contextmenu / keyup 各司其职 —— 去掉两个写入方
- *     互相打架这个结构性原因，而不是给 0 矩形打补丁；
+ *     mouseup / contextmenu / keyup 各司其职 —— 去掉两个写入方互相打架这个
+ *     结构性原因，而不是给 0 矩形打补丁；
  *  3. 右键菜单多一个「全选」，选中当前这条消息的正文（助手侧穿透 shadow）。
+ *
+ * A113 又收紧了一步：mousemove 也不再摆位。用户反馈「复制 agent 输出的内容
+ * 时画面会跳动」—— 拖选中每经过一个 mousemove 就重算一次位置，工具条跟着
+ * 手一路跳。现在拖选途中只记坐标，**松手那一刻才定位**（见 onMouseMove 注释）。
  *
  * 另外三个容易踩的点（A34 起就存在，保持不变）：
  *  - 选区可能落在 shadow root 里 —— contains() 会返回 false，必须顺着
@@ -690,10 +694,18 @@ function SelectionToolbar({
     const onMouseMove = (e: MouseEvent) => {
       pointer.x = e.clientX;
       pointer.y = e.clientY;
-      // 只在按住拖动时跟随；不按下时鼠标划过不该把工具条带走
-      if (pointer.down && !inToolbar(e.target)) {
-        schedule(contextPinned ? 'context' : 'drag');
-      }
+      // A113：拖选途中**只记坐标，不摆位**。
+      //
+      // 用户反馈「复制 agent 输出的内容时画面会跳动」。根因就在这里：旧代码
+      // 在 pointer.down 时对每个 mousemove 都 schedule('drag') → place() 用
+      // 指针坐标重算 top/left → 工具条跟着手一路跳。选中一大段文字时要经过
+      // 几十个 mousemove，工具条就跳几十下，视觉上就是「画面在抽」。
+      //
+      // 现在把时机收敛成用户自己说的那条：**松开鼠标才弹**。拖选中这里只负责
+      // 记住终点坐标，真正的定位在 onMouseUp 里做一次。
+      // （A49 当时选 mousemove 跟随是为了治「闪一下就没了」，但那是定位数据
+      //  缺失导致的；A54 之后 normalizeSelection + mouseup 定位已经能稳定出来，
+      //  继续跟着手跳只是副作用。）
     };
 
     const onMouseUp = (e: MouseEvent) => {
