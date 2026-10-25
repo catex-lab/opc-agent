@@ -81,6 +81,16 @@ const SESSION_IDLE_MS = 10 * 60 * 1000;
 const SESSION_POOL_MAX = 3;
 /** 空闲清扫间隔 */
 const SESSION_SWEEP_MS = 60 * 1000;
+/**
+ * 预热超时。
+ *
+ * 预热是「提前 spawn 进程」，正常情况下十几秒内完事（本机实测冷启动
+ * 14.7s，代理拖慢时会到 30s+）。但如果 CLI 卡在启动阶段（等鉴权、等网络），
+ * 这个 Promise 会一直悬着 —— 而首条消息的 `transport()` 正好会 await 它，
+ * 于是「预热」反而把第一条消息拖死。所以超时就丢弃条目（连带杀掉进程），
+ * 让首条消息回到「自己起进程」的老路：慢，但一定能出结果。
+ */
+const PREWARM_TIMEOUT = 60 * 1000;
 
 interface PoolEntry {
   session: SdkSession;
@@ -88,12 +98,29 @@ interface PoolEntry {
   configKey: string;
   /** CLI 侧 session id（init 消息带回），跨重启 resume 与保上下文都用它 */
   cliSessionId: string | null;
-  lastUsedAt: number;
-  /** 同一会话的发送队列：前一轮没跑完，后一轮在这条链上排队 */
-  chain: Promise<void>;
   /** 正在跑的那一轮的身份牌与中断器；没在跑就是 null */
   inflightToken: object | null;
   inflightInterrupt: (() => void) | null;
+}
+
+/**
+ * 一个会话的槽位。
+ *
+ * 为什么「串行链」挂在槽位上而不是条目上（A109）：配置变化需要重建进程时，
+ * 重建必须发生在**上一轮跑完之后**。A107 把链挂在条目上，于是新消息一到就
+ * 在 `acquireEntry` 里当场关掉旧会话 —— 如果那时正好有一轮在跑，那一轮会被
+ * 当成「CLI 进程提前结束」报错，用户看到的是「回答到一半突然断了」。
+ * 把链提到会话层，重建就自然落在链里，串行与重建都不再和「正在跑」抢。
+ */
+interface SessionSlot {
+  /** 当前池条目；被驱逐/重建期间为 null */
+  entry: PoolEntry | null;
+  /** 本会话的发送链：上一轮没跑完，后一轮在这条链上排队 */
+  chain: Promise<void>;
+  /** 排队中 + 正在跑的轮次数。>0 时这个槽位不能被清扫/LRU 回收 */
+  busy: number;
+  /** 最后一次有动作的时间（建条目 / 开轮 / 收轮） */
+  lastUsedAt: number;
 }
 
 /** 配置键：哪一项变了决定「热更新」还是「重建」，所以必须能按项拆。
@@ -134,8 +161,8 @@ export class SdkAdapter implements AgentProvider {
   private replies = new PendingReplies<PermissionDecision>();
   /** 探测缓存（避免每次刷新名册都跑一次鉴权） */
   private status: AgentStatus | null = null;
-  /** A107：长驻会话池：我们的会话 id → CLI 进程封装 */
-  private pool = new Map<string, PoolEntry>();
+  /** A107/A109：长驻会话池：我们的会话 id → 槽位（条目 + 串行链） */
+  private slots = new Map<string, SessionSlot>();
   /** 空闲清扫定时器（整个适配器一个就够） */
   private sweepTimer: NodeJS.Timeout | null = null;
 
@@ -241,7 +268,7 @@ export class SdkAdapter implements AgentProvider {
       // 进程不杀 —— 留给下一条消息复用，这才是池子的意义。
       // 身份牌比对不能省：同一会话的轮次是排队跑的，abort 这一轮时
       // 正在跑着的可能是**另一条** send() 的轮次，不能抢别人的中断。
-      const entry = this.pool.get(sessionId);
+      const entry = this.slots.get(sessionId)?.entry;
       if (entry && entry.inflightToken === turnToken && entry.inflightInterrupt) {
         const interrupt = entry.inflightInterrupt;
         entry.inflightInterrupt = null;
@@ -332,17 +359,26 @@ export class SdkAdapter implements AgentProvider {
 
     // ---- A107：池路径（默认）或 one-shot 回退 ----
     // 两条路共用一套消息映射（mapSdkMessage），差别只在「进程复用与否」。
-    // 注意：轮次挂在池条目自己的 promise 链上排队，但**不能** await 它再抽
-    // 队列 —— 队列必须与轮次并发抽干，否则 SSE 要等整轮结束才吐字，
-    // 流式就白做了。
+    // 注意：轮次挂在槽位的 promise 链上排队，但**不能** await 它再抽队列 ——
+    // 队列必须与轮次并发抽干，否则 SSE 要等整轮结束才吐字，流式就白做了。
     if (SESSION_POOL_ENABLED && typeof unstable_v2_createSession === 'function') {
-      const entry = this.acquireEntry(ctx);
-      const turn = entry.chain.then(() =>
-        this.runPooledTurn(entry, ctx, queue, canUseTool, turnToken, () => aborted, started)
+      const slot = this.slotFor(sessionId);
+      // 排队这一刻就算「在用」：清扫与 LRU 都不许在这期间把条目关掉，
+      // 否则排队中的轮次醒来会撞上一个已关闭的会话（A109）
+      slot.busy += 1;
+      slot.lastUsedAt = Date.now();
+      const turn = slot.chain.then(() =>
+        this.runPooledTurn(slot, ctx, queue, canUseTool, turnToken, () => aborted, started)
       );
       // 链子只承载「排队与跑完」，错误在轮次内部已经转成 error 事件，
       // 这里再 catch 一次只是为了不让链条带 rejected 状态往下传
-      entry.chain = turn.catch(() => {});
+      slot.chain = turn
+        .catch(() => {})
+        .finally(() => {
+          slot.busy = Math.max(0, slot.busy - 1);
+          slot.lastUsedAt = Date.now();
+          this.releaseIfIdle(sessionId, slot);
+        });
     } else {
       void this.runOneShotTurn(ctx, queue, canUseTool, () => aborted, started);
     }
@@ -383,46 +419,106 @@ export class SdkAdapter implements AgentProvider {
       clearInterval(this.sweepTimer);
       this.sweepTimer = null;
     }
-    for (const key of [...this.pool.keys()]) this.closeEntry(key);
+    for (const key of [...this.slots.keys()]) this.closeEntry(key);
+    this.slots.clear();
     this.replies.clear();
   }
 
-  // ============= A107：池路径 =============
+  // ============= A107/A109：池路径 =============
 
   /**
-   * 取（或建）这个会话的池条目。同步的 —— SessionImpl 构造不连网，
-   * 真正的进程 spawn 推迟到第一次 send()/stream() 里的 transport()。
+   * 预热：把 CLI 进程提前 spawn 起来，让**首条消息**不必再付冷启动税。
+   *
+   * 为什么值得单独做：A107 的池子只省「第 2 条起」，第一条仍要 14.7s
+   * （spawn + V8 编译 24MB + 进程启动）。用户抱怨的「响应慢」恰恰集中在
+   * 「打开会话问第一句」。预热把这段与「用户打字」重叠起来。
+   *
+   * 三条边界：
+   * 1. **只 spawn，不做 initialize**（SDK 的 `prewarm()` 就是这个语义）——
+   *    握手留给首条消息，因为握手要带 hasPrompt 之类的本轮参数。
+   * 2. **有轮次在跑/排队就完全不碰**：条目归轮次管，插一脚只会制造竞态。
+   * 3. **失败即静默丢弃**：没装 CLI / 未登录 / 网络不通都不该冒泡到请求层；
+   *    超时也丢弃（见 PREWARM_TIMEOUT 的注释）。
    */
-  private acquireEntry(ctx: SendContext): PoolEntry {
+  prewarm(ctx: SendContext): void {
+    if (!SESSION_POOL_ENABLED || typeof unstable_v2_createSession !== 'function') return;
+    const slot = this.slotFor(ctx.sessionId);
+    // 有轮次在跑/排队，或者这个会话已经有热进程：都不该动。
+    //
+    // 尤其「已有条目」这一条：预热的配置是从会话行拼出来的，未必与真正
+    // 跑过的那一轮完全一致（比如 systemPrompt 由请求体带、会话里存的是
+    // 另一份）。一旦按预热的配置去 diff，就可能把热进程判成「结构性不符」
+    // 而重建 —— 每次打开会话白起一个 24MB 进程，纯浪费。
+    if (slot.busy > 0 || slot.entry) return;
+
+    const entry = this.createEntry(slot, ctx, ctx.resumeToken ?? null);
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      // 超时：进程可能卡在启动/鉴权上，留着只会把首条消息一起拖死
+      this.dropEntry(slot, entry);
+    }, PREWARM_TIMEOUT);
+    timer.unref?.();
+
+    void entry.session
+      .prewarm()
+      .then(() => {
+        settled = true;
+        clearTimeout(timer);
+        slot.lastUsedAt = Date.now();
+      })
+      .catch(() => {
+        settled = true;
+        clearTimeout(timer);
+        // 预热失败不是错误：下一条消息会自己起进程（只是慢一点）
+        this.dropEntry(slot, entry);
+      });
+  }
+
+  /** 取（或建）会话槽位。同步、不碰 IO。 */
+  private slotFor(sessionId: string): SessionSlot {
+    let slot = this.slots.get(sessionId);
+    if (!slot) {
+      slot = { entry: null, chain: Promise.resolve(), busy: 0, lastUsedAt: Date.now() };
+      this.slots.set(sessionId, slot);
+      this.ensureSweep();
+    }
+    return slot;
+  }
+
+  /**
+   * 取（或建）这个会话的池条目。**只在轮次链里调用** —— 所以此刻本会话
+   * 没有别的轮次在跑，重建（关旧开新）是安全的。
+   *
+   * SessionImpl 构造不连网，真正的进程 spawn 推迟到第一次 send()/stream()。
+   */
+  private ensureEntry(slot: SessionSlot, ctx: SendContext): PoolEntry {
     const cfg = configKeyOf(ctx);
-    const existing = this.pool.get(ctx.sessionId);
+    const existing = slot.entry;
 
     if (existing) {
       const diff = configDiff(existing.configKey, cfg);
-      if (diff === 'same') {
-        existing.lastUsedAt = Date.now();
-        return existing;
-      }
+      if (diff === 'same') return existing;
       if (diff === 'mode-only') {
         // model / permissionMode 变了：热更新，不重启进程。
         // 具体动作放在轮次里做 —— setModel / setPermissionMode 是异步的，
         // 已连接的会话还要等 CLI 回控制响应。
         existing.configKey = cfg;
-        existing.lastUsedAt = Date.now();
         return existing;
       }
       // cwd / systemPrompt 变了：只能重建，但用旧 CLI session id 把上下文
       // 接回去 —— 直接丢弃的话，用户看到的会是「它突然失忆了」。
       const resumeFrom = existing.cliSessionId;
-      this.closeEntry(ctx.sessionId, existing);
-      return this.createEntry(ctx, resumeFrom);
+      this.dropEntry(slot, existing);
+      return this.createEntry(slot, ctx, resumeFrom);
     }
 
     // 池里没有：进程重启后的第一条消息带 resumeToken，用它恢复上下文
-    return this.createEntry(ctx, ctx.resumeToken ?? null);
+    return this.createEntry(slot, ctx, ctx.resumeToken ?? null);
   }
 
-  private createEntry(ctx: SendContext, resumeFrom: string | null): PoolEntry {
+  private createEntry(slot: SessionSlot, ctx: SendContext, resumeFrom: string | null): PoolEntry {
     const options = {
       cwd: ctx.cwd || process.cwd(),
       model: ctx.model,
@@ -455,20 +551,24 @@ export class SdkAdapter implements AgentProvider {
       // 所以它就是 CLI 侧会话 id，不等 init 消息也能当 resume 令牌用
       //（init 流消息可能被 send() 的 discardPendingMessages() 冲掉）。
       cliSessionId: session.sessionId,
-      lastUsedAt: Date.now(),
-      chain: Promise.resolve(),
       inflightToken: null,
       inflightInterrupt: null,
     };
-    this.pool.set(ctx.sessionId, entry);
+    slot.entry = entry;
+    slot.lastUsedAt = Date.now();
     this.ensureSweep();
     this.enforceCap();
     return entry;
   }
 
-  /** 跑一轮（池路径）。queue 由调用方 drain，这里只负责生产与收尾。 */
+  /**
+   * 跑一轮（池路径）。queue 由调用方 drain，这里只负责生产与收尾。
+   *
+   * 条目在**链里**才取（`ensureEntry`）：这样「配置变了要重建」不会撞上
+   * 上一轮还在跑的情况 —— 轮到这一轮时上一轮必然已经收尾。
+   */
   private async runPooledTurn(
-    entry: PoolEntry,
+    slot: SessionSlot,
     ctx: SendContext,
     queue: AsyncQueue<AgentEvent>,
     canUseTool: CanUseTool,
@@ -481,13 +581,13 @@ export class SdkAdapter implements AgentProvider {
       queue.close();
       return;
     }
-    // 轮次真正开始才刷新空闲计时 —— 否则排队中的轮次会被清扫误杀
-    entry.lastUsedAt = Date.now();
-    entry.inflightToken = token;
-    entry.inflightInterrupt = () => {
-      void entry.session.interrupt().catch(() => {});
-    };
+    let entry: PoolEntry | null = null;
     try {
+      entry = this.ensureEntry(slot, ctx);
+      entry.inflightToken = token;
+      entry.inflightInterrupt = () => {
+        void entry!.session.interrupt().catch(() => {});
+      };
       // 每轮换上当轮的权限 handler（白名单/门禁/弹窗判定都绑在 ctx 上）
       entry.session.setCanUseTool(canUseTool);
 
@@ -532,7 +632,7 @@ export class SdkAdapter implements AgentProvider {
         // error 事件已在 mapSdkMessage 推给前端；进程可能已不可用，驱逐避免
         // 复用死进程（真实 CLI 报 EADDRINUSE 这类致命错时复用会再次吊死）。
         // 不再 queue.fail()——否则前端会收到两条 error（mapSdkMessage 已推过）。
-        this.closeEntry(ctx.sessionId, entry);
+        this.dropEntry(slot, entry);
         queue.close();
         return;
       }
@@ -543,7 +643,7 @@ export class SdkAdapter implements AgentProvider {
       // 既没 result 也没 error，且不是被 abort 打断：CLI 进程八成已经崩了或
       // 被杀（stdout 直接关闭）。不报出来就会像以前一样「发了消息没响应」。
       if (!shouldAbort()) {
-        this.closeEntry(ctx.sessionId, entry);
+        this.dropEntry(slot, entry);
         // 这里 push 一条 error 事件再 close，而不是 queue.fail()：
         // A107 当时是因为 fail() 会把错误吞掉才绕开的（close() 用 {done:true}
         // 唤醒挂起的消费者，failure 没人读）。A108 已把 fail() 修成「直接
@@ -558,14 +658,14 @@ export class SdkAdapter implements AgentProvider {
       // 结构性失败（进程死了 / 会话失效 / 控制请求超时）：驱逐 + 报错。
       // 不做轮内重试 —— prompt 可能已在 CLI 侧执行了一半，重放有双重
       // 副作用风险。下一条消息会自动重建（resumeToken 还在，上下文不丢）。
-      this.closeEntry(ctx.sessionId, entry);
+      this.dropEntry(slot, entry ?? undefined);
       queue.fail(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      if (entry.inflightToken === token) {
+      if (entry && entry.inflightToken === token) {
         entry.inflightToken = null;
         entry.inflightInterrupt = null;
       }
-      entry.lastUsedAt = Date.now();
+      slot.lastUsedAt = Date.now();
     }
   }
 
@@ -627,12 +727,17 @@ export class SdkAdapter implements AgentProvider {
     }
   }
 
-  /** 关掉并移出一个条目。expect 用于身份比对，避免关掉已经被替换的新条目。 */
-  private closeEntry(key: string, expect?: PoolEntry): void {
-    const entry = this.pool.get(key);
+  /**
+   * 关掉并移出这个槽位的条目。
+   *
+   * `expect` 用于身份比对：调用方手里那个条目可能已经被重建替换掉了，
+   * 此时不能顺手把新的那个关掉（那会让紧随其后的轮次撞上死进程）。
+   */
+  private dropEntry(slot: SessionSlot, expect?: PoolEntry): void {
+    const entry = slot.entry;
     if (!entry) return;
     if (expect && entry !== expect) return;
-    this.pool.delete(key);
+    slot.entry = null;
     try {
       entry.session.close();
     } catch {
@@ -640,17 +745,34 @@ export class SdkAdapter implements AgentProvider {
     }
   }
 
+  /** 关掉某个会话的条目（按 sessionId，供 dispose / 清扫使用） */
+  private closeEntry(sessionId: string): void {
+    const slot = this.slots.get(sessionId);
+    if (!slot) return;
+    this.dropEntry(slot);
+  }
+
+  /** 没有任何在途轮次、也没有条目了 → 连槽位一起摘掉，别让 Map 长草 */
+  private releaseIfIdle(sessionId: string, slot: SessionSlot): void {
+    if (slot.busy > 0 || slot.entry) return;
+    if (this.slots.get(sessionId) === slot) this.slots.delete(sessionId);
+  }
+
   /** 启动空闲清扫（整个适配器一个定时器够用） */
   private ensureSweep(): void {
     if (this.sweepTimer) return;
     this.sweepTimer = setInterval(() => {
       const now = Date.now();
-      for (const [key, entry] of [...this.pool]) {
-        // 正在跑一轮的条目不扫；刚结束的轮次会在 finally 里刷新时间戳
-        if (entry.inflightToken) continue;
-        if (now - entry.lastUsedAt > SESSION_IDLE_MS) this.closeEntry(key);
+      for (const [key, slot] of [...this.slots]) {
+        // 有轮次在跑或排队就不扫：排队中的轮次也会刷新时间戳，但这里
+        // 不靠时间戳兜底 —— busy 才是「真的在用」的判据（A109）
+        if (slot.busy > 0) continue;
+        if (now - slot.lastUsedAt > SESSION_IDLE_MS) {
+          this.dropEntry(slot);
+          this.slots.delete(key);
+        }
       }
-      if (this.pool.size === 0 && this.sweepTimer) {
+      if (this.slots.size === 0 && this.sweepTimer) {
         clearInterval(this.sweepTimer);
         this.sweepTimer = null;
       }
@@ -658,20 +780,27 @@ export class SdkAdapter implements AgentProvider {
     this.sweepTimer.unref?.();
   }
 
-  /** LRU 上限：超了就先关最久没用的（正在跑的跳过） */
+  /** LRU 上限：超了就先关最久没用的（有轮次在跑的跳过） */
   private enforceCap(): void {
-    while (this.pool.size > SESSION_POOL_MAX) {
+    const liveCount = () => {
+      let n = 0;
+      for (const slot of this.slots.values()) if (slot.entry) n++;
+      return n;
+    };
+    while (liveCount() > SESSION_POOL_MAX) {
       let oldestKey: string | null = null;
       let oldestAt = Infinity;
-      for (const [key, entry] of this.pool) {
-        if (entry.inflightToken) continue;
-        if (entry.lastUsedAt < oldestAt) {
-          oldestAt = entry.lastUsedAt;
+      for (const [key, slot] of this.slots) {
+        if (!slot.entry || slot.busy > 0) continue;
+        if (slot.lastUsedAt < oldestAt) {
+          oldestAt = slot.lastUsedAt;
           oldestKey = key;
         }
       }
       if (!oldestKey) return; // 全在跑，超就超吧
-      this.closeEntry(oldestKey);
+      const slot = this.slots.get(oldestKey)!;
+      this.dropEntry(slot);
+      this.slots.delete(oldestKey);
     }
   }
 }

@@ -307,6 +307,24 @@ class AgentRegistry {
     this.providers.get(id)?.abort(sessionId);
   }
 
+  /**
+   * 预热某个 Agent 的常驻进程（目前只有 SDK 会话池实现）。
+   *
+   * 为什么放在注册表而不是直接拿 provider：调用方（HTTP 层）只认 agentId，
+   * 不该知道哪个 Agent 背后是 SDK、哪个是子进程 CLI。
+   */
+  prewarm(id: string, ctx: SendContext): void {
+    try {
+      // 只在「确认可用」时预热：未探测 / 未登录 / 未安装都不该白起一个
+      // ≈24MB 的进程（起来也会卡在鉴权上，最后还得被超时清掉）
+      if (this.statuses.get(id)?.availability !== 'ready') return;
+      this.providers.get(id)?.prewarm?.(ctx);
+    } catch (err) {
+      // 预热纯属优化：任何异常都不该冒到请求层
+      console.error('[Registry] prewarm 失败（忽略）:', (err as Error).message);
+    }
+  }
+
   resolvePermission(
     id: string,
     requestId: string,

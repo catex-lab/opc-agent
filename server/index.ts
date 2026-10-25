@@ -603,12 +603,58 @@ app.get("/api/sessions", (req, res) => {
   }
 });
 
+/**
+ * A109：打开/新建会话时预热常驻 CLI 进程。
+ *
+ * 为什么值得单独做：冷启动实测 14.7s（spawn + V8 编译 24MB + 进程启动），
+ * 全部压在「问第一句」那一刻 —— 而用户抱怨的「响应慢」恰恰集中在这。
+ * 预热把这段与「用户正在打字」重叠起来，首条消息只付模型推理。
+ *
+ * 三条约束：
+ * 1. **只对一对一会话做**。群聊会同时起多个 Agent，替用户决定「先热哪一个」
+ *    收益不确定，还会白占内存（每个 ≈24MB）。
+ * 2. **fire-and-forget**：不 await、不影响响应，失败在适配器里已静默。
+ * 3. **配置只用会话行里的值**（cwd / model / systemPrompt / resumeToken）——
+ *    与 /api/chat 的取值口径一致，否则首条消息会判成「结构性不符」而重建，
+ *    等于白热。
+ */
+function prewarmForSession(session: {
+  id: string;
+  kind?: string | null;
+  agent_id?: string | null;
+  cwd?: string | null;
+  model?: string | null;
+  system_prompt?: string | null;
+  sdk_session_id?: string | null;
+}): void {
+  try {
+    if ((session.kind ?? 'direct') !== 'direct') return;
+    if (!session.agent_id) return;
+    registry.prewarm(session.agent_id, {
+      sessionId: session.id,
+      // 预热不发送任何内容，prompt 只是结构占位
+      prompt: '',
+      systemPrompt: session.system_prompt ?? undefined,
+      cwd: session.cwd || process.cwd(),
+      // 与 /api/chat 一致：记忆作用域不回落，只认会话自己绑的目录
+      memoryCwd: session.cwd || undefined,
+      model: session.model ?? undefined,
+      resumeToken: session.sdk_session_id,
+      // 权限模式在首轮会被热更新（mode-only），这里给默认值即可
+      permissionMode: 'default',
+      allowedTools: [],
+    });
+  } catch {
+    /* 预热纯属优化，任何异常都不该影响请求 */
+  }
+}
+
 // 获取单个会话及其消息
 app.get("/api/sessions/:sessionId", (req, res) => {
   try {
     const { sessionId } = req.params;
     const session = db.getSession(sessionId);
-    
+
     if (!session) {
       return res.status(404).json({ error: "会话不存在" });
     }
@@ -655,6 +701,9 @@ app.get("/api/sessions/:sessionId", (req, res) => {
       messages: parsedMessages,
       dangling,
     });
+
+    // 响应先发出去，再在后台把进程热起来（顺序不能反：预热要几秒）
+    prewarmForSession(session);
   } catch (error: any) {
     console.error("[Session] Error:", error);
     res.status(500).json({ error: error?.message || "获取会话失败" });
@@ -724,6 +773,9 @@ app.post("/api/sessions", (req, res) => {
     });
     
     res.json({ session });
+
+    // 新建会话通常紧接着就要发第一条消息 —— 提前把进程热起来（A109）
+    prewarmForSession(session);
   } catch (error: any) {
     console.error("[Create Session] Error:", error);
     res.status(500).json({ error: error?.message || "创建会话失败" });

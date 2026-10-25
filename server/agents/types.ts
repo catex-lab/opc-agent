@@ -521,6 +521,12 @@ export interface AgentProvider {
    */
   resolvePermission?(requestId: string, decision: PermissionDecision): boolean;
   /**
+   * 预热：在用户还没发消息之前，把「起进程」这段提前做掉。
+   * 只有 SDK 系（常驻 CLI 进程）有意义；其他适配器实现为空即可。
+   * 必须是「失败静默」的 —— 它只是优化，不能影响任何正常请求。
+   */
+  prewarm?(ctx: SendContext): void;
+  /**
    * 进程退出时回收本适配器持有的长驻资源（子进程 / 定时器）。
    * 只有会「跨轮存活」的适配器需要实现 —— 目前是 ACP 与 SDK 会话池。
    */

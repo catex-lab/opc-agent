@@ -18,6 +18,11 @@
  *   PendingReplies.clear() 必须用兜底答复兑现，不能留永久挂起的 Promise
  * - L2-11 CLI 返回 is_error 结果时前端要收到 error（以前静默结束）
  * - L2-12 dispose() 要回收常驻进程（以前退出应用会留下孤儿 node 进程）
+ *
+ * A109 补充（槽位化 + 预热）：
+ * - L2-13 配置结构性变化**不能打断正在跑的那一轮**（重建挪进轮次链）
+ * - L2-14 池上限 LRU 生效（第 4 个会话进来时最久没用的那个进程被关掉）
+ * - L2-15 预热：先起进程、不发消息；首条消息复用同一个进程（starts 不增）
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -213,6 +218,8 @@ const cfg = {
   crashOn: Number(process.env.STUB_CRASH_ON || 0),
   emitError: process.env.STUB_EMIT_ERROR === '1',
   errorResult: process.env.STUB_ERROR_RESULT === '1',
+  // A109：让回复慢下来，用来制造「上一轮还在跑」的窗口
+  delayMs: Number(process.env.STUB_DELAY_MS || 0),
 };
 
 log({ event: 'start', pid: process.pid, sessionId, resumeId, permMode, model, argv });
@@ -262,7 +269,7 @@ rl.on('line', (line) => {
   }
 });
 
-async function respond(text, n) {
+async function respond(text, n, delayed) {
   if (cfg.emitError) {
     send({ type: 'error', error: 'stub-boom' });
     return;
@@ -282,6 +289,13 @@ async function respond(text, n) {
   // 也会被 hang 吞掉）。中断回一句，进程就回到可服务的空闲态。
   if (cfg.hang && msgCount === 1) {
     log({ event: 'hang', n });
+    return;
+  }
+  // A109：慢回复 —— 用来在「上一轮还没跑完」时插入下一条消息。
+  // 只在第一趟延迟（delayed 标记），否则 setTimeout 里再进来会无限递归。
+  if (cfg.delayMs > 0 && !delayed) {
+    log({ event: 'delay', n, ms: cfg.delayMs });
+    setTimeout(() => { void respond(text, n, true); }, cfg.delayMs);
     return;
   }
   send({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'stub-reply-' + n }] } });
@@ -416,6 +430,72 @@ async function l2() {
   say('2-11 is_error 结果被 surface', ev11.some((e) => e.type === 'error'), `events=${ev11.map((e) => e.type).join(',')}`);
   say('2-11 不会假装成功（无 done）', !ev11.some((e) => e.type === 'done'));
 
+  // ---- 2-13 配置结构性变化不打断正在跑的那一轮（A109 核心） ----
+  console.log('[A107] → 2-13 重建不打断在跑的轮次');
+  clearLog();
+  process.env.STUB_DELAY_MS = '800';
+  const sub13 = path.join(root, 'sub13');
+  fs.mkdirSync(sub13, { recursive: true });
+  const p13a = drain(adapter.send(ctx({ sessionId: 'l2-13', prompt: 'slow', cwd: root })));
+  // 等上一轮真的进了「CLI 正在生成」这个状态，再插一条 cwd 变了的消息
+  await new Promise((r) => setTimeout(r, 200));
+  const p13b = drain(adapter.send(ctx({ sessionId: 'l2-13', prompt: 'next', cwd: sub13 })));
+  const [ev13a, ev13b] = await Promise.all([p13a, p13b]);
+  delete process.env.STUB_DELAY_MS;
+  const log13 = readLog();
+  say(
+    '2-13 上一轮没被打断（无 error）',
+    !ev13a.some((e) => e.type === 'error'),
+    ev13a.map((e) => e.type).join(',')
+  );
+  say('2-13 上一轮正常收尾', ev13a.some((e) => e.type === 'text') && ev13a.some((e) => e.type === 'done'));
+  say('2-13 下一轮也拿到回复', ev13b.some((e) => e.type === 'text'));
+  const starts13 = starts(log13);
+  say('2-13 cwd 变仍然重建了进程', starts13.length === 2, `starts=${starts13.length}`);
+  say(
+    '2-13 重建的那个带 --resume（上下文接回去）',
+    typeof (starts13[1] as { resumeId?: string } | undefined)?.resumeId === 'string'
+  );
+
+  // ---- 2-14 池上限：LRU 淘汰最久没用的会话 ----
+  console.log('[A107] → 2-14 池上限 LRU');
+  clearLog();
+  for (const sid of ['lru-1', 'lru-2', 'lru-3', 'lru-4']) {
+    await drain(adapter.send(ctx({ sessionId: sid, prompt: 'hi' })));
+  }
+  const pids14 = starts(readLog()).map((l) => Number(l.pid));
+  const alive14 = pids14.filter((pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  say('2-14 起了 4 个进程', pids14.length === 4, `pids=${pids14.join(',')}`);
+  say('2-14 只留 3 个（LRU 淘汰 1 个）', alive14.length === 3, `alive=${alive14.length}`);
+  say('2-14 被淘汰的是最久没用的那个', !alive14.includes(pids14[0]), `first=${pids14[0]}`);
+
+  // ---- 2-15 预热：先起进程，首条消息复用同一个 ----
+  console.log('[A107] → 2-15 预热');
+  clearLog();
+  const warmCtx = ctx({ sessionId: 'l2-15', prompt: 'warm' });
+  adapter.prewarm(warmCtx);
+  // 等桩真的被 spawn（预热是 fire-and-forget，不返回 Promise）
+  for (let i = 0; i < 50 && starts(readLog()).length === 0; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const warmStarts = starts(readLog()).length;
+  say('2-15 预热把进程起起来了', warmStarts === 1, `starts=${warmStarts}`);
+  say('2-15 预热没有发送任何消息', !readLog().some((l) => l.event === 'user'));
+  const ev15 = await drain(adapter.send(ctx({ sessionId: 'l2-15', prompt: 'hi' })));
+  say('2-15 首条消息有回复', ev15.some((e) => e.type === 'text'));
+  say(
+    '2-15 首条消息复用预热的进程（没再 spawn）',
+    starts(readLog()).length === 1,
+    `starts=${starts(readLog()).length}`
+  );
+
   // ---- 2-12 dispose() 回收常驻进程 ----
   console.log('[A107] → 2-12 退出回收');
   clearLog();
@@ -437,8 +517,8 @@ async function l2() {
     await new Promise((r) => setTimeout(r, 100));
   }
   say('2-12 dispose() 后进程已退出', !alivePids.some(isAlive), `pids=${alivePids.join(',')}`);
-  const pool = (adapter as unknown as { pool: Map<string, unknown> }).pool;
-  say('2-12 dispose() 后池已清空', pool.size === 0, `size=${pool.size}`);
+  const slots = (adapter as unknown as { slots: Map<string, unknown> }).slots;
+  say('2-12 dispose() 后池已清空', slots.size === 0, `size=${slots.size}`);
 }
 
 async function drain(gen: AsyncIterable<Record<string, unknown>>) {
@@ -476,21 +556,26 @@ async function l3() {
   let serverErr = '';
   server.stderr.on('data', (d) => { serverErr += d.toString(); });
 
-  // 等它 ready（stdout 出现 listening）
-  let ready = false;
-  server.stdout.on('data', (d) => {
-    const s = d.toString();
-    if (s.includes('listening') || s.includes('Server running')) ready = true;
-  });
-  server.stderr.on('data', (d) => {
-    const s = d.toString();
-    if (s.includes('listening') || s.includes('Server running')) ready = true;
-  });
-
+  /**
+   * 就绪判定：**用 HTTP 探，不要认日志字符串**。
+   *
+   * 这里踩过一个坑（A109 才查出来）：原来等的是 stdout 里的 "listening" /
+   * "Server running"，而 server/index.ts 打的是「◉ API 服务器已启动」的
+   * 横幅 —— 两个字符串都对不上，于是 waitReady 必然超时，L3 在**任何**
+   * 环境下都会被判成「环境限制，非失败」。也就是说这条 e2e 一直是假的。
+   * 教训：就绪判定要探真实能力（接口能不能应答），别依赖人写的日志文案。
+   */
   const waitReady = async () => {
-    for (let i = 0; i < 60; i++) {
-      if (ready) return;
-      await new Promise((r) => setTimeout(r, 500));
+    const deadline = Date.now() + 45_000;
+    while (Date.now() < deadline) {
+      if (server.exitCode != null) throw new Error(`server exited: ${server.exitCode}; ${serverErr.slice(-200)}`);
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/api/sessions`);
+        if (res.ok) return;
+      } catch {
+        /* 还没起来 */
+      }
+      await new Promise((r) => setTimeout(r, 400));
     }
     throw new Error('server start timeout; stderr(末200): ' + serverErr.slice(-200));
   };
@@ -501,30 +586,102 @@ async function l3() {
     // 建会话
     const sid = (await fetchJson(`http://127.0.0.1:${port}/api/sessions`, 'POST', { agentId: 'workbuddy', title: 'A107 e2e' })).session.id;
 
-    // 记录 msg1 之前的日志偏移
-    const logBefore1 = readLog().length;
+    // 记录 msg1 之前的进程数（注意：不能拿「日志行数」当进程数 ——
+    // 一个桩进程会写 start/user 多行，行数差会把「复用」误判成「又起了进程」）
+    const startsBefore1 = starts(readLog()).length;
 
     // 发消息1
     const ev1 = await sseChat(port, sid, 'hi');
-    const logAfter1 = readLog().length;
+    const startsAfter1 = starts(readLog()).length;
 
     // 发消息2
     const ev2 = await sseChat(port, sid, 'again');
-    const logAfter2 = readLog().length;
+    const startsAfter2 = starts(readLog()).length;
 
-    say('3-1 消息1有回复', ev1.some((e) => e.type === 'text'));
-    say('3-1 消息2有回复', ev2.some((e) => e.type === 'text'));
-    say('3-1 消息1窗口起进程数>=1', logAfter1 - logBefore1 >= 1, `delta=${logAfter1 - logBefore1}`);
-    say('3-1 消息2窗口起进程数=0（复用）', logAfter2 - logAfter1 === 0, `delta=${logAfter2 - logAfter1}`);
+    // /api/chat 走 RunProjector，事件是 block 生命周期（不是旧的 {type:'text'}）。
+    // 注意首段文本随 block_open 的快照一起下发，**没有**对应的 block_delta ——
+    // 只认 delta 会漏掉「一句话就说完」的回复（本项目里这几乎是常态）。
+    const textOf = (evs: Array<Record<string, unknown>>) =>
+      evs
+        .map((e) => {
+          if (e.type === 'block_delta' && typeof e.delta === 'string') return e.delta;
+          const block = e.type === 'block_open' ? (e.block as { text?: unknown } | undefined) : undefined;
+          return typeof block?.text === 'string' ? block.text : '';
+        })
+        .join('');
+    const types = (evs: Array<Record<string, unknown>>) => evs.map((e) => e.type).join(',');
+
+    say('3-1 消息1有回复', textOf(ev1).includes('stub-reply-1'), types(ev1).slice(0, 120));
+    say('3-1 消息2有回复', textOf(ev2).includes('stub-reply-2'), types(ev2).slice(0, 120));
+    say('3-1 消息1正常收尾（run_end ok）', ev1.some((e) => e.type === 'run_end' && e.status === 'ok'));
+    say('3-1 消息1窗口起进程数=1', startsAfter1 - startsBefore1 === 1, `delta=${startsAfter1 - startsBefore1}`);
+    say('3-1 消息2窗口起进程数=0（复用）', startsAfter2 - startsAfter1 === 0, `delta=${startsAfter2 - startsAfter1}`);
 
     // 验证 DB 里 resumeToken 已写入
     const db = new DatabaseSync(path.join(dataDir, 'chat.db'), { readOnly: true });
     const sess = db.prepare("SELECT sdk_session_id FROM sessions WHERE id = ?").get(sid) as { sdk_session_id?: string } | undefined;
     say('3-1 DB 里 resumeToken 已写入', typeof sess?.sdk_session_id === 'string' && sess.sdk_session_id.length > 0, `token=${sess?.sdk_session_id?.slice(0, 20)}`);
+
+    // ---- 3-2 预热：建会话就把进程热起来，首条消息复用（A109） ----
+    //
+    // 这条依赖 workbuddy 的探测状态是 ready —— 预热刻意只在「确认可用」时
+    // 启动（未登录/未安装不该白起 24MB 进程）。本机没登录时按「跳过」处理，
+    // 不伪装成通过：那不是代码问题，是环境没到那一步。
+    const ready = await waitAgentReady(port, 'workbuddy', 20_000);
+    if (!ready) {
+      console.log('[A107] ⊘ 3-2 预热跳过：workbuddy 状态不是 ready（未登录/网络受限），按设计不预热');
+    } else {
+      clearLog();
+      const warmSid = (
+        await fetchJson(`http://127.0.0.1:${port}/api/sessions`, 'POST', {
+          agentId: 'workbuddy',
+          title: 'A107 e2e warm',
+        })
+      ).session.id;
+      let warmStarted = false;
+      for (let i = 0; i < 60; i++) {
+        if (starts(readLog()).length > 0) {
+          warmStarted = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      say('3-2 建会话即预热（没发消息就起了进程）', warmStarted, `starts=${starts(readLog()).length}`);
+      say('3-2 预热阶段没有发送消息', !readLog().some((l) => l.event === 'user'));
+      if (warmStarted) {
+        const evWarm = await sseChat(port, warmSid, 'first');
+        say('3-2 首条消息有回复', evWarm.some((e) => e.type === 'block_delta'));
+        say(
+          '3-2 首条消息复用预热的进程（starts 仍为 1）',
+          starts(readLog()).length === 1,
+          `starts=${starts(readLog()).length}`
+        );
+      }
+    }
   } finally {
     server.kill();
     await new Promise((r) => setTimeout(r, 300));
   }
+}
+
+/** 轮询 /api/agents 直到某个 Agent 的探测结果明确（不是 unknown） */
+async function waitAgentReady(port: number, agentId: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const data = (await (await fetch(`http://127.0.0.1:${port}/api/agents`)).json()) as {
+        agents?: Array<{ id: string; status?: { availability?: string } }>;
+      };
+      const info = data.agents?.find((a) => a.id === agentId);
+      const availability = info?.status?.availability;
+      if (availability === 'ready') return true;
+      if (availability && availability !== 'unknown') return false;
+    } catch {
+      /* 还没起来 */
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
 }
 
 async function fetchJson(url: string, method: string, body: unknown) {
