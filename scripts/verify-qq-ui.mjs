@@ -118,7 +118,7 @@ const shot = name => page.screenshot({ path: join(OUT, `${name}.png`) });
 // ============= [1] 头像悬停名片 =============
 console.log('\n[1] 头像悬停名片');
 await go('/');
-await page.locator('nav button').nth(1).click();
+await page.locator('nav button[aria-label="通讯录"]').click();
 await page.waitForTimeout(900);
 
 // 通讯录列表不再分段（在线/待处理/未接入），所以定位头像不能依赖 <section>。
@@ -273,13 +273,13 @@ ok(
 );
 
 // 通讯录同样可以右键改备注（A24：消息和通讯录两栏都要有）
-await page.locator('nav button').nth(1).click();
+await page.locator('nav button[aria-label="通讯录"]').click();
 await page.waitForTimeout(600);
 await page.locator('.tc-list-item').first().click({ button: 'right' });
 await page.waitForTimeout(250);
 ok((await page.getByRole('menuitem', { name: '修改备注' }).count()) === 1, '通讯录行右键也有「修改备注」');
 await page.keyboard.press('Escape');
-await page.locator('nav button').nth(0).click();
+await page.locator('nav button[aria-label="聊天"]').click();
 await page.waitForTimeout(600);
 
 // ============= [4c] 输入框聚焦：不再出现黑色轮廓（A24 用户要求）=============
@@ -299,7 +299,7 @@ ok(
 
 // ============= [5] 通讯录搜索行 =============
 console.log('\n[5] 通讯录：搜索框 + 右侧添加 + 两个 Tab');
-await page.locator('nav button').nth(1).click();
+await page.locator('nav button[aria-label="通讯录"]').click();
 await page.waitForTimeout(700);
 ok((await page.getByPlaceholder('搜索 AGENT、群聊').count()) === 1, '搜索框在位');
 ok((await page.getByRole('button', { name: '添加' }).count()) === 1, '搜索框右侧是「+」');

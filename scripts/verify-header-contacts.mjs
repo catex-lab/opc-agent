@@ -415,7 +415,7 @@ await shot('verify-group-header');
 // ============= [3] 通讯录（QQ 式）=============
 console.log('\n[3] 通讯录：搜索胶囊 + Tab + 分区列表');
 await go('/');
-await page.locator('nav button').nth(1).click();
+await page.locator('nav button[aria-label="通讯录"]').click();
 await page.waitForTimeout(1200);
 
 ok((await page.getByRole('heading', { name: '通讯录' }).count()) === 0, '没有「通讯录」大标题（QQ 式无标题）');
@@ -530,7 +530,7 @@ ok(page.url().endsWith('/chat/g1'), '点群聊行进入该群聊', page.url());
 
 // 回到通讯录，点 + → 菜单 → 发起群聊 → 打开**与会话栏同一个**建群弹窗
 // （A48：用户要求两处入口统一成同一个新窗口逻辑，通讯录不再有内联多选态）
-await page.locator('nav button').nth(1).click();
+await page.locator('nav button[aria-label="通讯录"]').click();
 await page.waitForTimeout(600);
 await page.getByRole('button', { name: '添加' }).click();
 await page.waitForTimeout(200);
@@ -563,7 +563,7 @@ ok(
 console.log('\n[3c] 同族分组 + 区域角标 + 身份小节');
 CURRENT_AGENTS = AGENTS_WITH_FAMILY;
 await go('/');
-await page.locator('nav button').nth(1).click();
+await page.locator('nav button[aria-label="通讯录"]').click();
 await page.waitForTimeout(1200);
 {
   // 只有 Kimi 同族两条 → 只有它成组
@@ -650,7 +650,7 @@ const GEMINI_PAIR = [
 ];
 CURRENT_AGENTS = GEMINI_PAIR;
 await go('/');
-await page.locator('nav button').nth(1).click();
+await page.locator('nav button[aria-label="通讯录"]').click();
 await page.waitForTimeout(1200);
 {
   ok((await page.locator('[data-family-group="google"]').count()) === 1, 'Google 两条成组');
@@ -718,7 +718,7 @@ const HINTS_FIXTURE = [
 ];
 CURRENT_AGENTS = HINTS_FIXTURE;
 await go('/');
-await page.locator('nav button').nth(1).click();
+await page.locator('nav button[aria-label="通讯录"]').click();
 await page.waitForTimeout(1200);
 {
   // ── Qoder CN：只卡死，没有下一步 ──
@@ -784,7 +784,7 @@ await page.addInitScript(() => {
 });
 await go('/');
 // `go()` 是整页重载，导航会回到默认 Tab，得再点一次通讯录
-await page.locator('nav button').nth(1).click();
+await page.locator('nav button[aria-label="通讯录"]').click();
 await page.waitForTimeout(1200);
 
 // ── 全空时的提示条 ──

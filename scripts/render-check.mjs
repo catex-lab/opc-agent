@@ -317,7 +317,7 @@ await shot('dark-chat');
  */
 async function goContacts({ dark = false } = {}) {
   await go('/');
-  await page.locator('nav button').nth(1).click();
+  await page.locator('nav button[aria-label="通讯录"]').click();
   await page.waitForTimeout(1200);
   if (dark) {
     await page.evaluate(() => document.documentElement.classList.add('dark'));

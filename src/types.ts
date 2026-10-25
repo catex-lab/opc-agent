@@ -239,6 +239,48 @@ export interface Session {
    * 只凭「最后一条是 user」会误报成中断。
    */
   dangling?: { messageId: string; at: string } | null;
+  /**
+   * A117：会话所属项目（`projects.id`）。
+   *
+   * 后端 `sessions.project_id` 是 A98 加出来的列，此前前端从没还原过它 ——
+   * 因为前端没有项目视图，没人读。现在「项目视图」要按项目分会话，
+   * 所以必须在 fetchSessions 的映射里带上，否则刷新后所有会话都归到
+   * 「未归属项目」里，项目视图永远是空的。
+   *
+   * `undefined` = 未归属（没绑 cwd、或项目已被删）。读取侧必须容忍
+   * 悬空引用，见 server/db.ts 的 getSessionProject()。
+   */
+  projectId?: string;
+}
+
+/**
+ * A117：项目（`projects` 表）。
+ *
+ * 项目由**目录**唯一确定：同一个目录永远只有一行，`path` 是归一化后的
+ * 小写正斜杠路径。创建走「取或建」—— 前端不需要先建项目再用。
+ */
+export interface Project {
+  id: string;
+  /** 归一化路径（唯一键，用于记忆分区） */
+  path: string;
+  /** 展示名。默认取目录名，可改（PATCH /api/projects/:id） */
+  name: string;
+  createdAt: string;
+  lastOpenedAt: string;
+  /** 归属该项目的会话数，由 GET /api/projects 顺带算好 */
+  sessionCount: number;
+  /** 项目记忆的作用域统计；目录不可推导时为 null */
+  memory: ProjectMemoryStats | null;
+}
+
+/** A117：项目记忆统计，与 server/memory.ts 的 ProjectMemoryStats 同形 */
+export interface ProjectMemoryStats {
+  key: string;
+  exists: boolean;
+  coreTokens: number;
+  coreBudget: number;
+  skillCount: number;
+  skillTokens: number;
 }
 
 export interface CustomAgent {

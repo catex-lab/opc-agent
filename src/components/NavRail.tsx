@@ -1,6 +1,6 @@
-import { MessageCircle, Users, Menu } from 'lucide-react';
+import { MessageCircle, Users, Menu, FolderKanban } from 'lucide-react';
 
-export type NavKey = 'chats' | 'contacts';
+export type NavKey = 'chats' | 'projects' | 'contacts';
 
 interface NavRailProps {
   active: NavKey | 'settings';
@@ -48,6 +48,11 @@ export function NavRail({
     label: string;
   }> = [
     { key: 'chats', icon: MessageCircle, label: '聊天' },
+    /* A117：「项目」夹在聊天与通讯录之间，不是排在最后。
+       它和「聊天」是同族的 —— 项目是「按目录把会话归堆」，点进去看到的
+       还是会话；通讯录是 Agent 名录，属于另一类东西。把项目放到通讯录之后
+       会让人以为它是「又一个通讯录」，而它其实更接近「聊天的另一种组织方式」。 */
+    { key: 'projects', icon: FolderKanban, label: '项目' },
     { key: 'contacts', icon: Users, label: '通讯录' },
   ];
 

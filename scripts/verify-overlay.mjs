@@ -241,7 +241,7 @@ for (const dark of [false, true]) {
 
   // ── 1. 通讯录 · 悬浮名片 ──
   await open(page, '/?glass=1');
-  await page.locator('nav button').nth(1).click();
+  await page.locator('nav button[aria-label="通讯录"]').click();
   await page.waitForTimeout(600);
   {
     const avatars = page.locator('[data-agent-avatar]');

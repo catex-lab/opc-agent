@@ -21,14 +21,17 @@ import { useChat } from './hooks/useChat';
 import { useAgentRegistry } from './hooks/useAgentRegistry';
 import { getScenario } from './scenarios';
 import { exportSessionToMarkdown } from './utils/exportSession';
-import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode } from './types';
+import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project } from './types';
 
 import { NavRail, type NavKey } from './components/NavRail';
 import { TitleBar } from './components/TitleBar';
 import { CursorGlow } from './components/CursorGlow';
 import { ConversationList, markSessionRead } from './components/ConversationList';
 import { ContactsPanel } from './components/ContactsPanel';
+import { ProjectPanel } from './components/ProjectPanel';
+import { ProjectDetail } from './components/ProjectDetail';
 import { SidebarResizer } from './components/SidebarResizer';
+import { pickDirectory } from './workspace';
 import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { ChatHeader } from './components/ChatHeader';
 import { WorkspacePanel } from './components/WorkspacePanel';
@@ -69,6 +72,51 @@ function AppContent() {
   const isSettingsPage = location.pathname === '/settings';
 
   const [nav, setNav] = useState<NavKey>('chats');
+
+  /**
+   * A117：项目视图的状态。
+   *
+   * `projects` 放在 App 层而不是 ProjectPanel 内部：右侧详情页也要用同一个
+   * 项目对象（名字、路径、记忆统计），两栏各拉一份会出现「列表已改名、
+   * 详情还是旧名」这种半秒不一致。
+   *
+   * 拉取时机是「首次切到项目栏」而不是启动即拉：`GET /api/projects` 会
+   * 顺带算每个项目的记忆 token 与技能数（要读磁盘），启动时白白多付一次
+   * 与首屏无关的开销。
+   */
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
+  const fetchProjects = useCallback(async () => {
+    setProjectsLoading(true);
+    setProjectsError(null);
+    try {
+      const r = await fetch('/api/projects');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `读取项目失败（${r.status}）`);
+      const list: Project[] = (j.projects ?? []).map((p: any) => ({
+        id: p.id,
+        path: p.path,
+        name: p.name,
+        createdAt: p.created_at,
+        lastOpenedAt: p.last_opened_at,
+        sessionCount: p.sessionCount ?? 0,
+        memory: p.memory ?? null,
+      }));
+      setProjects(list);
+      // 只清理失效的选中项（项目被删），**不自动选第一个**：
+      // 自动选中会让窄屏用户一进项目栏就落在某个详情页上、看不到列表，
+      // 而宽屏则是一进来就有内容 —— 两种屏幕的行为不一致，且「为什么是
+      // 这个项目」说不清。统一成「没选就是没选」，右侧给一句提示。
+      setSelectedProjectId(prev => (prev && list.some(p => p.id === prev) ? prev : null));
+    } catch (e: any) {
+      setProjectsError(e?.message || '读取项目失败');
+    } finally {
+      setProjectsLoading(false);
+    }
+  }, []);
   /**
    * 正在查看资料的 Agent（通讯录点进去的二级页）。
    *
@@ -312,6 +360,26 @@ function AppContent() {
     fetchSessions();
   }, [fetchSessions]);
 
+  /**
+   * A117：每次进入项目栏都拉一次项目列表。
+   *
+   * 为什么不在启动时拉：`GET /api/projects` 要读每个项目的记忆文件来算
+   * token 占用，那是磁盘 IO，与首屏无关。
+   *
+   * 为什么不做「只拉一次」：项目列表里有两个数会**在别的页面变**——
+   * `sessionCount`（删会话 / 新会话落库）和 `memory`（用户在设置页改了
+   * 项目记忆）。只拉一次的话，用户切回来看到的是一份过期快照，而界面上
+   * 没有任何线索说明它是旧的。项目数量级是「十几个目录」，重拉一次的
+   * 成本远低于「数字不对」的困惑。
+   *
+   * 列表非空时不显示 loading 文案（见 ProjectPanel 里 `loading && length===0`
+   * 的判断），所以重拉不会闪一下骨架。
+   */
+  useEffect(() => {
+    if (nav !== 'projects') return;
+    void fetchProjects();
+  }, [nav, fetchProjects]);
+
   const updateCurrentSessionModel = useCallback(
     (modelId: string) => {
       setSelectedModel(modelId);
@@ -323,9 +391,14 @@ function AppContent() {
   const handleDeleteSession = useCallback(
     async (sessionId: string) => {
       const navigateTo = await deleteSession(sessionId);
+      // A117：删会话会改变它所属项目的 sessionCount，而那个数是后端在
+      // GET /api/projects 里算的 —— 重拉一次，项目列表的数字才跟着变。
+      // 只在「用户已经用过项目栏」时才拉：从没打开过项目栏的人，不该因为
+      // 删了一条会话就多付一次「读所有项目记忆文件」的开销。
+      if (projects.length > 0) void fetchProjects();
       if (navigateTo) navigate(navigateTo);
     },
-    [deleteSession, navigate]
+    [deleteSession, navigate, fetchProjects, projects.length]
   );
 
   /**
@@ -363,6 +436,100 @@ function AppContent() {
     },
     [navigate, setCurrentSessionId]
   );
+
+  /**
+   * A117：添加项目。
+   *
+   * 两个入口合一：不传 `cwd` 时开原生目录对话框（Electron），传了就按手输
+   * 路径提交（浏览器开发态 / 验证脚本没有 `window.opc`）。
+   * 后端是「取或建」—— 同一个目录重复添加只会刷新 last_opened_at，不会
+   * 造出第二行，所以这里不必先查重。
+   */
+  const handleAddProject = useCallback(async (cwd?: string) => {
+    let dir = cwd;
+    if (!dir) {
+      const picked = await pickDirectory();
+      if (!picked) return; // 用户取消 / 当前环境没有原生对话框：安静退出
+      dir = picked;
+    }
+    try {
+      const r = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd: dir }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || '添加项目失败');
+      await fetchProjects();
+      if (j.project?.id) setSelectedProjectId(j.project.id);
+      MessagePlugin.success(`已添加项目「${j.project?.name ?? dir}」`);
+    } catch (e: any) {
+      // 目录不存在是这里最常见的失败（后端 validateDirectory 会拦），
+      // 必须把后端那句话原样给用户 —— 它带着具体路径，比「添加失败」有用得多。
+      MessagePlugin.error(e?.message || '添加项目失败');
+    }
+  }, [fetchProjects]);
+
+  /** 在项目下开新会话：cwd 一起带上，后端会按 cwd 自动绑到同一个项目（A98） */
+  const handleNewSessionInProject = useCallback(
+    (project: Project, agentId: string) => {
+      const agent = registry.getAgent(agentId);
+      const newSession: Session = {
+        id: uuidv4(),
+        title: agent?.name || '新对话',
+        model: selectedModel,
+        agentId,
+        permissionMode: 'default',
+        createdAt: new Date(),
+        messages: [],
+        cwd: project.path,
+        // 本地先标上，落库前就能在项目详情里看见；后端会按 cwd 算出同一个 id
+        projectId: project.id,
+        isLocal: true,
+      };
+      setSessions(prev => [newSession, ...prev]);
+      setNav('chats');
+      setCurrentSessionId(newSession.id);
+      navigate(`/chat/${newSession.id}`);
+    },
+    [registry, selectedModel, setSessions, setCurrentSessionId, navigate]
+  );
+
+  const handleRenameProject = useCallback(async (project: Project, name: string) => {
+    try {
+      const r = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j?.error || '重命名失败');
+      }
+      // 本地先改，避免等一次往返才看到新名字
+      setProjects(prev => prev.map(p => (p.id === project.id ? { ...p, name } : p)));
+    } catch (e: any) {
+      MessagePlugin.error(e?.message || '重命名失败');
+      await fetchProjects();
+    }
+  }, [fetchProjects]);
+
+  const handleDeleteProject = useCallback(async (project: Project) => {
+    try {
+      const r = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j?.error || '移除项目失败');
+      }
+      await fetchProjects();
+      // 会话的 project_id 已被后端置空 —— 本地那份也要跟着清，否则项目
+      // 视图里还能看见已经解绑的会话（要等下一次 fetchSessions 才消失）
+      setSessions(prev => prev.map(s => (s.projectId === project.id ? { ...s, projectId: undefined } : s)));
+      MessagePlugin.success(`已移除「${project.name}」`);
+    } catch (e: any) {
+      MessagePlugin.error(e?.message || '移除项目失败');
+    }
+  }, [fetchProjects, setSessions]);
 
   /**
    * A33 分支：把「截至这条消息」的会话复制成一个新会话并跳过去。
@@ -466,7 +633,9 @@ function AppContent() {
     setNav(key);
     // 切换主导航时关掉资料页：否则点「聊天」后右侧还停在上一个 Agent 的资料
     setDetailAgentId(null);
-    if (key === 'contacts' || isSettingsPage) {
+    // A117：「项目」与通讯录同理 —— 它占的是列表栏，右侧换成项目详情。
+    // 不清会话的话，切到项目栏的第一帧右侧还会挂着 ChatPage（同上那段代价）。
+    if (key === 'contacts' || key === 'projects' || isSettingsPage) {
       setCurrentSessionId(null);
       navigate('/');
     }
@@ -763,7 +932,13 @@ function AppContent() {
    * 判据是「用户是否正在看某个具体对象」：打开了资料页或会话 → 显示内容区；
    * 否则显示列表。宽屏下两栏同时显示，这个判断不参与。
    */
-  const showContent = !!detailAgent || !!currentSession;
+  /**
+   * 单栏模式（窄屏）下「列表栏」与「内容区」互斥。
+   *
+   * A117：项目详情也算内容区 —— 否则窄屏点一个项目，右侧的详情根本不渲染，
+   * 看起来像「点了没反应」。
+   */
+  const showContent = !!detailAgent || !!currentSession || (nav === 'projects' && !!selectedProjectId);
   const showColumn = !compact || !showContent;
 
   /**
@@ -785,6 +960,26 @@ function AppContent() {
     setCurrentSessionId(null);
     navigate('/');
   }, [navigate, setCurrentSessionId]);
+
+  /* ── A117：项目视图的派生数据 ────────────────────────────────────────
+   *
+   * 会话按 `projectId` 在前端过滤，不再向后端要「某项目的会话」接口：
+   * 会话列表本来就整份在内存里（fetchSessions 一次拉全），多一个接口只会
+   * 多一份可能与主列表不一致的数据源。
+   *
+   * 排序按创建时间倒序 —— 项目详情回答的是「在这儿干过什么」，
+   * 最近干的排最前。不跟聊天列表的「置顶优先」：那是消息栏的规则，
+   * 在这里置顶会把一个三个月前的会话顶到最上面。 */
+  const selectedProject = useMemo(
+    () => projects.find(p => p.id === selectedProjectId) ?? null,
+    [projects, selectedProjectId]
+  );
+  const projectSessions = useMemo(() => {
+    if (!selectedProject) return [];
+    return sessions
+      .filter(s => s.projectId === selectedProject.id)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }, [sessions, selectedProject]);
 
   return (
     /*
@@ -828,7 +1023,7 @@ function AppContent() {
         {/* A37：设置不再替换主内容，而是浮在它上面（见下面的弹窗）。
             主界面继续渲染 —— 遮罩后面能看见原来的会话，关掉就接着看。 */}
         <>
-          {/* 中间：会话列表 或 通讯录。单栏模式下与内容区互斥。 */}
+          {/* 中间：会话列表 / 项目 / 通讯录。单栏模式下与内容区互斥。 */}
             {showColumn && (nav === 'chats' ? (
               <ConversationList
                 sessions={sessions}
@@ -844,6 +1039,17 @@ function AppContent() {
                 groups={sessions.filter(s => s.kind === 'group')}
                 onCreateGroup={handleCreateGroup}
                 onSelectGroup={handleSelectSession}
+              />
+            ) : nav === 'projects' ? (
+              <ProjectPanel
+                projects={projects}
+                loading={projectsLoading}
+                error={projectsError}
+                selectedId={selectedProjectId}
+                onSelect={setSelectedProjectId}
+                onAdd={handleAddProject}
+                onRefresh={fetchProjects}
+                compact={compact}
               />
             ) : (
               <ContactsPanel
@@ -878,7 +1084,41 @@ function AppContent() {
               <main
                 className="flex min-w-0 flex-1 flex-col"
               >
-                {detailAgent ? (
+                {nav === 'projects' ? (
+                  selectedProject ? (
+                    <ProjectDetail
+                      project={selectedProject}
+                      sessions={projectSessions}
+                      agents={registry.agents}
+                      onOpenSession={handleSelectSession}
+                      onNewSession={handleNewSessionInProject}
+                      onRename={handleRenameProject}
+                      onDelete={handleDeleteProject}
+                      onBack={compact ? () => setSelectedProjectId(null) : undefined}
+                      compact={compact}
+                    />
+                  ) : (
+                    /* 项目栏但一个都没选中：列表栏已经在说「还没有项目」，
+                       这里只交代一句「右边是什么」，不留一整块纯白。 */
+                    <div
+                      className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-2"
+                      style={{
+                        backgroundColor: 'var(--tc-surface-content)',
+                        borderRadius: 'var(--tc-column-radius)',
+                      }}
+                      data-project-detail-empty
+                    >
+                      <p className="text-body-lg" style={{ color: 'var(--td-text-color-secondary)' }}>
+                        {projects.length === 0 ? '还没有项目' : '选一个项目'}
+                      </p>
+                      <p className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                        {projects.length === 0
+                          ? '从左侧「+」选一个目录，它下面的会话会归到一起'
+                          : '左侧点一个项目，这里会显示它的记忆与全部会话'}
+                      </p>
+                    </div>
+                  )
+                ) : detailAgent ? (
                   // 资料页自带的 onBack 清掉 detailAgent，单栏模式下这就等于
                   // 「回到通讯录列表」（showContent 变 false），无需另开一个返回口。
                   <AgentDetailPanel

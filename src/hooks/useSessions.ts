@@ -95,6 +95,10 @@ export function useSessions() {
           systemPrompt: s.system_prompt ?? undefined,
           // 置顶是持久状态，刷新后必须还原，否则「钉住的会话」每次重开都掉下来
           pinned: s.pinned === 1 || s.pinned === true,
+          // A117：所属项目。漏掉这一行，项目视图按 project_id 分会话会
+          // 一个都分不出来（全部落到「未归属」），而列表页看起来完全正常 ——
+          // 是那种「只有一个页面空着」的静默失效。
+          projectId: s.project_id ?? undefined,
           createdAt: new Date(s.created_at),
           messages: []
         }));
