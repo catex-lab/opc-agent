@@ -118,19 +118,64 @@ declare module '@tencent-ai/agent-sdk' {
     description?: string;
   }
 
+  /**
+   * A107：长驻会话（`unstable_v2_createSession` 的返回）。
+   *
+   * 为什么值得单用这套 API 而不是继续 `query()`：`query()` 是 one-shot ——
+   * 收到第一个 `result` 就 `transport.close()` 把 24MB 的 CLI 进程杀掉，
+   * 下一条消息整套冷启动（实测 ≈15s）重付一遍。会话对象把进程攥在手里，
+   * `send()`/`stream()` 可以一轮轮往下走。
+   *
+   * 字段按 `lib/session.js`（SessionImpl）实际实现列，宁缺毋滥。
+   */
   export interface SdkSession {
+    /** 立即可用：resumeSessionId > options.sessionId > 自动生成的 uuidv7 */
+    readonly sessionId: string;
+    /** 发一条用户消息；内部会确保 transport 已 initialize */
+    send(message: string): Promise<void>;
+    /** 读这一轮的回复；到 `result` 自行结束 */
+    stream(): AsyncIterable<SdkMessage>;
+    /** 中止当前轮：abort 本地控制器 + 给 CLI 发 interrupt 控制请求 */
+    interrupt(): Promise<void>;
+    /** 未连接时改 transport options（变成 CLI 参数）；已连接则发控制请求 */
+    setPermissionMode(mode: string): Promise<void>;
+    getPermissionMode(): string;
+    setModel(model: string): Promise<void>;
+    getModel(): string | undefined;
+    /** 运行时替换 canUseTool（QueryController 的 getter 是惰性的，立即生效） */
+    setCanUseTool(handler: CanUseTool): void;
+    /** 只 spawn + boot，不发 initialize —— 用来提前热身 */
+    prewarm(): Promise<void>;
+    close(): void;
     getAvailableModels(): Promise<AvailableModel[]>;
     [key: string]: unknown;
   }
 
   export function unstable_v2_createSession(options?: {
     cwd?: string;
+    model?: string;
+    maxTurns?: number;
+    systemPrompt?: string;
+    permissionMode?: string;
+    canUseTool?: CanUseTool;
+    /** 显式端口等透传参数（对象 → `--flag value`） */
+    extraArgs?: Record<string, string | null>;
     [key: string]: unknown;
-  }): Promise<SdkSession>;
+  }): SdkSession;
 
   export function unstable_v2_resumeSession(
-    ...args: unknown[]
-  ): Promise<SdkSession>;
+    sessionId: string,
+    options?: {
+      cwd?: string;
+      model?: string;
+      maxTurns?: number;
+      systemPrompt?: string;
+      permissionMode?: string;
+      canUseTool?: CanUseTool;
+      extraArgs?: Record<string, string | null>;
+      [key: string]: unknown;
+    }
+  ): SdkSession;
 
   // ============= 其余导出（保持宽松，用到时再收窄） =============
 
