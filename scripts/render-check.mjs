@@ -607,13 +607,17 @@ try {
         tag: el.tagName.toLowerCase(),
       };
     };
-    // secondary 的**浏览器解析值**。令牌在 :root 上是十六进制（#737373），
+    // primary 的**浏览器解析值**。令牌在 :root 上是十六进制（#fafafa / #171717），
     // 而 getComputedStyle 返回 rgb() —— 拿两者直接比永远是 false（踩过：
     // 明明改对了色却报红）。所以在页面里造一个探针元素，让浏览器自己算一遍。
+    //
+    // A116：这里原本探的是 --td-text-color-secondary。用户要求「agent 回复的
+    // 正文……使用亮白色，不要灰色」，正文从 secondary 提回 primary，
+    // 期望值随之换档 —— 断言本身（「正文色 === 期望令牌」）没变。
     const probeEl = document.createElement('span');
-    probeEl.style.color = 'var(--td-text-color-secondary)';
+    probeEl.style.color = 'var(--td-text-color-primary)';
     document.body.appendChild(probeEl);
-    const secondary = getComputedStyle(probeEl).color;
+    const primary = getComputedStyle(probeEl).color;
     probeEl.remove();
     // 顺便把**所有**消息里出现过的 part 名收一遍。这里纠正一个此前的误判：
     // md_li / md_ul / md_ol **确实存在**，只是只有含列表的那条消息里才有，
@@ -626,7 +630,7 @@ try {
       }
     }
     return {
-      secondary,
+      primary,
       parts: [...allParts],
       p: pick('[part~="md_p"]'),
       pAll: Array.from(sr.querySelectorAll('[part~="md_p"]')).map(el => parseFloat(getComputedStyle(el).fontSize)),
@@ -646,15 +650,17 @@ try {
   } else {
     console.log(`  [调试] parts=${typo.parts.join(',')} | 首元素=${typo.firstPart}`);
     console.log('  [调试] 结构:\n' + (typo.dump ?? []).map(d => '      ' + d).join('\n'));
-    const expectColor = typo.secondary;
+    const expectColor = typo.primary;
     const checks = [
       // 14px：原来 15px 在 12–13px 的界面里独占一层
       [typo.p && typo.p.fontSize === 14, '正文 14px', typo.p && `${typo.p.fontSize}px`],
       // 全文统一：段落与列表不能一个 14 一个 15
       [typo.pAll.every(s => s === 14), '段落字号全文统一', typo.pAll.join('/')],
       [typo.li && typo.li.fontSize === 14, '列表项 14px', typo.li && `${typo.li.fontSize}px`],
-      // 颜色降到 secondary：浅色 #737373 / 深色 #a3a3a3
-      [!!typo.p && typo.p.color === expectColor, '正文用 secondary 色（不是最黑的那档）', `${typo.p?.color} vs ${expectColor}`],
+      // 颜色走 primary：浅色 #171717 / 深色 #fafafa。
+      // A113 曾降到 secondary（长文不压抑），A116 按用户要求「亮白色，不要灰色」
+      // 提回来 —— 层级交给字号与留白，不靠把正文压灰。
+      [!!typo.p && typo.p.color === expectColor, '正文用 primary 色（最亮/最重那档）', `${typo.p?.color} vs ${expectColor}`],
       // 首块上留白为 0：头部行与正文顶端要对齐。
       // 实现方式见 index.css：不能用 ::part(md_p):first-child（那条选择器会被
       // 浏览器整条丢弃），改成「所有块 margin-top 一律为 0」，所以这条对

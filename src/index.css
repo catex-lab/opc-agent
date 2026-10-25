@@ -397,7 +397,7 @@ select:focus-visible {
   /* 旧名保留为别名：20+ 处引用不必逐个改，语义与值都跟着上面走。 */
   --tc-hover-chrome: var(--tc-fill-hover);
 
-  /* ── A115：权限模式图标的黑白化 ─────────────────────────────────────
+  /* ── A115/A116：权限模式图标的黑白化 ─────────────────────────────────
    *
    * 用户两条反馈：「将图中权限的图标替换为黑白色，不要彩色」＋「深色模式下
    * 红框位置的锁图标仍是黑色导致看不清」。根因是同一处：
@@ -405,21 +405,23 @@ select:focus-visible {
    * 「默认」是 #1f1f1f —— 在深色主题的输入框底（#1b1b1b）上对比度不到
    * 2:1，等于没有。
    *
-   * 现在改成一条跟随主题的中性阶，颜色彻底退出编码，四档只由形状区分
-   * （闭锁 / 编辑 / 清单 / 开锁）：
+   * 现在颜色彻底退出编码，四档只由形状区分（闭锁 / 编辑 / 清单 / 开锁）。
    *
-   *   默认      primary     最重 —— 这一档是「每次都要确认」，最常看
-   *   自动编辑  secondary   中间
-   *   只读      placeholder 最轻 —— 只出计划不动手
-   *   全放行    primary     与默认同重 —— 它是另一端极端（跳过所有确认），
-   *                          同样得一眼看见；两颗都是锁，形状区分足够
+   * A116（用户反馈）：「暗色模式下，图标、文字使用亮白色，不要灰色……
+   * 权限选框内的图标，亮色模式下同理，都要保证文字、图标清晰度」。
+   * A115 当时排的是 primary→secondary→placeholder 三档递减，实测在深色下
+   * 「自动编辑」#a3a3a3 与「只读」#737373 压在 #1b1b1b 上明显发灰，
+   * 四档里有两档读不清 —— 而这几颗图标只有 14px、细描边，明度一掉就散。
    *
-   * 为什么不一路递降到 disabled：最宽松的一档看起来「被禁用」比「彩色」
-   * 更糟，用户会以为选择器坏了。 */
+   * 所以四档**统一到 primary**（深色 #fafafa / 浅色 #171717）。
+   * 语义编码不再由明度承担：A115 已经把「四档靠形状区分」定下来了
+   * （闭锁=默认、编辑笔=自动编辑、清单=只读、开锁=全放行），
+   * 明度再分档等于给同一件事编两套码，且必然牺牲小图标的清晰度。
+   * ⚠️ 不要再改回三档递减 —— 那不是「层级」，那是让后两档看不清。 */
   --tc-perm-default: var(--td-text-color-primary);
-  --tc-perm-accept: var(--td-text-color-secondary);
-  --tc-perm-plan: var(--td-text-color-placeholder);
-  --tc-perm-bypass: var(--tc-perm-default);
+  --tc-perm-accept: var(--td-text-color-primary);
+  --tc-perm-plan: var(--td-text-color-primary);
+  --tc-perm-bypass: var(--td-text-color-primary);
 
   /* ── A83 质感层：微色阶 / 柔边 / 焦点阴影 ────────────────────────────
    *
@@ -740,6 +742,15 @@ select:focus-visible {
      不对齐会显得两个标题栏各说各话。窄栏内容靠 flex 在 88px 内分配。
      原值 77 偏紧，标题与底边线之间几乎没有留白，看起来像被压扁。 */
   --panel-header-height: 88px;
+
+  /* ── 浮层标题栏高度（dense，A116）──
+     设置弹窗的标题栏。用户反馈「红框位置上下占了太多空间」：88px 在
+     一块 700px 高的浮层里占 12.5%，而里面只有「设置」两个字 + 一颗关闭键。
+     88px 的由来是「并排两栏的标题必须落在同一水平线上」（见上面注释），
+     浮层只有一栏、没有对齐对象，所以可以单独压到 60px（= 36 块高 + 12×2 留白）。
+     ⚠️ 不要再把 --panel-header-height 直接改小来「省空间」—— 那个值同时
+        撑着消息列表与资料页的标题对齐。 */
+  --panel-header-height-dense: 60px;
 
   /* ── 会话头部（compact）高度 ──
      PanelHeader 的 compact 变体、群设置面板的顶边、群成员栏的栏头，
@@ -2647,6 +2658,28 @@ html[data-opc-glass='1'].dark .tc-btn-brand:active:not(:disabled) {
   background-color: var(--tc-fill-hover) !important;
 }
 
+/* A116（用户反馈）：「暗色模式下，图标、文字使用亮白色，不要灰色，例如刷新
+ * 按钮图标及文案……亮色模式下同理」。
+ *
+ * 设置页「登录配置」右上角那颗「刷新」是 variant="text"，默认前景走上面的
+ * secondary（深色 #a3a3a3 / 浅色 #737373）—— 它是这一屏里最该被点的按钮，
+ * 却比正文还淡。提到 primary（深色 #fafafa / 浅色 #171717）。
+ *
+ * ## 为什么不用内联 style
+ *
+ * 上面那条 `.t-button--variant-text` 带 `!important`，而内联样式**没有**
+ * !important 时压不过类规则的 !important（CSS 级联：!important 声明 >
+ * 普通内联声明）。在 SettingsPage 里写 `style={{ color: primary }}` 实测
+ * 无效，仍是 #a3a3a3 —— verify-a116-ui 的 [3] 组就是先红后绿的。
+ *
+ * ## 为什么只放这一颗
+ *
+ * text 按钮全应用还有「取消」「编辑」「删除」等，它们是真的次要操作，
+ * 一起提亮会让主次不分。所以用属性选择器按用途放行，不动通用档。 */
+.t-button--variant-text[data-refresh-login] {
+  color: var(--td-text-color-primary) !important;
+}
+
 .t-button--variant-base {
   background-color: var(--td-bg-color-component) !important;
   color: var(--td-text-color-primary) !important;
@@ -3251,7 +3284,11 @@ html[data-opc-glass='1'] t-chat-sender {
    无法分别选中；下面的取色策略因此保证两者共用同一底色时都成立。
    ===================================================================== */
 .chat-markdown {
-  color: var(--td-text-color-secondary);
+  /* A116（用户反馈）：「暗色模式下，图标、文字使用亮白色，不要灰色，例如……
+     agent 回复的正文……亮色模式下同理，都要保证文字、图标清晰度」。
+     这里从 secondary 改回 primary —— 撤销 A113 的第 2 项决定（见下面 md_p 段）。
+     两个主题同时生效：深色 #fafafa / 浅色 #171717。 */
+  color: var(--td-text-color-primary);
   /* 长回答优先阅读：略宽于 A4 正文但限制行长，降低横向扫读成本。
      A113：跟随正文降到 1.75（见下面 md_p 段的说明）。 */
   line-height: 1.75;
@@ -3274,11 +3311,20 @@ html[data-opc-glass='1'] t-chat-sender {
  *   1. **字号 15px → 14px**。15px 是「文档正文」的量级，而这里是 IM 消息流，
  *      周围（会话列表、时间戳、操作行）都是 12–13px，15px 显得独占一层。
  *      14px 与输入框的 15px 也拉开了「我打的」和「它回的」的层级差。
- *   2. **颜色 primary → secondary**（浅色 #171717 → #737373 一档的灰）。
- *      整篇 #171717 在浅色界面里是一块最重的墨，长回答尤其压抑；
- *      引用块本来就用 secondary，正文却用 primary，两者反而不一致。
- *      标题仍保留 primary —— 层级靠「重色 + 大字」给，正文让出来。
- *   3. **行高 1.72 → 1.75**。字号降了，行高要略补，否则 14px 密成一团。 */
+ *   2. ~~**颜色 primary → secondary**~~ —— **A116 已撤销，见下**。
+ *   3. **行高 1.72 → 1.75**。字号降了，行高要略补，否则 14px 密成一团。
+ *
+ * ## A116：颜色改回 primary（用户明确要求）
+ *
+ * A113 把正文从 #171717 降到 #737373，理由是「整篇重色压抑」。
+ * A116 用户看的是**深色**界面：「agent 回复的正文」在 #1b1b1b 上压 #a3a3a3，
+ * 一屏长回答整块发灰，读起来像半透明的次要信息。用户原话是
+ * 「图标、文字使用亮白色，不要灰色……亮色模式下同理，都要保证清晰度」。
+ *
+ * 所以两个主题都回到 primary（深色 #fafafa / 浅色 #171717）。
+ * ⚠️ 别再按「长文用灰降低压迫感」的思路调回去 —— 那是排版上的常见做法，
+ *    但在这个界面里，正文和「已思考」「工具摘要」这类**真正的次要信息**
+ *    会变成同一个灰度，用户分不清哪句是答案。层级交给字号和留白去做。 */
 .chat-markdown t-chat-md-content::part(md_p),
 .chat-markdown t-chat-md-content::part(md_span),
 .chat-markdown t-chat-md-content::part(md_li),
@@ -3286,7 +3332,7 @@ html[data-opc-glass='1'] t-chat-sender {
 .chat-markdown t-chat-md-content::part(md_ol) {
   font-size: 14px;
   line-height: 1.75;
-  color: var(--td-text-color-secondary);
+  color: var(--td-text-color-primary);
 }
 
 /* 正文标题层次：信息结构靠字号与留白建立，避免整篇回答变成同一灰度的长段落。

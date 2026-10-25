@@ -283,14 +283,18 @@ ok(
 );
 /* A115（用户要求）：「权限图标替换为黑白色，不要彩色」。
  * A84 原本在这里断言「四档 4 色分得开」—— 那条要求从 A115 起反过来了：
- * 颜色退出编码，四档只由形状区分。所以这里改成断言「四档全是中性灰」。
- * 档位数从 4 变成 3 是**有意的**（默认与全放行同重，见 index.css 的
- * --tc-perm-* 注释），不是回归。 */
+ * 颜色退出编码，四档只由形状区分。所以这里改成断言「四档全是中性色」。
+ *
+ * A116 又收紧了一步：用户反馈「暗色模式下……权限选框内的图标……不要灰色」，
+ * 于是四档从 primary/secondary/placeholder 三档递减**统一到 primary**，
+ * 这里量到的只剩 1 档（本脚本只断言「中性」，具体是不是 primary 由
+ * verify-a116-ui [3] 组比对 --td-text-color-primary 的解析值）。
+ * 档位从 4 → 3 → 1 都是有意的，不是回归。 */
 const permColors = new Set(permOptions.map(o => o.color));
 const neutralCount = permOptions.filter(o => isNeutral(o.color)).length;
 ok(
   neutralCount === permOptions.length && permOptions.length > 0,
-  `四档图标全是中性灰（${neutralCount}/${permOptions.length}）`,
+  `四档图标全是中性色（${neutralCount}/${permOptions.length}）`,
   `${permColors.size} 档：${[...permColors].join(' / ')}`
 );
 await page.keyboard.press('Escape');

@@ -13,7 +13,8 @@
  *   [2] 权限图标黑白化    —— 第 1/6 条「深色模式下锁图标仍是黑色看不清」。
  *       断言计算样式：四档图标必须全是中性色，且深色下明度必须高。
  *   [3] 设置页导航对比度  —— 第 8 条「菜单文字高亮，提高对比度」。
- *       未选中项与面板底的对比度 ≥ 4.5:1（WCAG AA 小字号），选中项加粗。
+ *       未选中项与面板底的对比度 ≥ 4.5:1（WCAG AA 小字号）；选中项**不加粗**
+ *       （A116 反转：用户要求「选中回显态不要加粗，使用原字体」）。
  *   [4] 弹窗立体影        —— 第 7 条「弹窗设计立体透明阴影效果」。
  *       四层外影（逐层放宽、Y 偏移同向、全半透明）+ 两条 inset 厚度边。
  *   [5] 群头像三处联动    —— 第 2 条「为群聊增加更换头像的功能」。
@@ -318,7 +319,7 @@ console.log('\n[2] 权限模式图标：四档中性色，深色下不消失');
 }
 
 // ============= [3] 设置页导航对比度 =============
-console.log('\n[3] 设置页导航：未选中项对比度达标，选中项加粗');
+console.log('\n[3] 设置页导航：未选中项对比度达标，选中项不加粗');
 {
   const { ctx, page } = await newPage();
   await page.goto(base + '/settings', { waitUntil: 'networkidle' });
@@ -352,7 +353,13 @@ console.log('\n[3] 设置页导航：未选中项对比度达标，选中项加�
     `最低 ${minRatio.toFixed(2)}:1（${inactive.map(n => n.label).join('/')}）`);
 
   const activeItem = nav.find(n => n.active);
-  ok(!!activeItem && activeItem.weight >= 600, '选中项加粗（≥600）', `weight=${activeItem?.weight}`);
+  // A116（用户要求）：「选中回显态不要加粗，使用原字体」—— 这条断言随之反转。
+  // 原来是 `weight >= 600`，现在要求「与未选中项完全相同」：任何字重差都会
+  // 让那一行在选中/取消时横向跳动，比 600 这一个具体值更该守。
+  const inactiveWeight = inactive[0]?.weight;
+  ok(!!activeItem && activeItem.weight === inactiveWeight,
+    '选中项不加粗（与未选中项同字重）',
+    `选中 ${activeItem?.weight} vs 未选中 ${inactiveWeight}`);
   // 「在哪一区」不能只靠 12% 的浅底色说活 —— 选中项还要与未选中项分得开
   const activeRatio = activeItem ? contrast(activeItem.color, bg) : 0;
   ok(activeRatio >= 3, '选中项与底的对比度也达标（品牌色不是浅灰）', `${activeRatio.toFixed(2)}:1`);

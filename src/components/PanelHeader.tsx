@@ -83,6 +83,19 @@ export interface PanelHeaderProps {
    */
   compact?: boolean;
   /**
+   * 密排变体（A116）：垂直内边距 20px → 12px，最小高度 88px → 60px。
+   *
+   * **只给浮层用**（当前唯一调用方是设置弹窗）。它和 `compact` 不是一回事：
+   * compact 改的是**结构**（去掉副标题行、字号降一档），dense 只压**留白**，
+   * 标题字号、字重、单/双行结构全不变。
+   *
+   * 为什么要有它：设置是一块 700px 高的浮层，88px 的标题栏吃掉 12.5%，
+   * 而标题栏里只有「设置」两个字和一颗关闭键 —— 用户原话「红框位置上下
+   * 占了太多空间」。88px 那个值是为了让**并排的两栏标题落在同一条水平线上**
+   * （见文件头的垂直节奏），浮层里只有一栏，没有对齐对象，不必背这个约束。
+   */
+  dense?: boolean;
+  /**
    * 标题栏底色。
    *
    * - `chrome`（默认）：框架面。列表栏 / 资料页 / 会话头部用，与左侧导航连成
@@ -127,6 +140,7 @@ export function PanelHeader({
   children,
   level = 'page',
   compact = false,
+  dense = false,
   surface = 'chrome',
   divider = true,
   onBack,
@@ -146,7 +160,13 @@ export function PanelHeader({
         // 其余位置保持统一高度，两栏并排时标题与分隔线才对得齐。
         // 52 是 `--tc-header-height`：群设置面板要从这条底边往下铺、
         // 群成员栏的栏头也用它，三处必须同值。
-        minHeight: compact ? 'var(--tc-header-height)' : 'var(--panel-header-height)',
+        // A116：dense 走自己的令牌（60px），不借用上面两个 —— 它只服务浮层，
+        // 一旦和栏级标题共用一个值，压留白就会连带压到消息列表和资料页。
+        minHeight: compact
+          ? 'var(--tc-header-height)'
+          : dense
+            ? 'var(--panel-header-height-dense)'
+            : 'var(--panel-header-height)',
         // 标题栏属于「框架」：与导航条、列表栏同一个令牌。
         // 三处共用一个值，才谈得上「标题栏色调与左侧栏一致」——
         // 靠「三处都记得写同一个令牌」是靠不住的。
@@ -161,7 +181,13 @@ export function PanelHeader({
     >
       <div
         className={`flex items-center gap-3 ${
-          compact ? 'px-4 py-2.5 sm:px-6' : isPage ? 'px-4 py-5 sm:px-6' : 'px-4 py-5'
+          compact
+            ? 'px-4 py-2.5 sm:px-6'
+            : dense
+              ? 'px-4 py-3 sm:px-6'
+              : isPage
+                ? 'px-4 py-5 sm:px-6'
+                : 'px-4 py-5'
         }`}
       >
         {onBack && (
@@ -181,7 +207,9 @@ export function PanelHeader({
         <div
           className="flex min-w-0 flex-1 flex-col"
           // compact 是单行结构，没有副标题来占位，块高不锁 44px
-          style={compact ? undefined : { minHeight: 44 }}
+          // dense 仍锁块高（双行结构不变），只是从 44 收到 36 ——
+          // 36 装得下 17px/1.5 的标题行（25.5px），副标题也还有位置。
+          style={compact ? undefined : { minHeight: dense ? 36 : 44 }}
         >
           <div className="flex items-center gap-2">
             <TitleTag

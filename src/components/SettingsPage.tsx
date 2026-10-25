@@ -457,6 +457,10 @@ export function SettingsPage({
           且没有 header 容器与底边线，是全应用最显眼的标题栏不一致。 */}
       <PanelHeader
         title="设置"
+        // A116（用户反馈）：「设置页的红框位置上下占了太多空间，请缩小」。
+        // dense 把垂直留白 20px→12px、整栏 88px→60px。设置是浮层，
+        // 没有「与旁边一栏标题对齐」的约束，可以单独压。
+        dense
         // A37：**不再传副标题**。用户要求「取消组件内的小字」——
         // 分区副标题（「主题、界面透明度、鼠标光斑」）与左侧导航里那行小字
         // 是同一句话说了两遍，而且它描述的正是下面三个分区按钮的内容，
@@ -482,7 +486,12 @@ export function SettingsPage({
                 // 弹窗圆角 16px，把按钮收进 (14, 16) 就落在圆角弧线的顺势位置。
                 // 用 transform 而不是改 PanelHeader 的 padding：那个组件还有
                 // 通讯录、会话头部两个消费方，它们的布局不该被设置弹窗带走。
-                transform: 'translate(9px, -8px)',
+                //
+                // A116：标题栏压到 60px 后，上边距从 20px 变成 12px，原来
+                // 那 -8px 会把按钮顶到距弹窗顶 3px —— 直接骑在 16px 圆角的
+                // 弧线上。所以纵向位移改成 0，让按钮回到「距顶 11px」这个
+                // A114 实测过的位置；横向 9px 不变（那一维没动）。
+                transform: 'translate(9px, 0)',
               }}
               aria-label="关闭设置"
               data-settings-close
@@ -520,8 +529,12 @@ export function SettingsPage({
                      未选中项原来是 `--td-text-color-secondary`（浅色 #737373），
                      压在 #f5f5f5 的设置面板上对比度约 3.6:1 —— 小字号下读着发虚，
                      扫一遍找不到自己想改的那一区。现在提到 primary（#171717），
-                     与正文同档；选中项保留品牌色，并额外加粗一档，
-                     「在哪一区」不再只靠底色那一层 12% 的浅灰说话。 */
+                     与正文同档；选中项保留品牌色。
+                     A116（用户要求）：「选中回显态不要加粗，使用原字体」——
+                     A115 曾额外加一档 font-semibold，本意是让「在哪一区」不只靠
+                     12% 浅底说话。但加粗会改变文字宽度，选中/取消时那一行会轻微
+                     横向跳动，而底色 + 品牌色已经是两层足够的提示。故撤掉字重，
+                     只留颜色。 */
                   color: active ? 'var(--td-brand-color)' : 'var(--td-text-color-primary)',
                 }}
                 data-settings-section={key}
@@ -529,7 +542,7 @@ export function SettingsPage({
                 <Icon size={16} className="shrink-0" />
                 {/* `text-sm` 是本项目唯一一处 Tailwind 裸字号；换成 --text-body-lg(14px)，
                     与设置页其余文字同一刻度 */}
-                <span className={`text-body-lg ${active ? 'font-semibold' : ''}`}>{label}</span>
+                <span className="text-body-lg">{label}</span>
               </button>
             );
           })}
@@ -683,6 +696,14 @@ export function SettingsPage({
               icon={<RefreshIcon />}
               onClick={checkLoginStatus}
               loading={loginStatus.checking}
+              /* A116（用户反馈）：「暗色模式下，图标、文字使用亮白色，不要灰色，
+                 例如刷新按钮图标及文案」。
+                 ⚠️ 这里**不能**用内联 style 改色：index.css 的
+                 `.t-button--variant-text { color: ... !important }` 带 !important，
+                 而内联样式没有 !important 时压不过类规则的 !important
+                 （实测内联写了也仍是 secondary #a3a3a3，见 verify-a116-ui [3]）。
+                 改色落在 index.css 的 `[data-refresh-login]` 选择器上。 */
+              data-refresh-login
             >
               刷新
             </Button>
