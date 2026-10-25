@@ -92,6 +92,7 @@
     "verify:a105": "tsx scripts/verify-a105.mjs",
     "verify:a106": "tsx scripts/verify-a106-cli-upgrade.ts",
     "verify:a107": "tsx scripts/verify-a107-session-pool.ts",
+    "verify:a111": "tsx scripts/verify-a111-raw-passthrough.ts",
     "verify:logo": "node scripts/verify-logo.mjs"
   },
   "dependencies": {

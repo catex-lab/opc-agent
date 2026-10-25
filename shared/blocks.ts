@@ -140,7 +140,42 @@ export interface NoteBlock {
   level: 'info' | 'warn';
 }
 
-export type Block = TextBlock | ThinkingBlock | ToolBlock | ImageBlock | NoteBlock | ArtifactBlock;
+/**
+ * 原生事件旁路块（A111）。
+ *
+ * 装的是**适配器没能归一化**的原生事件原文。存在的意义只有一条：不丢。
+ *
+ * 设计上刻意保持「一个 run 最多一块」——同一轮里几十条未识别事件如果各占一块，
+ * 消息流会被冲垮；聚合到一块、折叠展示，既不挡路又随时可查。
+ *
+ * 体积控制放在投影器（`MAX_RAW_ENTRIES` / `MAX_RAW_ENTRY_BYTES`）：payload 是
+ * 各家 CLI 的原生 JSON，可能有整段上下文，直接落库会把 SQLite 撑爆。
+ */
+export interface RawBlock {
+  id: string;
+  type: 'raw';
+  /** 未识别事件的条数（含已被省略的） */
+  count: number;
+  /** 保留下来的条目（按到达顺序）；超过上限后只增 count 不加条目 */
+  entries: RawEntry[];
+  /** 因体积/条数上限被省略的条数 */
+  omitted: number;
+  /** 收尾时间；缺失 = 本轮还在继续追加 */
+  endedAt?: number;
+}
+
+export interface RawEntry {
+  /** `协议:原生类型`，如 `sdk:stream_event` */
+  channel: string;
+  /** 到达时刻（毫秒） */
+  at: number;
+  /** 原生事件原文（已按 MAX_RAW_ENTRY_BYTES 截断） */
+  payload: unknown;
+  /** payload 被截断时置真，UI 提示「仅保留前 N 字节」 */
+  truncated?: boolean;
+}
+
+export type Block = TextBlock | ThinkingBlock | ToolBlock | ImageBlock | NoteBlock | ArtifactBlock | RawBlock;
 
 // ============= 事件（v2） =============
 
@@ -238,7 +273,19 @@ export function applyRunEvent(blocks: Block[], ev: RunEvent): boolean {
     case 'block_patch': {
       const block = blocks.find(b => b.id === ev.blockId);
       if (!block) return false;
-      Object.assign(block, ev.patch);
+      // `append` 是 raw 块专用的**追加语义**（A111），必须单独处理。
+      //
+      // 踩过的坑：投影器发的是 `patch: { count, append: entry }`，想表达「只把
+      // 新增那一条带上，别每次把前 19 条重发一遍」。但这里原本是一句裸的
+      // `Object.assign(block, ev.patch)` —— 于是 `append` 变成了块上的一个**游离
+      // 字段**，`entries` 一次都没长过。表现是：流式过程中 raw 块只显示第一条，
+      // 刷新一次（走 snapshot 从库里读）才突然全出来。
+      //
+      // 这类 bug 特别难发现，因为投影器的单测全绿（服务端 `this.blocks` 是对的），
+      // 而客户端那条应用路径没人测。所以 verify-a111 里补了 applyRunEvent 的断言。
+      const { append, ...rest } = ev.patch as { append?: RawEntry } & Record<string, unknown>;
+      Object.assign(block, rest);
+      if (block.type === 'raw' && append) block.entries.push(append);
       return true;
     }
 
@@ -273,7 +320,11 @@ export function applyRunEvent(blocks: Block[], ev: RunEvent): boolean {
 
 /** 当前块序列的「进行中」摘要，供 UI 显示「思考中…」「执行中…」 */
 export function runActivity(blocks: readonly Block[]): 'thinking' | 'tool' | 'writing' | 'idle' {
-  const last = [...blocks].reverse().find(b => b.type !== 'note');
+  // 找「最后一个有意义的主流程块」：note 是提示、raw 是旁路通道，两者都不代表
+  // 当前在干什么。A111 之前只跳过 note，于是 SDK 在正文之后来一条原生事件
+  // （stream_event 很常见），阶段就掉回 idle，spinner 从「正在生成」变回
+  // 「正在处理」—— 明明还在跑，看起来却像卡住了。
+  const last = [...blocks].reverse().find(b => b.type !== 'note' && b.type !== 'raw');
   if (!last) return 'idle';
   if (last.type === 'thinking' && last.state === 'streaming') return 'thinking';
   if (last.type === 'tool' && (last.status === 'running' || last.status === 'pending')) return 'tool';

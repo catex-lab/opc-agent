@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Loading, MessagePlugin } from 'tdesign-react';
 import { ChatMarkdown } from '@tdesign-react/chat';
 import { Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, TextSelect, User, Image as ImageIcon } from 'lucide-react';
-import { Message, Model, PermissionRequest, RegisteredAgent, Block, ThinkingBlock, ToolBlock } from '../types';
+import { Message, Model, PermissionRequest, RegisteredAgent, Block, ThinkingBlock, ToolBlock, RawBlock } from '../types';
 import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
 import { BackgroundTasksPill } from './BackgroundTasksPill';
@@ -70,6 +70,52 @@ function ThinkingView({ block }: { block: ThinkingBlock }) {
         {/* A83：思考正文在流式时逐字浮现；思考结束后传 false ——
             历史消息打开时不该「重打一遍」。 */}
         <TypingText text={block.text} animate={streaming} />
+      </div>
+    </details>
+  );
+}
+
+/**
+ * 原生事件旁路（A111）。
+ *
+ * 展示「适配器没能归一化」的原生事件原文。默认折叠 —— 它的价值是**可查**而不是
+ * 可读：摊开会把正文挤走，而绝大多数时候用户并不关心某条 `stream_event` 长什么样。
+ * 但「折叠」不等于「不存在」：只要发生过，这里一定有个入口。
+ *
+ * 用 `<details>` 而不是受控 state：与 ThinkingView 同一套做法，不额外引 Hook，
+ * 也天然支持键盘操作与无障碍读屏。
+ */
+function RawEventsView({ block }: { block: RawBlock }) {
+  const channels = Array.from(new Set(block.entries.map(e => e.channel)));
+  const channelLabel =
+    channels.slice(0, 3).join(' · ') + (channels.length > 3 ? ` 等 ${channels.length} 类` : '');
+  return (
+    <details className="mb-2 text-secondary" data-raw-block={block.id}>
+      <summary className="flex cursor-pointer select-none flex-wrap items-center gap-2">
+        <span>
+          原生事件 {block.count} 条
+          {block.omitted > 0 && `（另有 ${block.omitted} 条未保留）`}
+        </span>
+        <span style={{ color: 'var(--td-text-color-placeholder)' }}>{channelLabel}</span>
+      </summary>
+      <div className="mt-1 space-y-2">
+        {block.entries.map((e, i) => (
+          <div key={`${e.channel}-${i}`}>
+            <div className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+              {e.channel}
+              {e.truncated ? ' · 已截断' : ''}
+            </div>
+            <pre
+              className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md px-2 py-1.5 text-caption"
+              style={{
+                backgroundColor: 'var(--td-bg-color-page-container)',
+                color: 'var(--td-text-color-secondary)',
+              }}
+            >
+              {typeof e.payload === 'string' ? e.payload : JSON.stringify(e.payload, null, 2)}
+            </pre>
+          </div>
+        ))}
       </div>
     </details>
   );
@@ -1140,6 +1186,12 @@ export function ChatMessages({
           )}
         </div>
       );
+    }
+
+    // A111：原生事件旁路。放在 fallback 之前 —— fallback 读 `block.text`，
+    // 而 RawBlock 没有这个字段（加类型时 TS 会当场报错，正是这条分支存在的证明）。
+    if (block.type === 'raw') {
+      return <RawEventsView key={block.id} block={block} />;
     }
 
     return (

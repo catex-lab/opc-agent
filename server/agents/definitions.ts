@@ -1556,6 +1556,11 @@ const RAW_DEFS: AgentDefinition[] = [
       // ⚠️ 只能标 chat / write。HTTP 路径没有工具调用循环，标了 code / tools
       //    就是谎称能读写文件、能跑命令（详见 adapters/http.ts 的顶部说明）。
       capabilities: ['chat', 'write'],
+      // 空数组 ≠ 没写。`undefined` 是「后端没声明，界面按未知处理」，
+      // `[]` 是「确实一条过程能力都没有，界面把它们全部标成不支持」。
+      // http 类只有一问一答，过程区永远是空的 —— 必须说清是「没有」而不是
+      // 「我们没接」，否则用户会一直等一张不会出现的工具卡。
+      eventCapabilities: [],
       description: '字节豆包大模型，经火山方舟 API 接入。一问一答，不读写本地文件',
       icon: 'doubao',
       color: '#B0479E',
@@ -1713,6 +1718,8 @@ const RAW_DEFS: AgentDefinition[] = [
       authScopeName: 'Kimi 开放平台 API Key',
       // 同上：没有工具循环，不标 code / tools。
       capabilities: ['chat', 'write'],
+      // 理由同 doubao：`[]` 表示「确实没有过程能力」，不是「没声明」
+      eventCapabilities: [],
       description: '月之暗面 Kimi，经 Moonshot API 接入。一问一答，不读写本地文件',
       icon: 'kimicode',
       color: '#26215C',

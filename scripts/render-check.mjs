@@ -40,6 +40,9 @@ const AGENTS = [
     id: 'workbuddy', name: 'WorkBuddy', vendor: '腾讯', kind: 'sdk', icon: 'workbuddy',
     color: '#0EC8A9', description: '通用编码与自动化助手',
     capabilities: ['chat', 'code', 'tools'],
+    // A111：**故意只声明一部分**。清单的价值全在「不支持」那半边 ——
+    // 全支持的图看不出置灰态长什么样，等于没测。
+    eventCapabilities: ['thinking', 'tool', 'usage', 'cost', 'permission'],
     status: { availability: 'ready', version: '2.4.1' },
   },
   {
@@ -64,6 +67,9 @@ const AGENTS = [
     id: 'doubao', name: '豆包 MarsCode', vendor: '字节跳动', kind: 'cli', icon: 'doubao',
     color: '#1E37FC', description: '中文代码补全与解释',
     capabilities: ['chat', 'code'],
+    // A111：空数组 = 「确实一条过程能力都没有」，界面要把七项全标成不支持。
+    // 与「字段缺失（不知道）」是两回事，两种状态都得有夹具才测得出差别。
+    eventCapabilities: [],
     status: { availability: 'needs-setup', version: '1.2.0' },
   },
 ];
@@ -319,6 +325,38 @@ await goContacts();
 await shot('light-contacts');
 await goContacts({ dark: true });
 await shot('dark-contacts');
+
+/**
+ * Agent 资料页的过程能力清单（A111）。
+ *
+ * 两个 Agent 各截一张，因为要验的是**两种不同的「不支持」**：
+ *   workbuddy —— 部分支持（置灰那几项要和高亮的明显可区分）
+ *   doubao    —— 空清单（七项全置灰 + 一句「只返回最终回答」的说明）
+ *
+ * 入口是悬停头像 → 名片里的「查看资料」。名片是 portal 渲染的，所以
+ * 必须真的 hover 一次，直接找按钮会找不到。
+ */
+async function goAgentDetail(agentId) {
+  await goContacts();
+  // 通讯录整行本身就是「查看资料」按钮，直接点，不必先悬停出头像名片
+  const row = page.locator(`[data-agent-row="${agentId}"]`).first();
+  await row.waitFor({ state: 'visible', timeout: 8000 });
+  await row.click();
+  await page.waitForTimeout(900);
+}
+
+for (const agentId of ['workbuddy', 'doubao']) {
+  try {
+    await goAgentDetail(agentId);
+    await shot(`light-detail-${agentId}`);
+    await page.evaluate(() => document.documentElement.classList.add('dark'));
+    await page.waitForTimeout(400);
+    await shot(`dark-detail-${agentId}`);
+    await page.evaluate(() => document.documentElement.classList.remove('dark'));
+  } catch (err) {
+    console.log(`  ! 资料页 ${agentId} 截图失败：${err.message}`);
+  }
+}
 
 await go('/settings');
 await shot('light-settings');

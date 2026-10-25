@@ -4,9 +4,9 @@
 
 // 权限相关类型收敛到 shared/（与 server 共用同一份，避免前后端定义漂移）
 import type { PermissionMode, PermissionSupport } from '../shared/types';
-import type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlock } from '../shared/blocks';
+import type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlock, RawBlock, RawEntry } from '../shared/blocks';
 export type { PermissionMode, PermissionSupport };
-export type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlock };
+export type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlock, RawBlock, RawEntry };
 
 /** 会话类型：一对一 / 群聊 */
 export type SessionKind = 'direct' | 'group';
@@ -303,6 +303,24 @@ export type AgentKind = 'sdk' | 'cli' | 'acp' | 'mock';
 /** 能力标签，即 Agent 资料页上的「擅长领域」 */
 export type AgentCapability = 'chat' | 'code' | 'write' | 'tools' | 'image' | 'search';
 
+/**
+ * 过程能力（A111）：这个 Agent 能把「执行过程」暴露到什么粒度。
+ *
+ * 与 `AgentCapability` 是两件事，不能混用：一个会写代码的 Agent 完全可能
+ * 只吐纯文本。前端**只按这份清单决定画什么**，不按业务能力猜 —— 否则
+ * 就会出现「永远空着的工具折叠条」。
+ *
+ * 与后端 `server/agents/types.ts` 的 `AgentEventCapability` 同源。
+ */
+export type AgentEventCapability =
+  | 'thinking'
+  | 'thinking_summary'
+  | 'tool'
+  | 'tool_output'
+  | 'usage'
+  | 'cost'
+  | 'permission';
+
 /** 可执行的任务类别；结构与后端 AgentSkill 对齐。 */
 export interface AgentSkill {
   id: string;
@@ -383,6 +401,11 @@ export interface RegisteredAgent {
   vendor?: string;
   kind: AgentKind;
   capabilities: AgentCapability[];
+  /**
+   * 过程能力清单（A111）。缺省（undefined）= 后端没声明，界面按「未知」处理，
+   * **不要**替它假设支持或不支持。
+   */
+  eventCapabilities?: AgentEventCapability[];
   /** Agent 可承接的任务类别；旧服务端可能不返回 */
   skills?: AgentSkill[];
   description?: string;
@@ -478,6 +501,38 @@ export const CAPABILITY_META: Record<AgentCapability, { label: string; color: st
   image: { label: '生图', color: '#D54941' },
   search: { label: '联网检索', color: '#E37318' },
 };
+
+/**
+ * 过程能力的中文名与配色。
+ *
+ * 每个键都必须有文案 —— 资料页会把**全部**键都列出来（支持的高亮、
+ * 不支持的置灰并写「不支持」）。这就是「不折损」在 UI 上的落地方式：
+ * 用户能区分「这个 Agent 没做工具调用」和「这个 Agent 报不了工具调用」，
+ * 而不是对着一段什么都没有的过程区猜。
+ */
+export const EVENT_CAPABILITY_META: Record<
+  AgentEventCapability,
+  { label: string; hint: string }
+> = {
+  thinking: { label: '思考过程', hint: '展示模型推理原文' },
+  thinking_summary: { label: '思考摘要', hint: '只给推理摘要，不给原文' },
+  tool: { label: '工具调用', hint: '展示调用了哪些工具、结果如何' },
+  tool_output: { label: '工具实时输出', hint: '工具执行中边跑边看' },
+  usage: { label: '用量统计', hint: '上报 token 消耗' },
+  cost: { label: '费用统计', hint: '上报平台账单金额' },
+  permission: { label: '授权确认', hint: '执行敏感操作前先征求同意' },
+};
+
+/** 过程能力的稳定展示顺序：按「过程从内到外」排，不按字母 */
+export const EVENT_CAPABILITY_ORDER: AgentEventCapability[] = [
+  'thinking',
+  'thinking_summary',
+  'tool',
+  'tool_output',
+  'permission',
+  'usage',
+  'cost',
+];
 
 /** 可用性状态的中文名与配色（对应 IM 的在线状态） */
 export const AVAILABILITY_META: Record<

@@ -806,7 +806,7 @@ export class SdkAdapter implements AgentProvider {
 }
 
 /** 一轮对话的映射状态（工具开闭跟踪） */
-interface TurnState {
+export interface TurnState {
   currentToolId: string | null;
   openTools: string[];
   started: number;
@@ -816,9 +816,12 @@ interface TurnState {
  * 把一条 SDK 消息映射成统一事件。池路径与 one-shot 路径共用 ——
  * 两条路的差别只该是「进程复用与否」，不该是「事件长什么样」。
  *
+ * 导出是为了能直接断言「未知消息不会消失」（scripts/verify-a111）。
+ * 这条链路的失败模式是静默的，只能靠直接喂消息来验。
+ *
  * @returns 'continue' 还有下文；'result' 本轮结束；'error' CLI 报了错
  */
-function mapSdkMessage(
+export function mapSdkMessage(
   m: Record<string, unknown>,
   ctx: SendContext,
   queue: AsyncQueue<AgentEvent>,
@@ -843,6 +846,16 @@ function mapSdkMessage(
       for (const block of content as Array<Record<string, unknown>>) {
         if (block.type === 'text') {
           queue.push({ type: 'text', content: String(block.text ?? '') });
+        } else if (block.type === 'thinking') {
+          // A111：思考块以前在这里被**静默丢弃** —— 这个循环只认 text / image /
+          // tool_use，`{type:'thinking', thinking:'…'}` 落不到任何分支，然后就没了。
+          // 而 workbuddy 的 eventCapabilities 里明明写着 `thinking`：清单在撒谎。
+          //
+          // 这正是「多报 = 伪造」那类缺陷 —— 声明了能力、界面照着声明去画折叠条，
+          // 可适配器一次都没往那儿送过东西。修法是让适配器兑现清单，而不是
+          // 把清单改小：能力本来就有，是我们没接。
+          const think = String(block.thinking ?? '');
+          if (think) queue.push({ type: 'thinking', content: think });
         } else if (block.type === 'image' && typeof block.source === 'object' && block.source !== null) {
           const source = block.source as Record<string, unknown>;
           const mediaType = typeof source.media_type === 'string' ? source.media_type : 'image/png';
@@ -867,6 +880,21 @@ function mapSdkMessage(
             id: st.currentToolId,
             name: String(block.name ?? 'unknown'),
             input: block.input ?? {},
+          });
+        } else {
+          // A111：**内容块级**的旁路。
+          //
+          // 消息级兜底（本函数末尾那段）管的是「整条消息不认识」，管不到
+          // 「消息认识、但里面某个块不认识」——`assistant` 是认识的，所以
+          // 一个 `redacted_thinking` / `server_tool_use` / 未来新增的块类型
+          // 会安静地消失在 885 行这个循环里，连消息级兜底都摸不到它。
+          //
+          // channel 用 `sdk:block:<type>`：与消息级的 `sdk:<type>` 分开，
+          // 排障时一眼能看出「是块没映射」还是「整条消息没映射」。
+          queue.push({
+            type: 'raw',
+            channel: `sdk:block:${String(block.type ?? 'unknown')}`,
+            payload: block,
           });
         }
       }
@@ -916,5 +944,19 @@ function mapSdkMessage(
     return 'error';
   }
 
+  // A111：走到这里说明上面**没有一个分支认识它**。
+  //
+  // 以前这是一句裸的 `return 'continue'` —— 消息就此蒸发，界面上看不出任何异常。
+  // 新版 CLI 加了 `stream_event`、`compact_boundary`、`rate_limit` 这类消息时，
+  // 我们只能从「它怎么没反应」里猜。现在原样送进 raw 旁路：投影器收进一个
+  // RawBlock，UI 折叠展示，既不干扰正文，也永不静默丢弃。
+  //
+  // channel 用 `sdk:<type>[/<subtype>]` 而不是只写 type：`system` 底下有十几个
+  // subtype（status / compact_boundary / …），只报 type 等于没报。
+  queue.push({
+    type: 'raw',
+    channel: `sdk:${String(m.type ?? 'unknown')}${m.subtype ? `/${String(m.subtype)}` : ''}`,
+    payload: m,
+  });
   return 'continue';
 }

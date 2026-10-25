@@ -538,8 +538,13 @@ export class AcpAdapter implements AgentProvider {
 
 // ============= 协议 → 统一事件 映射 =============
 
-/** 把 ACP 的 session/update 映射成统一事件；返回 null 表示无需呈现 */
-function mapUpdate(update: Json): AgentEvent | AgentEvent[] | null {
+/**
+ * 把 ACP 的 session/update 映射成统一事件；返回 null 表示无需呈现
+ *（空 chunk 这类「确实没内容」的情况，与「不认识」是两件事）。
+ *
+ * 导出是为了能直接断言「未知 update 走 raw 而不是被丢掉」（scripts/verify-a111）。
+ */
+export function mapUpdate(update: Json): AgentEvent | AgentEvent[] | null {
   const kind = update.sessionUpdate as string | undefined;
 
   switch (kind) {
@@ -597,9 +602,25 @@ function mapUpdate(update: Json): AgentEvent | AgentEvent[] | null {
       }
       return events;
     }
-    // usage_update / availableCommands / plan / current_mode_update 等暂不呈现
+    // A111：这里以前是 `return null`，注释写着「usage_update / availableCommands /
+    // plan / current_mode_update 等暂不呈现」—— 「暂不呈现」在实现上就是**丢掉**，
+    // 而丢掉的恰恰是 ACP 的原生能力：
+    //   plan                → agent 自己的任务清单
+    //   availableCommands   → 斜杠命令表
+    //   current_mode_update → 权限模式变化
+    //   usage_update        → 上下文用量
+    // 现在全部走 raw 旁路，UI 折叠展示，一条都不丢。
+    //
+    // 为什么**不**顺手把 usage_update 映射成 `usage`：ACP 报的是「上下文占用」，
+    // 本项目的 `usage.tokens` 语义是「本轮消耗」，两者混在一起会让成本统计变成
+    // 假数据 —— types.ts 里记过同一个坑（ACP 曾把 token 数塞进 cost，于是
+    // 12000 个 token 显示成 $12000）。语义没对齐就不硬映射，先原样留着。
     default:
-      return null;
+      return {
+        type: 'raw',
+        channel: `acp:${kind || 'unknown'}`,
+        payload: update,
+      };
   }
 }
 

@@ -77,6 +77,28 @@ export type AgentEvent =
   | { type: 'done'; durationMs?: number; cost?: number; tokens?: number }
   | { type: 'error'; message: string }
   /**
+   * 原生事件旁路（A111）。
+   *
+   * 为什么必须有它：归一化是个**有损函数**——适配器把原生消息映射成上面那十几种
+   * 事件，映射不到的就只能丢掉。以前 SDK 适配器的 `mapSdkMessage` 末尾是一句
+   * 裸的 `return 'continue'`，任何不认识的 CLI 消息到那儿就人间蒸发：界面上看
+   * 不出异常，用户只知道「它好像少做了什么」。
+   *
+   * 这条旁路把「映射不到」变成「原样留着」：适配器不认识的消息必须从这里出去，
+   * 投影器会把它收进一个 RawBlock，UI 折叠展示。原生能力因此不会因为「我们还没
+   * 适配」而消失——这正是「不折损」的兜底。
+   *
+   * 注意体积：payload 是原生消息原文，可能很大。截断与条数上限在投影器里做，
+   * 适配器只管如实上报。
+   */
+  | {
+      type: 'raw';
+      /** 通道标识，用于 UI 分类与排障。约定 `协议:原生类型`，如 `sdk:stream_event` */
+      channel: string;
+      /** 原生事件原文 */
+      payload: unknown;
+    }
+  /**
    * 工具授权请求。
    *
    * 这是唯一一个「需要反向输入」的事件：适配器 yield 出它之后会挂起，

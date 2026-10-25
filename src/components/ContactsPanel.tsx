@@ -649,6 +649,8 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
       <button
         type="button"
         onClick={onViewDetail}
+        // 渲染自检脚本靠这个锚点进资料页（整行可点，不必先悬停出头像名片）
+        data-agent-row={agent.id}
         // 右键出菜单：改备注（本地别名）/ 看资料。
         // 挂在整行而不是只挂头像 —— 头像只有 42px，行是同一个目标的大靶子；
         // 用户说的「右键头像」自然落在行上，也仍然成立。

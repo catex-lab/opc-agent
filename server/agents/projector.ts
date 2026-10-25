@@ -37,8 +37,22 @@ import type {
   ThinkingBlock,
   ToolBlock,
   ArtifactBlock,
+  RawBlock,
+  RawEntry,
 } from '../../shared/blocks.js';
 import { MAX_ARTIFACT_DATA_BYTES } from './types.js';
+
+/**
+ * 一个 run 内最多保留多少条原生事件（A111）。
+ *
+ * 上限存在的理由不是「怕多」，而是**必须落库**：RawBlock 会跟着消息一起写进
+ * SQLite，一轮几百条原生事件会把库撑得很难看，而 99% 的情况下没人会去翻第 20 条。
+ * 超出后只增 `count` 与 `omitted`，UI 照样如实显示「另有 N 条未保留」。
+ */
+const MAX_RAW_ENTRIES = 20;
+
+/** 单条原生事件的字节上限；超出就截断成字符串前缀，并标记 truncated */
+const MAX_RAW_ENTRY_BYTES = 4096;
 
 export interface RunMeta {
   runId: string;
@@ -327,10 +341,91 @@ export class RunProjector {
         // 用量不是块：由调用方（/api/chat）在 done 时并入 run_end
         return [];
 
+      /**
+       * 原生事件旁路（A111）。
+       *
+       * 一个 run 只开**一块**，后续条目靠 patch 追加 —— 理由见 RawBlock 的注释：
+       * 几十条未识别事件各占一块会把消息流冲垮，而它们的价值是「可查」不是「可读」。
+       *
+       * 刻意**不动 `openId`**：raw 块不是文本块，不能成为「续写目标」。否则
+       * 一条未识别事件插进正文流之后，接下来的 text 会被续写到 raw 块上（类型
+       * 不符，append 会退回 openText 开新块），白丢一次合并机会；更糟的是
+       * `closeOpen` 会把 raw 块当成打开的文本块去 patch endedAt。
+       */
+      case 'raw': {
+        const existing = this.blocks.find(b => b.type === 'raw') as RawBlock | undefined;
+
+        // 封顶检查必须放在**序列化之前**：CLI 适配器是按行喂的，一轮下来
+        // 可能几百条未映射的行。原来的顺序是先 makeRawEntry（JSON.stringify
+        // 一遍、可能还截断 4KB 字符串）再判断「反正这条不要了」—— 纯浪费。
+        if (existing && existing.entries.length >= MAX_RAW_ENTRIES) {
+          // 到顶了：只更新计数，不追加条目 —— 但**绝不静默**，omitted 会让 UI 说明
+          existing.count += 1;
+          existing.omitted += 1;
+          return [
+            this.make({
+              type: 'block_patch',
+              blockId: existing.id,
+              patch: { count: existing.count, omitted: existing.omitted },
+            }),
+          ];
+        }
+
+        const at = this.now();
+        const entry = this.makeRawEntry(ev.channel, ev.payload, at);
+
+        if (!existing) {
+          const block: RawBlock = {
+            id: this.nextId(),
+            type: 'raw',
+            count: 1,
+            entries: [entry],
+            omitted: 0,
+          };
+          this.blocks.push(block);
+          // 与其它块一致：下发的必须是快照拷贝，避免重放缓冲被后续追加改掉
+          return [this.make({ type: 'block_open', block: { ...block, entries: [...block.entries] } })];
+        }
+
+        existing.count += 1;
+        existing.entries.push(entry);
+        return [
+          this.make({
+            type: 'block_patch',
+            blockId: existing.id,
+            // append 语义：只带新增那一条，避免每次 patch 都把前 19 条重发一遍
+            patch: { count: existing.count, append: entry },
+          }),
+        ];
+      }
+
       case 'done':
         // 用量随 finish() 一起走：落库必须在 run_end 之前完成
         return this.closeOpen('done');
     }
+  }
+
+  /**
+   * 造一条原生事件条目，并按字节上限截断。
+   *
+   * 为什么先 `JSON.stringify` 判长度、而不是只看 `payload` 的类型：一个 200KB 的
+   * 原生对象和一段 200KB 的字符串，对 SQLite 是同一件事。判的是**落库体积**，
+   * 不是内存里的形状。
+   *
+   * 没超限时保留原结构（UI 能格式化缩进）；超限时退化成字符串前缀并标记
+   * `truncated`，让用户知道「这里被截了」，而不是以为原生事件本来就这么短。
+   */
+  private makeRawEntry(channel: string, payload: unknown, at: number): RawEntry {
+    let json: string | null = null;
+    try {
+      json = JSON.stringify(payload) ?? null;
+    } catch {
+      // 循环引用 / BigInt 等无法序列化的值：如实记一句，不抛
+      return { channel, at, payload: '[无法序列化的原生事件]', truncated: true };
+    }
+    if (json === null) return { channel, at, payload: String(payload), truncated: true };
+    if (json.length <= MAX_RAW_ENTRY_BYTES) return { channel, at, payload };
+    return { channel, at, payload: json.slice(0, MAX_RAW_ENTRY_BYTES), truncated: true };
   }
 
   private findTool(toolId: string): ToolBlock | undefined {
@@ -372,6 +467,21 @@ export class RunProjector {
         })
       );
       closes.push(this.make({ type: 'block_close', blockId: b.id, state: next }));
+    }
+
+    // A111：raw 块没有 status 字段，靠 endedAt 判断是否已收尾。
+    // 不关它的话，UI 会一直以为这一轮还有旁路事件在进来。
+    for (const b of this.blocks) {
+      if (b.type !== 'raw' || b.endedAt) continue;
+      b.endedAt = this.now();
+      closes.push(this.make({ type: 'block_patch', blockId: b.id, patch: { endedAt: b.endedAt } }));
+      closes.push(
+        this.make({
+          type: 'block_close',
+          blockId: b.id,
+          state: status === 'ok' ? 'done' : status === 'aborted' ? 'cancelled' : 'error',
+        })
+      );
     }
 
     const end = this.make({

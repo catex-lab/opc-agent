@@ -145,6 +145,33 @@ type CliChild = ChildProcessByStdio<null, Readable, Readable>;
  */
 type BidiChild = ChildProcessByStdio<Writable, Readable, Readable>;
 
+/**
+ * 给一条「映射器不认识的 JSONL 行」起个通道名（A111）。
+ *
+ * 为什么单独抽成导出函数：这段逻辑埋在 `handleJsonLine` 这个闭包里，
+ * 而那个闭包只有在真起子进程、真吐 stdout 时才跑得到 —— 想验证它就得起
+ * 一个假 CLI，代价远大于收益。抽成纯函数后，验证脚本能直接喂各种形状的行，
+ * 断言「通道名有没有把关键信息带出来」。
+ *
+ * 取字段的顺序按各 CLI 的实测习惯排：`type` 最常见，`event` 次之
+ * （stream_event 这类包了一层），`kind` 兜底。三个都没有就记 `unknown` ——
+ * 至少能看出「有这么一条、但它连类型字段都没有」。
+ */
+export function cliRawChannel(obj: unknown): string {
+  if (obj && typeof obj === 'object') {
+    const rec = obj as Record<string, unknown>;
+    for (const key of ['type', 'event', 'kind'] as const) {
+      const v = rec[key];
+      if (typeof v === 'string' && v) {
+        // subtype 必须带上：`system` 底下有十几种，只报 type 等于没报
+        const sub = rec.subtype ?? rec.subType;
+        return typeof sub === 'string' && sub ? `${v}/${sub}` : v;
+      }
+    }
+  }
+  return Array.isArray(obj) ? 'array' : typeof obj;
+}
+
 export class CliAdapter implements AgentProvider {
   readonly descriptor: AgentDescriptor;
 
@@ -698,7 +725,25 @@ export class CliAdapter implements AgentProvider {
         });
       }
       const mapped = mapLine?.(obj);
-      if (!mapped) return;
+      if (!mapped) {
+        // A111：**CLI 层的旁路**。
+        //
+        // 原来这里是一句 `return` —— 这一行的内容就此消失。而这一层恰恰是
+        // 12 个 Agent 里 12 个都走的路（sdk / acp 各只有一个），所以「不认识
+        // 就丢掉」在这里的杀伤面最大：CLI 一升级，新增的行类型静默蒸发，
+        // 界面上只表现为「它好像少做了什么」，没有任何报错。
+        //
+        // 代价是会有噪音：有些映射器是**故意**返回 null 的（比如流式增量之后
+        // 又来的整段兜底，接了就会重复）。这些行现在也会进旁路。接受这个代价，
+        // 因为投影器把整个 run 的 raw 聚成**一块**、最多留 20 条、其余只计数，
+        // 且 UI 默认折叠 —— 噪音被关在抽屉里，而丢失是找不回来的。
+        queue.push({
+          type: 'raw',
+          channel: `cli:${cliRawChannel(obj)}`,
+          payload: obj,
+        });
+        return;
+      }
       // 一行可能拆成多个事件（如「工具开始 + 工具结果」）
       for (const ev of Array.isArray(mapped) ? mapped : [mapped]) {
         if (ev.type === 'usage') {

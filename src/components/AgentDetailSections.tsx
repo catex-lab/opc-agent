@@ -3,6 +3,8 @@ import { InstallCard } from './InstallCard';
 import {
   AVAILABILITY_META,
   CAPABILITY_META,
+  EVENT_CAPABILITY_META,
+  EVENT_CAPABILITY_ORDER,
   REGION_META,
   SURFACE_META,
   type RegisteredAgent,
@@ -328,6 +330,56 @@ export function AgentDetailSections({
               </span>
             ))}
           </div>
+        </section>
+      )}
+
+      {/* 过程能力（A111）──
+          为什么要单独一块：聊天里「过程区是空的」有两种完全不同的原因 ——
+          这个 Agent 这一轮确实没调工具，或者它压根报不了工具调用。
+          以前两者在界面上长得一模一样，用户只能猜。这里把清单摊开：
+          支持的高亮，不支持的置灰并写「不支持」。
+
+          `undefined`（后端没声明）时整块不渲染 —— 那是「不知道」，
+          不该被画成「不支持」。只有空数组才是明确的「一条都没有」。 */}
+      {agent.eventCapabilities && (
+        <section className="mt-6" data-agent-event-capabilities>
+          <h3 className="tc-section-title mb-2">过程能力</h3>
+          <div className="flex flex-wrap gap-2">
+            {EVENT_CAPABILITY_ORDER.map(key => {
+              const meta = EVENT_CAPABILITY_META[key];
+              const supported = agent.eventCapabilities!.includes(key);
+              return (
+                <span
+                  key={key}
+                  title={meta.hint}
+                  data-event-capability={key}
+                  data-supported={supported ? '1' : '0'}
+                  className="rounded-md px-2 py-1"
+                  style={
+                    supported
+                      ? {
+                          backgroundColor: 'color-mix(in srgb, var(--td-brand-color) 12%, transparent)',
+                          color: 'var(--td-brand-color)',
+                        }
+                      : {
+                          // 不支持的一律走 placeholder 色 + 虚线边：视觉上明显是「没有」，
+                          // 而不是「有但很淡」
+                          border: '1px dashed var(--td-component-stroke)',
+                          color: 'var(--td-text-color-placeholder)',
+                        }
+                  }
+                >
+                  {meta.label}
+                  {!supported && '（不支持）'}
+                </span>
+              );
+            })}
+          </div>
+          {agent.eventCapabilities.length === 0 && (
+            <p className="mt-2 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+              这个 Agent 只返回最终回答，不暴露执行过程。
+            </p>
+          )}
         </section>
       )}
 
