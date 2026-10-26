@@ -466,6 +466,11 @@ select:focus-visible {
   /* 需要「明确可点」的控件（次要按钮、可交互卡片）用这一档 7%。
      再淡下去按钮就没有轮廓了，键盘用户会失去「这是一个控件」的线索。 */
   --tc-edge-strong: rgb(0 0 0 / 0.07);
+  /* 竖向引用线（quote bar / left rule）。
+     比 --tc-edge-strong（7%）重、又明显轻于正文 —— 它只负责「把思考正文
+     和答案隔开一条缝」，不是一根描边。18% 是实测值：再淡整条线在 800px 宽的
+     消息列里会被看成不存在，正文就失去「缩进归属于思考」的线索。 */
+  --tc-rule: rgb(0 0 0 / 0.18);
   /* 内高光：贴在浮起面的顶边，1px 白。它是「厚度」而不是「描边」——
      上亮下暗，读起来是一块被光打到的面；四边等亮就成了线框。 */
   --tc-bevel: inset 0 1px 0 rgb(255 255 255 / 0.7);
@@ -653,6 +658,13 @@ select:focus-visible {
    * 4.5% 白在 #121212 上几乎不可见，5.5% 才勉强顶得住。 */
   --tc-edge: rgb(255 255 255 / 0.055);
   --tc-edge-strong: rgb(255 255 255 / 0.085);
+  /* 竖向引用线（深色）。深色下低 alpha 的白容易「被吃掉」，所以比浅色
+     的 18% 提到 20%。
+     上限是 20% 不是随便挑的：verify:surface 的边线审计规定「非品牌色的
+     可见边线 alpha 必须 ≤ 0.21」—— 超过就会读成第二套版面分割线，和
+     --tc-edge-strong（8.5%）拉开的层级反而变成噪音。24% 实测能过肉眼，
+     但审计会把它判成强度失控，所以收在这一档。 */
+  --tc-rule: rgb(255 255 255 / 0.2);
   /* 内高光在深色下要很克制：4.5% 白。再亮就是一圈发光的顶边，
    * 深色界面里会显得「塑料感」。 */
   --tc-bevel: inset 0 1px 0 rgb(255 255 255 / 0.045);
@@ -2997,6 +3009,94 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   line-height: 1.55;
   font-style: italic;
   color: var(--td-text-color-placeholder);
+}
+
+/* ── 思考块（方案 A：左细线铺开）──────────────────────────────────────
+ *
+ * 语义：「原 Agent 给什么，前端就展示什么」。三种能力状态必须长得不一样：
+ *   raw      完整推理链 → 头部「思考 · Ns · N 字」+ 正文沿左细线铺开
+ *   summary  只有摘要   → 头部挂「摘要」角标，别让人以为看到了完整思维链
+ *   未提供   不渲染 —— ThinkingView 只在存在 thinking 块时被调用，不留空壳
+ *
+ * 为什么用左细线而不是卡片：同一屏里还有工具轨迹、diff、权限提示，思考再套一层
+ * 卡片会把「过程」压得比「答案」重。13px 正体 + 一档灰（secondary）是「能读」
+ * 与「不抢戏」之间的取值 —— 上一版是 12px 斜体 placeholder，用户读不动。
+ *
+ * `.tc-thinking` 这个类名**同时保留**：`verify-a36` 按它数「轨迹之外的开头
+ * 思考」的条数，改名会让那条断言静默空转（与 `.tc-bubble-assistant` 同一类
+ * 情况）。这里的选择器写成 `.tc-thinking.tc-think`（两个类），特异性高于
+ * 上面单类的同名声明，所以按顺序与按特异性都能覆盖。
+ *
+ * 轨迹内的嵌套思考（AgentTrace 的 ThinkingNode）只带 `.tc-thinking`，
+ * 规格不变 —— 它缩进挂在一个工具步骤下面，空间本就有限。
+ */
+/* 块与块之间的间距由父级 flex 的 gap 承担，这里不再自己加外边距 */
+.tc-thinking.tc-think {
+  color: var(--td-text-color-secondary);
+}
+
+.tc-thinking.tc-think > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 0 -4px;
+  padding: 2px 6px 2px 4px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--td-text-color-secondary);
+  list-style: none;
+  transition: background-color var(--duration-fast) var(--ease-tencent);
+}
+
+/* 折叠时头部不留 8px 下边距（那 8px 是「头部 → 正文」的间距，只有展开才需要） */
+.tc-thinking.tc-think[open] > summary {
+  margin-bottom: 8px;
+}
+
+.tc-thinking.tc-think > summary:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.tc-thinking.tc-think > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tc-thinking.tc-think > summary > svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.tc-think-title {
+  font-weight: 500;
+}
+
+.tc-think-meta {
+  color: var(--td-text-color-placeholder);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 只有摘要时的角标：明确标注，避免被当成完整推理链 */
+.tc-think-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--td-brand-color);
+  background-color: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
+}
+
+/* 正文：左细线 + 13px secondary。特异性写成两个类 + 一个类，
+   压过上面 `.tc-thinking > div`（单类 + 元素）的 italic/placeholder 规格。 */
+.tc-thinking.tc-think > .tc-think-body {
+  padding-left: 13px;
+  border-left: 2px solid var(--tc-rule);
+  font-size: 13px;
+  line-height: 1.75;
+  font-style: normal;
+  background-color: transparent;
+  color: var(--td-text-color-secondary);
 }
 
 /* ── A33：答案全宽（去卡片化）────────────────────────────────────────

@@ -102,7 +102,9 @@
     "verify:a115": "npm run verify:a115-identity && npm run verify:a115-ui",
     "verify:a116-ui": "node scripts/verify-a116-ui.mjs",
     "verify:a117-projects": "node scripts/verify-a117-projects.mjs",
-    "verify:a118-overlay-dismiss": "node scripts/verify-a118-overlay-dismiss.mjs"
+    "verify:a118-overlay-dismiss": "node scripts/verify-a118-overlay-dismiss.mjs",
+    "verify:think-view": "node scripts/verify-think-view.mjs",
+    "verify:opencode-thinking": "tsx scripts/verify-opencode-thinking.ts"
   },
   "dependencies": {
     "@qoder-ai/qoder-agent-sdk": "^1.0.55",

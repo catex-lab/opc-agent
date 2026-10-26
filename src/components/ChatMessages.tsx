@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loading, MessagePlugin } from 'tdesign-react';
 import { ChatMarkdown } from '@tdesign-react/chat';
-import { Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, TextSelect, Image as ImageIcon } from 'lucide-react';
+import { Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, Sparkles, TextSelect, Image as ImageIcon } from 'lucide-react';
 import { Message, Model, PermissionRequest, RegisteredAgent, Block, ThinkingBlock, ToolBlock, RawBlock } from '../types';
 import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
@@ -42,33 +42,57 @@ function useElapsed(startedAt: number | undefined, active: boolean): number | nu
 }
 
 /**
- * 思考块。
+ * 思考块（方案 A：左细线铺开）。
  *
- * 流式中是「思考中 · 已用 Ns」实时秒数，完成后定格为「已思考 Ns」。
- * codex 的 reasoning 只有摘要没有原始思维链，必须标「（摘要）」——
- * 否则用户会以为看到了完整推理链。
+ * 「原 Agent 给什么，前端就展示什么」—— 三种能力状态必须长得不一样：
+ *   raw      完整推理链，正文沿左细线铺开；
+ *   summary  只有厂商摘要，挂「摘要」角标（不标就会让人以为看到了完整思维链）；
+ *   未提供   根本不渲染 —— 本组件只在存在 thinking 块时被调用。
+ *
+ * 默认展开策略：正在流的这一条 + 最新一条助手消息。其余历史折叠，
+ * 否则长会话里每条都铺开会把答案挤到屏幕外。
+ *
+ * `<details>` 的 open 直接写 `streaming || defaultOpen`：React 只在 prop 值
+ * 变化时写 DOM，值不变就不会覆盖用户的手动折叠 / 展开。于是「流式中 → 结束」
+ * 这一跳会把非最新消息翻成折叠（open true→false），最新消息保持展开
+ * （true→true，不写 DOM）。别在这里改成受控 state —— 那会把用户的选择吃掉。
  */
-function ThinkingView({ block }: { block: ThinkingBlock }) {
+function ThinkingView({
+  block,
+  defaultOpen = false,
+}: {
+  block: ThinkingBlock;
+  defaultOpen?: boolean;
+}) {
   const streaming = block.state === 'streaming';
   const live = useElapsed(block.startedAt, streaming);
   const secs =
     block.endedAt && block.startedAt
       ? Math.max(0, Math.round((block.endedAt - block.startedAt) / 1000))
       : null;
+
   return (
-    <details className="tc-thinking mb-2 text-secondary" open={streaming}>
-      <summary className="flex cursor-pointer select-none items-center gap-2">
-        {streaming && <Loading size="small" />}
-        <span>
-          {streaming
-            ? `思考中 · 已用 ${live ?? 0}s`
-            : `已思考 ${secs ?? 0}s${block.format === 'summary' ? '（摘要）' : ''}`}
-        </span>
-        <span style={{ color: 'var(--td-text-color-placeholder)' }}>
-          {block.text.length} 字
-        </span>
+    <details
+      className="tc-thinking tc-think mb-2"
+      open={streaming || defaultOpen}
+      data-think-format={block.format}
+    >
+      <summary className="cursor-pointer select-none">
+        {streaming ? (
+          <Loading size="small" />
+        ) : (
+          <Sparkles size={13} style={{ flexShrink: 0 }} />
+        )}
+        <span className="tc-think-title">{streaming ? '思考中' : '思考'}</span>
+        {streaming ? (
+          <span className="tc-think-meta">已用 {live ?? 0}s</span>
+        ) : secs != null ? (
+          <span className="tc-think-meta">{secs}s</span>
+        ) : null}
+        {block.format === 'summary' && <span className="tc-think-badge">摘要</span>}
+        <span className="tc-think-meta">{block.text.length} 字</span>
       </summary>
-      <div className="whitespace-pre-wrap leading-relaxed">
+      <div className="tc-think-body whitespace-pre-wrap">
         {/* A83：思考正文在流式时逐字浮现；思考结束后传 false ——
             历史消息打开时不该「重打一遍」。 */}
         <TypingText text={block.text} animate={streaming} />
@@ -1088,7 +1112,8 @@ export function ChatMessages({
     block: Block,
     index: number,
     isStreaming?: boolean,
-    isLast?: boolean
+    isLast?: boolean,
+    defaultOpen?: boolean
   ): React.ReactNode => {
     if (block.type === 'text') {
       return (
@@ -1109,7 +1134,7 @@ export function ChatMessages({
     }
 
     if (block.type === 'thinking') {
-      return <ThinkingView key={block.id} block={block} />;
+      return <ThinkingView key={block.id} block={block} defaultOpen={defaultOpen} />;
     }
 
     if (block.type === 'tool') {
@@ -1241,8 +1266,11 @@ export function ChatMessages({
    *
    * 按「连续」而非「全部」分组，是为了保留「工具 → 文本 → 工具」这种交错顺序
    * （文本是模型对上一批工具结果的解释，位置有语义）。
+   *
+   * `defaultOpen`：这条消息是不是会话里**最新一条助手消息**。只有它的思考块
+   * 默认展开（正在流的那一条另由 block.state 决定），其余历史折叠。
    */
-  const renderAssistantContent = (message: Message) => {
+  const renderAssistantContent = (message: Message, defaultOpen = false) => {
     // 失败原因。后端会把真实错误（未登录 / 网络不可达 / 退出码）带上来，
     // 这里原样展示，不用「发生错误请重试」这种无信息量的文案盖掉它。
     const errorBlock = message.error ? (
@@ -1284,7 +1312,7 @@ export function ChatMessages({
         i = j;
       } else {
         nodes.push(
-          renderBlock(block, i, message.isStreaming, i === blocks.length - 1)
+          renderBlock(block, i, message.isStreaming, i === blocks.length - 1, defaultOpen)
         );
         i++;
       }
@@ -1323,6 +1351,11 @@ export function ChatMessages({
     if (m.role !== 'assistant' || m.isStreaming) return n;
     return n + lingeringToolBlocks(toBlocks(m), true).length;
   }, 0);
+
+  // 最新一条助手消息的 id —— 只有它的思考块默认展开。
+  // 反向找第一条，而不是比索引：中途插入的编排叙述行（note）不该让「最后一条」
+  // 错位，且最后一条可能是用户消息，此时没有消息需要默认展开。
+  const lastAssistantId = [...messages].reverse().find(m => m.role === 'assistant')?.id;
 
   return (
     <div
@@ -1503,7 +1536,8 @@ export function ChatMessages({
             )}
 
             {/* 助手消息 - 按顺序渲染内容块 */}
-            {message.role === 'assistant' && renderAssistantContent(message)}
+            {message.role === 'assistant' &&
+              renderAssistantContent(message, message.id === lastAssistantId)}
 
             {/* 流式状态行（A34）：从发出请求到最后一条 token 全程在线、
                 秒数在涨；文案按阶段变化（正在处理 / 思考 / 调用工具 / 生成）。

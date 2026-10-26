@@ -1120,7 +1120,16 @@ const RAW_DEFS: AgentDefinition[] = [
         // "Session ID to continue, or to create if it does not exist"）。
         // extractResumeToken 从任意行取 sessionID，与 --session 同一个 ID
         // 空间（opencode 的 JSON 流每行都带会话的 sessionID）。
-        const args = ['run', '--format', 'json'];
+        //
+        // `--thinking`：**必须显式加**，否则一条 reasoning 事件都不会发。
+        // 它是默认关的开关（`opencode run --help`：`--thinking  Show thinking
+        // blocks`），没有传的话映射器里那条 `case 'reasoning'` 永远收不到
+        // 事件 —— 这正是「descriptor 声明了 eventCapabilities: ['thinking']、
+        // 前端却有思考面板」的根因：清单在撒谎。
+        // 它是纯布尔开关，不带取值；`opencode` 没有 reasoning-effort 参数，
+        // 所以 `ctx.reasoningEffort` 在这里没有落点。若某个模型本身不支持
+        // 思考，CLI 不会报错，只是不发事件 —— 前端据此什么都不渲染。
+        const args = ['run', '--format', 'json', '--thinking'];
         if (ctx.resumeToken) args.push('--session', ctx.resumeToken);
         if (ctx.model) args.push('-m', ctx.model);
         args.push(prompt);
