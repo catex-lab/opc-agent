@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentDetailSections } from './AgentDetailSections';
 import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
+import { useDraggableDialog } from '../hooks/useDraggableDialog';
 
 interface AgentDetailModalProps {
   agent: RegisteredAgent | undefined;
@@ -38,6 +39,8 @@ interface AgentDetailModalProps {
  */
 export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const drag = useDraggableDialog(panelRef, { handle: '[data-dialog-handle]' });
 
   useEffect(() => {
     if (!open) return;
@@ -76,13 +79,19 @@ export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps
       data-agent-detail-overlay
     >
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="tc-agent-detail-title"
         className="tc-dialog tc-pop-in flex max-h-full w-full max-w-[440px] flex-col overflow-hidden rounded-2xl"
+        onPointerDown={drag.onPointerDown}
+        onPointerMove={drag.onPointerMove}
+        onPointerUp={drag.onPointerUp}
+        onPointerCancel={drag.onPointerCancel}
       >
         {/* 卡头：头像 + 名字 + 状态 + 关闭。固定不滚，滚的是下面的信息区 */}
         <div
+          data-dialog-handle
           className="flex shrink-0 items-start gap-3 px-5 pb-4 pt-5"
           style={{ borderBottom: '1px solid var(--tc-divider)' }}
         >

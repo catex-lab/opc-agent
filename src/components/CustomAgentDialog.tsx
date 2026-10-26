@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bot, Eye, EyeOff, Loader2, X } from 'lucide-react';
-import { Input } from 'tdesign-react';
+import { Bot, Eye, EyeOff, X } from 'lucide-react';
+import { Input, Button } from 'tdesign-react';
 import type { InputRef } from 'tdesign-react';
+import { useDraggableDialog } from '../hooks/useDraggableDialog';
 
 /**
  * 「自定义 Agent」创建弹窗（A114）。
@@ -58,6 +59,8 @@ export function CustomAgentDialog({ open, onClose, onCreated }: CustomAgentDialo
   // TDesign 的 Input ref 是 InputRef（有 focus()/select()/blur()），
   // 不是裸 HTMLInputElement —— 直接按后者声明会编译不过。
   const nameRef = useRef<InputRef>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const drag = useDraggableDialog(panelRef, { handle: '[data-dialog-handle]' });
 
   // 每次打开都是空表单：上一次填的一半不该留在里面
   useEffect(() => {
@@ -131,6 +134,7 @@ export function CustomAgentDialog({ open, onClose, onCreated }: CustomAgentDialo
       }}
     >
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="自定义 Agent"
@@ -138,10 +142,14 @@ export function CustomAgentDialog({ open, onClose, onCreated }: CustomAgentDialo
         /* A115：与其余四个弹窗统一到 `.tc-dialog`（半透明玻璃 + 四层立体影）。
            原来这里是实色底 + `--shadow-float`，同一屏里两套弹窗语言。 */
         className="tc-dialog flex w-[min(460px,100%)] flex-col overflow-hidden rounded-2xl"
+        onPointerDown={drag.onPointerDown}
+        onPointerMove={drag.onPointerMove}
+        onPointerUp={drag.onPointerUp}
+        onPointerCancel={drag.onPointerCancel}
       >
         {/* 头部：图标 + 标题 + 关闭。字号用 text-body 而不是 text-title-lg ——
             这是个 460px 的小弹窗，标题太大反而压住表单 */}
-        <div className="flex shrink-0 items-center gap-2.5 px-5 pb-3 pt-5">
+        <div data-dialog-handle className="flex shrink-0 items-center gap-2.5 px-5 pb-3 pt-5">
           <span
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
             style={{ backgroundColor: 'var(--td-brand-color-light)', color: 'var(--td-brand-color)' }}
@@ -265,25 +273,18 @@ export function CustomAgentDialog({ open, onClose, onCreated }: CustomAgentDialo
 
         {/* 底部操作。左「取消」右「创建」—— 与设置页保存按钮同一套主次关系 */}
         <div className="flex shrink-0 items-center justify-end gap-2 px-5 pb-5 pt-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg px-3.5 py-1.5 text-body transition-colors hover:bg-[var(--tc-hover-chrome)]"
-            style={{ color: 'var(--td-text-color-secondary)' }}
-          >
+          <Button variant="outline" onClick={onClose}>
             取消
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            theme="primary"
             onClick={() => void submit()}
             disabled={submitting}
-            className="flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-body font-medium transition-colors disabled:opacity-60"
-            style={{ backgroundColor: 'var(--td-brand-color)', color: '#fff' }}
+            loading={submitting}
             data-custom-agent-submit
           >
-            {submitting && <Loader2 size={14} className="animate-spin" />}
-            {submitting ? '创建中' : '创建'}
-          </button>
+            创建
+          </Button>
         </div>
       </div>
     </div>,

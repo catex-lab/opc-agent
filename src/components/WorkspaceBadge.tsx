@@ -55,8 +55,29 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
   const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDetailsElement>(null);
 
+  /**
+   * A120：用户可以从「最近目录」里移除某一项（点右侧 ×）。
+   * 这条偏好存在 localStorage，不改数据层 —— 会话的 cwd 还在，只是
+   * 不出现在这个快捷列表里。
+   */
+  const [ignoredDirs, setIgnoredDirs] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('opc_ignored_dirs');
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set<string>();
+    }
+  });
+
   const hasCwd = !!cwd;
   const label = hasCwd ? dirName(cwd!) : '默认目录';
+
+  const handleRemoveRecent = (dir: string) => {
+    const next = new Set(ignoredDirs);
+    next.add(dir);
+    setIgnoredDirs(next);
+    localStorage.setItem('opc_ignored_dirs', JSON.stringify([...next]));
+  };
 
   // 最近目录：**打开时**才拉。徽标每次渲染都在，挂载就拉会让每个带会话的
   // 页面都多发一个用不上的请求；而「打开面板」正说明用户此刻想换目录。
@@ -301,35 +322,50 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
             >
               最近目录
             </div>
-            {recent.map(dir => {
-              const active = dir === cwd;
-              return (
-                <button
-                  key={dir}
-                  type="button"
-                  onClick={() => {
-                    if (!active) onChange(dir);
-                  }}
-                  className={MENU_ITEM_CLASS}
-                  style={{
-                    color: active ? 'var(--td-text-color-primary)' : 'var(--td-text-color-secondary)',
-                    /* 选中回显态：这是「当前目录」那一行，允许有底色 */
-                    backgroundColor: active ? 'var(--tc-fill-selected)' : undefined,
-                  }}
-                  title={dir}
-                  data-workspace-recent
-                >
-                  <Folder size={14} style={{ color: active ? 'var(--td-brand-color)' : undefined }} />
-                  <span className="truncate">{dirName(dir)}</span>
-                  <span
-                    className="ml-auto truncate font-mono text-caption"
-                    style={{ color: 'var(--td-text-color-placeholder)', maxWidth: 130 }}
+            {recent
+              .filter(dir => !ignoredDirs.has(dir))
+              .map(dir => {
+                const active = dir === cwd;
+                return (
+                  <button
+                    key={dir}
+                    type="button"
+                    onClick={() => {
+                      if (!active) onChange(dir);
+                    }}
+                    className={`${MENU_ITEM_CLASS} group`}
+                    style={{
+                      color: active ? 'var(--td-text-color-primary)' : 'var(--td-text-color-secondary)',
+                      /* 选中回显态：这是「当前目录」那一行，允许有底色 */
+                      backgroundColor: active ? 'var(--tc-fill-selected)' : undefined,
+                    }}
+                    title={dir}
+                    data-workspace-recent
                   >
-                    {dir}
-                  </span>
-                </button>
-              );
-            })}
+                    <Folder size={14} style={{ color: active ? 'var(--td-brand-color)' : undefined }} />
+                    <span className="truncate">{dirName(dir)}</span>
+                    <span
+                      className="ml-auto truncate font-mono text-caption"
+                      style={{ color: 'var(--td-text-color-placeholder)', maxWidth: 100 }}
+                    >
+                      {dir}
+                    </span>
+                    {!active && (
+                      <span
+                        className="ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--tc-hover-chrome)]"
+                        style={{ color: 'var(--td-text-color-placeholder)' }}
+                        onClick={e => {
+                          e.stopPropagation();
+                          handleRemoveRecent(dir);
+                        }}
+                        title="从最近目录中移除"
+                      >
+                        <X size={12} />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
           </>
         )}
       </div>

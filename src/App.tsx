@@ -19,6 +19,7 @@ import { useSessions } from './hooks/useSessions';
 import { useModels } from './hooks/useModels';
 import { useChat } from './hooks/useChat';
 import { useAgentRegistry } from './hooks/useAgentRegistry';
+import { useDraggableDialog } from './hooks/useDraggableDialog';
 import { getScenario } from './scenarios';
 import { exportSessionToMarkdown } from './utils/exportSession';
 import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project } from './types';
@@ -857,91 +858,19 @@ function AppContent() {
   }, [isSettingsPage, handleCloseSettings]);
 
   /**
-   * 设置弹窗可以按住标题栏拖动（用户反馈：「设置页无法拖动」）。
+   * A120：设置弹窗、自定义 Agent 弹窗、Agent 详情弹窗都支持拖拽移动。
    *
-   * 它不是独立窗口，拖不动靠 `-webkit-app-region` —— 只能自己算位移。
-   * 三条约束：
-   *   1. **只认标题栏**（`header`），按钮 / 输入框上按下不算拖动 ——
-   *      否则「点 ×」会先变成一次 0 位移的拖动，鼠标微抖就点不中；
-   *   2. 位移**夹在遮罩容器内**，拖不出可视区（拖丢了就再也找不到弹窗）；
-   *   3. 关掉设置时**归零** —— 下次打开回到居中，不记忆上次的怪位置。
-   *
-   * ⚠️ 位移**不走 state**，直接写 `style.transform`：设置页里有滑杆、
-   *    记忆面板、Agent 列表，每次 pointermove 都 setState 等于每帧重渲染
-   *    整棵子树，拖动会明显发涩。这里只需要浏览器重绘一层合成层。
+   * 用统一 hook `useDraggableDialog` 实现：位移直接写 DOM，不走 state，
+   * 避免每帧重渲染整棵子树。只认标题栏（`header`），按钮/输入框上按下
+   * 不算拖动。
    */
   const settingsPanelRef = useRef<HTMLDivElement>(null);
-  /** 当前累计位移（拖完要留着的那个值） */
-  const settingsOffsetRef = useRef({ x: 0, y: 0 });
-  const settingsDragRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    baseX: number;
-    baseY: number;
-    minX: number;
-    maxX: number;
-    minY: number;
-    maxY: number;
-  } | null>(null);
-
-  const applySettingsOffset = (x: number, y: number) => {
-    settingsOffsetRef.current = { x, y };
-    const el = settingsPanelRef.current;
-    if (el) el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-  };
-
-  const onSettingsDragStart = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (!target.closest('header')) return;
-    if (target.closest('button, a, input, textarea, select, [role="switch"]')) return;
-
-    const el = e.currentTarget;
-    const rect = el.getBoundingClientRect();
-    const host = el.parentElement?.getBoundingClientRect();
-    if (!host) return;
-
-    const base = settingsOffsetRef.current;
-    settingsDragRef.current = {
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      baseX: base.x,
-      baseY: base.y,
-      // 当前已经带位移，所以边界要换算成「还能再挪多少」
-      minX: base.x + (host.left - rect.left),
-      maxX: base.x + (host.right - rect.right),
-      minY: base.y + (host.top - rect.top),
-      maxY: base.y + (host.bottom - rect.bottom),
-    };
-    el.setPointerCapture(e.pointerId);
-  }, []);
-
-  const onSettingsDragMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    const d = settingsDragRef.current;
-    if (!d || d.pointerId !== e.pointerId) return;
-    const clamp = (v: number, lo: number, hi: number) =>
-      Math.min(Math.max(v, lo), Math.max(lo, hi));
-    applySettingsOffset(
-      clamp(d.baseX + e.clientX - d.startX, d.minX, d.maxX),
-      clamp(d.baseY + e.clientY - d.startY, d.minY, d.maxY)
-    );
-  }, []);
-
-  const onSettingsDragEnd = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    const d = settingsDragRef.current;
-    if (!d || d.pointerId !== e.pointerId) return;
-    settingsDragRef.current = null;
-    e.currentTarget.releasePointerCapture?.(e.pointerId);
-  }, []);
+  const settingsDrag = useDraggableDialog(settingsPanelRef, { handle: 'header' });
 
   useEffect(() => {
     if (isSettingsPage) return;
-    settingsDragRef.current = null;
-    // 弹窗本身已卸载，这里只是把「下次打开」的起点复位
-    settingsOffsetRef.current = { x: 0, y: 0 };
-  }, [isSettingsPage]);
+    settingsDrag.reset();
+  }, [isSettingsPage, settingsDrag]);
 
   /**
    * 追加/合并一条群聊消息。
@@ -1418,10 +1347,10 @@ function AppContent() {
                  位移也不在这里写：拖动时由 applySettingsOffset 直接改 DOM，
                  避免每帧重渲染设置页（见上面的注释）。 */
               className="tc-dialog relative flex h-[min(700px,100%)] w-[min(900px,100%)] overflow-hidden rounded-2xl [&_header]:select-none"
-              onPointerDown={onSettingsDragStart}
-              onPointerMove={onSettingsDragMove}
-              onPointerUp={onSettingsDragEnd}
-              onPointerCancel={onSettingsDragEnd}
+              onPointerDown={settingsDrag.onPointerDown}
+              onPointerMove={settingsDrag.onPointerMove}
+              onPointerUp={settingsDrag.onPointerUp}
+              onPointerCancel={settingsDrag.onPointerCancel}
               data-settings-panel
             >
               <SettingsPage
