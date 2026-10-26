@@ -9,7 +9,7 @@
  *   [2] 步骤动词退到 placeholder；文件名退到 secondary（不再比正文黑）
  *   [3] diff 统计常态降 opacity（不再每一步都跳饱和色）
  *   [4] 工具图标常态淡化，hover 恢复（语义颜色保留，只是不抢眼）
- *   [5] 思考链展开正文退到 placeholder + 3% 背景 + italic
+ *   [5] 思考链展开正文：正体 12.5px secondary + 2px 左细线（方案 C，2026-10-26 改）
  *   [6] 步骤明细退到 placeholder + 3% 背景
  *   [7] 轨迹与正文之间有 8px 物理分隔
  *   [8] 编排叙述行去掉胶囊背景，变成纯文本脚注
@@ -235,7 +235,7 @@ const iconOpHover = await page.evaluate(() => {
 });
 ok(iconOpHover === 1, '工具图标 hover 后 opacity 恢复为 1', iconOpHover);
 
-// ── [5] 思考链展开正文：placeholder + 3% 背景 + italic ─────────────────
+// ── [5] 思考链展开正文：正体 12.5px secondary + 左细线（方案 C）─────────
 // 先展开思考块
 await page.click('.tc-thinking > summary');
 await page.waitForTimeout(200);
@@ -243,19 +243,35 @@ const thinkingDiv = await page.evaluate(() => {
   const el = document.querySelector('.tc-thinking > div');
   if (!el) return null;
   const cs = getComputedStyle(el);
-  return { color: cs.color, bg: cs.backgroundColor, italic: cs.fontStyle };
+  const probe = (prop, value) => {
+    const s = document.createElement('span');
+    s.style[prop] = value;
+    document.body.appendChild(s);
+    const out = getComputedStyle(s)[prop];
+    s.remove();
+    return out;
+  };
+  return {
+    color: cs.color,
+    bg: cs.backgroundColor,
+    italic: cs.fontStyle,
+    border: `${cs.borderLeftWidth} ${cs.borderLeftStyle}`,
+    borderColor: cs.borderLeftColor,
+    rule: probe('borderLeftColor', 'var(--tc-rule)'),
+    secondary: probe('color', 'var(--td-text-color-secondary)'),
+  };
 });
 ok(thinkingDiv != null, '思考链展开正文存在');
 if (thinkingDiv) {
-  ok(thinkingDiv.color === 'rgb(163, 163, 163)', '思考正文颜色 = placeholder', thinkingDiv.color);
-  ok(thinkingDiv.italic === 'italic', '思考正文 font-style = italic', thinkingDiv.italic);
-  // 背景是 color-mix，计算值近似 3% alpha
-  const bgLum = thinkingDiv.bg;
-  ok(
-    bgLum.includes('0.03') || bgLum.includes('rgb(4') || bgLum.includes('rgb(7'),
-    '思考正文背景 ≈ 3%（淡到几乎看不见）',
-    bgLum
-  );
+  // 2026-10-26（方案 C）：轨迹内思考从「等宽 12px 最淡灰 + 3% 底」改成
+  // 「正体 12.5px secondary + 2px 左细线」。旧的 placeholder / italic / 底色
+  // 三条期望随之作废 —— 这是本脚本第 N 次「界面改了、期望表没跟上」，
+  // 改样式时先 grep 这里。
+  ok(thinkingDiv.color === thinkingDiv.secondary, '思考正文颜色 = secondary（不再是最浅一档）', thinkingDiv.color);
+  ok(thinkingDiv.italic === 'normal', '思考正文 font-style = normal（自然语言不用等宽斜体）', thinkingDiv.italic);
+  ok(thinkingDiv.bg === 'rgba(0, 0, 0, 0)' || thinkingDiv.bg === 'transparent', '思考正文无底色（不再是工具输出那种盒子）', thinkingDiv.bg);
+  ok(thinkingDiv.border === '2px solid', '思考正文带 2px 左细线', thinkingDiv.border);
+  ok(thinkingDiv.borderColor === thinkingDiv.rule, '左细线颜色 = --tc-rule（与消息级思考同一令牌）', thinkingDiv.borderColor);
 }
 
 // ── [6] 步骤明细：placeholder + 3% 背景 ───────────────────────────────

@@ -4215,6 +4215,53 @@ html[data-opc-glass='1'] t-chat-sender {
   }
 }
 
+/* 轨迹折叠过渡（方案 C 配套）。
+ *
+ * 为什么不用 `height: auto` 过渡：那不可插值。这里用 `grid-template-rows`
+ * 的 0fr ↔ 1fr —— 唯一能对「内容高度」做平滑过渡又不需要 JS 量高度的写法。
+ *
+ * 展开走 keyframes（元素是刚挂上的，没有「上一帧」可供 transition 插值），
+ * 收起走 transition（元素已经在 1fr 上）。两条路各自成立，不要合并成一条。
+ * 时长 200/220ms 与 AgentTrace.tsx 的 FOLD_MS 对齐 —— 那边负责「播完再卸载」。 */
+.tc-trace-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: tc-fold-in 200ms var(--ease-tencent) both;
+}
+
+.tc-trace-fold[data-fold='0'] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  animation: none;
+  transition:
+    grid-template-rows 200ms var(--ease-tencent),
+    opacity 140ms linear;
+}
+
+.tc-trace-fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@keyframes tc-fold-in {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-trace-fold,
+  .tc-trace-fold[data-fold='0'] {
+    animation: none;
+    transition: none;
+  }
+}
+
 /* 轨迹滚动区。
    为什么要限高：一条消息挂 30 个步骤时，不封顶就会把整个会话顶成
    一屏全是过程、答案被挤到看不见。参考图也是同样处理。
@@ -4271,6 +4318,82 @@ html[data-opc-glass='1'] t-chat-sender {
 
 .tc-trace-faint {
   color: var(--td-text-color-placeholder);
+}
+
+/* ── 轨迹内思考（方案 C）──────────────────────────────────────────────
+ *
+ * 位置：缩进挂在某个工具步骤下面，回答的是「为什么这么调」。
+ * 语言与方案 A（消息级思考）一致：头部 12px secondary + 正文正体沿 2px
+ * 左细线铺开。只降半档字号、缩进更浅 —— 它左边已经被轨迹缩进吃掉 18px。
+ *
+ * 为什么不再用 `.tc-step-detail`（等宽 12px + 3% 底 + 8rem 滚动）：
+ * 那是**工具输出**的语言，机器文本等宽才对；思考是自然语言，套等宽 +
+ * 最淡一档灰，长推理比工具输出还难读。方案 C 的稿子里它本该是正体 secondary。
+ *
+ * 这里不做 max-height：外层 `.tc-trace-scroll` 已经封了 320px 并自己滚动，
+ * 再套一层内部滚动条会出现「滚动区里套滚动区」的双滚动条。
+ */
+.tc-thinking.tc-think-note {
+  color: var(--td-text-color-secondary);
+}
+
+.tc-thinking.tc-think-note > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: -4px;
+  padding: 2px 6px 2px 4px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--td-text-color-secondary);
+  list-style: none;
+  transition: background-color var(--duration-fast) var(--ease-tencent);
+}
+
+/* 折叠时不留 6px 下边距：那 6px 是「头部 → 正文」的间距，只有展开才需要 */
+.tc-thinking.tc-think-note[open] > summary {
+  margin-bottom: 6px;
+}
+
+.tc-thinking.tc-think-note > summary:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.tc-thinking.tc-think-note > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tc-thinking.tc-think-note > summary > svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.tc-think-note-title {
+  font-weight: 500;
+}
+
+.tc-think-note-meta {
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 正文：正体 12.5px secondary + 2px 左细线。
+   选择器写成「两个类 + 一个类」，压过 `.tc-thinking > div`（单类 + 元素）
+   那套 12px 斜体 placeholder + 3% 底的老规格 —— 不靠 !important。 */
+.tc-thinking.tc-think-note > .tc-think-note-body {
+  margin: 0 0 2px;
+  padding: 1px 0 1px 11px;
+  border-left: 2px solid var(--tc-rule);
+  background-color: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 1.7;
+  color: var(--td-text-color-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ── 后台任务胶囊 ─────────────────────────────────────────────────────

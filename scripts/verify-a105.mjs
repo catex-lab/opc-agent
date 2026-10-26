@@ -167,10 +167,15 @@ console.log('\n[5] definitions 契约');
   const trae = AGENT_DEFS.find(d => d.descriptor.id === 'trae');
   const zcode = AGENT_DEFS.find(d => d.descriptor.id === 'zcode');
 
-  check('trae 的 bin 是数组（多命令名候选）', Array.isArray(trae?.cli?.bin));
+  check('trae 的 bin 是数组', Array.isArray(trae?.cli?.bin));
+  // A119 推翻 A105 的这条期望：`bin/trae-cn.cmd` 是 VS Code 官方垫片
+  // （跑 resources/app/out/cli.js，是 IDE 的 `code` 命令，没有 exec），
+  // 把它当 CLI 会把 `exec --json` 当文件夹、拉起 IDE 窗口并挂到超时。
+  // 所以 bin 只认 `traecli`，本机没装就如实报未安装。
   check(
-    "trae 的 bin 首选 'trae-cn'（本机实际命令名，文档名 traecli 在后）",
-    Array.isArray(trae?.cli?.bin) && trae.cli.bin[0] === 'trae-cn'
+    "trae 的 bin 只认 'traecli'（不再把 IDE 垫片 trae-cn 当 CLI）",
+    Array.isArray(trae?.cli?.bin) && trae.cli.bin.length === 1 && trae.cli.bin[0] === 'traecli',
+    JSON.stringify(trae?.cli?.bin)
   );
 
   check("zcode 的 binExts 含 '.cjs'（引擎无可执行扩展名）", zcode?.cli?.binExts?.includes('.cjs') === true);
@@ -199,8 +204,19 @@ console.log('\n[6] 真探测（起子进程，几秒内完成）');
   const { registry: reg } = await import('../server/agents/registry.ts');
 
   const trae = await reg.probeOne('trae', true);
-  check('trae 探测为 ready（修复前是 not-installed）', trae?.status.availability === 'ready', trae?.status.message);
-  check('trae 拿到真实版本号', /\d+\.\d+/.test(trae?.status.version ?? ''), trae?.status.version);
+  // A119 之后这条是**本机状态断言**（与上面写死 `E:\AI\Trae CN\...` 同一性质）：
+  // 本机只有 IDE、没有 traecli，所以正确结果是 not-installed。
+  // 若哪天本机装了 traecli，这里应改成「ready 且版本号来自 traecli」。
+  check(
+    'trae 如实报未安装（IDE 垫片不算 CLI，不冒充 ready）',
+    trae?.status.availability === 'not-installed',
+    `${trae?.status.availability} / ${trae?.status.message ?? ''}`
+  );
+  check(
+    'trae 不把 IDE 版本号当 CLI 版本（不编造 version）',
+    !trae?.status.version,
+    String(trae?.status.version)
+  );
 
   const zcode = await reg.probeOne('zcode', true);
   check('zcode 探测为 ready（修复前是 not-installed）', zcode?.status.availability === 'ready', zcode?.status.message);

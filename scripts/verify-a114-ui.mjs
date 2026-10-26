@@ -300,14 +300,17 @@ try {
     failures.push('拿不到设置弹窗或关闭按钮');
     console.log('  ❌ 拿不到设置弹窗或关闭按钮');
   } else {
-    // 目标 (14, 16)：弹窗圆角 16px，收进这个位置才落在弧线的顺势处。
+    // 目标 (12, 16)：弹窗圆角 16px，收进这个位置才落在弧线的顺势处。
     // 原来是 (22, 25) —— 与标题行对齐，结果是悬在标题旁边、离圆角还有一段。
-    const topOk = m.fromTop === 14;
+    // A116 把设置页标题栏从 88px 压到 60px 之后，关闭键的 translate 从
+    // (9px,-8px) 改成 (9px,0)，实测落点由 14 变成 12（A116 只看了截图和
+    // 自己的探针，没跑本脚本，这条期望就一直停在 14）。
+    const topOk = m.fromTop === 12;
     const rightOk = m.fromRight === 16;
-    if (!topOk || !rightOk) failures.push(`关闭按钮位置不对：距顶 ${m.fromTop}px、距右 ${m.fromRight}px（期望 14 / 16）`);
+    if (!topOk || !rightOk) failures.push(`关闭按钮位置不对：距顶 ${m.fromTop}px、距右 ${m.fromRight}px（期望 12 / 16）`);
     console.log(topOk && rightOk
       ? `  ✓ 关闭按钮收进弹窗圆角  [距顶 ${m.fromTop}px / 距右 ${m.fromRight}px]`
-      : `  ❌ 关闭按钮位置 [距顶 ${m.fromTop}px / 距右 ${m.fromRight}px，期望 14 / 16]`);
+      : `  ❌ 关闭按钮位置 [距顶 ${m.fromTop}px / 距右 ${m.fromRight}px，期望 12 / 16]`);
   }
 } catch (e) {
   failures.push('关闭按钮用例异常：' + String(e).slice(0, 160));

@@ -182,8 +182,19 @@ function DiffTag({ diff }: { diff: TraceDiff }) {
   );
 }
 
-/** 思考节点：缩进挂在上一个工具下面，一行「深度思考」+ 字数 + 秒数（用户要求保留） */
-function ThinkingNode({ item }: { item: TraceItem }) {
+/**
+ * 思考节点（方案 C）：缩进挂在上一个工具下面，一行「深度思考」+ 字数 + 秒数。
+ *
+ * 排版与方案 A 同一套语言（头部 12px secondary、正文正体沿 2px 左细线铺开），
+ * 只降半档字号、缩进更浅 —— 它挂在轨迹里，左边已经被缩进吃掉 18px。
+ *
+ * 为什么不再用 `.tc-step-detail`（等宽 12px + 3% 底）：那是**工具输出**的语言，
+ * 机器文本等宽才对；思考是自然语言，套等宽 + 最淡一档灰，长推理比工具输出还难读。
+ *
+ * `collapse`：这条消息已经有正文了。用户口径是「输出正文前折叠上面的」——
+ * 答案出现后，过程让位，不再自动铺开。
+ */
+function ThinkingNode({ item, collapse = false }: { item: TraceItem; collapse?: boolean }) {
   const t = item.thinking;
   if (!t) return null;
   const running = t.state === 'streaming';
@@ -191,15 +202,15 @@ function ThinkingNode({ item }: { item: TraceItem }) {
 
   return (
     <div className="tc-trace-nested" data-trace-thinking={item.id}>
-      <details className="tc-thinking" open={running}>
+      <details className="tc-thinking tc-think-note" open={running && !collapse}>
         <summary>
           <Sparkles size={12} style={{ flexShrink: 0 }} />
-          <span>{running ? '深度思考中' : '深度思考'}</span>
-          <span className="tc-trace-faint">{t.text.length} 字</span>
-          {secs != null && <span className="tc-trace-faint">{secs}s</span>}
-          {t.format === 'summary' && <span className="tc-trace-faint">摘要</span>}
+          <span className="tc-think-note-title">{running ? '深度思考中' : '深度思考'}</span>
+          {t.format === 'summary' && <span className="tc-think-badge">摘要</span>}
+          <span className="tc-think-note-meta">{t.text.length} 字</span>
+          {secs != null && <span className="tc-think-note-meta">{secs}s</span>}
         </summary>
-        <div className="tc-step-detail">{t.text}</div>
+        <div className="tc-think-note-body">{t.text}</div>
       </details>
     </div>
   );
@@ -258,7 +269,7 @@ function detailOf(item: TraceItem): ReactNode {
 }
 
 /** 单步 */
-function StepRow({ item }: { item: TraceItem }) {
+function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boolean }) {
   const [open, setOpen] = useState(false);
   const { icon: Icon, color } = iconOf(item.toolName);
   const detail = item.kind === 'tool' ? detailOf(item) : null;
@@ -341,7 +352,7 @@ function StepRow({ item }: { item: TraceItem }) {
       {item.nested.length > 0 && (
         <div className="tc-trace-nest">
           {item.nested.map(n => (
-            <ThinkingNode key={n.id} item={n} />
+            <ThinkingNode key={n.id} item={n} collapse={collapse} />
           ))}
         </div>
       )}
@@ -354,9 +365,14 @@ export interface AgentTraceProps {
   blocks: readonly Block[];
   /** 这一轮是否还在流式（决定默认展开 + 自动贴底） */
   isStreaming?: boolean;
+  /** 这条消息已经有正文：收起轨迹，把版面让给答案（用户口径） */
+  collapse?: boolean;
 }
 
-export function AgentTrace({ blocks, isStreaming = false }: AgentTraceProps) {
+/** 折叠过渡时长（ms）。改这里必须同步 index.css 的 `.tc-trace-fold`。 */
+const FOLD_MS = 220;
+
+export function AgentTrace({ blocks, isStreaming = false, collapse = false }: AgentTraceProps) {
   const items = useMemo(() => buildTrace(blocks), [blocks]);
   const summary = useMemo(() => summarizeTrace(items), [items]);
 
@@ -369,6 +385,28 @@ export function AgentTrace({ blocks, isStreaming = false }: AgentTraceProps) {
     if (prevStreaming.current && !isStreaming && !touched.current) setExpanded(false);
     prevStreaming.current = !!isStreaming;
   }, [isStreaming]);
+
+  // 正文开始输出 → 收起。同样尊重手动选择：用户自己点开过就不再抢。
+  useEffect(() => {
+    if (collapse && !touched.current) setExpanded(false);
+  }, [collapse]);
+
+  /**
+   * 折叠动画要「先挂住再卸」。
+   *
+   * 直接 `expanded && <div>` 会让 300px 高的轨迹在一帧内消失，答案猛地往上跳；
+   * 一直挂在 DOM 里又会让收起态白养一棵子树（`verify-a36` 明着断言
+   * 「收起时步骤不渲染」）。所以：收起时先留着播 220ms 过渡，播完再卸载。
+   */
+  const [showBody, setShowBody] = useState(expanded);
+  useEffect(() => {
+    if (expanded) {
+      setShowBody(true);
+      return;
+    }
+    const timer = setTimeout(() => setShowBody(false), FOLD_MS);
+    return () => clearTimeout(timer);
+  }, [expanded]);
 
   const toggle = () => {
     touched.current = true;
@@ -392,14 +430,16 @@ export function AgentTrace({ blocks, isStreaming = false }: AgentTraceProps) {
     const ro = new ResizeObserver(check);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [expanded, items.length]);
+    // showBody 也进依赖：从折叠态展开时，滚动区是「展开那一帧之后」才挂上的，
+    // 只依赖 expanded 的话这里拿到的是 null，遮罩永远算不出来。
+  }, [expanded, showBody, items.length]);
 
   // 流式中贴底：新步骤永远在末尾，不贴底就看不到它
   useEffect(() => {
     if (!running || !expanded) return;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [running, expanded, items.length]);
+  }, [running, expanded, showBody, items.length]);
 
   if (items.length === 0) return null;
 
@@ -459,23 +499,27 @@ export function AgentTrace({ blocks, isStreaming = false }: AgentTraceProps) {
         {durationText && <span className="tc-trace-meta">{durationText}</span>}
       </div>
 
-      {expanded && (
-        <div
-          ref={scrollRef}
-          className="tc-trace-scroll"
-          data-trace-scroll
-          data-fade={overflowing ? '1' : undefined}
-        >
-          <div className="tc-steps">
-            {items.map(item =>
-              item.kind === 'thinking' ? (
-                <div key={item.id} className="tc-trace-solo">
-                  <ThinkingNode item={item} />
-                </div>
-              ) : (
-                <StepRow key={item.id} item={item} />
-              )
-            )}
+      {showBody && (
+        <div className="tc-trace-fold" data-trace-fold data-fold={expanded ? '1' : '0'}>
+          <div className="tc-trace-fold-inner">
+            <div
+              ref={scrollRef}
+              className="tc-trace-scroll"
+              data-trace-scroll
+              data-fade={overflowing ? '1' : undefined}
+            >
+              <div className="tc-steps">
+                {items.map(item =>
+                  item.kind === 'thinking' ? (
+                    <div key={item.id} className="tc-trace-solo">
+                      <ThinkingNode item={item} collapse={collapse} />
+                    </div>
+                  ) : (
+                    <StepRow key={item.id} item={item} collapse={collapse} />
+                  )
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

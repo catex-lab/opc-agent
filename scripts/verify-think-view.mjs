@@ -1,5 +1,5 @@
 /**
- * 思考过程展示（方案 A）—— L2 浏览器验收。
+ * 思考过程展示（方案 A 消息级 + 方案 C 轨迹内）—— L2 浏览器验收。
  *
  * ## 语义：原 Agent 给什么，前端就展示什么
  *
@@ -8,18 +8,21 @@
  *   summary  只有摘要   → 头部挂「摘要」角标（不标就让人以为看到完整思维链）
  *   未提供   不渲染    → 没有 thinking 块就没有 .tc-think 元素
  *
- * 默认展开策略：正在流的这一条 + 最新一条助手消息；其余历史折叠。
+ * ## 展开策略（2026-10-26 用户口径，覆盖 A 的「最新一条默认展开」）
+ *
+ *   1. 正在流的思考 → 展开（此刻它就是正文）；
+ *   2. 这条消息已经有答案正文 → 思考、轨迹、轨迹内思考全部收起 ——
+ *      「输出正文回答前折叠上面的」；
+ *   3. 其余（历史、无正文）→ 折叠。
+ *
+ * 夹具就是按这个矩阵摆的：m1 历史有正文 / m4 最新有正文 / m5 正文已开始流 /
+ * m6 还在思考没有正文。四条的 open 值必须是 [false, false, false, true]。
  *
  * ## 层位
  * 静态 dist + API 夹具，不起服务端。适配器层「CLI 真的会发 reasoning 事件」
- * 由 `verify-opencode-thinking.ts`（L1 纯函数）负责 —— 那才是 opencode 早期
- * 「声明了 thinking 能力但界面一直空白」的根因（buildArgs 没传 --thinking）。
- *
- * ## 为什么单独一个脚本
- * `verify-a85` 的夹具里唯一的 thinking 块紧跟在工具之后，被收进轨迹，
- * 走的是 AgentTrace 的嵌套节点（规格不同）。消息级开头思考（ThinkingView）
- * 的视觉契约在这里守着 —— 否则改坏它只会表现为「截图上看着怪」，没有任何
- * 脚本会红。
+ * 由 `verify-opencode-thinking.ts`（L1）负责；匀速揭示的推进算法由
+ * `verify-smooth-text.ts`（L1）负责 —— 静态夹具造不出「流式增量」，
+ * 这里只能验到「揭示游标不丢字」这一层。
  *
  * 运行：npm run build && node scripts/verify-think-view.mjs
  */
@@ -48,27 +51,32 @@ const SESSIONS = [{ id: 's1', title: '思考展示', agent_id: 'wb', model: 'm',
 
 const iso = secAgo => new Date(Date.now() - secAgo * 1000).toISOString();
 
-// 故意排成：历史一条（raw，应收起）+ 无思考的一条（absent）+ 最新一条（summary，应展开）
+const THINK_RAW =
+  '用户问的是磁盘剩余空间，需要先确认是哪个盘符。C 盘还是全部？直接用 PowerShell 的 Get-PSDrive 一次性读出所有驱动器的 Used / Free，比重扫整个文件系统快得多。';
+
 const MESSAGES = [
-  { id: 'm0', role: 'user', session_id: 's1', created_at: iso(300), content: '帮我看看磁盘还剩多少空间' },
+  { id: 'm0', role: 'user', session_id: 's1', created_at: iso(400), content: '帮我看看磁盘还剩多少空间' },
+  // m1：历史消息，思考 + 正文 → 折叠
   {
-    id: 'm1', role: 'assistant', session_id: 's1', model: 'm', created_at: iso(290),
+    id: 'm1', role: 'assistant', session_id: 's1', model: 'm', created_at: iso(390),
     blocks: [
       {
         id: 'b1-think', type: 'thinking', state: 'done', format: 'raw',
-        text: '用户问的是磁盘剩余空间，需要先确认是哪个盘符。C 盘还是全部？直接用 PowerShell 的 Get-PSDrive 一次性读出所有驱动器的 Used / Free，比重扫整个文件系统快得多。',
+        text: THINK_RAW,
         startedAt: Date.now() - 9000, endedAt: Date.now() - 4200,
       },
       { id: 'b1-text', type: 'text', state: 'done', text: 'C 盘剩余 58.3 GB，D 盘剩余 241.7 GB。' },
     ],
   },
   { id: 'm2', role: 'user', session_id: 's1', created_at: iso(120), content: '再查一次' },
+  // m3：没有 thinking 块 → 什么都不渲染（不留空壳）
   {
     id: 'm3', role: 'assistant', session_id: 's1', model: 'm', created_at: iso(110),
     blocks: [{ id: 'b3-text', type: 'text', state: 'done', text: 'C 盘剩余 58.2 GB。' }],
   },
+  // m4：最新一条「已完成」且有正文 → 折叠（A 时代这里展开，现在让位给答案）
   {
-    id: 'm4', role: 'assistant', session_id: 's1', model: 'm', created_at: iso(10),
+    id: 'm4', role: 'assistant', session_id: 's1', model: 'm', created_at: iso(60),
     blocks: [
       {
         id: 'b4-think', type: 'thinking', state: 'done', format: 'summary',
@@ -78,6 +86,76 @@ const MESSAGES = [
       { id: 'b4-text', type: 'text', state: 'done', text: 'C 盘剩余 58.1 GB。' },
     ],
   },
+  // m5：正文已经开始流 → 思考、轨迹、轨迹内思考全收起；同时提供方案 C 的样张
+  // 注意：`isStreaming` 不写在消息上 —— 加载器逐字段映射，服务端从不发这个字段
+  // （真实流式由 [9] 的 SSE 造）。这里靠 blocks 里的文本触发折叠规则。
+  {
+    id: 'm5', role: 'assistant', session_id: 's1', model: 'm', created_at: iso(20),
+    blocks: [
+      {
+        id: 'b5-think', type: 'thinking', state: 'done', format: 'raw',
+        text: '先确认盘符，再决定用哪个命令。',
+        startedAt: Date.now() - 8000, endedAt: Date.now() - 6000,
+      },
+      {
+        id: 'b5-tool', type: 'tool', toolId: 't1', name: 'bash',
+        input: { command: 'Get-PSDrive -PSProvider FileSystem' },
+        output: 'Name Used(GB) Free(GB)\nC: 412.6 58.3\nD: 180.2 241.7',
+        status: 'completed',
+        startedAt: Date.now() - 6000, endedAt: Date.now() - 4000,
+      },
+      {
+        id: 'b5-think-2', type: 'thinking', state: 'done', format: 'raw',
+        text: '输出已经拿到两个盘的用量，直接念数字即可，不必再补充「如何释放空间」——用户只问了剩多少。',
+        startedAt: Date.now() - 4000, endedAt: Date.now() - 3000,
+      },
+      {
+        id: 'b5-text', type: 'text', state: 'done',
+        text: 'C 盘剩余 58.3 GB，D 盘剩余 241.7 GB。',
+      },
+    ],
+  },
+  // m6：最新一条、还没有正文 → 展开（唯一该展开的一条）
+  {
+    id: 'm6', role: 'assistant', session_id: 's1', model: 'm', created_at: iso(5),
+    blocks: [
+      {
+        id: 'b6-think', type: 'thinking', state: 'done', format: 'raw',
+        text: '用户又问了一次，可能想要更精确的数字。',
+        startedAt: Date.now() - 2000, endedAt: Date.now() - 1000,
+      },
+    ],
+  },
+];
+
+/* ── 真流式夹具（[9]）────────────────────────────────────────────────
+ * 静态夹具造不出「正在增长」的正文（加载器逐字段映射，服务端不发
+ * isStreaming），而这次要验的两件事 —— 正文一开始就折叠上面、正文匀速
+ * 揭示 —— 只存在于流式过程中。所以 [9] 真跑一轮 SSE：先思考、再调工具、
+ * 最后吐答案，每 120ms 一个事件，脚本在中途采样。
+ */
+const LIVE_DELTAS = [
+  'C 盘剩余 58.3 GB，',
+  'D 盘剩余 241.7 GB。',
+  '两个盘都还有余量，',
+  '暂时不需要清理。',
+  '需要的话我可以列出',
+  '占用最大的几个目录。',
+];
+const LIVE_FULL = LIVE_DELTAS.join('');
+const sse = events =>
+  events.map((e, i) => `id: ${e.seq ?? i + 1}\ndata: ${JSON.stringify(e)}\n\n`).join('');
+const LIVE_EVENTS = [
+  { seq: 1, type: 'run_start', runId: 'r-live', sessionId: 's1', messageId: 'a-live', agentId: 'wb', model: 'm' },
+  { seq: 2, type: 'block_open', block: { id: 'lv-think', type: 'thinking', text: '先确认盘符。', state: 'streaming', format: 'raw', startedAt: Date.now() } },
+  { seq: 3, type: 'block_delta', blockId: 'lv-think', channel: 'text', delta: '直接用 Get-PSDrive 一次读完更快。' },
+  { seq: 4, type: 'block_close', blockId: 'lv-think', state: 'done' },
+  { seq: 5, type: 'block_open', block: { id: 'lv-tool', type: 'tool', toolId: 'lt1', name: 'bash', input: { command: 'Get-PSDrive -PSProvider FileSystem' }, status: 'running', startedAt: Date.now() } },
+  { seq: 6, type: 'block_close', blockId: 'lv-tool', state: 'done' },
+  { seq: 7, type: 'block_open', block: { id: 'lv-text', type: 'text', text: '', state: 'streaming' } },
+  ...LIVE_DELTAS.map((delta, i) => ({ seq: 8 + i, type: 'block_delta', blockId: 'lv-text', channel: 'text', delta })),
+  { seq: 20, type: 'block_close', blockId: 'lv-text', state: 'done' },
+  { seq: 21, type: 'run_end', runId: 'r-live', status: 'ok', durationMs: 2400 },
 ];
 
 const failures = [];
@@ -93,6 +171,26 @@ function ok(cond, label, detail) {
 
 const server = createServer(async (req, res) => {
   try {
+    // 慢速 SSE：fulfill 是一次性写回整个 body，那样测不到「正在增长」，
+    // 所以 /api/chat 必须由真实服务器分片写。
+    if (req.url.startsWith('/api/chat')) {
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        });
+        let i = 0;
+        const tick = () => {
+          if (i >= LIVE_EVENTS.length) return res.end();
+          res.write(sse([LIVE_EVENTS[i++]]));
+          setTimeout(tick, 120);
+        };
+        tick();
+      });
+      return;
+    }
     const url = new URL(req.url, 'http://x');
     let p = decodeURIComponent(url.pathname);
     if (p === '/' || p.endsWith('/index.html')) p = '/index.html';
@@ -119,16 +217,18 @@ const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 }, 
 await ctx.route('**/api/**', route => {
   const url = route.request().url();
   const json = o => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(o) });
+  // /api/chat 交给服务器（慢速 SSE），不要在这里 fulfill
+  if (url.includes('/api/chat')) return route.continue();
   if (url.includes('/api/agent-credentials')) return json({ credentials: [] });
-  if (/\api\/sessions\/[^/]+$/.test(url)) {
+  if (/api\/sessions\/[^/]+$/.test(url)) {
     const id = url.split('/api/sessions/')[1].split('?')[0];
     const s = SESSIONS.find(x => x.id === id) ?? SESSIONS[0];
     return json({ session: s, messages: MESSAGES });
   }
-  if (/\api\/agents\/probe/.test(url)) return json({ agents: AGENTS });
-  if (/\api\/agents(\?|$)/.test(url)) return json({ agents: AGENTS });
-  if (/\api\/models/.test(url)) return json({ models: MODELS });
-  if (/\api\/sessions/.test(url)) return json({ sessions: SESSIONS });
+  if (/api\/agents\/probe/.test(url)) return json({ agents: AGENTS });
+  if (/api\/agents(\?|$)/.test(url)) return json({ agents: AGENTS });
+  if (/api\/models/.test(url)) return json({ models: MODELS });
+  if (/api\/sessions/.test(url)) return json({ sessions: SESSIONS });
   return json({});
 });
 
@@ -138,7 +238,7 @@ page.on('pageerror', e => errors.push(String(e.message)));
 page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
 
 await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
-await page.waitForTimeout(1000);
+await page.waitForTimeout(1200);
 
 // ── [1] 三种能力状态 ─────────────────────────────────────────────────
 console.log('\n[1] 三种能力状态');
@@ -158,24 +258,28 @@ const states = await page.evaluate(() => {
     heads: nodes.map(n => head(n)),
     metaTexts,
     bodyCount: document.querySelectorAll('.tc-think-body').length,
+    // 轨迹内思考是另一个类，不该被数进来
+    noteCount: document.querySelectorAll('.tc-think-note').length,
   };
 });
-ok(states.count === 2, '只有两条思考被渲染（无 thinking 块的那条不留空壳）', String(states.count));
-ok(states.formats.join(',') === 'raw,summary', '格式标记如实透传', states.formats.join(','));
+ok(states.count === 4, '消息级思考 4 条（无 thinking 块的那条不留空壳）', String(states.count));
+ok(states.formats.join(',') === 'raw,summary,raw,raw', '格式标记如实透传', states.formats.join(','));
 ok(states.badges[0] === null, 'raw 不挂角标', String(states.badges[0]));
 ok(states.badges[1] === '摘要', 'summary 挂「摘要」角标', String(states.badges[1]));
 ok(/思考/.test(states.heads[0]), '头部是「思考」', states.heads[0]);
 ok(states.metaTexts.some(t => /^\d+\s*字$/.test(t)), '头部保留字数（用户口径：保留）', states.metaTexts.join(' / '));
 ok(states.metaTexts.some(t => /^\d+\s*s$/.test(t)), '头部保留耗时（数字 + s）', states.metaTexts.join(' / '));
-ok(states.bodyCount === 2, '每个思考块有正文容器', String(states.bodyCount));
+ok(states.bodyCount === 4, '每个消息级思考块有正文容器', String(states.bodyCount));
 
-// ── [2] 默认展开策略 ─────────────────────────────────────────────────
-console.log('\n[2] 默认展开策略');
+// ── [2] 展开策略矩阵 ─────────────────────────────────────────────────
+console.log('\n[2] 展开策略：正文出现就折叠上面的');
 const openState = await page.evaluate(() =>
   [...document.querySelectorAll('.tc-think')].map(n => n.open)
 );
-ok(openState[0] === false, '历史消息的思考默认折叠', String(openState[0]));
-ok(openState[1] === true, '最新一条助手消息的思考默认展开', String(openState[1]));
+ok(openState[0] === false, '历史消息（有正文）的思考折叠', String(openState[0]));
+ok(openState[1] === false, '最新一条「已完成且有正文」也折叠（覆盖 A 的默认展开）', String(openState[1]));
+ok(openState[2] === false, '正文已出现的消息，上方思考折叠', String(openState[2]));
+ok(openState[3] === true, '最新一条「还没有正文」的思考展开（过程此刻就是内容）', String(openState[3]));
 
 // ── [3] 正文视觉契约（方案 A）────────────────────────────────────────
 console.log('\n[3] 正文视觉契约：左细线 + 13px secondary + 正体');
@@ -183,7 +287,7 @@ const body = await page.evaluate(() => {
   const el = document.querySelector('.tc-think[data-think-format="raw"] .tc-think-body');
   if (!el) return null;
   const cs = getComputedStyle(el);
-  // 探针：把令牌解析成真实 rgb() 再比，避免写死 18%（深色是 24% 白）
+  // 探针：把令牌解析成真实 rgb() 再比，避免写死 18%（深色是 20% 白）
   const probeEl = document.createElement('span');
   probeEl.style.borderLeftColor = 'var(--tc-rule)';
   document.body.appendChild(probeEl);
@@ -221,7 +325,7 @@ if (body) {
   ok(body.paddingLeft === '13px', '左内缩 13px', body.paddingLeft);
   ok(body.borderLeftWidth === '2px' && body.borderLeftStyle === 'solid', '左细线 2px solid', `${body.borderLeftWidth} ${body.borderLeftStyle}`);
   ok(body.borderLeftColor === body.ruleToken, '左细线颜色 = --tc-rule（读令牌，不写死百分比）', body.borderLeftColor);
-  ok(body.color === body.tok.secondary, '正文颜色 = secondary（比答案轻一档，不是一档灰之外的最浅）', body.color);
+  ok(body.color === body.tok.secondary, '正文颜色 = secondary（比答案轻一档，不是最浅那档）', body.color);
   ok(body.background === 'rgba(0, 0, 0, 0)' || body.background === 'transparent', '无背景卡（不是盒子）', body.background);
   ok(
     Math.abs(body.lineHeight - 1.75) < 0.02,
@@ -278,7 +382,7 @@ ok(headStyle.badgeBg === headStyle.token.brandBg, '摘要角标底色 = 10% 品�
 
 // ── [4b] 几何：左细线与头部图标同一条竖线 ─────────────────────────────
 // 折叠态下 details 的子元素 bounding rect 是 0（浏览器不给折叠内容布局），
-// 所以只能量展开的那一条。
+// 所以只能量展开的那一条 —— 夹具里唯一展开的是 m6（还在思考）。
 console.log('\n[4b] 几何对齐');
 const geo = await page.evaluate(() => {
   const node = document.querySelector('.tc-think[open]');
@@ -312,25 +416,127 @@ ok(
 
 // ── [5] 用户的手动选择不被抢回去 ──────────────────────────────────────
 console.log('\n[5] 用户折叠 / 展开的手动选择被尊重');
-const before = await page.evaluate(() => [...document.querySelectorAll('.tc-think')].map(n => n.open));
 await page.click('.tc-think[data-think-format="raw"] > summary');
 await page.waitForTimeout(200);
 const afterOpen = await page.evaluate(() =>
   document.querySelector('.tc-think[data-think-format="raw"]')?.open
 );
-ok(afterOpen === true, '手动展开历史消息的思考', String(afterOpen));
+ok(afterOpen === true, '手动展开历史消息的思考（不会被「已折叠」状态抢回去）', String(afterOpen));
 await page.reload({ waitUntil: 'networkidle' });
-await page.waitForTimeout(1000);
+await page.waitForTimeout(1200);
 const afterReload = await page.evaluate(() => [...document.querySelectorAll('.tc-think')].map(n => n.open));
 ok(
-  JSON.stringify(afterReload) === JSON.stringify([false, true]),
-  '刷新后回到默认策略（历史折叠 / 最新展开），不靠持久化状态',
+  JSON.stringify(afterReload) === JSON.stringify([false, false, false, true]),
+  '刷新后回到默认策略（只有「正在思考且无正文」那条展开），不靠持久化状态',
   JSON.stringify(afterReload)
 );
-void before;
 
-// ── [6] --tc-rule 明暗双主题都有 ─────────────────────────────────────
-console.log('\n[6] --tc-rule 双主题令牌');
+// ── [6] 轨迹内思考（方案 C）───────────────────────────────────────────
+console.log('\n[6] 轨迹内思考：正体 12.5px + 左细线（方案 C）');
+const traceState = await page.evaluate(() => {
+  const trace = document.querySelector('[data-trace]');
+  const bar = trace?.querySelector('[data-steps-bar]');
+  return {
+    traces: document.querySelectorAll('[data-trace]').length,
+    aria: bar?.getAttribute('aria-expanded') ?? null,
+    scroll: document.querySelectorAll('[data-trace-scroll]').length,
+  };
+});
+ok(traceState.traces === 1, '只有一条消息带工具轨迹', String(traceState.traces));
+ok(traceState.aria === 'false', '正文已出现 → 轨迹收起（把版面让给答案）', String(traceState.aria));
+ok(traceState.scroll === 0, '收起态不渲染步骤（动画播完就卸载，不白养子树）', String(traceState.scroll));
+
+// 展开轨迹，读方案 C 的正文规格
+await page.click('[data-steps-bar]');
+await page.waitForTimeout(500);
+const expandedFold = await page.evaluate(() => ({
+  fold: document.querySelector('[data-trace-fold]')?.getAttribute('data-fold') ?? null,
+  noteOpen: document.querySelector('.tc-think-note')?.open ?? null,
+  // 轨迹内思考是独立一类，不能被数进 `.tc-think`（否则消息级的两条断言会串味）
+  noteCount: document.querySelectorAll('.tc-think-note').length,
+  messageThinkCount: document.querySelectorAll('.tc-think').length,
+}));
+ok(expandedFold.fold === '1', '展开后 data-fold=1（过渡动画的状态锚点）', String(expandedFold.fold));
+ok(expandedFold.noteOpen === false, '正文已出现 → 轨迹内思考也收起（不再自动铺开）', String(expandedFold.noteOpen));
+ok(
+  expandedFold.noteCount === 1 && expandedFold.messageThinkCount === 4,
+  '轨迹内思考单独一类（不混进 .tc-think）',
+  `${expandedFold.noteCount} / ${expandedFold.messageThinkCount}`
+);
+const note = await page.evaluate(() => {
+  const el = document.querySelector('.tc-think-note-body');
+  if (!el) return null;
+  const cs = getComputedStyle(el);
+  const probe = (prop, value) => {
+    const s = document.createElement('span');
+    s.style[prop] = value;
+    document.body.appendChild(s);
+    const out = getComputedStyle(s)[prop];
+    s.remove();
+    return out;
+  };
+  const head = document.querySelector('.tc-think-note > summary');
+  const hcs = head ? getComputedStyle(head) : null;
+  return {
+    fontSize: cs.fontSize,
+    fontStyle: cs.fontStyle,
+    lineHeight: parseFloat(cs.lineHeight) / parseFloat(cs.fontSize),
+    fontFamily: cs.fontFamily.toLowerCase(),
+    color: cs.color,
+    background: cs.backgroundColor,
+    paddingLeft: cs.paddingLeft,
+    borderLeftWidth: cs.borderLeftWidth,
+    borderLeftStyle: cs.borderLeftStyle,
+    borderLeftColor: cs.borderLeftColor,
+    rule: probe('borderLeftColor', 'var(--tc-rule)'),
+    secondary: probe('color', 'var(--td-text-color-secondary)'),
+    headFontSize: hcs?.fontSize ?? null,
+    headColor: hcs?.color ?? null,
+    headText: head?.textContent ?? '',
+  };
+});
+ok(note != null, '轨迹内思考正文存在');
+if (note) {
+  ok(note.fontSize === '12.5px', '正文字号 12.5px（比消息级 A 小半档）', note.fontSize);
+  ok(note.fontStyle === 'normal', '正体，不再斜体', note.fontStyle);
+  ok(note.color === note.secondary, '正文颜色 = secondary（不是最浅一档 placeholder）', note.color);
+  ok(note.borderLeftWidth === '2px' && note.borderLeftStyle === 'solid', '左细线 2px solid', `${note.borderLeftWidth} ${note.borderLeftStyle}`);
+  ok(note.borderLeftColor === note.rule, '左细线颜色 = --tc-rule（与方案 A 同一条令牌）', note.borderLeftColor);
+  ok(note.paddingLeft === '11px', '左内缩 11px（轨迹里空间更紧，比 A 浅）', note.paddingLeft);
+  ok(note.background === 'rgba(0, 0, 0, 0)' || note.background === 'transparent', '无 3% 底色（不再是工具输出的盒子）', note.background);
+  ok(!/mono|consolas|courier/.test(note.fontFamily), '不再用等宽字体（那是工具输出的语言）', note.fontFamily.split(',')[0]);
+  ok(Math.abs(note.lineHeight - 1.7) < 0.02, '行高 1.7', note.lineHeight.toFixed(2));
+  ok(note.headFontSize === '12px', '头部 12px（与方案 A 同一档）', note.headFontSize);
+  ok(note.headColor === note.secondary, '头部颜色 = secondary', note.headColor);
+  ok(note.headText.includes('深度思考') && note.headText.includes('字'), '头部保留「深度思考 + 字数」', note.headText);
+}
+
+// ── [7] 匀速揭示的接线 ────────────────────────────────────────────────
+// 静态夹具造不出「流式增量」（加载器逐字段映射，服务端不发 isStreaming），
+// 这里只守两条：所有正文都走 AnswerMarkdown、揭示游标没有把字吞掉。
+// 真正的流式揭示在 [9] 由 SSE 验。
+console.log('\n[7] 正文匀速揭示：接线与不丢字');
+const reveal = await page.evaluate(() => {
+  const nodes = [...document.querySelectorAll('[data-answer-markdown]')];
+  return nodes.map(n => ({
+    revealed: Number(n.getAttribute('data-revealed')),
+    streaming: n.getAttribute('data-answer-streaming'),
+  }));
+});
+ok(reveal.length === 4, '4 段正文都走 AnswerMarkdown', String(reveal.length));
+ok(
+  reveal.every(r => Number.isFinite(r.revealed) && r.revealed > 0),
+  '揭示游标都有值（没有渲染成空）',
+  reveal.map(r => r.revealed).join(',')
+);
+ok(
+  reveal.every(r => r.streaming === '0'),
+  '历史正文一律非流式（不重打一遍）',
+  reveal.map(r => r.streaming).join(',')
+);
+
+// ── [8] --tc-rule 明暗双主题都有 ─────────────────────────────────────
+console.log('\n[8] --tc-rule 双主题令牌');
 const css = await readFile(join(ROOT, 'src', 'index.css'), 'utf8');
 ok(css.includes('--tc-rule: rgb(0 0 0 / 0.18)'), '浅色 --tc-rule = 18% 墨');
 ok(css.includes('--tc-rule: rgb(255 255 255 / 0.2)'), '深色 --tc-rule = 20% 白');
@@ -346,33 +552,132 @@ await page.evaluate(() => document.documentElement.classList.add('dark'));
 await page.waitForTimeout(400);
 const dark = await page.evaluate(() => {
   const body = document.querySelector('.tc-think[open] .tc-think-body');
-  const badge = document.querySelector('.tc-think[open] .tc-think-badge');
+  const note = document.querySelector('.tc-think-note-body');
+  // 角标在 summary 里，折叠态的 details 也看得见 —— 别再加 `[open]` 前缀，
+  // 唯一带角标的那条恰好是折叠的（m4），加了就永远读不到。
+  const badge = document.querySelector('.tc-think-badge');
   return {
     rule: body ? getComputedStyle(body).borderLeftColor : null,
     color: body ? getComputedStyle(body).color : null,
+    noteRule: note ? getComputedStyle(note).borderLeftColor : null,
     badge: badge ? getComputedStyle(badge).backgroundColor : null,
   };
 });
 ok(dark.rule === 'rgba(255, 255, 255, 0.2)', '深色下左细线真解析为 20% 白', dark.rule);
 ok(dark.color === 'rgb(163, 163, 163)', '深色下正文跟随 secondary 提亮', dark.color);
+ok(dark.noteRule === 'rgba(255, 255, 255, 0.2)', '深色下轨迹内思考的左细线同步', dark.noteRule);
 ok(dark.badge.includes('0.1'), '深色下角标底色仍是有色透明底（不是纯黑块）', dark.badge);
 
+// ── [9] 真流式：正文一开始就折叠上面 + 正文匀速揭示 ─────────────────────
+console.log('\n[9] 真流式：正文开始 → 折叠上面 / 匀速揭示');
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(1000);
+await page.fill('textarea', '再看一次磁盘');
+await page.press('textarea', 'Enter');
+
+const live = [];
+for (let i = 0; i < 46; i++) {
+  live.push(await page.evaluate(() => {
+    const answers = [...document.querySelectorAll('[data-answer-markdown]')];
+    const last = answers[answers.length - 1];
+    const thinks = [...document.querySelectorAll('.tc-think')];
+    const bars = [...document.querySelectorAll('[data-steps-bar]')];
+    return {
+      streaming: last?.getAttribute('data-answer-streaming') ?? null,
+      revealed: last ? Number(last.getAttribute('data-revealed')) : -1,
+      thinkOpen: thinks.length ? thinks[thinks.length - 1].open : null,
+      thinkText: thinks.length ? thinks[thinks.length - 1].querySelector('summary')?.textContent ?? '' : '',
+      traceAria: bars.length ? bars[bars.length - 1].getAttribute('aria-expanded') : null,
+    };
+  }));
+  await page.waitForTimeout(80);
+}
+
+const streamingSamples = live.filter(s => s.streaming === '1');
+ok(streamingSamples.length >= 5, '抓到流式过程（不是一次性渲染）', String(streamingSamples.length));
+ok(
+  live.some(s => s.thinkText.includes('思考中')),
+  '思考流式时头部是「思考中」',
+  live.find(s => s.thinkText.includes('思考中'))?.thinkText ?? '（没抓到）'
+);
+ok(
+  live.some(s => s.thinkOpen === true),
+  '思考流式时展开（过程此刻就是内容）',
+  String(live.some(s => s.thinkOpen === true))
+);
+ok(
+  live.some(s => s.traceAria === 'true'),
+  '工具跑起来时轨迹自动展开',
+  String(live.some(s => s.traceAria === 'true'))
+);
+// 正文开始之后：思考、轨迹都必须收起。
+// 判据是「正文里已经有字」（revealed > 0）—— 空文本块开出来时不该折叠，
+// 否则每轮都会在「刚准备说话」的那一帧抖一下。
+const idx = live.findIndex(s => s.streaming === '1' && s.revealed > 0);
+ok(idx > 0, '取到「正文已有字」的采样点', String(idx));
+const afterText = idx > 0 ? live.slice(idx) : [];
+ok(
+  afterText.length > 0 && afterText.every(s => s.thinkOpen === false),
+  '正文一出字，上方思考立即折叠',
+  afterText.map(s => s.thinkOpen).join(',')
+);
+ok(
+  afterText.length > 0 && afterText.every(s => s.traceAria === null || s.traceAria === 'false'),
+  '正文一出字，上方轨迹同时折叠',
+  afterText.map(s => s.traceAria).join(',')
+);
+
+// 揭示：单调不减、过程中确实落后于全文、结束后补齐
+const revealed = streamingSamples.map(s => s.revealed).filter(n => n >= 0);
+ok(revealed.length >= 3, '流式期间取到多个揭示游标', String(revealed.length));
+ok(
+  revealed.every((n, i) => i === 0 || n >= revealed[i - 1]),
+  '揭示游标单调不减（不会回退重排）',
+  revealed.join(',')
+);
+ok(
+  new Set(revealed).size >= 3,
+  '揭示是逐字推进，不是整段砸下来',
+  `${new Set(revealed).size} 个不同值`
+);
+ok(
+  revealed.some(n => n < LIVE_FULL.length - 5),
+  '流式期间确实落后于全文（说明节流生效）',
+  `${Math.max(...revealed)} / ${LIVE_FULL.length}`
+);
+
+const settled = await page.evaluate(() => {
+  const answers = [...document.querySelectorAll('[data-answer-markdown]')];
+  const last = answers[answers.length - 1];
+  const thinks = [...document.querySelectorAll('.tc-think')];
+  return {
+    revealed: Number(last?.getAttribute('data-revealed')),
+    streaming: last?.getAttribute('data-answer-streaming'),
+    thinkOpen: thinks[thinks.length - 1]?.open ?? null,
+  };
+});
+ok(settled.streaming === '0', '结束后标记回落到非流式', String(settled.streaming));
+ok(settled.revealed === LIVE_FULL.length, '结束后揭示到全文（不会永远少半句）', `${settled.revealed}/${LIVE_FULL.length}`);
+ok(settled.thinkOpen === false, '结束后思考保持折叠（不会「哗」地展开一片）', String(settled.thinkOpen));
+
+// 截图：一轮真流式跑完后的实际长相（轨迹展开看方案 C）
+await page.locator('[data-steps-bar]').last().click();
+await page.waitForTimeout(500);
+const liveShots = join(OUT, 'think');
+await page.screenshot({ path: join(liveShots, 'live-done.png'), fullPage: false });
+
 // ── 截图（三态 + 浅色），给用户看实际长相 ─────────────────────────────
-// 此刻页面还是深色（上一节的真解析检查刚加的 class），顺手把深色三态拍下来。
 const shots = join(OUT, 'think');
 await mkdir(shots, { recursive: true });
+await page.evaluate(() => document.documentElement.classList.remove('dark'));
+await page.waitForTimeout(400);
 const nodes = page.locator('.tc-think');
 await nodes.nth(0).locator('> summary').click();
 await page.waitForTimeout(300);
-await nodes.nth(0).screenshot({ path: join(shots, 'dark-raw.png') });
-await nodes.nth(1).screenshot({ path: join(shots, 'dark-summary.png') });
+await nodes.nth(0).screenshot({ path: join(shots, 'light-raw.png') });
 await nodes.nth(0).locator('> summary').click();
 await page.waitForTimeout(300);
-await nodes.nth(0).screenshot({ path: join(shots, 'dark-collapsed.png') });
-
-await page.evaluate(() => document.documentElement.classList.remove('dark'));
-await page.waitForTimeout(400);
-await nodes.nth(1).screenshot({ path: join(shots, 'light-summary.png') });
+await nodes.nth(0).screenshot({ path: join(shots, 'light-collapsed.png') });
 await page.screenshot({ path: join(OUT, 'think-view.png'), fullPage: true });
 
 if (errors.length) {
