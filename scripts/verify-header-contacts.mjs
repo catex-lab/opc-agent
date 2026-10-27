@@ -434,12 +434,12 @@ ok((await search.count()) === 1, '有顶部搜索框');
   ok(radius === '9999px', '搜索框是全圆胶囊', String(radius));
 }
 // 右侧只有一个「+」，探测与建群都收进它的菜单（QQ 的做法）
-ok((await page.getByRole('button', { name: '添加' }).count()) === 1, '搜索框右侧有「+」添加按钮');
-await page.getByRole('button', { name: '添加' }).click();
+ok((await page.getByRole('button', { name: '添加', exact: true }).count()) === 1, '搜索框右侧有「+」添加按钮');
+await page.getByRole('button', { name: '添加', exact: true }).click();
 await page.waitForTimeout(200);
 ok((await page.getByRole('button', { name: '重新探测' }).count()) === 1, '「+」菜单里有重新探测');
 ok((await page.getByRole('button', { name: '发起群聊' }).count()) === 1, '「+」菜单里有发起群聊');
-await page.getByRole('button', { name: '添加' }).click();
+await page.getByRole('button', { name: '添加', exact: true }).click();
 await page.waitForTimeout(200);
 
 // Tab：两个，激活项品牌色下划线
@@ -462,7 +462,8 @@ ok((await tabs.count()) === 2, '恰好两个 Tab（AGENT / 群聊）', `count=${
 }
 
 // 联系人列表：**不再分段**（在线 / 待处理 / 未接入），改成一整条平铺名单，
-// 在线的排最上面。状态信息没有丢 —— 不可用的行尾有状态文字，头像角上有圆点。
+// 在线的排最上面。状态信息没有丢 —— **每一行行尾都有状态词**（A134 起，
+// 原先只写不可用的行，于是「三个 Agent 只有绿点」读不出状态），头像角上还有圆点。
 for (const title of ['在线', '待处理', '未接入']) {
   ok((await page.getByRole('heading', { name: title, exact: true }).count()) === 0, `没有「${title}」分段标题`);
 }
@@ -475,6 +476,10 @@ for (const title of ['在线', '待处理', '未接入']) {
   ok(/^WorkBuddy/.test(rows[0] ?? ''), '第一个是在线的 WorkBuddy（在线优先）', rows[0]?.slice(0, 24));
   ok(/Gemini CLI/.test(rows[rows.length - 1] ?? ''), '不可用的 Gemini CLI 被排到最末', rows[rows.length - 1]?.slice(0, 24));
   ok(rows[rows.length - 1]?.includes('未登录'), '不可用的行尾标出状态文字（不是只剩颜色）', rows[rows.length - 1]);
+  // A134：在线行也必须有词 —— 这条是审查报告 P0-3 的正面证据
+  ok(rows[0]?.includes('在线'), '在线行同样有状态文字（不再只有一颗绿点）', rows[0]);
+  const withWord = rows.filter(r => /在线|未登录|需修复|网络不通|未安装|不可用|未探测|缺 Key/.test(r)).length;
+  ok(withWord === rows.length, '每一行都带状态词（同一列表只有一种表达方式）', `${withWord}/${rows.length}`);
 }
 await shot('verify-contacts');
 
@@ -532,7 +537,7 @@ ok(page.url().endsWith('/chat/g1'), '点群聊行进入该群聊', page.url());
 // （A48：用户要求两处入口统一成同一个新窗口逻辑，通讯录不再有内联多选态）
 await page.locator('nav button[aria-label="通讯录"]').click();
 await page.waitForTimeout(600);
-await page.getByRole('button', { name: '添加' }).click();
+await page.getByRole('button', { name: '添加', exact: true }).click();
 await page.waitForTimeout(200);
 await page.getByRole('button', { name: '发起群聊' }).click();
 await page.waitForTimeout(400);
@@ -553,7 +558,7 @@ await shot('verify-contacts-newgroup');
 await page.getByRole('button', { name: '取消' }).click();
 await page.waitForTimeout(300);
 ok((await page.locator('[data-new-group-dialog]').count()) === 0, '点「取消」关闭弹窗');
-ok((await page.getByRole('button', { name: '添加' }).count()) === 1, '关闭后回到普通通讯录（+ 仍是「添加」）');
+ok((await page.getByRole('button', { name: '添加', exact: true }).count()) === 1, '关闭后回到普通通讯录（+ 仍是「添加」）');
 ok(
   (await page.getByRole('heading', { name: '我的群聊' }).count()) === 0,
   '群聊目录始终没有「我的群聊」分类标题'
@@ -903,6 +908,79 @@ await page.locator('[data-get-agents-reprobe]').click();
 await page.waitForTimeout(600);
 ok(PROBE_HITS > before, '「重新检测」真的请求了 /api/agents/probe', `${before} → ${PROBE_HITS}`);
 
+// ── A134：清单页不再逐张卡画「重新检测」 ──
+/**
+ * 原来 4 张卡各一颗 + 底栏一颗 = 一屏 5 颗按钮打同一个接口。它不是行级动作
+ * （`POST /api/agents/probe` 是全量重探），画在卡上等于把一个全局动作伪装成
+ * 行级动作；底栏是 shrink-0 常驻的，不需要第二入口。
+ *
+ * 这条必须用「计数」钉住，不能用「底栏那颗还在」代替 —— 后者在 5 颗都在时
+ * 同样绿，正是被修掉的那个状态。
+ */
+ok(
+  (await page.locator('[data-get-agents-row] [data-install-reprobe]').count()) === 0,
+  '清单页的卡片里没有「重新检测」（全局动作收进底栏）',
+  `还剩 ${await page.locator('[data-get-agents-row] [data-install-reprobe]').count()} 颗`
+);
+ok((await page.locator('[data-get-agents-reprobe]').count()) === 1, '底栏那颗「重新检测」还在（唯一的入口）');
+
+// zcode（installer 且没有 url）本来就没有主操作，去掉重新检测后整行按钮应该消失，
+// 不能留一段空白行 —— 那会在卡片底部多出 12px 幽灵间距。
+ok(
+  (await page.locator('[data-get-agents-row="zcode"] [data-install-card] > div.mt-3').count()) === 0,
+  '没有主操作的卡片不留空按钮行',
+  '留了空行 = 卡片底部多一段说不清来历的间距'
+);
+
+// ── A134：内容溢出时底边渐隐（Windows 的 overlay 滚动条静止时不画）──
+{
+  const fade = await page.evaluate(() => {
+    const sc = document.querySelector('[data-get-agents] .overflow-y-auto');
+    if (!sc) return { missing: true };
+    const cs = getComputedStyle(sc);
+    return {
+      missing: false,
+      fade: sc.getAttribute('data-fade'),
+      scrollHeight: sc.scrollHeight,
+      clientHeight: sc.clientHeight,
+      mask: cs.maskImage || cs.webkitMaskImage || '',
+      padBottom: cs.paddingBottom,
+    };
+  });
+  ok(!fade.missing, '找到清单的滚动容器');
+  if (!fade.missing) {
+    ok(fade.scrollHeight > fade.clientHeight, '内容确实装不下（这条断言的前提）', `${fade.scrollHeight} > ${fade.clientHeight}`);
+    ok(fade.fade === '1', '溢出时挂上渐隐标记', String(fade.fade));
+    ok(/gradient/.test(fade.mask), '底边是渐变遮罩（不是硬切在半个字上）', fade.mask.slice(0, 60));
+    ok(parseFloat(fade.padBottom) >= 20, '底部留了与渐隐同高的空隙（滚到底时淡掉的是留白）', fade.padBottom);
+  }
+}
+
+// 滚到底：最后一张卡必须**完整**可见，且不被淡掉（底边距容器底 ≥ 留白高度）
+{
+  const bottom = await page.evaluate(() => {
+    const px = n => Math.round(n * 100) / 100;
+    const sc = document.querySelector('[data-get-agents] .overflow-y-auto');
+    sc.scrollTop = sc.scrollHeight;
+    const sr = sc.getBoundingClientRect();
+    const rows = [...document.querySelectorAll('[data-get-agents-row]')];
+    const last = rows[rows.length - 1];
+    const lr = last.getBoundingClientRect();
+    return {
+      agent: last.getAttribute('data-get-agents-row'),
+      gap: px(sr.bottom - lr.bottom),
+      pad: parseFloat(getComputedStyle(sc).paddingBottom),
+      scrollTop: sc.scrollTop,
+    };
+  });
+  ok(bottom.scrollTop > 0, '滚动区真的滚动了（否则下面两条是空断言）', `scrollTop=${bottom.scrollTop}`);
+  ok(bottom.gap >= 0, '滚到底后最后一张卡完整可见（没被底栏切掉）', `${bottom.agent} 距底 ${bottom.gap}px`);
+  ok(bottom.gap >= bottom.pad - 2, '滚到底时最后一张卡落在渐隐区之上（不会永远半虚）', `gap=${bottom.gap} pad=${bottom.pad}`);
+  await page.evaluate(() => {
+    document.querySelector('[data-get-agents] .overflow-y-auto').scrollTop = 0;
+  });
+}
+
 await shot('verify-get-agents');
 
 // ── 资料页：卡片复用同一套 ──
@@ -917,6 +995,18 @@ ok(
 ok(
   (await page.locator('[data-agent-install] [data-install-command]').innerText()).trim() === codexCmd,
   '资料页里的命令与清单页一致'
+);
+/**
+ * 与上面「清单页卡片里没有重新检测」互补的一条。
+ *
+ * 只有前者的话，把 `canReprobe` 直接删掉（两个形态都不画）也会全绿 ——
+ * 资料页**没有**常驻底栏，那颗按钮是唯一的重新探测入口，丢了它用户装完
+ * 只能去别处找。这条守的就是「`!bare` 这个条件还在起作用」。
+ */
+ok(
+  (await page.locator('[data-agent-install] [data-install-reprobe]').count()) === 1,
+  '资料页的卡片**保留**「重新检测」（那里没有底栏，这是唯一入口）',
+  `实际 ${await page.locator('[data-agent-install] [data-install-reprobe]').count()} 颗`
 );
 
 // ── 反例：CLI 类条目在 needs-auth 下不许出现获取卡片 ──

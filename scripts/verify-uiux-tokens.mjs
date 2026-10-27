@@ -208,6 +208,155 @@ const fontSizeBlock = tw.slice(tw.indexOf('fontSize:'), tw.indexOf('spacing:'));
 const literalPx = [...fontSizeBlock.matchAll(/\[[^,\]]*?([0-9.]+px)/g)].map(m => m[0]);
 ok(literalPx.length === 0, 'tailwind.config 的 fontSize 块里没有字面量 px', literalPx.join(' | '));
 
+// ── F：状态词色阶（A134）─────────────────────────────────────────────
+/**
+ * 状态词是 11px 小字，靠「文字 + 颜色」两条线索。颜色若不到 4.5:1，
+ * 等于把两条线索都削弱了 —— 而这类失败在任何运行时闸门里都不会红
+ * （没人会去量一个 11px 灰字的对比度）。所以在这里从令牌值直接算。
+ *
+ * 背景取 `--tc-surface-chrome`（通讯录列表所在的面），**从 CSS 里读**，
+ * 不写死 #f5f5f5 —— 表面色改了这条断言跟着走，不会变成一条过期的绿。
+ */
+const relLum = hex => {
+  const n = parseInt(hex.replace('#', ''), 16);
+  const ch = [n >> 16 & 255, n >> 8 & 255, n & 255].map(c => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+};
+const contrast = (a, b) => {
+  const x = relLum(a);
+  const y = relLum(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
+
+const STATUS_TOKENS = ['ok', 'warn', 'danger', 'muted'];
+/** 每个令牌应当出现两次：`:root` 一次（浅色）、`:root.dark` 一次（深色） */
+const statusDecl = new Map();
+for (const m of css.matchAll(/--tc-status-([a-z]+):\s*(#[0-9a-fA-F]{3,8})/g)) {
+  if (!statusDecl.has(m[1])) statusDecl.set(m[1], []);
+  statusDecl.get(m[1]).push(m[2]);
+}
+const chromeDecl = [...css.matchAll(/--tc-surface-chrome:\s*(#[0-9a-fA-F]{3,8})/g)].map(m => m[1]);
+
+ok(chromeDecl.length >= 2, '--tc-surface-chrome 浅深两份都在（下面要拿它算对比度）', `找到 ${chromeDecl.length} 份`);
+
+for (const name of STATUS_TOKENS) {
+  const vals = statusDecl.get(name) ?? [];
+  ok(vals.length === 2, `--tc-status-${name} 浅色与深色各定义一次`, `实际 ${vals.length} 次：${vals.join(',') || '无'}`);
+}
+
+if (chromeDecl.length >= 2) {
+  STATUS_TOKENS.forEach((name, i) => {
+    const vals = statusDecl.get(name) ?? [];
+    if (vals.length < 2) return;
+    for (const [theme, idx] of [['浅色', 0], ['深色', 1]]) {
+      const ratio = contrast(vals[idx], chromeDecl[idx]);
+      ok(
+        ratio >= 4.5,
+        `--tc-status-${name} ${theme}对 chrome 面 ≥4.5:1`,
+        `${vals[idx]} on ${chromeDecl[idx]} = ${ratio.toFixed(2)}:1（11px 小字必须达标）`
+      );
+    }
+  });
+}
+
+// 状态词必须走令牌：裸 hex 在深色下必挂一条（实测 ready #0E7A5F 只有 3.25:1）
+const typesSrc = fs.readFileSync(path.join(SRC, 'types.ts'), 'utf8');
+const availBlock = typesSrc.slice(typesSrc.indexOf('AVAILABILITY_META'), typesSrc.indexOf('availabilityLabelOf'));
+ok(
+  !/color:\s*'#/.test(availBlock),
+  'AVAILABILITY_META 的 color 全部走 --tc-status-* 令牌',
+  '出现裸 hex：深色主题下会不达标，且改主题时没人会想起来改这里'
+);
+ok(/color:\s*'var\(--tc-status-/.test(availBlock), 'AVAILABILITY_META 确实引用了 --tc-status-*', '一个都没引用');
+
+// 每一行都要有状态词，不许只写异常行（审查报告 P0-3 的原话：
+// 「三个 Agent 只有绿点，没有任何文字」）
+const contactsSrc = fs.readFileSync(path.join(SRC, 'components', 'ContactsPanel.tsx'), 'utf8');
+ok(
+  !/availability !== 'ready'/.test(contactsSrc),
+  '通讯录每一行都渲染状态词（不再只写非 ready 行）',
+  '又出现了 `availability !== \'ready\'` 的判断 —— 那就退回「两种表达方式并存」'
+);
+ok(/data-agent-status=/.test(contactsSrc), '状态词带 data-agent-status 锚点（运行时按状态定位）', '缺锚点');
+
+// ── G：可滚动内容区的「还有更多」信号（A134）──────────────────────────
+/**
+ * 这一节的由来：Windows 的 Chrome 用 overlay 滚动条，静止时不画。获取 Agent
+ * 弹窗的内容 890px 装进 712px 的容器，用户看到的不是「可以往下滚」，而是
+ * 第 4 组的分组标题被硬切在 16.73/34px 处 —— 读起来像渲染坏了。
+ *
+ * 三条不许退化的点：
+ *   ① 渐隐只在真的溢出时挂（`[data-fade='1']`）—— 装得下时把最后一行淡掉，
+ *      等于在没有更多的地方说「还有更多」，是另一种假话；
+ *   ② `padding-bottom` 与渐隐同高，且**引用同一个变量** —— 分开写死两处，
+ *      改一处就会留下「滚到底时最后一张卡永远半虚」；
+ *   ③ 用 mask 而不是盖一层渐变 div —— 弹窗是半透明玻璃面，渐变层要跟它
+ *      配平颜色（浅色/深色/玻璃态各一套），mask 只需要把自己淡成透明。
+ */
+const fadeRule = css.slice(css.indexOf(".tc-scroll-fade[data-fade='1']"));
+const fadeBlock = fadeRule.slice(0, fadeRule.indexOf('}'));
+/**
+ * 按 `;` 切成一条条声明再逐条看。
+ *
+ * **不能**在整块文本上跑 `/mask-image:.*var\(--tc-fade-h\)/` ——
+ * `-webkit-mask-image` 里也含 `mask-image:` 这个子串，只要前缀那条是对的，
+ * 标准那条写死成别的值也照样绿。而 Chromium 里**后写的标准属性赢**，
+ * 于是「闸门绿、界面却不是你以为的那样」。（本闸门第一版就是这样，
+ * 反向探针当场抓出来的。）
+ */
+const fadeDecls = fadeBlock
+  .split(';')
+  .map(d => d.trim())
+  .filter(Boolean);
+const maskDecls = fadeDecls.filter(d => /(^|-)mask-image\s*:/.test(d));
+ok(fadeRule.startsWith(".tc-scroll-fade[data-fade='1']"), '存在 .tc-scroll-fade 的溢出态规则', '没找到选择器');
+ok(/--tc-fade-h:\s*\d+px/.test(fadeBlock), '渐隐高度是一个变量（--tc-fade-h）', '写死了数字就没人能同步改');
+ok(
+  /padding-bottom:\s*var\(--tc-fade-h\)/.test(fadeBlock),
+  'padding-bottom 引用同一个变量（滚到底时淡掉的是留白，不是内容）',
+  '写死成别的值 = 列表末尾永远半虚'
+);
+ok(maskDecls.length === 2, '两条 mask 声明都在（-webkit- 前缀 + 标准）', `实际 ${maskDecls.length} 条：${maskDecls.join(' | ')}`);
+ok(
+  maskDecls.length === 2 && maskDecls.every(d => /var\(--tc-fade-h\)/.test(d)),
+  '两条 mask 都引用同一个变量',
+  '只改一条 = 闸门绿但浏览器用另一条，等于没改'
+);
+ok(
+  !/background[^:]*:\s*linear-gradient/.test(fadeBlock),
+  '用 mask 淡出，不盖渐变层',
+  '玻璃面上盖不透明渐变层，深色/玻璃态会露馅'
+);
+
+const dialogSrc = fs.readFileSync(path.join(SRC, 'components', 'GetAgentsDialog.tsx'), 'utf8');
+ok(/useOverflowY/.test(dialogSrc), '获取 Agent 弹窗接了 useOverflowY（真的判断有没有溢出）', '没接 = 遮罩要么不出现要么乱出现');
+ok(
+  /className="tc-scroll-fade[^"]*overflow-y-auto"/.test(dialogSrc),
+  '滚动区挂了 tc-scroll-fade',
+  '类没挂上，规则再对也不生效'
+);
+ok(/data-fade=\{overflowing \? '1' : undefined\}/.test(dialogSrc), '滚动区按溢出状态挂 data-fade', '缺这条，渐隐永远不开');
+
+const traceSrc = fs.readFileSync(path.join(SRC, 'components', 'AgentTrace.tsx'), 'utf8');
+ok(
+  /className="tc-trace-scroll tc-scroll-fade"/.test(traceSrc),
+  '轨迹滚动区复用同一个 tc-scroll-fade（不是第二套写法）',
+  '各写一套 = 用户说的「每改一个页面就出现一套新样式」'
+);
+
+// 清单页里不许再逐张卡画「重新检测」：它是全局动作（全量 probe），
+// 画在每张卡上等于伪装成行级动作，且底栏那颗常驻可见、不需要第二入口。
+const installSrc = fs.readFileSync(path.join(SRC, 'components', 'InstallCard.tsx'), 'utf8');
+ok(
+  /const canReprobe = !!onReprobe && !bare;/.test(installSrc),
+  '清单页（bare）不再逐张卡画「重新检测」',
+  '同一个全局动作在一屏里出现 5 次，主次被稀释'
+);
+ok(/const hasActions = canCopy \|\| canOpen \|\| canFillKey \|\| canReprobe;/.test(installSrc), '按钮整行按 hasActions 决定渲不渲染（不留空白行）', '会留下 12px 的幽灵间距');
+
 // ── 输出 ────────────────────────────────────────────────────────────
 if (DUMP) {
   console.log(`\n命中明细（含白名单放行，共 ${hits.length} 处）：`);

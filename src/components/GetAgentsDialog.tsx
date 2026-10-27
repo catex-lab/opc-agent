@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { RefreshCw, X } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { InstallCard } from './InstallCard';
+import { useOverflowY } from '../hooks/useOverflowY';
 import { AVAILABILITY_META, availabilityLabelOf, type InstallMethod, type RegisteredAgent } from '../types';
 
 /**
@@ -87,6 +88,9 @@ export function GetAgentsDialog({
   onViewDetail,
 }: GetAgentsDialogProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  // A134：内容装不下时底边渐隐 —— Windows 的 overlay 滚动条静止时不画，
+  // 没有这个信号，第 4 组的分组标题就是被硬切在字中间（实测 16.73/34px）。
+  const { ref: scrollRef, overflowing } = useOverflowY<HTMLDivElement>();
 
   useEffect(() => {
     if (!open) return;
@@ -182,7 +186,11 @@ export function GetAgentsDialog({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          ref={scrollRef}
+          className="tc-scroll-fade min-h-0 flex-1 overflow-y-auto"
+          data-fade={overflowing ? '1' : undefined}
+        >
           {groups.length === 0 ? (
             <div
               className="px-5 py-10 text-center text-secondary"

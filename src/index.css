@@ -891,6 +891,21 @@ select:focus-visible {
   --tool-color-danger: #d54941;   /* 删除等破坏性操作 */
   --tool-color-task: #e37318;     /* 任务 / 计划 */
   --tool-color-skill: #0e7a5f;    /* 技能调用 */
+
+  /* ── A134：状态词专用文字色（四档）──
+   *
+   * 为什么不直接用 `--td-success-color` 这类语义色当文字：那些基色是按
+   * **大字号 / 图形**定的（#2ba471 对白底只有 3.15:1），拿来写 11px 状态词
+   * 读不清。实测原先是裸 hex，四档里每一档都至少在一个主题下不达标：
+   *   ready #0E7A5F 深色 3.25 · needs-auth #E37318 浅色 2.86
+   *   needs-setup #D54941 浅色 3.96 · not-installed #8B8B8B 浅色 3.13
+   * 所以状态词单独开一档，浅色取深、深色取亮，**四档全部 ≥4.5:1（对 chrome 面）**。
+   * 闸门 `verify:uiux-tokens` 会从这里的值算一遍，改浅了当场红。
+   */
+  --tc-status-ok: #0E7A5F;       /* 4.85:1 @ #f5f5f5 */
+  --tc-status-warn: #B45309;     /* 4.61:1 */
+  --tc-status-danger: #C0392B;   /* 4.99:1 */
+  --tc-status-muted: #6E6E6E;    /* 4.68:1（比 secondary 深一档：secondary 对 chrome 只有 4.35） */
 }
 
 :root.dark {
@@ -907,6 +922,13 @@ select:focus-visible {
   --tool-color-danger: #e8646f;
   --tool-color-task: #f5943f;
   --tool-color-skill: #2aa87f;
+
+  /* A134：状态词深色档 —— 不是把浅色值提亮一点，而是重算过对比度
+     （6.94 / 7.56 / 5.97 / 6.83，全对 #1b1b1b） */
+  --tc-status-ok: #35B98A;
+  --tc-status-warn: #E89B4A;
+  --tc-status-danger: #F0716B;
+  --tc-status-muted: #a3a3a3;
 }
 
 
@@ -4526,8 +4548,7 @@ html[data-opc-glass='1'] t-chat-sender {
 
 /* 轨迹滚动区。
    为什么要限高：一条消息挂 30 个步骤时，不封顶就会把整个会话顶成
-   一屏全是过程、答案被挤到看不见。参考图也是同样处理。
-   渐隐遮罩只在真的溢出时挂（data-fade=1），短轨迹末尾不会莫名其妙发虚。 */
+   一屏全是过程、答案被挤到看不见。参考图也是同样处理。 */
 .tc-trace-scroll {
   max-height: 320px;
   overflow-y: auto;
@@ -4536,11 +4557,6 @@ html[data-opc-glass='1'] t-chat-sender {
   padding-right: 2px;
   scrollbar-width: thin;
   scrollbar-color: var(--td-component-stroke) transparent;
-}
-
-.tc-trace-scroll[data-fade='1'] {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
 }
 
 .tc-trace-scroll::-webkit-scrollbar {
@@ -4552,6 +4568,32 @@ html[data-opc-glass='1'] t-chat-sender {
 }
 .tc-trace-scroll::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* ===== 可滚动内容区的「还有更多」信号（A134）=====
+ *
+ * 为什么必须有：Windows 的 Chrome 用 overlay 滚动条，**静止时完全不画**。
+ * 一个装满内容、底部被容器硬切一半的滚动区，在用户眼里不是「可以往下滚」，
+ * 而是「渲染坏了」——A134 量到获取 Agent 弹窗第 4 组的标题只露出
+ * 16.73/34px，正好切在字中间。
+ *
+ * 为什么用 mask 而不是盖一层渐变 div：弹窗是半透明玻璃面（`--tc-glass-bg`
+ * + backdrop-filter），渐变层要跟它配平颜色，深色主题、玻璃态、不同表面
+ * 各是一套值，迟早对不上。mask 是把自己**淡成透明**，露出的是什么颜色它
+ * 根本不需要知道。
+ *
+ * 为什么溢出时才挂（`data-fade="1"`）：内容装得下时把最后一行淡掉，等于
+ * 在说「下面还有」而下面什么都没有 —— 那是另一种假话。判定见
+ * `useOverflowY`。
+ *
+ * `padding-bottom` 与渐隐同高：滚到底时被淡掉的是这段留白，不是最后一张
+ * 卡的内容。少了它，列表末尾会永远处于半虚状态，看着像没画完。
+ */
+.tc-scroll-fade[data-fade='1'] {
+  --tc-fade-h: 26px;
+  padding-bottom: var(--tc-fade-h);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--tc-fade-h)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--tc-fade-h)), transparent);
 }
 
 /* 嵌套思考节点的连接线。

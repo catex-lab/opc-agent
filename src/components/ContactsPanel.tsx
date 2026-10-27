@@ -93,9 +93,9 @@ type Tab = 'agents' | 'groups';
  * 其实只有一件事 ——「谁现在能用」。那件事用**排序**表达就够了：
  * 在线的永远排在最上面，其余按原顺序跟在后面。
  *
- * 状态信息并没有丢：头像右下角的点仍然表达在线/待处理/未接入（颜色不是唯一
- * 线索，`AgentAvatar` 的 title 里有文字），不可用的行尾还会补一句状态文字，
- * 悬停名片里也有完整说明。也就是说：**去掉的是分类，不是信息**。
+ * 状态信息并没有丢：头像右下角的点表达在线/待处理/未接入，**行尾还有一句状态词**
+ * （A134 起每一行都写，不再只写异常行），悬停名片里也有完整说明。
+ * 也就是说：**去掉的是分类，不是信息**。
  *
  * ## 发起群聊在哪发生（A48 改）
  *
@@ -599,9 +599,9 @@ interface ContactRowProps {
  * 反而要先读完每张卡片。现在按微信通讯录的做法：列表只负责识别与状态，
  * 其余信息全部收进二级资料页（AgentDetailPanel）。
  *
- * 在线与否由头像右下角的圆点表达（绿=在线 / 橙=待处理 / 红=需修复 /
- * 灰=未接入）。颜色不是唯一线索 —— AgentAvatar 的 title 里带了状态文字，
- * 悬停即可读到，不至于让色觉障碍用户完全失去信息。
+ * 在线与否由头像右下角的圆点 + **行尾的状态词**共同表达（A134 起每一行都有词，
+ * 绿色不再是唯一线索）。原话是审查报告 P0-3：「状态文字不能只依赖绿、红、橙色小圆点」——
+ * 圆点是给扫视用的，词是给读的，两者都得在。
  *
  * 行高、头像尺寸、内边距与会话列表的行完全一致（42px 头像 / px-2.5 py-2.5），
  * 两栏并排切换时列表节奏不跳。
@@ -654,18 +654,19 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
           {regionBadge}
         </span>
       )}
-      {/* 不可用的行尾补一句状态文字。
-          以前「待处理 / 未接入」由分组标题承担，现在名单不再分段，
-          只剩头像角上那个小圆点的话，一眼扫过去分不清「离线」和「没装」。
-          文字比颜色更可靠（色觉障碍、深浅色主题下都读得到）。 */}
-      {agent.status.availability !== 'ready' && (
-        <span
-          className="shrink-0 text-caption"
-          style={{ color: AVAILABILITY_META[agent.status.availability].color }}
-        >
-          {availabilityLabelOf(agent)}
-        </span>
-      )}
+      {/* 状态词：**每一行都写**，不只写异常行（A134 / 审查报告 P0-3）。
+          原来只有非 ready 行才有文字，于是「三个 Agent 只有绿点、Gemini 有橙字」——
+          同一列表两种表达方式，用户读不出绿点到底是「已安装」还是「已连接」还是
+          「可用」。而底层 7 档状态一直是够的，缺的只是把词铺出来。
+          文字比颜色可靠（色觉障碍、深浅色主题下都读得到），颜色只是**附加**线索；
+          配色走 `--tc-status-*`，浅深两档都过了 4.5:1（见 index.css 那段注释）。 */}
+      <span
+        className="shrink-0 text-caption"
+        style={{ color: AVAILABILITY_META[agent.status.availability].color }}
+        data-agent-status={agent.status.availability}
+      >
+        {availabilityLabelOf(agent)}
+      </span>
     </>
   );
 

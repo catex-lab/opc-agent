@@ -614,18 +614,28 @@ export const EVENT_CAPABILITY_META: Record<
   permission: { label: '授权确认', hint: '执行敏感操作前先征求同意' },
 };
 
-/** 可用性状态的中文名与配色（对应 IM 的在线状态） */
+/**
+ * 可用性状态的中文名与配色（对应 IM 的在线状态）。
+ *
+ * `color` 是**文字色**，一律走 `--tc-status-*` 令牌（A134）。原先写裸 hex，
+ * 四档里每一档都至少在一个主题下不到 4.5:1（ready 深色 3.25、needs-auth
+ * 浅色 2.86…），而这些词是 11px —— 只有颜色没有文字时更糟，只有文字却看不清
+ * 同样等于没有。令牌的浅/深两档都算过对比度，见 index.css 那段注释。
+ *
+ * `dot` 是**图形**（头像右下角 8px 圆点），要求 3:1 即可，保留原值不动 ——
+ * 小圆点不需要文字级的对比度，提亮反而会在深色下显得发光。
+ */
 export const AVAILABILITY_META: Record<
   AgentAvailability,
   { label: string; color: string; dot: string }
 > = {
-  ready: { label: '在线', color: '#0E7A5F', dot: '#00A870' },
-  'needs-auth': { label: '未登录', color: '#E37318', dot: '#ED7B2F' },
-  'needs-setup': { label: '需修复', color: '#D54941', dot: '#E34D59' },
-  unreachable: { label: '网络不通', color: '#D54941', dot: '#E34D59' },
-  'not-installed': { label: '未安装', color: '#8B8B8B', dot: '#C6C6C6' },
-  unsupported: { label: '不可用', color: '#8B8B8B', dot: '#C6C6C6' },
-  unknown: { label: '未探测', color: '#8B8B8B', dot: '#C6C6C6' },
+  ready: { label: '在线', color: 'var(--tc-status-ok)', dot: '#00A870' },
+  'needs-auth': { label: '未登录', color: 'var(--tc-status-warn)', dot: '#ED7B2F' },
+  'needs-setup': { label: '需修复', color: 'var(--tc-status-danger)', dot: '#E34D59' },
+  unreachable: { label: '网络不通', color: 'var(--tc-status-danger)', dot: '#E34D59' },
+  'not-installed': { label: '未安装', color: 'var(--tc-status-muted)', dot: '#C6C6C6' },
+  unsupported: { label: '不可用', color: 'var(--tc-status-muted)', dot: '#C6C6C6' },
+  unknown: { label: '未探测', color: 'var(--tc-status-muted)', dot: '#C6C6C6' },
 };
 
 /**

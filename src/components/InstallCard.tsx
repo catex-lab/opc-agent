@@ -112,6 +112,33 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
 
   const method = install.method;
   const env = agent.installEnv;
+
+  /**
+   * 这一张卡上有哪几颗按钮。
+   *
+   * 拆成布尔量而不是在 JSX 里重复写条件，是因为下面还要用同一个判断决定
+   * 「整行按钮要不要渲染」—— 两处各写一遍条件，迟早有一处漏改，于是
+   * 出现「空白的按钮行」（一段 12px 的幽灵间距）。
+   */
+  const canCopy = !!install.command && (method === 'npm' || method === 'script');
+  const canOpen = !!install.url && (method === 'npm' || method === 'script' || method === 'installer');
+  const canFillKey = method === 'key' && !!onOpenCredential;
+  /**
+   * 清单页（`bare`）里**不**逐张卡画「重新检测」。
+   *
+   * 它不是行级动作：点下去打的是 `POST /api/agents/probe`，全量重新探测，
+   * 和清单页底栏那颗是同一个回调。画在每张卡上等于把一个全局动作伪装成
+   * 行级动作 —— 用户会以为「只重测这一条」。而且清单页底栏是 `shrink-0`
+   * 常驻的，永远看得见，不需要在卡上再给一个入口。
+   *
+   * 资料页（非 bare）没有底栏，那颗必须留在卡上。
+   *
+   * 副作用也是正向的：一屏里同一个动作从 5 颗降到 1 颗，每张卡只剩
+   * 「主操作 + 一个次要跳转」，主次对比不再被第三颗同色按钮稀释。
+   */
+  const canReprobe = !!onReprobe && !bare;
+  const hasActions = canCopy || canOpen || canFillKey || canReprobe;
+
   // 环境不满足时说清"这条命令会失败"，而不是等用户复制完撞墙
   const envWarn =
     method === 'npm' && env?.node && env.node.ok === false
@@ -180,81 +207,82 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         </div>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {/* 主按钮按 method 走：npm 复制命令，script/installer 打开官网，key 填凭据 */}
-        {method === 'npm' && install.command && (
-          <button
-            type="button"
-            className="tc-btn-brand"
-            onClick={onCopy}
-            data-install-copy
-          >
-            {copied ? <Check size={14} /> : <Copy size={14} />}
-            {copied ? '已复制' : '复制命令'}
-          </button>
-        )}
+      {hasActions && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {/* 主按钮按 method 走：npm 复制命令，script/installer 打开官网，key 填凭据 */}
+          {canCopy && method === 'npm' && (
+            <button
+              type="button"
+              className="tc-btn-brand"
+              onClick={onCopy}
+              data-install-copy
+            >
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+              {copied ? '已复制' : '复制命令'}
+            </button>
+          )}
 
-        {(method === 'script' || method === 'installer') && install.url && (
-          <button
-            type="button"
-            className="tc-btn-brand"
-            onClick={() => open(install.url!)}
-            data-install-open
-          >
-            <ExternalLink size={14} />
-            {method === 'script' ? '打开安装页' : '打开下载页'}
-          </button>
-        )}
+          {canOpen && method !== 'npm' && (
+            <button
+              type="button"
+              className="tc-btn-brand"
+              onClick={() => open(install.url!)}
+              data-install-open
+            >
+              <ExternalLink size={14} />
+              {method === 'script' ? '打开安装页' : '打开下载页'}
+            </button>
+          )}
 
-        {method === 'script' && install.command && (
-          <button
-            type="button"
-            className="tc-btn-secondary"
-            onClick={onCopy}
-            data-install-copy
-          >
-            {copied ? <Check size={14} /> : <Copy size={14} />}
-            {copied ? '已复制' : '复制命令'}
-          </button>
-        )}
+          {canCopy && method === 'script' && (
+            <button
+              type="button"
+              className="tc-btn-secondary"
+              onClick={onCopy}
+              data-install-copy
+            >
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+              {copied ? '已复制' : '复制命令'}
+            </button>
+          )}
 
-        {method === 'npm' && install.url && (
-          <button
-            type="button"
-            className="tc-btn-secondary"
-            onClick={() => open(install.url!)}
-            data-install-open
-          >
-            <ExternalLink size={14} />
-            打开项目页
-          </button>
-        )}
+          {canOpen && method === 'npm' && (
+            <button
+              type="button"
+              className="tc-btn-secondary"
+              onClick={() => open(install.url!)}
+              data-install-open
+            >
+              <ExternalLink size={14} />
+              打开项目页
+            </button>
+          )}
 
-        {method === 'key' && onOpenCredential && (
-          <button
-            type="button"
-            className="tc-btn-brand"
-            onClick={() => onOpenCredential(agent.id)}
-            data-install-open-settings
-          >
-            <KeyRound size={14} />
-            填写 API Key
-          </button>
-        )}
+          {canFillKey && (
+            <button
+              type="button"
+              className="tc-btn-brand"
+              onClick={() => onOpenCredential!(agent.id)}
+              data-install-open-settings
+            >
+              <KeyRound size={14} />
+              填写 API Key
+            </button>
+          )}
 
-        {/* 装完/填完之后的统一动作。不放"安装完成"这类话 —— 我们不知道装没装成 */}
-        {onReprobe && (
-          <button
-            type="button"
-            className="tc-btn-secondary ml-auto"
-            onClick={onReprobe}
-            data-install-reprobe
-          >
-            <RefreshCw size={14} />
-            重新检测
-          </button>
-        )}
-      </div>
+          {canReprobe && (
+            <button
+              type="button"
+              className="tc-btn-secondary ml-auto"
+              onClick={onReprobe}
+              data-install-reprobe
+            >
+              <RefreshCw size={14} />
+              重新检测
+            </button>
+          )}
+        </div>
+      )}
 
       {!bare && install.checkedAt && (
         // 核实日期是给"这条链接还新不新"用的，不是装饰。放在角落里不打扰人。

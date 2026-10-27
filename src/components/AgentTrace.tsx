@@ -56,6 +56,7 @@ import {
   type TraceItem,
 } from '../../shared/trace';
 import { DiffView } from './DiffView';
+import { useOverflowY } from '../hooks/useOverflowY';
 
 /**
  * 工具 → 图标 + 颜色。
@@ -454,26 +455,13 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
   const durationText = formatHandledDuration(totalMs);
 
   // 渐隐遮罩：只有真的溢出时才淡出，否则短轨迹末尾会莫名其妙变虚
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [overflowing, setOverflowing] = useState(false);
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const check = () => setOverflowing(el.scrollHeight > el.clientHeight + 2);
-    check();
-    const ro = new ResizeObserver(check);
-    ro.observe(el);
-    return () => ro.disconnect();
-    // showBody 也进依赖：从折叠态展开时，滚动区是「展开那一帧之后」才挂上的，
-    // 只依赖 expanded 的话这里拿到的是 null，遮罩永远算不出来。
-  }, [expanded, showBody, items.length]);
+  const { ref: scrollRef, el: scrollEl, overflowing } = useOverflowY<HTMLDivElement>();
 
   // 流式中贴底：新步骤永远在末尾，不贴底就看不到它
   useEffect(() => {
     if (!running || !expanded) return;
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [running, expanded, showBody, items.length]);
+    if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
+  }, [running, expanded, showBody, items.length, scrollEl]);
 
   if (items.length === 0) return null;
 
@@ -542,7 +530,7 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
           <div className="tc-trace-fold-inner">
             <div
               ref={scrollRef}
-              className="tc-trace-scroll"
+              className="tc-trace-scroll tc-scroll-fade"
               data-trace-scroll
               data-fade={overflowing ? '1' : undefined}
             >
