@@ -659,7 +659,9 @@ function FilePreview({
   const richMarkdown = isMarkdownFile(entry.name) && (data?.size ?? 0) <= MAX_MARKDOWN_BYTES;
   const mono = {
     fontFamily: 'var(--font-mono)',
-    fontSize: 12,
+    /* A133：原来是裸 12。文件预览是「次级信息」（读而不是写），
+       取 --text-secondary 与「辅助说明」同一档；值不变，出处补上。 */
+    fontSize: 'var(--text-secondary)',
     lineHeight: '18px',
   } as const;
 

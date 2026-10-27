@@ -195,7 +195,7 @@ export function GetAgentsDialog({
             groups.map(g => (
               <section key={g.method} data-get-agents-group={g.method}>
                 <div
-                  className="sticky top-0 z-10 flex items-baseline gap-2 px-5 py-2 text-[12px]"
+                  className="sticky top-0 z-10 flex items-baseline gap-2 px-5 py-2 text-secondary"
                   style={{
                     backgroundColor: 'var(--tc-surface-raised, transparent)',
                     color: 'var(--td-text-color-placeholder)',
@@ -253,7 +253,7 @@ export function GetAgentsDialog({
                           </span>
                         )}
                         <span
-                          className="shrink-0 text-[11px]"
+                          className="shrink-0 text-caption"
                           style={{ color: meta.color }}
                         >
                           {availabilityLabelOf(a)}
@@ -278,7 +278,7 @@ export function GetAgentsDialog({
           style={{ borderTop: '1px solid var(--tc-divider)' }}
         >
           <span
-            className="min-w-0 flex-1 text-[12px]"
+            className="min-w-0 flex-1 text-secondary"
             style={{ color: 'var(--td-text-color-placeholder)' }}
           >
             装完点重新检测，状态立刻更新，不用重启应用

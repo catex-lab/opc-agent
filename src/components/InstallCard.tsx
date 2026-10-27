@@ -143,7 +143,13 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         <div
           className="mt-2 select-all overflow-hidden rounded-lg px-2.5 py-1.5"
           style={{
-            backgroundColor: 'var(--tc-surface-sunken, rgba(0,0,0,0.04))',
+            /* A133：原来引用 `--tc-surface-sunken` —— 这个令牌**从来没有定义过**，
+               于是浏览器一直静默用后面的 fallback（rgba(0,0,0,0.04)）。
+               这和 A84 删掉的 `ease-spring` 是同一类坑：指向不存在变量的引用
+               编译不报错、运行时静默降级，谁也不知道自己看到的是兜底值。
+               改用已存在的 --td-bg-color-component（浅 #f5f5f5 / 深 #262626），
+               它就是「凹进去的控件面」那一档，不必为单个用途再造令牌。 */
+            backgroundColor: 'var(--td-bg-color-component)',
             // A115 续：命令条是「嵌进去」的内容块，描边走 --tc-edge
             // （4.5% 墨）—— 它有 sunken 底色把自己和周围分开，
             // 不再需要 10% 的墨线。

@@ -50,6 +50,9 @@ export default {
         'title': ['var(--text-title)', { lineHeight: 'var(--leading-tight)' }],
         'title-lg': ['var(--text-title-lg)', { lineHeight: 'var(--leading-tight)' }],
         'page': ['var(--text-page)', { lineHeight: 'var(--leading-tight)' }],
+        /* A133：空态大标题（新对话页欢迎语）。8 档里的最高一档，
+           只服务「一屏只有一句话」的场景，不要当通用标题用。 */
+        'display': ['var(--text-display)', { lineHeight: 'var(--leading-tight)' }],
         /* 保留 Tailwind 原名但重新绑定到腾讯档位，避免老代码掉回 Tailwind 默认值 */
         'xs': ['var(--text-secondary)', { lineHeight: 'var(--leading-normal)' }],
         'sm': ['var(--text-body)', { lineHeight: 'var(--leading-normal)' }],

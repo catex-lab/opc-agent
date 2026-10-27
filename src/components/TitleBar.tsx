@@ -181,7 +181,7 @@ export function TitleBar({ compact = false }: { compact?: boolean }) {
             不用 <img>：build/ 不进 app.asar，打包态会静默裂图。 */}
         <span
           data-app-logo
-          className="relative flex h-[18px] w-[18px] items-center justify-center rounded-[4px]"
+          className="relative flex h-[18px] w-[18px] items-center justify-center rounded-sm"
           style={{ backgroundColor: 'var(--tc-logo-tile)', color: 'var(--tc-logo-mark)' }}
         >
           <AppLogo size={13.5} />

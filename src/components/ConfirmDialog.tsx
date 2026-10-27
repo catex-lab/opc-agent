@@ -73,7 +73,13 @@ export function ConfirmDialog({
   return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center p-6"
-      style={{ backgroundColor: 'rgba(0, 0, 0, 0.45)' }}
+      /* A133：原来写死 rgba(0,0,0,0.45)。面板本身是 .tc-dialog（半透明玻璃），
+         遮罩就必须走 --tc-mask-soft —— 这一档的取值理由写在 index.css:1488：
+         「还能看见背后」的强度，配半透明底才有意义；实色底加深遮罩只会让
+         界面变黑一块。设置弹窗（App.tsx:1347）与获取 Agent（GetAgentsDialog:133）
+         早就是这一档，只有这里没跟上，于是同一套玻璃面板在三个弹窗下面
+         压着两种不同深度的遮罩。 */
+      style={{ backgroundColor: 'var(--tc-mask-soft)' }}
       onMouseDown={e => {
         // 只有点在遮罩本身才关闭；从面板里拖出来松手不该关
         if (e.target === e.currentTarget) onCancel();

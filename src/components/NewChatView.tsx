@@ -93,7 +93,7 @@ export function NewChatView({
         {/* 标题 */}
         <div className="text-center mb-8">
           <h2
-            className="text-2xl font-semibold mb-2"
+            className="text-display font-semibold mb-2"
             style={{ color: 'var(--td-text-color-primary)' }}
           >
             {APP_CONFIG.name}

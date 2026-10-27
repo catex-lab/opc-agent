@@ -512,7 +512,9 @@ await page.waitForTimeout(400);
   ok(imgOk, '消息流里那张图片消息真的加载出来了（玻璃后面的彩色背景）');
   await shot('verify-p7-glass-detail-on-image');
   await glassOf('[data-agent-detail-overlay] [role="dialog"]', '图片消息上的详情弹窗');
-  // 蒙层要比 ConfirmDialog 淡：透得出背后的图
+  // A133：遮罩全站收敛成一档（--tc-mask-soft = 0.34），这里守的是「够淡、透得出背后的图」。
+  // 原注释写的是「蒙层要比 ConfirmDialog 淡」——那个相对关系已经不存在了
+  // （ConfirmDialog 也改成了同一档），所以别把它当成两者之间的比较。
   const mask = await page.evaluate(() => {
     const el = document.querySelector('[data-agent-detail-overlay]');
     return el ? getComputedStyle(el).backgroundColor : '';

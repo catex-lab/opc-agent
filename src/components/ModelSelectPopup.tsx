@@ -175,7 +175,7 @@ export function ModelSelectPopup({
         </span>
         <Tooltip
           content={
-            <span style={{ fontSize: 12, lineHeight: 1.6 }}>
+            <span style={{ fontSize: 'var(--text-secondary)', lineHeight: 1.6 }}>
               这里只列当前 Agent 已经报上来的模型。
               <br />
               清单由各厂商官方接口提供，装好 CLI 后点下方「添加模型」去设置里刷新。
@@ -239,7 +239,7 @@ export function ModelSelectPopup({
                   <span className="truncate text-body leading-5">{m.name}</span>
                   {m.tag && (
                     <span
-                      className="shrink-0 rounded px-1 text-[10px] leading-4"
+                      className="shrink-0 rounded px-1 text-caption"
                       style={tagStyle(m.tag)}
                     >
                       {m.tag}
