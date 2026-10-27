@@ -423,11 +423,11 @@ export function NewGroupDialog({
               onClick={submit}
               disabled={selected.length === 0}
               data-new-group-submit
-              className="tc-btn-brand px-6 py-2 text-body"
+              className="tc-btn-brand"
             >
               完成
             </button>
-            <button type="button" onClick={onClose} className="tc-btn-secondary px-6 py-2 text-body">
+            <button type="button" onClick={onClose} className="tc-btn-secondary">
               取消
             </button>
           </div>

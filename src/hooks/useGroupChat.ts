@@ -1,6 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Message, PermissionRequest, OrchestrationMode } from '../types';
+import type { PermissionOption } from '../types';
+import { behaviorOfKind, reasonCodeOfKind } from '../../shared/permissions';
 import {
   applyRunEvent,
   textOfBlocks,
@@ -82,6 +84,14 @@ function createEventStreamSession(opts: {
   const runByMessage = new Map<string, string>();
   const lastSeq = new Map<string, number>();
   const dirty = new Set<string>();
+  /**
+   * A122：本端的停止把手。
+   *
+   * `stopped` 与「网络断了」必须区分开 —— 两者在 catch 里都是同一个读流异常，
+   * 不区分就会在用户按下停止后立刻自动重连回去（等于停止无效）。
+   */
+  const controller = new AbortController();
+  let stopped = false;
   let rafId: number | null = null;
   /**
    * rAF 兜底定时器，与 useChat 同一套道理：Electron 的
@@ -240,6 +250,8 @@ function createEventStreamSession(opts: {
           timestamp: Date.now(),
           risk: data.risk,
           rule: data.rule,
+          // P4：群聊卡片同样按服务端下发的目录渲染
+          options: Array.isArray(data.options) ? data.options : undefined,
         });
         break;
 
@@ -283,6 +295,8 @@ function createEventStreamSession(opts: {
     try {
       await consume(resp);
     } catch (err) {
+      // 用户点了停止：不重连。接回去等于「按了停止、字还在往下长」
+      if (stopped) throw err;
       const active = [...runs.values()].filter(r => r.streaming);
       if (active.length === 0) throw err;
       for (const r of active) {
@@ -309,7 +323,36 @@ function createEventStreamSession(opts: {
     if (fallbackTimer != null) clearTimeout(fallbackTimer);
   };
 
-  return { handleEvent, consume, consumeWithReconnect, drain, dispose };
+  /**
+   * 用户按「停止」（A122）：一次收掉这一轮里**所有**还在跑的路。
+   *
+   * 群播与工作流会同时有多路在跑，而服务端的中止是按 run 计的
+   * （每一棒只杀自己那个子进程），所以要逐路发；不逐路就会留下
+   * 「界面停了、某个成员还在写文件」的半停状态。
+   */
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    for (const r of runs.values()) {
+      if (!r.streaming) continue;
+      fetch(`/api/runs/${r.runId}/stop`, { method: 'POST' }).catch(() => {});
+    }
+    controller.abort();
+    drain();
+  };
+
+  return {
+    handleEvent,
+    consume,
+    consumeWithReconnect,
+    drain,
+    dispose,
+    stop,
+    /** 给 fetch 用：停止时掐掉本端这条 SSE */
+    signal: controller.signal,
+    /** 给调用方用：区分「用户停的」与「断线的」，前者不该贴错误气泡 */
+    isStopped: () => stopped,
+  };
 }
 
 export function useGroupChat(options: UseGroupChatOptions) {
@@ -324,6 +367,12 @@ export function useGroupChat(options: UseGroupChatOptions) {
 
   const [isLoading, setIsLoading] = useState(false);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
+
+  /**
+   * 当前这条流。群聊发言与工作流脚本共用一个槽位 —— 同一时刻只有一轮在发
+   * （`isLoading` 已经把并发挡住了），所以不需要按 runId 建表。
+   */
+  const streamRef = useRef<ReturnType<typeof createEventStreamSession> | null>(null);
 
   /** 新开一条流会话（群聊发言与工作流共用同一套状态机） */
   const newSession = () =>
@@ -348,11 +397,14 @@ export function useGroupChat(options: UseGroupChatOptions) {
 
       setIsLoading(true);
       const stream = newSession();
+      streamRef.current = stream;
 
       try {
         const response = await fetch('/api/group-chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          // A122：停止要能掐掉这条流（否则气泡继续往下长字）
+          signal: stream.signal,
           body: JSON.stringify({
             sessionId: currentSessionId,
             message: messageContent,
@@ -371,6 +423,9 @@ export function useGroupChat(options: UseGroupChatOptions) {
         // 兜底：流正常结束但没收到 turn_done 的 run，解除流式状态
         stream.drain();
       } catch (error) {
+        // 用户按的停止不是失败：各路气泡已由 stop() 解除流式态，
+        // 这里再补一条「请求失败」等于把用户的主动操作报成故障
+        if (stream.isStopped()) return;
         console.error('[GroupChat] 请求失败:', error);
         upsertMessage({
           id: uuidv4(),
@@ -401,11 +456,14 @@ export function useGroupChat(options: UseGroupChatOptions) {
 
       setIsLoading(true);
       const stream = newSession();
+      streamRef.current = stream;
 
       try {
         const response = await fetch('/api/workflow/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          // A122：与群聊同一个停止把手
+          signal: stream.signal,
           body: JSON.stringify({
             sessionId: currentSessionId,
             source,
@@ -423,6 +481,7 @@ export function useGroupChat(options: UseGroupChatOptions) {
         await stream.consumeWithReconnect(response);
         stream.drain();
       } catch (error) {
+        if (stream.isStopped()) return;
         console.error('[Workflow] 请求失败:', error);
         upsertMessage({
           id: uuidv4(),
@@ -439,11 +498,51 @@ export function useGroupChat(options: UseGroupChatOptions) {
     [currentSessionId, agentIds, orchestration, title, isLoading, upsertMessage, onOrchestrationSync]
   );
 
+  /**
+   * 停止当前这一轮（A122）。
+   *
+   * 没有正在跑的流时静默不做任何事：「停止」按钮在流收尾的那一帧之后才消失，
+   * 那一刻点下去不该发出一个必然 404 的请求，更不该报错。
+   */
+  const stopRun = useCallback(() => {
+    setIsLoading(false);
+    streamRef.current?.stop();
+  }, []);
+
+  /**
+   * 群聊审批的答复口（P4）。
+   *
+   * 之前群聊卡片拿到的是 useChat 的 handler —— 而 useChat 那条流的
+   * permissionRequest 永远是 null，点了「允许」什么都不会发生。
+   * 这里用群聊自己的 requestId 直接回服务端，顺手把选项带上。
+   */
+  const resolvePermission = useCallback(async (option?: PermissionOption) => {
+    if (!permissionRequest) return;
+
+    const behavior = option ? behaviorOfKind(option.kind) : 'deny';
+    const reasonCode = option ? reasonCodeOfKind(option.kind) : 'user_rejected';
+
+    await fetch('/api/permission-response', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestId: permissionRequest.requestId,
+        behavior,
+        ...(option ? { optionId: option.id } : {}),
+        ...(reasonCode ? { reasonCode } : {}),
+      }),
+    });
+
+    setPermissionRequest(null);
+  }, [permissionRequest]);
+
   return {
     isLoading,
     permissionRequest,
     sendGroupMessage,
     runWorkflowScript,
+    resolvePermission,
     setPermissionRequest,
+    stopRun,
   };
 }

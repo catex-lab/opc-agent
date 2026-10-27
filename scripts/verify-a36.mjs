@@ -115,6 +115,17 @@ const MESSAGES = [
     author_agent_id: 'hermes', created_at: new Date(now + 1000).toISOString(),
     blocks: [
       { id: 'g3', type: 'tool', toolId: 'gt2', name: 'Bash', status: 'completed', input: { command: 'npm test', description: '跑测试' }, output: 'ok', startedAt: now - 2000, endedAt: now - 1000 },
+      // A125：本轮结束了，但这个工具从未报回结果 → 结果未回传（不是 completed / failed）
+      {
+        id: 'g3b', type: 'tool', toolId: 'gt3', name: 'Bash', status: 'interrupted',
+        input: { command: 'npm run dev', description: '起开发服务' },
+        startedAt: now - 900, endedAt: now - 400,
+      },
+      // A125：厂商隐去正文的思考 → 「已隐去」，不伪造内容
+      {
+        id: 'g3c', type: 'thinking', text: '', state: 'done', format: 'raw', redacted: true,
+        startedAt: now - 300, endedAt: now - 200,
+      },
       { id: 'g4', type: 'text', text: '我也看完了。', state: 'done' },
     ],
   },
@@ -375,6 +386,62 @@ console.log('\n[8] 群聊：每个 Agent 各自一段轨迹');
   );
   ok(traces.length === 2, '两条回复各有一段轨迹', String(traces.length));
   ok(traces[0]?.agent !== traces[1]?.agent, '两段分属不同 Agent（不合并）', `${traces[0]?.agent} / ${traces[1]?.agent}`);
+  await ctx.close();
+}
+
+// ============= [8b] 结果未回传 / 已隐去（A125） =============
+console.log('\n[8b] 结果未回传与已隐去的思考');
+{
+  const { ctx, page } = await newPage();
+  await page.goto(base + '/chat/s2', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1200);
+
+  // 完成态默认收起：先展开两条轨迹，否则步骤行根本不渲染
+  const bars = page.locator('[data-steps-bar]');
+  const barCount = await bars.count();
+  for (let i = 0; i < barCount; i++) {
+    if ((await bars.nth(i).getAttribute('aria-expanded')) !== 'true') await bars.nth(i).click();
+  }
+  await page.waitForTimeout(400);
+
+  const chip = page.locator('[data-trace-status="interrupted"]').first();
+  ok((await chip.count()) > 0, '出现「结果未回传」标记');
+  ok(((await chip.textContent()) ?? '').trim() === '结果未回传', '文案是「结果未回传」', ((await chip.textContent()) ?? '').trim());
+
+  // 设计稿数值：18px 高 / 10.8px 字 / 4px 圆角。字号被现有样式带跑会立刻红。
+  const chipStyle = await chip.evaluate(el => {
+    const s = getComputedStyle(el);
+    return { h: s.height, fs: s.fontSize, br: s.borderTopLeftRadius };
+  });
+  ok(chipStyle.h === '18px', '胶囊高 18px（设计稿）', chipStyle.h);
+  ok(chipStyle.fs === '10.8px', '胶囊字号 10.8px（设计稿）', chipStyle.fs);
+  ok(chipStyle.br === '4px', '胶囊圆角 4px（设计稿）', chipStyle.br);
+
+  const dotStyle = await page
+    .locator('[data-tool-step="gt3"] .tc-step-dot')
+    .first()
+    .evaluate(el => {
+      const s = getComputedStyle(el);
+      return { bg: s.backgroundColor, shadow: s.boxShadow };
+    });
+  ok(/rgba\(0, 0, 0, 0\)|transparent/.test(dotStyle.bg), '未回传的圆点不填状态色', dotStyle.bg);
+  ok(dotStyle.shadow.includes('inset'), '空心圈用 inset 描边表达', dotStyle.shadow);
+
+  // 汇总行也不许画绿勾：这一轮结束 ≠ 全部成功
+  ok(
+    (await page.locator('.tc-unknown-dot').count()) === 1,
+    '汇总行用空心圈而不是绿勾（只有 hermes 这条有未回传）',
+    String(await page.locator('.tc-unknown-dot').count())
+  );
+
+  const red = page.locator('[data-trace-thinking] [data-redacted="1"]').first();
+  ok((await red.count()) > 0, '被隐去的思考有独立标记');
+  const redText = ((await red.textContent()) ?? '').trim();
+  ok(redText.includes('已隐去'), '标题是「已隐去」', redText);
+  ok(!redText.includes('字'), '不显示字数（没有正文可数）', redText);
+  ok((await red.locator('details').count()) === 0, '没有点了没反应的空折叠条');
+
+  await page.screenshot({ path: join(OUT, 'a36-unknown.png'), fullPage: false });
   await ctx.close();
 }
 

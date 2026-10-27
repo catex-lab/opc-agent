@@ -1,7 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { MessagePlugin } from 'tdesign-react';
 import { v4 as uuidv4 } from 'uuid';
 import { Message, PermissionRequest, PermissionMode, Session, CustomAgent, ImageBlock } from '../types';
+import type { PermissionOption } from '../types';
+import { behaviorOfKind, reasonCodeOfKind } from '../../shared/permissions';
 import {
   applyRunEvent,
   textOfBlocks,
@@ -86,6 +88,26 @@ export function useChat(options: UseChatOptions) {
     return localStorage.getItem(STORAGE_KEYS.draftInput) || '';
   });
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
+
+  /**
+   * 本轮的「停止」把手（A122）。
+   *
+   * 三件事各管一段，缺一件就停不干净：
+   *   · controller —— 掐掉本端这条 SSE。不掐的话气泡会一直往下长字。
+   *   · runId —— 让服务端**立刻**中止子进程。只掐 fetch 会落进 20s 断线宽限
+   *     （那是给网络抖动准备的），Agent 照旧在改文件、照旧烧额度。
+   *   · stopped —— 「用户主动停」和「网络断了」在 catch 里长得一模一样
+   *     （都是一个 AbortError / 读流异常）。没有这个标记，断线重连会把刚
+   *     停掉的流又接回来，并且给用户贴一条「请求失败」。
+   */
+  const turnRef = useRef<{
+    controller: AbortController;
+    runId: string | null;
+    stopped: boolean;
+    /** 流式气泡的落点；run_start 之后要换成后端返回的真 id */
+    sessionId: string;
+    messageId: string;
+  } | null>(null);
 
   // 保存输入框内容到 localStorage（防抖）
   const saveInput = useCallback((value: string) => {
@@ -202,6 +224,17 @@ export function useChat(options: UseChatOptions) {
     localStorage.removeItem(STORAGE_KEYS.draftInput);
     setIsLoading(true);
 
+    // A122：这一轮的停止把手。气泡此刻还是临时 id，run_start 到达后由
+    // applyInit 换成后端真值（换错的后果是停止时点不到正在流的那条消息）。
+    const controller = new AbortController();
+    turnRef.current = {
+      controller,
+      runId: null,
+      stopped: false,
+      sessionId: sessionId!,
+      messageId: tempAssistantMessageId,
+    };
+
     const agent = getAgent(currentAgentId);
     // 会话级（场景注入）的 systemPrompt 优先于 Agent 自带的：
     // 场景模板要能覆盖 Agent 的默认人设，否则「问答=只读」这类约束落不了地。
@@ -278,6 +311,8 @@ export function useChat(options: UseChatOptions) {
       const response = await fetch(imageMode ? '/api/image' : '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // A122：停止时掐掉这条流（生图端点同样受益：断开即中止）
+        signal: controller.signal,
         body: JSON.stringify(imageMode ? {
           sessionId,
           // 生图端点的入参叫 prompt（它不是对话消息，是一次生成请求）
@@ -340,6 +375,11 @@ export function useChat(options: UseChatOptions) {
         if (sid) realSessionId = sid;
         if (mid) realAssistantMessageId = mid;
         if (modelId) usedModel = modelId;
+        // 停止要落在这条气泡上，而它的 id 在这里才从临时值换成后端真值
+        if (turnRef.current) {
+          turnRef.current.sessionId = realSessionId;
+          turnRef.current.messageId = realAssistantMessageId;
+        }
 
         if (realSessionId !== sessionId) {
           setSessions(prev => prev.map(s => (s.id === sessionId ? { ...s, id: realSessionId } : s)));
@@ -387,6 +427,7 @@ export function useChat(options: UseChatOptions) {
         switch (data.type) {
           case 'run_start':
             runId = data.runId ?? null;
+            if (turnRef.current) turnRef.current.runId = runId;
             if (typeof data.seq === 'number') lastSeq = data.seq;
             applyInit(data.sessionId, data.messageId, data.model);
             break;
@@ -415,6 +456,8 @@ export function useChat(options: UseChatOptions) {
               timestamp: Date.now(),
               risk: data.risk,
               rule: data.rule,
+              // 缺省保持缺省：没声明选项 ≠ 给了 0 个选项
+              options: Array.isArray(data.options) ? data.options : undefined,
             });
             break;
 
@@ -460,6 +503,9 @@ export function useChat(options: UseChatOptions) {
       try {
         await consume(response);
       } catch (err) {
+        // 用户点了停止：这条异常是**我们自己**造成的，绝不能走重连 ——
+        // 接回去等于「按了停止、字还在往下长」，而服务端还会白跑一轮。
+        if (turnRef.current?.stopped) throw err;
         // 断线重连（E5）：带着最后收到的 seq 接回去，不重发整轮
         if (runId && lastSeq > 0) {
           const resumed = await fetch(`/api/runs/${runId}/stream?after=${lastSeq}`);
@@ -471,7 +517,8 @@ export function useChat(options: UseChatOptions) {
       }
 
     } catch (error) {
-      console.error('Chat error:', error);
+      const userStopped = turnRef.current?.stopped === true;
+      if (!userStopped) console.error('Chat error:', error);
       // 必须按 realAssistantMessageId 匹配：applyInit() 早就把气泡 id 从
       // 临时值换成了后端真值，这里再用 tempAssistantMessageId 就一个都
       // 匹配不上 —— 错误贴不上、isStreaming 也不置 false，永久转圈。
@@ -485,7 +532,11 @@ export function useChat(options: UseChatOptions) {
                 ? {
                     ...m,
                     isStreaming: false,
-                    error: `请求失败：${(error as Error).message || '未知错误'}`,
+                    // 用户自己按的停止不是失败：已经吐出来的字留着，
+                    // 不贴「请求失败：signal is aborted without reason」这种内部话
+                    error: userStopped
+                      ? m.error
+                      : `请求失败：${(error as Error).message || '未知错误'}`,
                   }
                 : m
             )
@@ -531,43 +582,65 @@ export function useChat(options: UseChatOptions) {
     [currentSession, isLoading, sendMessage]
   );
 
-  // 处理停止事件
+  /**
+   * 停止本轮（A122）。
+   *
+   * 这里原本只有一句 `setIsLoading(false)`：发送键变回可点，而 Agent 一个字没停 ——
+   * SSE 还在读、气泡还在往下长字（A121 的匀速揭示还会继续吐），子进程还在改文件。
+   * 用户看到的就是「点了停止，还在进行」。现在三处一起收：
+   *   1. 让服务端**立刻**中止这一 run（不掐的话要等 20s 断线宽限）
+   *   2. 掐掉本端这条 SSE，并靠 stopped 标记躲过断线重连
+   *   3. 关掉这条气泡的流式态，别留一个永久转圈的它
+   */
   const handleStop = useCallback(() => {
     setIsLoading(false);
-  }, []);
+    const turn = turnRef.current;
+    if (!turn) return;
 
-  // 处理权限允许
-  const handlePermissionAllow = useCallback(async () => {
+    turn.stopped = true;
+    if (turn.runId) {
+      // fire-and-forget：按停止不该被一次网络往返拖住，界面要立刻收。
+      // 失败也不管 —— 最坏退回到「断开宽限后中止」，仍然会停。
+      fetch(`/api/runs/${turn.runId}/stop`, { method: 'POST' }).catch(() => {});
+    }
+    turn.controller.abort();
+    setSessions(prev => prev.map(s => (
+      s.id !== turn.sessionId
+        ? s
+        : {
+            ...s,
+            messages: s.messages.map(m => (
+              m.id === turn.messageId ? { ...m, isStreaming: false } : m
+            )),
+          }
+    )));
+  }, [setSessions]);
+
+  /**
+   * 回一次权限请求（P4）。
+   *
+   * `option` 由审批卡原样传回（来自服务端下发的目录），这里只做翻译：
+   * kind → behavior，reject_always → user_denied_always。不传 option 是
+   * 老路径兜底，按「拒绝」处理 —— 但必须带上原因码，否则服务端无法区分
+   * 「用户拒绝」和「超时 / 收尾」。
+   */
+  const resolvePermission = useCallback(async (option?: PermissionOption) => {
     if (!permissionRequest) return;
-    
-    
+
+    const behavior = option ? behaviorOfKind(option.kind) : 'deny';
+    const reasonCode = option ? reasonCodeOfKind(option.kind) : 'user_rejected';
+
     await fetch('/api/permission-response', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         requestId: permissionRequest.requestId,
-        behavior: 'allow'
-      })
+        behavior,
+        ...(option ? { optionId: option.id } : {}),
+        ...(reasonCode ? { reasonCode } : {}),
+      }),
     });
-    
-    setPermissionRequest(null);
-  }, [permissionRequest]);
 
-  // 处理权限拒绝
-  const handlePermissionDeny = useCallback(async () => {
-    if (!permissionRequest) return;
-    
-    
-    await fetch('/api/permission-response', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId: permissionRequest.requestId,
-        behavior: 'deny',
-        message: '用户拒绝了此操作'
-      })
-    });
-    
     setPermissionRequest(null);
   }, [permissionRequest]);
 
@@ -579,7 +652,6 @@ export function useChat(options: UseChatOptions) {
     sendMessage,
     regenerate,
     handleStop,
-    handlePermissionAllow,
-    handlePermissionDeny,
+    resolvePermission,
   };
 }

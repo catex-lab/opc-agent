@@ -14,6 +14,8 @@
 
 import type { RiskLevel } from './permission-gate.js';
 import type { EventSource } from '../../shared/blocks.js';
+import type { EventCapability, CapabilityProfile } from '../../shared/capabilities.js';
+import type { PermissionDecision, PermissionOption } from '../../shared/permissions.js';
 
 /** 统一事件流。与模板 SSE 契约一一对应。 */
 export type AgentEvent =
@@ -36,8 +38,22 @@ export type AgentEvent =
       source?: EventSource;
     }
   | { type: 'text'; content: string }
-  /** 思考过程（Hermes ACP 的 agent_thought_chunk）。与正文分开，前端折叠展示 */
-  | { type: 'thinking'; content: string }
+  /**
+   * 思考过程（Hermes ACP 的 agent_thought_chunk）。与正文分开，前端折叠展示。
+   *
+   * `format` 与 `redacted` 必须由**适配器**在事件上声明，不能由投影器猜：
+   *   · codex 只给 reasoning summary；把它硬标成原文，用户会以为看到了完整推理链
+   *   · Anthropic 的 `redacted_thinking` 正文是密的，只剩「确实想过」这个事实
+   * 这两个信息只有产出事件的那一层知道，投影器只负责原样落到块上。
+   * 缺省 = 适配器没声明，按原文处理（历史行为不变）。
+   */
+  | {
+      type: 'thinking';
+      content: string;
+      format?: 'raw' | 'summary';
+      /** 内容被厂商隐去；此时 `content` 通常为空，但块仍必须存在 */
+      redacted?: boolean;
+    }
   | { type: 'tool'; id: string; name: string; input?: unknown }
   /**
    * 工具执行过程中的增量输出（E5）。
@@ -115,6 +131,13 @@ export type AgentEvent =
       risk?: RiskLevel;
       /** 命中的规则原文 / 分类器说明，供审批弹窗解释「凭什么卡你」 */
       rule?: string;
+      /**
+       * 本次请求**真实可选**的答复档位（P4）。
+       *
+       * 由适配器决定，UI 不补齐：SDK 四档、CLI 双向只两档、ACP 是服务端给的。
+       * 缺省 = 该适配器没有声明（老路径），前端退回「拒绝 / 允许」两个按钮。
+       */
+      options?: PermissionOption[];
     };
 
 // ============= Agent 描述 =============
@@ -142,15 +165,12 @@ export type AgentCapability =
  *
  * 与 AgentCapability 分开的理由见 AgentDescriptor.eventCapabilities 的注释。
  * `text` / `done` / `error` 是所有适配器都能给的，不列在这里。
+ *
+ * 联合类型本体在 `shared/capabilities.ts` —— 后端与前端必须用同一份定义，
+ * 手抄镜像迟早漂（这个项目已经有过一份 20 类漂移的先例）。这里保留旧名字，
+ * 是为了让 20 多个既有引用不用改。
  */
-export type AgentEventCapability =
-  | 'thinking'      // 思考过程（原文或摘要）
-  | 'thinking_summary' // 只给摘要（如 codex 的 reasoning summary）
-  | 'tool'          // 工具调用与结果
-  | 'tool_output'   // 工具执行中的增量输出
-  | 'usage'         // token 用量
-  | 'cost'          // 费用
-  | 'permission';   // 反向权限请求
+export type AgentEventCapability = EventCapability;
 
 /** Agent 能承接的结构化任务类别（参考 A2A AgentSkill）。 */
 export interface AgentSkill {
@@ -470,6 +490,14 @@ export interface AgentInfo extends AgentDescriptor {
   /** P4-5：权限强制能力（UI 据此如实提示「该场景的只读约束落不了地」） */
   permissionSupport?: PermissionSupport;
   /**
+   * 最近一次 run 观测到的过程能力档（P2）。
+   *
+   * 与 `eventCapabilities`（声明）是两回事：这份是投影器数出来的事实。
+   * 缺省 = 还没跑过 / 老库没记录 —— 界面据此显示「未观察到」，而不是
+   * 把「不知道」画成「不支持」。
+   */
+  observedCapabilities?: CapabilityProfile;
+  /**
    * 本机是否具备安装前置条件（A71）。只在 `install.requires` 需要时才挂上，
    * 免得 14 条都拖着一个空对象。界面据此把「跑这条命令会失败」提前说清，
    * 而不是让用户复制完才发现没装 Node。
@@ -566,11 +594,13 @@ export interface AgentProvider {
   dispose?(): void;
 }
 
-/** 前端对权限请求的答复 */
-export interface PermissionDecision {
-  behavior: 'allow' | 'deny';
-  message?: string;
-}
+/**
+ * 前端对权限请求的答复。
+ *
+ * 定义收敛到 `shared/permissions.ts`（P4）：带了 `optionId` 时适配器据此
+ * 精确选中，`reasonCode` 用来区分「用户拒绝」与「超时 / 收尾 / 门禁」。
+ */
+export type { PermissionDecision, PermissionOption, PermissionReasonCode } from '../../shared/permissions.js';
 
 // ============= 工具函数 =============
 

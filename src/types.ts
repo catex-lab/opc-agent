@@ -5,8 +5,13 @@
 // 权限相关类型收敛到 shared/（与 server 共用同一份，避免前后端定义漂移）
 import type { PermissionMode, PermissionSupport } from '../shared/types';
 import type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlock, RawBlock, RawEntry } from '../shared/blocks';
+import type { EventCapability, CapabilityProfile } from '../shared/capabilities';
+import type { PermissionOption, PermissionReasonCode } from '../shared/permissions';
 export type { PermissionMode, PermissionSupport };
+export type { PermissionOption, PermissionReasonCode };
 export type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlock, RawBlock, RawEntry };
+export type { EventCapability, CapabilityProfile };
+export { EVENT_CAPABILITY_ORDER } from '../shared/capabilities';
 
 /** 会话类型：一对一 / 群聊 */
 export type SessionKind = 'direct' | 'group';
@@ -338,6 +343,13 @@ export interface PermissionRequest {
   risk?: 'safe' | 'risky' | 'dangerous';
   /** 命中的规则名（人话），弹窗上解释「凭什么问这一句」 */
   rule?: string;
+  /**
+   * P4：本次真实可选的答复档位，由适配器决定、原样渲染。
+   *
+   * 缺省 = 该适配器没声明（历史路径），卡片退回「拒绝 / 允许」两个按钮。
+   * 前端**不补齐** always 之类的档位 —— 摆了就得真做到。
+   */
+  options?: PermissionOption[];
 }
 
 /**
@@ -346,6 +358,10 @@ export interface PermissionRequest {
 export interface PermissionResponse {
   requestId: string;
   behavior: 'allow' | 'deny';
+  /** P4：选中的档位 id（适配器据此精确回选；缺省按 behavior 找第一档） */
+  optionId?: string;
+  /** P4：拒绝原因码，用来区分用户决定 / 超时 / 收尾 / 门禁 */
+  reasonCode?: PermissionReasonCode;
   message?: string;
 }
 
@@ -370,16 +386,11 @@ export type AgentCapability = 'chat' | 'code' | 'write' | 'tools' | 'image' | 's
  * 只吐纯文本。前端**只按这份清单决定画什么**，不按业务能力猜 —— 否则
  * 就会出现「永远空着的工具折叠条」。
  *
- * 与后端 `server/agents/types.ts` 的 `AgentEventCapability` 同源。
+ * P2：联合类型本体已挪进 `shared/capabilities.ts`，前后端用同一份。
+ * 这里保留旧名字与常量导出，既有引用不用改 —— 但**不再手抄一份**：
+ * 手抄镜像漂起来是没有声音的（OpenHands 那份实测漂了 20 类）。
  */
-export type AgentEventCapability =
-  | 'thinking'
-  | 'thinking_summary'
-  | 'tool'
-  | 'tool_output'
-  | 'usage'
-  | 'cost'
-  | 'permission';
+export type AgentEventCapability = EventCapability;
 
 /** 可执行的任务类别；结构与后端 AgentSkill 对齐。 */
 export interface AgentSkill {
@@ -471,6 +482,14 @@ export interface RegisteredAgent {
    * **不要**替它假设支持或不支持。
    */
   eventCapabilities?: AgentEventCapability[];
+  /**
+   * 最近一次 run **观测到**的过程能力档（P2）。
+   *
+   * 与上面那份声明分开：声明可能过期，这份是投影器数出来的事实。
+   * 缺省 = 还没跑过 / 老服务端不返回 —— 界面显示「未观察到」，
+   * 不把「不知道」画成「不支持」。
+   */
+  observedCapabilities?: CapabilityProfile;
   /** Agent 可承接的任务类别；旧服务端可能不返回 */
   skills?: AgentSkill[];
   description?: string;
@@ -587,17 +606,6 @@ export const EVENT_CAPABILITY_META: Record<
   cost: { label: '费用统计', hint: '上报平台账单金额' },
   permission: { label: '授权确认', hint: '执行敏感操作前先征求同意' },
 };
-
-/** 过程能力的稳定展示顺序：按「过程从内到外」排，不按字母 */
-export const EVENT_CAPABILITY_ORDER: AgentEventCapability[] = [
-  'thinking',
-  'thinking_summary',
-  'tool',
-  'tool_output',
-  'permission',
-  'usage',
-  'cost',
-];
 
 /** 可用性状态的中文名与配色（对应 IM 的在线状态） */
 export const AVAILABILITY_META: Record<

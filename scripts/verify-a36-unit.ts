@@ -182,6 +182,17 @@ console.log('\n[6] lingeringToolBlocks：本轮结束仍在跑的工具');
   // 老数据没有时间戳，status 停在 running 只说明「当年没记完成状态」
   const legacy: Block[] = [{ ...running, startedAt: 0 }];
   ok(lingeringToolBlocks(legacy, true).length === 0, '老数据（startedAt=0）不算遗留，避免永久胶囊');
+
+  // A125：finish() 不再把没回结果的工具伪造成 completed，而是标 interrupted。
+  // 胶囊必须跟着认这一档，否则「修好终态」的代价是「功能永远数不出东西」。
+  const interrupted = tool('Bash', { command: 'npm run dev' }, { status: 'interrupted', endedAt: 8000 });
+  ok(lingeringToolBlocks([interrupted], true).length === 1, 'interrupted（结果未回传）也算遗留');
+  ok(
+    lingeringToolBlocks([{ ...interrupted, startedAt: 0 }], true).length === 0,
+    '老数据即使被标 interrupted 且无时间戳，也不算遗留'
+  );
+  ok(toolItem(interrupted).status === 'interrupted', 'toolItem：interrupted 不落进 done / error');
+  ok(toolItem(tool('Bash', { command: 'x' })).status === 'done', '对照组：completed 仍是 done');
 }
 
 // ============= 汇总 =============

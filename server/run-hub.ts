@@ -39,6 +39,15 @@ interface RunRecord {
   sessionId?: string;
   /** 这一轮是谁在跑（群聊里多棒接力时，同一会话会有多个 run） */
   agentId?: string;
+  /**
+   * 用户点「停止」时这一 run 该做的事（A122）。
+   *
+   * 由各路由在创建 run 之后注册：中止本轮的 AbortController + 让适配器杀掉子进程。
+   * 存在的必要：路由只在「客户端断开 + 20s 宽限」这条路径上握着 ac，
+   * 而重连端点明确「不因断开而中止」——所以前端把 fetch 掐掉并不能停下 Agent，
+   * 必须有一条按 runId 走的即时中止路。
+   */
+  onAbort?: () => void;
 }
 
 /** 后台任务快照：只暴露「还在跑」的 run，不带事件与块 */
@@ -83,7 +92,12 @@ class RunHub {
       run.sessionId = event.sessionId;
       run.agentId = event.agentId;
     }
-    if (event.type === 'run_end') run.finishedAt = Date.now();
+    if (event.type === 'run_end') {
+      run.finishedAt = Date.now();
+      // 收尾之后已经没有可中止的东西；留着会把路由闭包（res / session / ac）
+      // 一直吊到 sweep 才回收
+      run.onAbort = undefined;
+    }
 
     for (const fn of run.subscribers) {
       try {
@@ -135,6 +149,33 @@ class RunHub {
 
   isFinished(runId: string): boolean {
     return this.runs.get(runId)?.finishedAt != null;
+  }
+
+  /** 注册（或替换）这一 run 的中止动作。run 已不存在就不注册，交给调用方的 404 兜底 */
+  setAbortHandler(runId: string, fn: () => void): void {
+    const run = this.runs.get(runId);
+    if (run) run.onAbort = fn;
+  }
+
+  /**
+   * 即时中止一个 run（A122：界面上的「停止」）。
+   *
+   * 只做「执行已注册的中止动作」，不把自己标成 finished —— 收尾（闭合块、
+   * 落库、发 run_end）是各路由的活。在这里抢先 finished 会让这一轮的答案
+   * 停在半截却不落库，重连端点也会立刻 404，比不停更糟。
+   *
+   * 返回 false = 没有这个 run、已经结束、或没注册中止动作，没什么可停。
+   */
+  stop(runId: string): boolean {
+    const run = this.runs.get(runId);
+    if (!run || run.finishedAt != null || !run.onAbort) return false;
+    try {
+      run.onAbort();
+    } catch (err) {
+      console.warn(`[RunHub] 中止 ${runId} 失败:`, (err as Error)?.message);
+      return false;
+    }
+    return true;
   }
 
   /** 当前有几个重连上来的订阅者（用于判断「客户端真的走了」还是「正在重连」） */

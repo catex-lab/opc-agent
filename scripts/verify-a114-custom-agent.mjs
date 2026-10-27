@@ -199,8 +199,10 @@ async function main() {
     const defs = await j(await fetch(`${base}/api/agents/custom`));
     const raw = JSON.stringify(defs);
     ok(!raw.includes('sk-test-1234567890'), 'GET /api/agents/custom 不回传 Key');
-    ok((defs.agents ?? []).some(a => a.id === id && a.model === 'deepseek-chat'),
-      '定义里有模型名');
+    // 模型名早已从单数 `model` 改成子资源 `models[]`（通讯录一条厂商、
+    // 多个模型），这条断言当时没跟着改，一直红着报「定义里有模型名」。
+    ok((defs.agents ?? []).some(a => a.id === id && (a.models ?? []).includes('deepseek-chat')),
+      '定义里有模型名', JSON.stringify((defs.agents ?? []).find(a => a.id === id)?.models));
 
     // ── 4. 模型清单 ────────────────────────────────────────────
     const models = await j(await fetch(`${base}/api/agents/${id}/models`));

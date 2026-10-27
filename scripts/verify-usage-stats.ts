@@ -373,7 +373,9 @@ async function main() {
     'main.tsx 引入 ErrorBoundary');
   has('src/main.tsx', '<ErrorBoundary>', 'App 被 ErrorBoundary 包裹');
   ok(
-    /<ErrorBoundary>[\s\S]*<BrowserRouter>[\s\S]*<App \/>[\s\S]*<\/BrowserRouter>[\s\S]*<\/ErrorBoundary>/.test(
+    // BrowserRouter 在 A115 起带了 `useTransitions={false}`，写死 `<BrowserRouter>`
+    // 会把它判成「没包住」—— 守的是嵌套顺序，不是标签字面量，所以属性要放过。
+    /<ErrorBoundary>[\s\S]*<BrowserRouter[^>]*>[\s\S]*<App \/>[\s\S]*<\/BrowserRouter>[\s\S]*<\/ErrorBoundary>/.test(
       src('src/main.tsx')
     ),
     'ErrorBoundary 包在 Router/App 外层（崩了才兜得住）'

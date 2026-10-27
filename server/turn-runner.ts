@@ -20,6 +20,7 @@ import { randomUUID } from 'crypto';
 import * as db from './db.js';
 import { RunProjector } from './agents/projector.js';
 import { registry } from './agents/registry.js';
+import { runProfileOf } from './agents/capability.js';
 import { resolveModelForAgent } from './model-routing.js';
 import type { PermissionMode } from './agents/definitions.js';
 import { publishRunEvent, runHub } from './run-hub.js';
@@ -50,6 +51,13 @@ export interface TurnRunnerDeps {
   triggerPrompt?: string;
   /** 中止信号：客户端断开时由调用方 abort */
   signal: AbortSignal;
+  /**
+   * A122：中止**整个请求**（群聊/工作流里一次「停止」要停下所有成员）。
+   *
+   * 与 signal 分开是因为 signal 只读：按 runId 即时中止的钩子必须能真的
+   * 按下 controller，光有 signal 只能等调用方自己发现该断了。
+   */
+  abortTurn?: () => void;
   /** v2 块事件出口（写 SSE）。传 noop 就是纯后台运行 */
   emitBlocks: (events: RunEvent[]) => void;
   /**
@@ -116,10 +124,20 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
       // A100：事件来源（纯文本解析 vs 结构化输出 vs 原生协议）。
       // 群聊里每一棒可能换人，所以每个棒单独取一次，不能在外层取一遍。
       source: registry.eventSourceOf(agentId),
+      // P2：能力档按 (引擎 · 模型 · 网关) 记，每一棒单独算 —— 群聊成员
+      // 用的是同一个网关但不同模型，折叠成一个档就分不清是谁的问题。
+      capabilities: runProfileOf(agentId, resolvedModel),
     });
     if (!internal) {
       runHub.create(runId);
       activeRuns.add(runId);
+      // A122：这一棒的即时中止入口（界面点「停止」）。群聊一次可能有几路
+      // 同时在跑，所以每路单独注册：停一路只杀那一路的子进程，
+      // abortTurn 负责让编排引擎别再往下派发。
+      runHub.setAbortHandler(runId, () => {
+        deps.abortTurn?.();
+        registry.abort(agentId, session.id);
+      });
     }
 
     let errorMsg: string | undefined;
@@ -186,8 +204,17 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
     }
 
     const status = deps.signal.aborted ? 'aborted' : errorMsg ? 'error' : 'ok';
-    const { closes } = projector.finish(status, turnDone ?? undefined);
+    const { closes, end } = projector.finish(status, turnDone ?? undefined);
     emit(closes);
+    // P2：内部阶段的"能力"不是用户看到的这一轮，不记；
+    // 其余每一棒都记 —— 群聊里谁给得出思考，正是这里最想知道的事。
+    if (!internal && end.type === 'run_end' && end.capabilities) {
+      try {
+        db.saveCapabilityProfile(end.capabilities);
+      } catch (e: any) {
+        console.error('[Capability] 保存观测结果失败:', e?.message ?? e);
+      }
+    }
 
     const blocks = projector.blockList;
     const text = textOfBlocks(blocks);

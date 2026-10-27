@@ -320,7 +320,7 @@ export function MemoryPanel() {
         />
         <div className="mt-1 flex items-center justify-between">
           {counter(estimate(core), isProject ? (projectStats?.coreBudget ?? 800) : (stats?.coreBudget ?? 800))}
-          <Button size="small" variant="outline" loading={saving === 'core'} onClick={() => void save('core')}>
+          <Button variant="outline" loading={saving === 'core'} onClick={() => void save('core')}>
             保存
           </Button>
         </div>
@@ -345,7 +345,7 @@ export function MemoryPanel() {
         />
         <div className="mt-1 flex items-center justify-between">
           {counter(estimate(user), stats?.userBudget ?? 500)}
-          <Button size="small" variant="outline" loading={saving === 'user'} onClick={() => void save('user')}>
+          <Button variant="outline" loading={saving === 'user'} onClick={() => void save('user')}>
             保存
           </Button>
         </div>
@@ -363,7 +363,7 @@ export function MemoryPanel() {
             placeholder="关键词（支持全文检索，输入 - 也不会报错）"
             onEnter={() => void search()}
           />
-          <Button size="small" variant="outline" onClick={() => void search()}>
+          <Button variant="outline" onClick={() => void search()}>
             检索
           </Button>
         </div>

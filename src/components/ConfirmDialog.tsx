@@ -103,7 +103,7 @@ export function ConfirmDialog({
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="tc-btn-secondary px-3.5 py-1.5 text-body"
+            className="tc-btn-secondary"
           >
             {cancelText}
           </button>

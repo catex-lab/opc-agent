@@ -164,6 +164,18 @@ export interface HttpSpec {
   dialect: 'openai' | 'anthropic' | 'gemini';
   /** 完整的请求地址（含路径与查询参数） */
   url: string;
+  /**
+   * 根地址（不含端点路径）。有它时适配器**每次请求按当前模型重拼 URL**，
+   * `url` 退化成「默认模型那一条」的展示/兜底值。
+   *
+   * 为什么需要：Gemini 的模型名在路径里（`/models/<id>:generateContent`），
+   * 用户在模型下拉里换一个模型，就换了一个端点。只存创建时拼好的 `url`
+   * 会让 50 个模型全部打到第一个模型上 —— 而且报错是上游「模型不存在」，
+   * 从表象看不出是本地拼错了。
+   *
+   * 内置条目（豆包 / Kimi / Gemini）地址是固定的，不填这个字段，行为不变。
+   */
+  baseUrl?: string;
   /** 用于可达性探测的主机（可带端口，默认 443） */
   host: string;
   /** 未指定模型时的默认模型 */
@@ -746,7 +758,10 @@ function createCodexLineageMapper(errorLabel: string): (obj: unknown) => AgentEv
       }
       case 'reasoning': {
         const d = deltaOf(textSent, id, String(item.text ?? item.summary ?? ''));
-        return d ? { type: 'thinking', content: d } : null;
+        // codex 只给 reasoning summary，从不给原始思维链 —— 描述符里写的就是
+        // `thinking_summary`。这里如实标注，UI 才会换文案，而不是把摘要
+        // 冒充成「完整推理过程」。
+        return d ? { type: 'thinking', content: d, format: 'summary' } : null;
       }
       case 'command_execution': {
         if (started) {

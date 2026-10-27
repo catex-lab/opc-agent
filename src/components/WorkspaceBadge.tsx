@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, FolderOpen, ExternalLink, Folder, FolderPlus, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronDown, FolderOpen, ExternalLink, Folder, FolderPlus, RotateCcw, X } from 'lucide-react';
 import { MENU_ITEM_CLASS } from './menuItem';
 import { pickDirectory, revealInFolder, dirName, hasNativeDialogs, createWorkspace } from '../workspace';
 
@@ -57,51 +57,69 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
 
   /**
    * A120：用户可以从「最近目录」里移除某一项（点右侧 ×）。
-   * 这条偏好存在 localStorage，不改数据层 —— 会话的 cwd 还在，只是
-   * 不出现在这个快捷列表里。
+   *
+   * A131：这条偏好改存服务端（`POST /api/recent-directories/dismiss`）。原先存
+   * localStorage，而打包态每次启动都换一个系统分配的空闲端口 —— 端口即源，
+   * 换源之后清单读不回来，用户看到的正是「点掉过，下次打开又全回来了」。
+   * 列表本身已由服务端剔除忽略项，这里只留一个条数用来决定「全部恢复」出不出。
    */
-  const [ignoredDirs, setIgnoredDirs] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem('opc_ignored_dirs');
-      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
-    } catch {
-      return new Set<string>();
-    }
-  });
+  const [dismissed, setDismissed] = useState(0);
 
   const hasCwd = !!cwd;
   const label = hasCwd ? dirName(cwd!) : '默认目录';
 
-  const handleRemoveRecent = (dir: string) => {
-    const next = new Set(ignoredDirs);
-    next.add(dir);
-    setIgnoredDirs(next);
-    localStorage.setItem('opc_ignored_dirs', JSON.stringify([...next]));
+  /** 拉一次最近目录。打开面板时拉、恢复之后也拉 —— 两处共用同一份口径 */
+  const loadRecent = useCallback(async () => {
+    try {
+      const r = await fetch('/api/recent-directories');
+      const j = (r.ok ? await r.json() : {}) as {
+        directories?: string[];
+        dismissedCount?: number;
+      };
+      setRecent(Array.isArray(j.directories) ? j.directories : []);
+      setDismissed(typeof j.dismissedCount === 'number' ? j.dismissedCount : 0);
+    } catch {
+      // 拉不到不弹错：最近目录是便利功能，不是必需品。静默留空，
+      // 「切换目录」这条路与它无关，照样能用。
+      setRecent([]);
+    }
+    setRecentLoaded(true);
+  }, []);
+
+  const handleRemoveRecent = async (dir: string) => {
+    // 先就地摘掉再发请求：× 点下去那一行就该消失，不该等一个网络往返。
+    // 服务端同时按归一化路径记，所以 `C:\A` 与 `c:/a` 是一次忽略，不是两次。
+    setRecent(prev => prev.filter(d => d !== dir));
+    setDismissed(n => n + 1);
+    setNotice('已忽略，下次打开也不会再出现');
+    try {
+      await fetch('/api/recent-directories/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: dir }),
+      });
+    } catch {
+      setNotice('这次没存住，下次打开它可能还在');
+    }
+  };
+
+  const handleRestoreAll = async () => {
+    try {
+      const r = await fetch('/api/recent-directories/restore', { method: 'POST' });
+      const j = (r.ok ? await r.json() : {}) as { restored?: number };
+      setNotice(j.restored ? `已恢复 ${j.restored} 个目录` : '没有需要恢复的目录');
+    } catch {
+      setNotice('恢复失败，目录仍被忽略');
+    }
+    await loadRecent();
   };
 
   // 最近目录：**打开时**才拉。徽标每次渲染都在，挂载就拉会让每个带会话的
   // 页面都多发一个用不上的请求；而「打开面板」正说明用户此刻想换目录。
   useEffect(() => {
     if (!open || recentLoaded) return;
-    let alive = true;
-    fetch('/api/recent-directories')
-      .then(r => (r.ok ? r.json() : { directories: [] }))
-      .then((j: { directories?: string[] }) => {
-        if (!alive) return;
-        setRecent(Array.isArray(j.directories) ? j.directories : []);
-        setRecentLoaded(true);
-      })
-      .catch(() => {
-        if (!alive) return;
-        // 拉不到不弹错：最近目录是便利功能，不是必需品。静默留空，
-        // 「切换目录」这条路与它无关，照样能用。
-        setRecent([]);
-        setRecentLoaded(true);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [open, recentLoaded]);
+    void loadRecent();
+  }, [open, recentLoaded, loadRecent]);
 
   /**
    * 点面板以外的地方收起。
@@ -313,7 +331,9 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
           </p>
         )}
 
-        {recent.length > 0 && (
+        {/* 一条都没忽略过时不占位；但「只剩已忽略项」时这一节仍要出现，
+            否则「全部恢复」没有出口，被点掉的目录就永久回不来了。 */}
+        {(recent.length > 0 || dismissed > 0) && (
           <>
             <div className="my-1 h-px" style={{ backgroundColor: 'var(--td-component-border)' }} />
             <div
@@ -322,9 +342,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
             >
               最近目录
             </div>
-            {recent
-              .filter(dir => !ignoredDirs.has(dir))
-              .map(dir => {
+            {recent.map(dir => {
                 const active = dir === cwd;
                 return (
                   <button
@@ -356,7 +374,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
                         style={{ color: 'var(--td-text-color-placeholder)' }}
                         onClick={e => {
                           e.stopPropagation();
-                          handleRemoveRecent(dir);
+                          void handleRemoveRecent(dir);
                         }}
                         title="从最近目录中移除"
                       >
@@ -365,7 +383,20 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
                     )}
                   </button>
                 );
-              })}
+            })}
+            {dismissed > 0 && (
+              <button
+                type="button"
+                onClick={() => void handleRestoreAll()}
+                className={`${MENU_ITEM_CLASS} text-caption`}
+                style={{ color: 'var(--td-text-color-placeholder)' }}
+                title="把点过 × 的目录全部放回列表"
+                data-workspace-restore
+              >
+                <RotateCcw size={12} />
+                已忽略 {dismissed} 个 · 全部恢复
+              </button>
+            )}
           </>
         )}
       </div>

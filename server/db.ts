@@ -6,6 +6,16 @@ import { dataDirPath } from './paths.js';
 // A98：项目路径归一与显示名。纯函数模块（只依赖 crypto / path），
 // 不会反过来 import db.ts，所以这里引用它是安全的。
 import { normalizeProjectPath, defaultProjectName } from './project-key.js';
+// A131：「最近目录」的忽略清单。它只依赖 paths.ts 与 project-key.ts（两个都不
+// import 本文件），所以这里引它不会绕成环。
+import { isDismissed } from './dismissed-dirs.js';
+import type {
+  CapabilityKey,
+  CapabilityProbe,
+  CapabilityProfile,
+  EventCapability,
+} from '../shared/capabilities.js';
+import { capabilityKeyString } from '../shared/capabilities.js';
 
 // 路径推导已拆到 `paths.ts`（无副作用），这里只做 re-export：
 // 既有 `import { dataDirPath } from './db.js'` 的调用点无需改动，
@@ -57,6 +67,10 @@ db.exec(`
     scenario_id TEXT,
     -- 会话级系统提示词（场景注入），发送时优先于 Agent 自带
     system_prompt TEXT,
+    -- A123：会话级权限模式（default | acceptEdits | plan | bypassPermissions）。
+    -- NULL = 没选过 → 按 'default' 跑。这一档以前**只活在内存里一个 useState**：
+    -- 芯片显示「全放行」、发出去的却是 'default'，等于一个假控件。加这列来终结它。
+    permission_mode TEXT,
     -- 置顶：1 = 钉在消息列表顶部。右键菜单切换
     pinned INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -151,6 +165,43 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_project_tasks_project
     ON project_tasks(project_id, created_at);
+
+  -- 过程能力档的观测结果（P2）。
+  --
+  -- 为什么要落库而不是只放内存：这份数据的用途是回答「清单说它有思考，
+  -- 那它实际给过吗」——答案必须跨越重启，否则每次开应用都退回「不知道」，
+  -- 用户看到的永远只是那份可能撒谎的声明。
+  --
+  -- cap_key 是 (引擎|模型|网关) 的稳定字符串（见 shared/capabilities.ts）。
+  -- 三元组做主键而不是 agent_id：同一个 Codex 接官方模型和接第三方网关
+  -- 是两种事件形态，按 Agent 折叠就等于把后者的问题算到前者头上。
+  --
+  -- 只存最近一次：能力档是"当前事实"，不是审计日志。历史趋势没有第二个
+  -- 消费方，存了只会让表无限长。
+  CREATE TABLE IF NOT EXISTS agent_capabilities (
+    cap_key TEXT PRIMARY KEY,
+    engine TEXT NOT NULL,
+    model TEXT,
+    gateway TEXT NOT NULL,
+    declared TEXT,
+    observed TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  -- 真实 CLI 标定结果（P3）。
+  --
+  -- 为什么不复用上面那张表：observed 是「这一轮真的出现过」，probed 是
+  -- 「专门跑一条标定任务得到的结论」。两者来源不同、时间点不同，塞进同一行
+  -- 就会出现「用一个时间戳同时表示两件事」—— 那正是 P1/P2 一直在拆的假数据。
+  -- 分表之后，观测只覆盖观测，标定只覆盖标定，互不擦除。
+  CREATE TABLE IF NOT EXISTS agent_capability_probes (
+    cap_key TEXT PRIMARY KEY,
+    engine TEXT NOT NULL,
+    model TEXT,
+    gateway TEXT NOT NULL,
+    capabilities TEXT NOT NULL,
+    probed_at INTEGER NOT NULL
+  );
 `);
 
 /**
@@ -185,11 +236,22 @@ ensureColumn('sessions', 'cwd', 'cwd TEXT');
 ensureColumn('sessions', 'reasoning_effort', 'reasoning_effort TEXT');
 ensureColumn('sessions', 'scenario_id', 'scenario_id TEXT');
 ensureColumn('sessions', 'system_prompt', 'system_prompt TEXT');
+/**
+ * A123：会话级权限模式。老库里为 NULL = 「没选过」，读取侧按 'default' 处理，
+ * 语义与迁移前完全一致（迁移前它本来每条消息都是 'default'）。
+ *
+ * 刻意用可空而不是 `NOT NULL DEFAULT 'default'`：这一档的「没设置过」和
+ * 「显式选了 default」目前行为相同，但真到要区分「跟随 Agent 自带档位」时，
+ * NULL 才有地方放。`pinned` 那种布尔位才需要 NOT NULL。
+ */
+ensureColumn('sessions', 'permission_mode', 'permission_mode TEXT');
 ensureColumn('sessions', 'pinned', 'pinned INTEGER NOT NULL DEFAULT 0');
 /**
  * A98：会话所属项目。
  *
- * 老会话这一列为 NULL —— 随后由 `backfillSessionProjects()` 按 cwd 回填。
+ * 三个值各有含义（A131 起）：**NULL** = 从没算过，交给
+ * `backfillSessionProjects()` 按 cwd 回填；**''** = 用户亲手把这个会话从
+ * 项目里摘掉了，回填必须跳过；**其它** = 指向 `projects.id`。
  * 刻意**不加外键**：SQLite 不支持给已有表 ALTER 出外键约束，硬加要整表
  * 重建；而这张表是本机唯一的真实对话数据，为了一个可空外键去重建它
  * 风险不对等。代价是读取侧必须容忍「project_id 指向一个不存在的项目」，
@@ -268,6 +330,16 @@ export interface DbSession {
   scenario_id: string | null;
   /** 会话级系统提示词（场景注入） */
   system_prompt: string | null;
+  /**
+   * A123：会话级权限模式（`'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'`）。
+   *
+   * NULL / undefined = 没选过 → 按 `'default'` 跑。存的是**枚举值本身**，
+   * 不存中文标签（换语言不该让已存的数据失效）。
+   *
+   * 声明成可选是为了 `createSession()` 的调用点：绝大多数新建会话不指定档位，
+   * 让每个调用点写一遍 `permission_mode: null` 只是噪音。
+   */
+  permission_mode?: string | null;
   /**
    * A98：所属项目 id。NULL = 会话没绑定工作目录，或来自回填之前的旧数据。
    *
@@ -413,16 +485,26 @@ export function renameProject(id: string, name: string): boolean {
 }
 
 /**
- * 删除项目：先把会话解绑再删行。
+ * 删除项目：先把会话标成「用户主动解除归属」再删行。
  *
  * 为什么手动解绑而不是靠外键级联：project_id 是 ALTER 出来的列，加不了
  * 外键（见上面 ensureColumn 的说明）。这里必须自己收拾干净，
  * 否则会留下指向不存在项目的 session，读取侧就得永远防着。
  *
+ * A131：解绑写的是**空串**而不是 NULL，这两个值不是一回事 ——
+ * NULL = 「从没算过」（存量数据，交给 `backfillSessionProjects()` 回填），
+ * '' = 「算过，而且用户亲手把它从项目里摘掉了」（回填必须跳过）。
+ * 以前这里写 NULL，于是启动回填照着还留着的 cwd 把项目**重新建回来**，
+ * 用户看到的正是「删掉的项目每次打开又出现」。
+ *
+ * 读取侧不受影响：`getSessionProject()` 判的是真值，'' 与 NULL 一样会
+ * 回落到「按 cwd 现算」，所以记忆分区仍按路径走 —— 摘掉分组不该把
+ * 那个目录的记忆一起抹成全局。
+ *
  * **不删记忆文件** —— 那是用户的真实内容，删项目行不等于想扔掉记忆。
  */
 export function deleteProject(id: string): boolean {
-  db.prepare('UPDATE sessions SET project_id = NULL WHERE project_id = ?').run(id);
+  db.prepare(`UPDATE sessions SET project_id = '' WHERE project_id = ?`).run(id);
   const r = db.prepare('DELETE FROM projects WHERE id = ?').run(id);
   return toNumber(r.changes) > 0;
 }
@@ -535,11 +617,19 @@ export function getSessionProject(sessionId: string): DbProject | undefined {
 }
 
 /**
- * 老数据回填：把已有会话按 cwd 关联到项目。
+ * 存量回填：把「从没算过项目归属」的老会话按 cwd 关联到项目。
  *
- * 幂等，启动时调用一次即可。`cwd` 为空的会话（纯问答、没指定目录）
- * 保持 NULL —— 它们本来就不属于任何项目，硬塞一个「当前进程目录」
- * 反而会让它们的记忆错误地共享到一个假项目里。
+ * 只吃 `project_id IS NULL`。**空串是另一回事** —— 它表示用户亲手把这个
+ * 会话从项目里摘掉了（见 `deleteProject`），回填必须跳过它，否则删除动作
+ * 会在下一次启动时被完整撤销。
+ *
+ * `cwd` 为空的会话（纯问答、没指定目录）保持 NULL —— 它们本来就不属于任何
+ * 项目，硬塞一个「当前进程目录」反而会让它们的记忆错误地共享到一个假项目里。
+ *
+ * A131：目录在磁盘上已经不存在的一律跳过，与 `POST /api/projects` 用**同一把
+ * 尺子**（`validateDirectory`）。此前两条路口径不一致：手动建项目要校验存在，
+ * 回填不校验 —— 于是用户删掉的文件夹反而每次启动都被复活成一个项目。
+ * 跳过时保持 NULL，所以目录哪天回来（外接盘、重新 clone）还能正常关联上。
  */
 export function backfillSessionProjects(): number {
   const rows = db
@@ -550,11 +640,19 @@ export function backfillSessionProjects(): number {
     .all() as unknown as Array<{ id: string; cwd: string }>;
 
   let linked = 0;
+  let skipped = 0;
   for (const row of rows) {
+    if (!fs.existsSync(row.cwd)) {
+      skipped++;
+      continue;
+    }
     const project = getOrCreateProject(row.cwd);
     if (!project) continue;
     db.prepare('UPDATE sessions SET project_id = ? WHERE id = ?').run(project.id, row.id);
-    linked += 1;
+    linked++;
+  }
+  if (skipped > 0) {
+    console.log(`[DB] 项目回填：${linked} 个会话已关联，${skipped} 个因目录已不存在而跳过`);
   }
   return linked;
 }
@@ -582,18 +680,40 @@ export function getSession(id: string): DbSession | undefined {
  *
  * `MAX(updated_at)` 而不是 `ORDER BY updated_at`：同一个目录可能被多个会话
  * 同时引用，GROUP BY 之后取它**最近一次被用到**的时间，才符合「最近」的语义。
+ *
+ * ## A131：分组键必须是归一化路径，不是原始字符串
+ *
+ * `sessions.cwd` 存的是用户当初怎么写就怎么落的原样字符串，所以同一个目录会有
+ * 好几种写法。实测本机：`c:/users/me/downloads/ack-v1` 与
+ * `C:\Users\me\Downloads\ACK-v1` 并存 —— 列表里于是出现「ack-v1 / ACK-v1」
+ * 两条，点掉一条另一条照旧。这里按 `normalizeProjectPath` 归一之后再去重，
+ * **代表值取该目录最近一次被使用时的那条原样写法**：显示成 `ack-v1` 还是
+ * `ACK-v1` 由用户决定，不由小写化替他决定。
+ *
+ * 点过 × 的在这里剔除，清单见 `server/dismissed-dirs.ts`。
  */
 export function getRecentDirectories(limit = 8): string[] {
-  const stmt = db.prepare(`
-    SELECT cwd, MAX(updated_at) AS last_used
-    FROM sessions
-    WHERE cwd IS NOT NULL AND cwd != ''
-    GROUP BY cwd
-    ORDER BY last_used DESC
-    LIMIT ?
-  `);
-  const rows = stmt.all(limit) as unknown as Array<{ cwd: string }>;
-  return rows.map(r => r.cwd).filter(Boolean);
+  const rows = db
+    .prepare(`
+      SELECT cwd, MAX(updated_at) AS last_used
+      FROM sessions
+      WHERE cwd IS NOT NULL AND cwd != ''
+      GROUP BY cwd
+      ORDER BY last_used DESC
+    `)
+    .all() as unknown as Array<{ cwd: string }>;
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const row of rows) {
+    const key = normalizeProjectPath(row.cwd);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    if (isDismissed(row.cwd)) continue;
+    out.push(row.cwd);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 // 创建会话
@@ -602,10 +722,10 @@ export function createSession(session: DbSession): DbSession {
     INSERT INTO sessions (
       id, title, model, agent_id, sdk_session_id,
       kind, agent_ids, orchestration,
-      cwd, reasoning_effort, scenario_id, system_prompt, pinned, project_id,
+      cwd, reasoning_effort, scenario_id, system_prompt, permission_mode, pinned, project_id,
       created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     bind(session.id),
@@ -620,6 +740,7 @@ export function createSession(session: DbSession): DbSession {
     bind(session.reasoning_effort),
     bind(session.scenario_id),
     bind(session.system_prompt),
+    bind(session.permission_mode ?? null),
     bind(session.pinned ?? 0),
     bind(session.project_id),
     bind(session.created_at),
@@ -645,6 +766,7 @@ export function updateSession(
       | 'reasoning_effort'
       | 'scenario_id'
       | 'system_prompt'
+      | 'permission_mode'
       | 'pinned'
       | 'project_id'
     >
@@ -698,6 +820,12 @@ export function updateSession(
   if (updates.system_prompt !== undefined) {
     fields.push('system_prompt = ?');
     values.push(updates.system_prompt);
+  }
+  // A123：与 reasoning_effort 同构 —— null = 清空（回到「没选过」），
+  // undefined = 这一项不动。合法性由路由层校验，这里不认值只认列。
+  if (updates.permission_mode !== undefined) {
+    fields.push('permission_mode = ?');
+    values.push(updates.permission_mode);
   }
   if (updates.pinned !== undefined) {
     fields.push('pinned = ?');
@@ -944,6 +1072,114 @@ export function getVerificationsBySession(sessionId: string): DbVerification[] {
 /** 删掉某条消息的验证结果（消息被删/重生成时用） */
 export function deleteVerificationsByMessage(messageId: string): void {
   db.prepare('DELETE FROM verifications WHERE message_id = ?').run(bind(messageId));
+}
+
+// ============= 过程能力档（P2） =============
+
+export interface StoredCapabilityProfile extends CapabilityProfile {
+  /** run_end 一定给；这里显式收窄，消费方不必再判 undefined */
+  observed: EventCapability[];
+  updatedAt: number;
+}
+
+/**
+ * 记下一次 run 的观测结果（按三元组覆盖）。
+ *
+ * 没有 `observed` 的档不写：那说明调用方在 run_start 阶段就调了，
+ * 写进去等于把"声明"记成"事实"——正是这张表要防的事。
+ */
+export function saveCapabilityProfile(profile: CapabilityProfile): void {
+  if (!profile.observed) return;
+  const key = capabilityKeyString(profile.key);
+  db.prepare(`
+    INSERT INTO agent_capabilities (cap_key, engine, model, gateway, declared, observed, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(cap_key) DO UPDATE SET
+      declared = excluded.declared,
+      observed = excluded.observed,
+      updated_at = excluded.updated_at
+  `).run(
+    bind(key),
+    bind(profile.key.engine),
+    bind(profile.key.model ?? null),
+    bind(profile.key.gateway),
+    bind(profile.declared ? JSON.stringify(profile.declared) : null),
+    bind(JSON.stringify(profile.observed)),
+    Date.now()
+  );
+}
+
+/** 一个引擎最近一次被观测到的档（按 updatedAt 取最新） */
+export function latestCapabilityProfileFor(engine: string): StoredCapabilityProfile | undefined {
+  const row = db
+    .prepare('SELECT * FROM agent_capabilities WHERE engine = ? ORDER BY updated_at DESC LIMIT 1')
+    .get(bind(engine)) as Record<string, unknown> | undefined;
+  return row ? parseCapabilityRow(row) : undefined;
+}
+
+function parseCapabilityRow(row: Record<string, unknown>): StoredCapabilityProfile {
+  const parseList = (v: unknown): EventCapability[] | undefined => {
+    if (typeof v !== 'string' || !v) return undefined;
+    try {
+      const parsed = JSON.parse(v);
+      return Array.isArray(parsed) ? (parsed as EventCapability[]) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  return {
+    key: {
+      engine: String(row.engine ?? ''),
+      ...(row.model ? { model: String(row.model) } : {}),
+      gateway: String(row.gateway ?? ''),
+    },
+    ...(parseList(row.declared) ? { declared: parseList(row.declared) } : {}),
+    observed: parseList(row.observed) ?? [],
+    updatedAt: Number(row.updated_at) || 0,
+  };
+}
+
+// ============= 真实标定结果（P3） =============
+
+/**
+ * 记下一次真实标定（按三元组覆盖）。
+ *
+ * 空能力清单也要写：标定跑成功了、一条过程事件都没给，这是一个**结论**，
+ * 和「没标定过」（表里没有这一行）必须能分开。所以这里没有 `if (!length) return`。
+ */
+export function saveCapabilityProbe(key: CapabilityKey, probe: CapabilityProbe): void {
+  db.prepare(`
+    INSERT INTO agent_capability_probes
+      (cap_key, engine, model, gateway, capabilities, probed_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(cap_key) DO UPDATE SET
+      capabilities = excluded.capabilities,
+      probed_at = excluded.probed_at
+  `).run(
+    bind(capabilityKeyString(key)),
+    bind(key.engine),
+    bind(key.model ?? null),
+    bind(key.gateway),
+    bind(JSON.stringify(probe.capabilities)),
+    probe.at
+  );
+}
+
+/** 某个三元组最近一次标定结果；没有就是 undefined（= 从没标定过） */
+export function loadCapabilityProbe(key: CapabilityKey): CapabilityProbe | undefined {
+  const row = db
+    .prepare('SELECT capabilities, probed_at FROM agent_capability_probes WHERE cap_key = ?')
+    .get(bind(capabilityKeyString(key))) as Record<string, unknown> | undefined;
+  if (!row) return undefined;
+  let capabilities: EventCapability[];
+  try {
+    const parsed = JSON.parse(String(row.capabilities ?? ''));
+    if (!Array.isArray(parsed)) return undefined;
+    capabilities = parsed as EventCapability[];
+  } catch {
+    return undefined;
+  }
+  return { capabilities, at: Number(row.probed_at) || 0 };
 }
 
 export default db;

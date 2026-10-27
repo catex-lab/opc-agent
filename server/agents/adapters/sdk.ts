@@ -21,6 +21,11 @@ import { decideToolAccess } from '../toolPolicy.js';
 import { evaluateToolCall } from '../permission-gate.js';
 import { currentPermissionRules } from '../../permission-rules.js';
 import { withMemoryContext } from '../../memory.js';
+import {
+  SDK_PERMISSION_OPTIONS,
+  buildDenialMessage,
+  reasonCodeOfKind,
+} from '../../../shared/permissions.js';
 import type {
   AgentDescriptor,
   AgentEvent,
@@ -159,6 +164,20 @@ export class SdkAdapter implements AgentProvider {
   private active = new Map<string, { abort: () => void }>();
   /** 待答复的权限请求 */
   private replies = new PendingReplies<PermissionDecision>();
+  /**
+   * 「本会话始终允许 / 始终拒绝」的记忆（P4）。
+   *
+   * SDK 没有持久化审批决定的 API，只能由适配器自己记住工具名。
+   * 作用域是「本会话 + 本次应用运行」—— 界面上每个始终选项的 note 都写了
+   * 这条边界，不能让它悄悄跨会话或跨重启生效。
+   *
+   * 记忆不能跳过门禁：`rm -rf /` 这类高危检查在白名单与记忆**之前**，
+   * 所以「始终允许」也不可能放行危险操作。
+   */
+  private approvalMemory = new Map<
+    string,
+    { allow: Set<string>; deny: Set<string> }
+  >();
   /** 探测缓存（避免每次刷新名册都跑一次鉴权） */
   private status: AgentStatus | null = null;
   /** A107/A109：长驻会话池：我们的会话 id → 槽位（条目 + 串行链） */
@@ -292,7 +311,11 @@ export class SdkAdapter implements AgentProvider {
         console.log(
           `[SDK] 工具被场景白名单拦截: ${toolName} (category=${gate.category ?? 'unlisted'})`
         );
-        return { behavior: 'deny', message: gate.reason } as PermissionResult;
+        // 两段式：先定性「不是工具故障」，再给替代路径 —— 否则模型会重试
+        return {
+          behavior: 'deny',
+          message: buildDenialMessage('rule_blocked', gate.reason),
+        } as PermissionResult;
       }
 
       // ---- A40 权限门禁（规则匹配 + Bash 分类器 + 路径越界）----
@@ -309,7 +332,7 @@ export class SdkAdapter implements AgentProvider {
         console.log(`[SDK] 门禁拦截 ${toolName}: ${verdict.rule} — ${verdict.reason ?? ''}`);
         return {
           behavior: 'deny',
-          message: `[权限门禁] ${verdict.reason ?? verdict.rule ?? '高危操作'}`,
+          message: buildDenialMessage('rule_blocked', verdict.reason ?? verdict.rule),
         } as PermissionResult;
       }
 
@@ -325,6 +348,20 @@ export class SdkAdapter implements AgentProvider {
         return { behavior: 'allow', updatedInput: input } as PermissionResult;
       }
 
+      // ---- P4：本会话的「始终」记忆 ----
+      // 放在白名单 / 门禁 / bypass / auto 之后：用户点过「始终允许」的工具
+      // 不再弹窗，但高危检查已经先行拦过，记忆不能把危险操作放出去。
+      const memory = this.approvalMemory.get(sessionId);
+      if (memory?.deny.has(toolName)) {
+        return {
+          behavior: 'deny',
+          message: buildDenialMessage('user_denied_always', toolName),
+        } as PermissionResult;
+      }
+      if (memory?.allow.has(toolName)) {
+        return { behavior: 'allow', updatedInput: input } as PermissionResult;
+      }
+
       const requestId = randomUUID();
       queue.push({
         type: 'permission_request',
@@ -335,23 +372,41 @@ export class SdkAdapter implements AgentProvider {
         // 弹窗上要显示「为什么问这一句」，否则用户只看到一堵墙
         risk: verdict.risk,
         rule: verdict.rule,
+        // 这些是 SDK 真的能兑现的档位（见 approvalMemory 的注释）
+        options: [...SDK_PERMISSION_OPTIONS],
       });
 
       // 挂起，直到前端 POST /api/permission-response
       const decision = await this.replies.register(
         requestId,
-        () => ({ behavior: 'deny', message: '权限请求超时' }) as PermissionDecision,
+        () => ({ behavior: 'deny', reasonCode: 'timeout' }) as PermissionDecision,
         PERMISSION_TIMEOUT,
         // 归属到会话：别的会话收尾时不能把我的待答复项清掉
-        sessionId
+        sessionId,
+        // 会话结束与超时是两件不同的事，原因码不能互相冒充
+        () => ({ behavior: 'deny', reasonCode: 'cancelled' }) as PermissionDecision
       );
 
+      const chosen = decision.optionId
+        ? SDK_PERMISSION_OPTIONS.find(o => o.id === decision.optionId)
+        : undefined;
+      const kind = chosen?.kind;
+
       if (decision.behavior === 'allow') {
+        if (kind === 'allow_always') {
+          this.memoryFor(sessionId).allow.add(toolName);
+        }
         return { behavior: 'allow', updatedInput: input } as PermissionResult;
+      }
+
+      const code =
+        (kind && reasonCodeOfKind(kind)) || decision.reasonCode || 'user_rejected';
+      if (code === 'user_denied_always') {
+        this.memoryFor(sessionId).deny.add(toolName);
       }
       return {
         behavior: 'deny',
-        message: decision.message || '用户拒绝了此操作',
+        message: buildDenialMessage(code, decision.message || toolName),
       } as PermissionResult;
     };
 
@@ -406,6 +461,15 @@ export class SdkAdapter implements AgentProvider {
     return this.replies.settle(requestId, decision);
   }
 
+  private memoryFor(sessionId: string): { allow: Set<string>; deny: Set<string> } {
+    let entry = this.approvalMemory.get(sessionId);
+    if (!entry) {
+      entry = { allow: new Set(), deny: new Set() };
+      this.approvalMemory.set(sessionId, entry);
+    }
+    return entry;
+  }
+
   /**
    * 进程退出时回收常驻 CLI 进程。
    *
@@ -422,6 +486,7 @@ export class SdkAdapter implements AgentProvider {
     for (const key of [...this.slots.keys()]) this.closeEntry(key);
     this.slots.clear();
     this.replies.clear();
+    this.approvalMemory.clear();
   }
 
   // ============= A107/A109：池路径 =============
@@ -856,6 +921,11 @@ export function mapSdkMessage(
           // 把清单改小：能力本来就有，是我们没接。
           const think = String(block.thinking ?? '');
           if (think) queue.push({ type: 'thinking', content: think });
+        } else if (block.type === 'redacted_thinking') {
+          // 厂商把这段思考加密了：正文拿不到，但「确实想过一段」是事实。
+          // 以前它掉进下面的 raw 旁路，界面上只剩一条看不懂的原生事件；
+          // 现在落成一个「已隐去」的思考块 —— 不伪造内容，也不假装没发生。
+          queue.push({ type: 'thinking', content: '', redacted: true });
         } else if (block.type === 'image' && typeof block.source === 'object' && block.source !== null) {
           const source = block.source as Record<string, unknown>;
           const mediaType = typeof source.media_type === 'string' ? source.media_type : 'image/png';
@@ -886,8 +956,8 @@ export function mapSdkMessage(
           //
           // 消息级兜底（本函数末尾那段）管的是「整条消息不认识」，管不到
           // 「消息认识、但里面某个块不认识」——`assistant` 是认识的，所以
-          // 一个 `redacted_thinking` / `server_tool_use` / 未来新增的块类型
-          // 会安静地消失在 885 行这个循环里，连消息级兜底都摸不到它。
+          // 一个 `server_tool_use` / 未来新增的块类型会安静地消失在 885 行
+          // 这个循环里，连消息级兜底都摸不到它。
           //
           // channel 用 `sdk:block:<type>`：与消息级的 `sdk:<type>` 分开，
           // 排障时一眼能看出「是块没映射」还是「整条消息没映射」。

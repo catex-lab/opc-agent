@@ -57,6 +57,9 @@ export function AgentDetailPanel({
   return (
     <div
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      /* 打靶锚点：资料页是**内嵌栏**不是弹窗（弹窗版是 AgentDetailModal），
+         没有这个属性的话脚本只能靠「返回通讯录」按钮反推容器，很脆。 */
+      data-agent-detail-page
       style={{
         backgroundColor: 'var(--tc-surface-content)',
         // A103：资料页也是「一栏」，与聊天列同规格的圆角。
@@ -96,6 +99,11 @@ export function AgentDetailPanel({
               icon={agent.icon}
               color={agent.color}
               availability={avail}
+              /* A124（用户要求）：详情页头像不再挂右下角状态点。
+                 这颗点与下面那行「● 在线」说的是同一件事，同屏两个状态码
+                 只会让人怀疑两者会不会不一致 —— 保留带文字的那一个。
+                 列表 / 名片 / 头部那些小头像仍然带点（那里没有文字状态行）。 */
+              showStatus={false}
               size={80}
             />
             <h2
@@ -152,7 +160,7 @@ export function AgentDetailPanel({
               type="button"
               disabled={!canChat}
               onClick={() => onStartChat(agent.id)}
-              className="tc-btn-brand px-6 py-2 text-body"
+              className="tc-btn-brand"
               data-start-chat
             >
               <MessageSquarePlus size={16} />

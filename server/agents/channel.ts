@@ -139,7 +139,7 @@ export function linkAbort(
 export class PendingReplies<D> {
   private map = new Map<
     string,
-    { resolve: (d: D) => void; fallback?: () => D; scope?: string }
+    { resolve: (d: D) => void; fallback?: () => D; scope?: string; onClear?: () => D }
   >();
 
   /**
@@ -149,10 +149,18 @@ export class PendingReplies<D> {
    *                  不传的话调用方可能拿到 undefined —— 请务必传。
    * @param scope     归属（一般传会话 id）。`clear(scope)` 只清同一归属的项，
    *                  避免 A 会话收尾顺手把 B 会话正在等的弹窗清掉。
+   * @param onClear   收尾时的答复。缺省沿用 `onTimeout` —— 但「超时」与
+   *                  「会话结束」是两种事实，能分开就必须分开，否则原因码在撒谎。
    */
-  register(id: string, onTimeout?: () => D, timeoutMs = 5 * 60 * 1000, scope?: string): Promise<D> {
+  register(
+    id: string,
+    onTimeout?: () => D,
+    timeoutMs = 5 * 60 * 1000,
+    scope?: string,
+    onClear?: () => D
+  ): Promise<D> {
     return new Promise<D>(resolve => {
-      this.map.set(id, { resolve, fallback: onTimeout, scope });
+      this.map.set(id, { resolve, fallback: onTimeout, scope, onClear });
 
       if (timeoutMs > 0) {
         const timer = setTimeout(() => {
@@ -186,7 +194,14 @@ export class PendingReplies<D> {
     for (const [id, entry] of [...this.map]) {
       if (scope !== undefined && entry.scope !== scope) continue;
       this.map.delete(id);
-      entry.resolve(entry.fallback ? entry.fallback() : (undefined as D));
+      // 「会话收尾」优先用自己的答复：和超时共用一份兜底会让原因码撒谎
+      entry.resolve(
+        entry.onClear
+          ? entry.onClear()
+          : entry.fallback
+            ? entry.fallback()
+            : (undefined as D)
+      );
     }
   }
 

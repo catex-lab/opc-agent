@@ -211,7 +211,11 @@ async function main() {
     const del = await send('DELETE', `/api/projects/${sB.project_id}`);
     ok(del.status === 200, '删除项目成功');
     ok(!(await get('/api/projects')).projects.some((p: any) => p.id === sB.project_id), '列表里不再有它');
-    ok((await get(`/api/sessions/${sB.id}`)).session.project_id === null, '会话已解绑（不留下悬空引用）');
+    // A131：解绑落的是**空串**不是 null —— null 会被启动回填当成「从没算过」，
+    // 照着还留着的 cwd 把项目重新建回来（就是用户报的「删了又出现」）。
+    ok((await get(`/api/sessions/${sB.id}`)).session.project_id === '',
+      '会话标成空串（= 主动摘掉，回填不再动它）',
+      JSON.stringify((await get(`/api/sessions/${sB.id}`)).session.project_id));
     ok((await get(`/api/sessions/${sB.id}`)).project === null, '解绑后详情不再指向已删项目');
 
     // ── 7. 非法路径 ────────────────────────────────────────────

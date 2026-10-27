@@ -174,6 +174,7 @@ export function GetAgentsDialog({
             ref={closeRef}
             onClick={onClose}
             aria-label="关闭"
+            data-dialog-close
             className="tc-icon-btn shrink-0"
             style={{ color: 'var(--td-text-color-secondary)' }}
           >
@@ -285,7 +286,7 @@ export function GetAgentsDialog({
           {onReprobe && (
             <button
               type="button"
-              className="tc-btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs"
+              className="tc-btn-secondary"
               onClick={onReprobe}
               data-get-agents-reprobe
             >

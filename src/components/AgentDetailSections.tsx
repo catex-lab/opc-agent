@@ -363,54 +363,82 @@ export function AgentDetailSections({
           支持的高亮，不支持的置灰并写「不支持」。
 
           `undefined`（后端没声明）时整块不渲染 —— 那是「不知道」，
-          不该被画成「不支持」。只有空数组才是明确的「一条都没有」。 */}
-      {agent.eventCapabilities && (
-        <section className="mt-6" data-agent-event-capabilities>
-          <h3 className="tc-section-title mb-2">过程能力</h3>
-          <div className="flex flex-wrap gap-2">
-            {EVENT_CAPABILITY_ORDER.map(key => {
-              const meta = EVENT_CAPABILITY_META[key];
-              const supported = agent.eventCapabilities!.includes(key);
-              return (
-                <span
-                  key={key}
-                  title={meta.hint}
-                  data-event-capability={key}
-                  data-supported={supported ? '1' : '0'}
-                  /* A115：这里原来**一个字号类都没写**，于是 chip 落到浏览器默认
-                     字号（比旁边的能力 chip 大出一号）—— 同屏并排时「组件大小
-                     不一」就是这么来的。现在与能力 chip 共用 CHIP。
-                     虚线边用 `border` + `box-border` 之外的写法会改变 chip 的
-                     实际尺寸（边框吃进 padding），所以不支持态补一层
-                     `border border-transparent` 占位，两种态外框同宽。 */
-                  className={`${CHIP} border border-transparent box-border`}
-                  style={
-                    supported
-                      ? {
-                          backgroundColor: 'color-mix(in srgb, var(--td-brand-color) 12%, transparent)',
-                          color: 'var(--td-brand-color)',
-                        }
-                      : {
-                          // 不支持的一律走 placeholder 色 + 虚线边：视觉上明显是「没有」，
-                          // 而不是「有但很淡」
-                          border: '1px dashed var(--td-component-stroke)',
-                          color: 'var(--td-text-color-placeholder)',
-                        }
-                  }
-                >
-                  {meta.label}
-                  {!supported && '（不支持）'}
-                </span>
-              );
-            })}
-          </div>
-          {agent.eventCapabilities.length === 0 && (
-            <p className="mt-2 text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              这个 Agent 只返回最终回答，不暴露执行过程。
-            </p>
-          )}
-        </section>
-      )}
+          不该被画成「不支持」。只有空数组才是明确的「一条都没有」。
+
+          P2：清单之外再挂一行**观测事实**（最近一次 run 实际给出了什么）。
+          声明是静态的、可能过期；这一行才是投影器数出来的。两者不一致时
+          必须让用户看见 —— 「清单说有、实际一次没给」正是要消灭的那种谎。 */}
+      {(agent.eventCapabilities || agent.observedCapabilities) && (() => {
+        const declared = agent.eventCapabilities ?? [];
+        const observedProfile = agent.observedCapabilities;
+        const observed = observedProfile?.observed ?? [];
+        const observedSet = new Set(observed);
+        const undeclared = observed.filter(k => !declared.includes(k));
+        return (
+          <section className="mt-6" data-agent-event-capabilities>
+            <h3 className="tc-section-title mb-2">过程能力</h3>
+            <div className="flex flex-wrap gap-2">
+              {EVENT_CAPABILITY_ORDER.map(key => {
+                const meta = EVENT_CAPABILITY_META[key];
+                const supported = declared.includes(key);
+                return (
+                  <span
+                    key={key}
+                    title={meta.hint}
+                    data-event-capability={key}
+                    data-supported={supported ? '1' : '0'}
+                    /* 有观测记录时才写这个属性：没有记录 ≠ 观察到 0 项 */
+                    data-observed={observedProfile ? (observedSet.has(key) ? '1' : '0') : undefined}
+                    /* A115：这里原来**一个字号类都没写**，于是 chip 落到浏览器默认
+                       字号（比旁边的能力 chip 大出一号）—— 同屏并排时「组件大小
+                       不一」就是这么来的。现在与能力 chip 共用 CHIP。
+                       虚线边用 `border` + `box-border` 之外的写法会改变 chip 的
+                       实际尺寸（边框吃进 padding），所以不支持态补一层
+                       `border border-transparent` 占位，两种态外框同宽。 */
+                    className={`${CHIP} border border-transparent box-border`}
+                    style={
+                      supported
+                        ? {
+                            backgroundColor: 'color-mix(in srgb, var(--td-brand-color) 12%, transparent)',
+                            color: 'var(--td-brand-color)',
+                          }
+                        : {
+                            // 不支持的一律走 placeholder 色 + 虚线边：视觉上明显是「没有」，
+                            // 而不是「有但很淡」
+                            border: '1px dashed var(--td-component-stroke)',
+                            color: 'var(--td-text-color-placeholder)',
+                          }
+                    }
+                  >
+                    {meta.label}
+                    {!supported && '（不支持）'}
+                  </span>
+                );
+              })}
+            </div>
+            {declared.length === 0 && !observedProfile && (
+              <p className="mt-2 text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                这个 Agent 只返回最终回答，不暴露执行过程。
+              </p>
+            )}
+            {observedProfile && (
+              <p
+                className="mt-2 text-secondary"
+                data-observed-capabilities
+                style={{ color: 'var(--td-text-color-placeholder)' }}
+              >
+                {observed.length > 0
+                  ? `最近一次运行（${observedProfile.key.model ?? '默认模型'} · ${observedProfile.key.gateway}）实际给出：${observed
+                      .map(k => EVENT_CAPABILITY_META[k].label)
+                      .join('、')}`
+                  : '最近一次运行只返回了最终回答 —— 上面这些过程能力一项都没出现。'}
+                {undeclared.length > 0 &&
+                  `；其中「${undeclared.map(k => EVENT_CAPABILITY_META[k].label).join('、')}」清单里没有声明`}
+              </p>
+            )}
+          </section>
+        );
+      })()}
 
       {/* 结构化技能（参考 A2A AgentSkill）：展示可承接的具体任务及其数据形式。 */}
       {(agent.skills?.length ?? 0) > 0 && (

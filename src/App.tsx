@@ -19,7 +19,6 @@ import { useSessions } from './hooks/useSessions';
 import { useModels } from './hooks/useModels';
 import { useChat } from './hooks/useChat';
 import { useAgentRegistry } from './hooks/useAgentRegistry';
-import { useDraggableDialog } from './hooks/useDraggableDialog';
 import { getScenario } from './scenarios';
 import { exportSessionToMarkdown } from './utils/exportSession';
 import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project } from './types';
@@ -207,6 +206,7 @@ function AppContent() {
     updateSessionMessages,
     setSessionPinned,
     setSessionReasoningEffort,
+    setSessionPermissionMode,
     setSessionCwd,
     clearSessionMessages,
     isMessagesLoaded,
@@ -249,8 +249,7 @@ function AppContent() {
     sendMessage,
     regenerate,
     handleStop,
-    handlePermissionAllow,
-    handlePermissionDeny,
+    resolvePermission,
   } = useChat({
     currentSession,
     currentSessionId,
@@ -809,6 +808,12 @@ function AppContent() {
     (agentId: string) => {
       const here = location.pathname;
       if (here && here !== '/settings') settingsReturnRef.current = here;
+      // A129：自建厂商的 Key 归「自定义模型厂商」编辑器管，凭据列表里没有它的行 ——
+      // 带 `?agent=` 过去会找不到锚点，直接落到那个分区。
+      if (agentId.startsWith('custom-')) {
+        navigate('/settings?section=login');
+        return;
+      }
       navigate(`/settings?agent=${encodeURIComponent(agentId)}`);
     },
     [navigate, location.pathname]
@@ -818,6 +823,18 @@ function AppContent() {
     const back = settingsReturnRef.current;
     navigate(back && back !== '/settings' ? back : '/');
   }, [navigate]);
+
+  /**
+   * 去设置页添加一个模型厂商（A129）。
+   *
+   * 与 `handleOpenCredential` 同一套返回逻辑：记下来处，关闭设置后回到原来的
+   * 页面。不带 `?agent=`，直接落到「登录配置」分区 —— 厂商编辑器在里面。
+   */
+  const handleAddProvider = useCallback(() => {
+    const here = location.pathname;
+    if (here && here !== '/settings') settingsReturnRef.current = here;
+    navigate('/settings?section=login&provider=add');
+  }, [navigate, location.pathname]);
 
   /**
    * 删除一个自建 Agent（A114）。
@@ -856,21 +873,6 @@ function AppContent() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isSettingsPage, handleCloseSettings]);
-
-  /**
-   * A120：设置弹窗、自定义 Agent 弹窗、Agent 详情弹窗都支持拖拽移动。
-   *
-   * 用统一 hook `useDraggableDialog` 实现：位移直接写 DOM，不走 state，
-   * 避免每帧重渲染整棵子树。只认标题栏（`header`），按钮/输入框上按下
-   * 不算拖动。
-   */
-  const settingsPanelRef = useRef<HTMLDivElement>(null);
-  const settingsDrag = useDraggableDialog(settingsPanelRef, { handle: 'header' });
-
-  useEffect(() => {
-    if (isSettingsPage) return;
-    settingsDrag.reset();
-  }, [isSettingsPage, settingsDrag]);
 
   /**
    * 追加/合并一条群聊消息。
@@ -993,7 +995,23 @@ function AppContent() {
     [registry, setSessions, setCurrentSessionId, navigate]
   );
 
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
+  /**
+   * 权限档位是**会话级设置**（A123）。
+   *
+   * 这里原本是一个全局 `useState('default')`：芯片改的是它，而发消息时 `useChat`
+   * 读的是 `currentSession.permissionMode` —— 两个来源永不相交。后果是「选了全放行、
+   * 下一轮还是弹窗问授权」，而芯片上看不出任何异常（它显示的正是自己刚设的值）。
+   * 现在读会话、写会话（PATCH 落库），与工作目录 / 思考档位走同一条链。
+   *
+   * 不需要「先记一个待用值」的中间态：芯片只在有 currentSession 时才渲染。
+   */
+  const permissionMode: PermissionMode = currentSession?.permissionMode ?? 'default';
+  const setPermissionMode = useCallback(
+    (mode: PermissionMode) => {
+      if (currentSession) void setSessionPermissionMode(currentSession.id, mode);
+    },
+    [currentSession, setSessionPermissionMode]
+  );
 
   /**
    * 单栏模式下「该显示哪一栏」。
@@ -1134,7 +1152,7 @@ function AppContent() {
                 onSelectGroup={handleSelectSession}
                 compact={compact}
                 onOpenCredential={handleOpenCredential}
-                onAgentsChanged={registry.load}
+                onAddProvider={handleAddProvider}
               />
             ))}
 
@@ -1273,8 +1291,7 @@ function AppContent() {
                         onStop={handleStop}
                         onInputChange={setInputValue}
                         onModelChange={updateCurrentSessionModel}
-                        onPermissionAllow={handlePermissionAllow}
-                        onPermissionDeny={handlePermissionDeny}
+                        onPermissionResolve={resolvePermission}
                         onPermissionModeChange={setPermissionMode}
                         onOrchestrationChange={handleOrchestrationChange}
                         onMembersChange={handleMembersChange}
@@ -1336,7 +1353,6 @@ function AppContent() {
                 等于第二块全屏页面；900 之后两侧能看见遮罩与背后的会话，
                 「浮层」这层语义才成立。 */}
             <div
-              ref={settingsPanelRef}
               /* A115 续：改挂 .tc-dialog —— 与其余六个业务弹窗同一套
                  「玻璃 + 四层立体影 + 两条厚度边」。改之前这里是内联
                  实色底 + 1px 10% 墨描边 + --shadow-float 两段影：
@@ -1344,13 +1360,9 @@ function AppContent() {
                  打开的一块。⚠️ 内联的 backgroundColor / border / boxShadow
                  必须一并删掉 —— 内联优先级高于 class，留着任何一个都会
                  把玻璃底盖回实色，那种失效没有报错，只是「看起来没变」。
-                 位移也不在这里写：拖动时由 applySettingsOffset 直接改 DOM，
-                 避免每帧重渲染设置页（见上面的注释）。 */
+                 A130（用户决定）：弹窗固定在窗口内、不许拖动。A120 接的
+                 拖拽已摘 —— DOM 浮层出不了视口，拖到边上只会被裁成半截文字。 */
               className="tc-dialog relative flex h-[min(700px,100%)] w-[min(900px,100%)] overflow-hidden rounded-2xl [&_header]:select-none"
-              onPointerDown={settingsDrag.onPointerDown}
-              onPointerMove={settingsDrag.onPointerMove}
-              onPointerUp={settingsDrag.onPointerUp}
-              onPointerCancel={settingsDrag.onPointerCancel}
               data-settings-panel
             >
               <SettingsPage
@@ -1397,7 +1409,7 @@ function EmptyState({
         <button
           type="button"
           onClick={onGoContacts}
-          className="tc-btn-brand mt-5 px-3.5 py-2 text-body"
+          className="tc-btn-brand mt-5"
         >
           {/* A37：去掉行尾的「→」。按钮本身有底色和圆角，已经明确是「可点」，
               再挂一个箭头是重复的指示。 */}

@@ -380,6 +380,26 @@ class AgentRegistry {
     return this.providers.get(id)?.resolvePermission?.(requestId, decision) ?? false;
   }
 
+  /**
+   * 不知道是哪个 Agent 发起的权限请求时，向所有 Provider 问一遍。
+   *
+   * 为什么需要：网页面只回传 `requestId`，不带 agent id。旧实现硬编码了
+   * `['workbuddy', 'hermes']` 两个 id —— 用户自己接的供应商（自定义 sdk /
+   * acp / cli 条目）弹出的审批卡点了「允许」永远没反应，因为那个循环根本
+   * 没问过它。requestId 是全局唯一的 UUID，命中即返回；没命中返回 null。
+   *
+   * @returns 命中的 Agent id（供日志），未命中返回 null
+   */
+  resolvePermissionAnywhere(
+    requestId: string,
+    decision: PermissionDecision
+  ): string | null {
+    for (const [id, provider] of this.providers) {
+      if (provider.resolvePermission?.(requestId, decision)) return id;
+    }
+    return null;
+  }
+
   /** 按 id 反查定义（供需要 cli 规格等静态信息的场景） */
   definition(id: string) {
     return findDef(id);

@@ -237,7 +237,11 @@ console.log('\nA98 删项目');
   ok(fs.existsSync(memFile), '删除前记忆文件存在');
 
   ok(db.deleteProject(pa.id) === true, '删除项目成功');
-  ok(db.getSession('s-a')?.project_id == null, '会话已解绑（不留下悬空引用）');
+  // A131 改了这里的期望值：解绑写的是**空串**而不是 NULL。NULL = 「从没算过」，
+  // 会被启动回填按 cwd 重新建出项目 —— 那正是「删掉的项目每次打开又出现」的根因。
+  // 空串 = 「用户亲手摘过」，回填必须跳过。两者都不是悬空引用。
+  ok(db.getSession('s-a')?.project_id === '', '会话标成空串（= 主动摘掉，回填不再动它）',
+    JSON.stringify(db.getSession('s-a')?.project_id));
   ok(db.getSessionProject('s-a') === undefined, '解绑后 getSessionProject 返回 undefined');
   ok(fs.existsSync(memFile), '**记忆文件没有被删**（删项目行 ≠ 想扔记忆）');
   ok(db.deleteProject(pa.id) === false, '重复删除返回 false');

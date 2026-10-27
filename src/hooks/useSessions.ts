@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Session, Message } from '../types';
+import { Session, Message, PermissionMode } from '../types';
 
 const STORAGE_KEYS = {
   sessionModels: 'sessionModels',
@@ -91,6 +91,10 @@ export function useSessions() {
           // A62：思考强度档位。刷新后必须还原，否则用户每次重开
           // 都得重新选一遍档位（那等于这个设置不存在）
           reasoningEffort: s.reasoning_effort ?? undefined,
+          // A123：权限档位必须一并还原。漏掉这一行的后果不是「界面少个字段」，
+          // 而是芯片显示的值和发出去的值来自两个地方 —— 用户选了全放行、
+          // 下一轮还在弹窗问授权，而且重启后看起来还是「全放行」。
+          permissionMode: s.permission_mode ?? undefined,
           scenarioId: s.scenario_id ?? undefined,
           systemPrompt: s.system_prompt ?? undefined,
           // 置顶是持久状态，刷新后必须还原，否则「钉住的会话」每次重开都掉下来
@@ -348,6 +352,44 @@ export function useSessions() {
   );
 
   /**
+   * A123：改会话的权限模式（输入框里那颗权限芯片）。
+   *
+   * 与 setSessionReasoningEffort 完全同构：先本地改（芯片立刻响应），再 PATCH 落库，
+   * 失败回滚并出声。这一档以前**根本没有这条链** —— 芯片写的是 App 里一个全局
+   * useState，发消息读的是 session 对象，于是「选了全放行、下一轮还是弹窗问授权」，
+   * 而且芯片上看不出错（它显示的确实是自己刚设的值）。
+   *
+   * 后端对非法值回 400（不静默纠正成 default），所以这里必须处理失败回滚：
+   * 不回滚的话芯片会停在一个适配器从来没收到的值上。
+   *
+   * 本地空壳会话（isLocal）不发请求：值留在内存里，首条消息由 /api/chat 带过去。
+   */
+  const setSessionPermissionMode = useCallback(
+    async (sessionId: string, value: PermissionMode) => {
+      const prev = sessions.find(s => s.id === sessionId)?.permissionMode;
+      setSessions(p => p.map(s => (s.id === sessionId ? { ...s, permissionMode: value } : s)));
+
+      const target = sessions.find(s => s.id === sessionId);
+      if (target?.isLocal) return;
+
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ permissionMode: value }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      } catch (error) {
+        console.warn('[Sessions] 权限模式落库失败，已回滚:', error);
+        setSessions(p =>
+          p.map(s => (s.id === sessionId ? { ...s, permissionMode: prev } : s))
+        );
+      }
+    },
+    [sessions]
+  );
+
+  /**
    * A63：改会话的工作目录（会话栏头的工作区徽标）。
    *
    * 与 setSessionReasoningEffort 同构：先本地改（界面立刻响应），再 PATCH
@@ -434,6 +476,7 @@ export function useSessions() {
     updateSessionMessages,
     setSessionPinned,
     setSessionReasoningEffort,
+    setSessionPermissionMode,
     setSessionCwd,
     clearSessionMessages,
   };

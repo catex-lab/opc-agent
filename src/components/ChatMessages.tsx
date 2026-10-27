@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Loading, MessagePlugin } from 'tdesign-react';
 import { Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, Sparkles, TextSelect, Image as ImageIcon } from 'lucide-react';
 import { Message, Model, PermissionRequest, RegisteredAgent, Block, ThinkingBlock, ToolBlock, RawBlock } from '../types';
+import type { PermissionOption } from '../types';
 import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
 import { BackgroundTasksPill } from './BackgroundTasksPill';
@@ -943,8 +944,8 @@ interface ChatMessagesProps {
   imageMode?: boolean;
   // 内联权限确认相关
   permissionRequest?: PermissionRequest | null;
-  onPermissionAllow?: () => void;
-  onPermissionDeny?: () => void;
+  /** P4：选某一档答复（由审批卡原样回传服务端下发的选项） */
+  onPermissionResolve?: (option: PermissionOption) => void;
   /**
    * 点 Agent 头像 → 弹该 Agent 的详情（P7）。
    *
@@ -994,8 +995,7 @@ export function ChatMessages({
   groupMode = false,
   imageMode = false,
   permissionRequest,
-  onPermissionAllow,
-  onPermissionDeny,
+  onPermissionResolve,
   /** 点 Agent 头像 → 弹该 Agent 的详情（P7） */
   onShowAgentDetail,
   onRegenerate,
@@ -1106,8 +1106,17 @@ export function ChatMessages({
       } else if (b.type === 'thinking' && b.text) {
         parts.push(`> **思考过程**\n>\n> ${b.text.split('\n').join('\n> ')}`);
       } else if (b.type === 'tool') {
-        const failed = b.status === 'failed' || b.isError;
-        parts.push(`- 工具 \`${b.name}\`：${failed ? '失败' : '完成'}`);
+        // 「中止」与「未回传」不能都写成「失败」：导出给别人的文档里，
+        // 前者是用户自己停的，后者是我们没拿到结果，责任完全不同。
+        const outcome =
+          b.status === 'interrupted'
+            ? '结果未回传'
+            : b.status === 'failed' || b.isError
+              ? '失败'
+              : b.status === 'cancelled'
+                ? '已中止'
+                : '完成';
+        parts.push(`- 工具 \`${b.name}\`：${outcome}`);
       }
     }
     return parts.join('\n\n');
@@ -1652,12 +1661,11 @@ export function ChatMessages({
           A35：去掉 `ml-12` —— 那是给「头像 36 + 间距 12」让位的旧缩进，
           现在助手侧正文已经整宽铺满（头像在头部那一行），再缩 48px 就会
           比上下消息都往右错一截。 */}
-      {permissionRequest && onPermissionAllow && onPermissionDeny && (
+      {permissionRequest && onPermissionResolve && (
         <div className="flex gap-3">
           <InlinePermissionCard
             request={permissionRequest}
-            onAllow={onPermissionAllow}
-            onDeny={onPermissionDeny}
+            onResolve={onPermissionResolve}
           />
         </div>
       )}

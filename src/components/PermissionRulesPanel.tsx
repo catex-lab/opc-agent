@@ -165,11 +165,13 @@ export function PermissionRulesPanel() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
+        {/* A124：加号原来写成裸 svg + mr-1，落在文字基线上，实测比按钮中心高 3px。
+            改走 TDesign 的 icon 插槽 —— 对齐由组件负责，不再靠手写 margin 猜。 */}
         <Button
           variant="outline"
+          icon={<PlusIcon size={14} />}
           onClick={() => setRules(prev => [...prev, { ...EMPTY_ROW }])}
         >
-          <PlusIcon className="mr-1" />
           添加规则
         </Button>
         <Button theme="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>

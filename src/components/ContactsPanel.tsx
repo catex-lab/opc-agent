@@ -15,7 +15,6 @@ import {
 import { AgentAvatar } from './AgentAvatar';
 import { AgentHoverCard } from './AgentHoverCard';
 import { GetAgentsDialog, isInstallable } from './GetAgentsDialog';
-import { CustomAgentDialog } from './CustomAgentDialog';
 import { ContextMenu } from './ContextMenu';
 import { RemarkDialog } from './RemarkDialog';
 import { useAgentRemarks, setAgentRemark } from '../agentRemarks';
@@ -63,10 +62,13 @@ interface ContactsPanelProps {
    */
   onOpenCredential?: (agentId: string) => void;
   /**
-   * Agent 名单变了（A114：新建 / 删除自建 Agent 后调用）。
-   * 后端建完已经立刻探过一次，所以这里只需要重新拉列表，不必再全量探测。
+   * 去设置页添加一个模型厂商（A129）。
+   *
+   * A114 起这里是一个「自定义 Agent」弹窗，只收地址+模型，Key 与连通性
+   * 都不在同一个地方 —— 用户填错模型名要等第一次对话才看到 404。
+   * 现在整件事收进「设置 → 登录配置 → 自定义模型厂商」，这里只做跳转。
    */
-  onAgentsChanged?: () => void;
+  onAddProvider?: () => void;
 }
 
 type Tab = 'agents' | 'groups';
@@ -121,7 +123,7 @@ export function ContactsPanel({
   onSelectGroup,
   compact = false,
   onOpenCredential,
-  onAgentsChanged,
+  onAddProvider,
 }: ContactsPanelProps) {
   const [keyword, setKeyword] = useState('');
   /** Tab：AGENT（Agent 通讯录）/ 群聊目录 */
@@ -142,14 +144,6 @@ export function ContactsPanel({
    * 逐条点进资料页各找一次按钮，是把一件一次性的事拆成十一次 —— 所以主入口在这里。
    */
   const [getAgentsOpen, setGetAgentsOpen] = useState(false);
-  /**
-   * 「自定义 Agent」创建弹窗（A114）。
-   *
-   * 与「获取 Agent」的分工：那个清单解决「本机扫不到内置的 Agent」，
-   * 这个弹窗解决「我手上有一个别家平台的 API Key，想把它接进来」——
-   * 后者根本没有对应的内置条目，扫一万次也扫不出来。
-   */
-  const [customDialogOpen, setCustomDialogOpen] = useState(false);
   /** 右上角「+」的下拉（发起群聊 / 重新探测） */
   const [addMenuOpen, setAddMenuOpen] = useState(false);
 
@@ -333,21 +327,20 @@ export function ContactsPanel({
                       发起群聊
                     </button>
                   )}
-                  {/* A114：自定义 Agent。放在「获取 Agent」旁边 —— 两者都是
-                      「把一个新 Agent 弄进通讯录」，只是一个从本机扫、
-                      一个从别家平台的 API 接。 */}
+                  {/* A129：自定义厂商收进设置页。这里只做跳转 —— 添加流程
+                      要拉模型清单、测连通，弹窗里做不下，也不该做两套。 */}
                   <button
                     type="button"
                     onClick={() => {
                       setAddMenuOpen(false);
-                      setCustomDialogOpen(true);
+                      onAddProvider?.();
                     }}
                     className={MENU_ITEM_CLASS}
                     style={{ color: 'var(--td-text-color-primary)' }}
-                    data-contacts-custom-agent
+                    data-contacts-add-provider
                   >
                     <Plug size={14} />
-                    自定义 Agent
+                    添加模型厂商
                   </button>
                   {/* A71：获取入口。放在「重新探测」上面 —— 探测是运维动作，
                       获取是新用户第一次打开就要做的事，位置要更靠上。 */}
@@ -588,13 +581,6 @@ export function ContactsPanel({
         onReprobe={onProbe}
         onOpenCredential={onOpenCredential}
         onViewDetail={onViewDetail}
-      />
-
-      {/* 自定义 Agent（A114）：把别家平台的 API 接进来。 */}
-      <CustomAgentDialog
-        open={customDialogOpen}
-        onClose={() => setCustomDialogOpen(false)}
-        onCreated={() => onAgentsChanged?.()}
       />
     </div>
   );

@@ -13,6 +13,8 @@
  *   3. 不传这三列时落 NULL。
  *   4. updateSession 能改这三列，且改其中一列不影响其它列。
  *   5. getAllSessions 带出这三列。
+ *   6b. A123：会话级权限模式 permission_mode —— 建会话落库、改、清空、
+ *       「不传这一项」不许抹掉已存值、列表查询带出。
  *
  * 运行：npx tsx scripts/verify-session-persist.ts
  */
@@ -86,6 +88,8 @@ async function main() {
   eq(legacy?.cwd ?? null, null, '老会话 cwd 迁移后为 NULL');
   eq(legacy?.scenario_id ?? null, null, '老会话 scenario_id 迁移后为 NULL');
   eq(legacy?.system_prompt ?? null, null, '老会话 system_prompt 迁移后为 NULL');
+  // A123：权限档位列同样由迁移补上，老行为 NULL（= 没选过 → 按 default 跑）
+  eq(legacy?.permission_mode ?? null, null, '老会话 permission_mode 迁移后为 NULL');
 
   const t = new Date().toISOString();
 
@@ -151,6 +155,64 @@ async function main() {
     !!row && 'cwd' in row && 'scenario_id' in row && 'system_prompt' in row,
     'getAllSessions 返回三列'
   );
+
+  // —— 6b. A123：会话级权限模式 ——
+  {
+    // 上面两个 createSession 都没带这一列 → 必须是 NULL（= 没选过），
+    // 不能是空串：空串会走到适配器的 `|| 'default'` 之外，语义就漂了。
+    eq(got?.permission_mode ?? null, null, '未指定 permission_mode → NULL（不是空串）');
+
+    db.createSession({
+      id: 'new-perm',
+      title: '全放行会话',
+      model: '',
+      agent_id: 'workbuddy',
+      sdk_session_id: null,
+      kind: 'direct',
+      agent_ids: null,
+      orchestration: null,
+      cwd: null,
+      scenario_id: null,
+      system_prompt: null,
+      permission_mode: 'bypassPermissions',
+      created_at: t,
+      updated_at: t,
+    });
+    eq(
+      db.getSession('new-perm')?.permission_mode,
+      'bypassPermissions',
+      'createSession 落库 permission_mode'
+    );
+
+    db.updateSession('new-perm', { permission_mode: 'plan' });
+    eq(db.getSession('new-perm')?.permission_mode, 'plan', 'updateSession 改 permission_mode');
+    eq(
+      db.getSession('new-perm')?.agent_id,
+      'workbuddy',
+      '改 permission_mode 不动其它列（这一档以前没有列，最怕的是顺手覆盖）'
+    );
+
+    db.updateSession('new-perm', { permission_mode: null });
+    eq(
+      db.getSession('new-perm')?.permission_mode ?? null,
+      null,
+      'updateSession 可清空 permission_mode（null = 回到「没选过」）'
+    );
+
+    // undefined 与 null 必须是两种语义：不传这一项时**不许**把已存的值抹掉
+    db.updateSession('new-perm', { permission_mode: 'acceptEdits' });
+    db.updateSession('new-perm', { title: '改名而已' });
+    eq(
+      db.getSession('new-perm')?.permission_mode,
+      'acceptEdits',
+      'updateSession 不含这一项时保持原值（undefined ≠ 清空）'
+    );
+
+    ok(
+      'permission_mode' in (db.getAllSessions().find(s => s.id === 'new-perm') ?? {}),
+      'getAllSessions 带出 permission_mode（漏带=列表页与刷新后回显不到）'
+    );
+  }
 
   // —— 7. blocks 列：整条块序列的落库与读回（E2） ——
   {

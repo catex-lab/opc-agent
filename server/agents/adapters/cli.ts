@@ -19,6 +19,11 @@ import { AsyncQueue, PendingReplies, linkAbort } from '../channel.js';
 import { decideToolAccess } from '../toolPolicy.js';
 import { evaluateToolCall } from '../permission-gate.js';
 import { currentPermissionRules } from '../../permission-rules.js';
+import {
+  CLI_PERMISSION_OPTIONS,
+  buildDenialMessage,
+  reasonCodeOfKind,
+} from '../../../shared/permissions.js';
 import type { AgentDefinition, CliSpec } from '../definitions.js';
 import {
   findExecutable,
@@ -119,8 +124,11 @@ const AUTH_HINT_RE =
 /**
  * 子进程环境。
  * 在宿主环境基础上关掉交互与颜色，避免 CLI 以为自己在 TTY 里等输入。
+ *
+ * 导出给能力标定（P3）复用：标定也必须用同一套环境起子进程，
+ * 否则会出现「标定说 JSON 解析不了、正常对话却好好的」这种口径不一致。
  */
-function childEnv(): NodeJS.ProcessEnv {
+export function childEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     NO_COLOR: '1',
@@ -635,7 +643,10 @@ export class CliAdapter implements AgentProvider {
         console.log(
           `[CLI:bidi] 工具被场景白名单拦截: ${ask.toolName} (category=${gate.category ?? 'unlisted'})`
         );
-        respond({ behavior: 'deny', message: gate.reason ?? '场景未授权该工具' });
+        respond({
+          behavior: 'deny',
+          message: buildDenialMessage('rule_blocked', gate.reason ?? '场景未授权该工具'),
+        });
         return;
       }
 
@@ -649,7 +660,7 @@ export class CliAdapter implements AgentProvider {
         console.log(`[CLI:bidi] 门禁拦截 ${ask.toolName}: ${verdict.rule} — ${verdict.reason ?? ''}`);
         respond({
           behavior: 'deny',
-          message: `[权限门禁] ${verdict.reason ?? verdict.rule ?? '高危操作'}`,
+          message: buildDenialMessage('rule_blocked', verdict.reason ?? verdict.rule),
         });
         return;
       }
@@ -669,19 +680,30 @@ export class CliAdapter implements AgentProvider {
         // 弹窗上要显示「为什么问这一句」，否则用户只看到一堵墙
         risk: verdict.risk,
         rule: verdict.rule,
+        // 双向协议只有 allow / deny 两种答复，只摆这两档
+        options: [...CLI_PERMISSION_OPTIONS],
       });
 
       // 挂起，直到前端 POST /api/permission-response（或超时按拒绝）
       const decision = await this.replies.register(
         requestId,
-        () => ({ behavior: 'deny', message: '权限请求超时' }),
+        () => ({ behavior: 'deny', reasonCode: 'timeout' }),
         PERMISSION_TIMEOUT,
-        ctx.sessionId
+        ctx.sessionId,
+        () => ({ behavior: 'deny', reasonCode: 'cancelled' })
       );
       if (decision.behavior === 'allow') {
         respond({ behavior: 'allow', updatedInput: ask.input });
       } else {
-        respond({ behavior: 'deny', message: decision.message || '用户拒绝了此操作' });
+        const chosen = decision.optionId
+          ? CLI_PERMISSION_OPTIONS.find(o => o.id === decision.optionId)
+          : undefined;
+        const code =
+          (chosen && reasonCodeOfKind(chosen.kind)) || decision.reasonCode || 'user_rejected';
+        respond({
+          behavior: 'deny',
+          message: buildDenialMessage(code, decision.message || ask.toolName),
+        });
       }
     };
 

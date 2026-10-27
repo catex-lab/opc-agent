@@ -38,6 +38,31 @@ import type {
 } from '../types.js';
 import { decideAcpToolAccess } from '../toolPolicy.js';
 import type { ScenarioTool } from '../../../shared/scenarios.js';
+import {
+  normalizePermissionOptions,
+  behaviorOfKind,
+  type PermissionOption,
+} from '../../../shared/permissions.js';
+
+/**
+ * 从 ACP 归一化后的选项里挑一个回给服务端。
+ *
+ * 为什么单独抽成纯函数：选择规则是这一段里最容易悄悄出错的地方 ——
+ * 早先的实现在 allow 时「找不到 allow 就退回第一个选项」，而 ACP 的
+ * 选项顺序由服务端决定，第一个很可能是 reject。用户点了允许，工具却被
+ * 拒了，日志里看不出来。现在找不到就返回 null，调用方回 cancelled。
+ */
+export function selectAcpOption(
+  options: readonly PermissionOption[],
+  decision: { behavior: 'allow' | 'deny'; optionId?: string }
+): PermissionOption | null {
+  if (decision.optionId) {
+    const exact = options.find(o => o.id === decision.optionId);
+    if (exact) return exact;
+  }
+  const want = decision.behavior;
+  return options.find(o => behaviorOfKind(o.kind) === want) ?? null;
+}
 
 /** ACP 协议版本，实测 Hermes 接受 1 */
 const PROTOCOL_VERSION = 1;
@@ -185,7 +210,7 @@ export class AcpAdapter implements AgentProvider {
   /** 待答复的权限请求：requestId → { rpcId, acpSessionId, options } */
   private pendingPerms = new Map<
     string,
-    { rpcId: unknown; options: Array<{ optionId: string; kind?: string }> }
+    { rpcId: unknown; options: PermissionOption[] }
   >();
   private agentInfo: { name?: string; version?: string } | null = null;
   /** session/new 返回的模型清单，供前端选择 */
@@ -310,7 +335,9 @@ export class AcpAdapter implements AgentProvider {
       const acpSessionId = params.sessionId as string | undefined;
       const queue = acpSessionId ? this.streams.get(acpSessionId) : undefined;
       const toolCall = (params.toolCall ?? {}) as Json;
-      const options = (params.options ?? []) as Array<{ optionId: string; kind?: string; name?: string }>;
+      // P4：选项先归一化再使用。认不出的 kind 直接丢，不按 allow/deny 猜；
+      // 归一化结果既用于回包选择，也原样发给前端渲染。
+      const options = normalizePermissionOptions(params.options);
 
       // ---- P4-5 工具白名单：不满足就直接回 reject，不再打扰用户 ----
       //
@@ -323,16 +350,14 @@ export class AcpAdapter implements AgentProvider {
         title
       );
       if (!gate.allowed) {
-        const reject =
-          options.find(o => /reject|deny/i.test(o.kind ?? '')) ??
-          options.find(o => /reject|deny|no/i.test(o.optionId));
+        const reject = selectAcpOption(options, { behavior: 'deny' });
         console.log(
           `[ACP] 工具被场景白名单拦截: ${title} (kind=${String(toolCall.kind ?? '未提供')})`
         );
         this.rpc?.respond(
           msg.id,
           reject
-            ? { outcome: { outcome: 'selected', optionId: reject.optionId } }
+            ? { outcome: { outcome: 'selected', optionId: reject.id } }
             : { outcome: { outcome: 'cancelled' } }
         );
         return;
@@ -348,6 +373,8 @@ export class AcpAdapter implements AgentProvider {
           toolUseId: toolCall.toolCallId as string | undefined,
           toolName: String(toolCall.title ?? toolCall.kind ?? 'tool'),
           input: (toolCall.rawInput ?? {}) as Record<string, unknown>,
+          // 服务端一个选项都没给时保持缺省，UI 退回两按钮兜底
+          ...(options.length ? { options } : {}),
         });
       } else {
         // 没有消费者就直接拒绝，避免 ACP 侧永久挂起
@@ -508,30 +535,15 @@ export class AcpAdapter implements AgentProvider {
     if (!pending || !this.rpc) return false;
     this.pendingPerms.delete(requestId);
 
-    if (decision.behavior === 'allow') {
-      // 优先选 allow 类选项；找不到就退回第一个选项
-      const allow =
-        pending.options.find(o => /allow/i.test(o.kind ?? '')) ??
-        pending.options.find(o => /allow|yes|approve/i.test(o.optionId)) ??
-        pending.options[0];
-      if (!allow) {
-        this.rpc.respond(pending.rpcId, { outcome: { outcome: 'cancelled' } });
-        return true;
-      }
-      this.rpc.respond(pending.rpcId, {
-        outcome: { outcome: 'selected', optionId: allow.optionId },
-      });
-    } else {
-      const reject =
-        pending.options.find(o => /reject|deny/i.test(o.kind ?? '')) ??
-        pending.options.find(o => /reject|deny|no/i.test(o.optionId));
-      this.rpc.respond(
-        pending.rpcId,
-        reject
-          ? { outcome: { outcome: 'selected', optionId: reject.optionId } }
-          : { outcome: { outcome: 'cancelled' } }
-      );
-    }
+    // 按 id 精确回选；没带 id 就按行为找第一档；找不到一律 cancelled。
+    // 绝不能「退回第一个选项」—— 服务端给的顺序里第一个可能是 reject。
+    const picked = selectAcpOption(pending.options, decision);
+    this.rpc.respond(
+      pending.rpcId,
+      picked
+        ? { outcome: { outcome: 'selected', optionId: picked.id } }
+        : { outcome: { outcome: 'cancelled' } }
+    );
     return true;
   }
 

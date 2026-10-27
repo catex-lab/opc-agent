@@ -2105,6 +2105,34 @@ html[data-opc-glass='1'] .tc-bubble-user {
    原先各处的按钮靠 `transition-opacity` + hover 改透明度来做反馈，
    视觉上是「整块变淡」，不是腾讯那种「底色加深」。而且禁用态与 hover 态
    容易撞在一起。这里统一成按状态切换背景色。 */
+/* ── A124：按钮几何只在这一处定义 ──────────────────────────────────────
+ *
+ * 用户一轮点了五处「按钮大小、填充不一致」。实测离散度（`verify:a124-button-spec`）：
+ * 动作按钮高度 **24 / 32 / 38** 三档、水平内边距 **7 / 12 / 15 / 24** 四种、
+ * 字号 **12 / 13 / 14** 三种。根因不是谁写错了，而是 `.tc-btn-brand` /
+ * `.tc-btn-secondary` 这两个类**只管颜色和状态、不管几何** —— 高度和内边距
+ * 留给每个站点自己写 Tailwind，于是同一个类在每个弹窗里长得都不一样。
+ *
+ * 定档取 32 / 15 / 14：这是 TDesign 默认中档按钮的实测值，也是全站最新那批
+ * 按钮（自定义 Agent、权限门禁）已经在用的尺寸 —— 收敛到它，组件库那边一处都不用改，
+ * 只需要把散落的自定内边距删掉。
+ *
+ * 令牌放在这里而不是各组件：改一档全站生效，且打靶脚本读的就是这三个数。 */
+:root {
+  --tc-btn-height: 32px;
+  --tc-btn-pad-x: 15px;
+  --tc-btn-font: var(--text-body-lg);
+}
+
+.tc-btn-brand,
+.tc-btn-secondary {
+  height: var(--tc-btn-height);
+  padding: 0 var(--tc-btn-pad-x);
+  font-size: var(--tc-btn-font);
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .tc-btn-brand {
   display: inline-flex;
   align-items: center;
@@ -2232,7 +2260,11 @@ html[data-opc-glass='1'].dark .tc-btn-brand:active:not(:disabled) {
   justify-content: center;
   gap: 6px;
   border-radius: var(--td-radius-default);
-  background-color: var(--tc-layer-1);
+  /* A124：底色从 `--tc-layer-1` 改成透明，与 TDesign 的 `variant="outline"` 同一档。
+   * 之前同一个「取消」按钮在两个弹窗里一个是浅灰实底、一个是透明描边 ——
+   * 用户说的「填充不一致」就是这一处。次操作靠**描边**表达，不靠底色；
+   * 悬停才给底（下面那条 hover），这样静止时整屏只有一种「能点的框」语言。 */
+  background-color: transparent;
   color: var(--td-text-color-primary);
   border: 1px solid var(--tc-edge-strong);
   transition:
@@ -2398,6 +2430,23 @@ html[data-opc-glass='1'].dark .tc-btn-brand:active:not(:disabled) {
 
 .t-select-input .t-input__suffix-icon {
   color: var(--td-text-color-secondary) !important;
+}
+
+/* Tooltip 不许挡鼠标（A123 实测）
+ *
+ * 输入框底部的两颗芯片（权限模式 / 思考强度）都带一个 `placement="top"` 的
+ * 说明气泡，而它们的下拉也是**向上**展开的。于是悬停芯片 → 气泡浮在芯片正上方
+ * → 点开下拉 → 最后一颗选项正好落在气泡底下。实测那颗「全放行」选项被一个
+ * 144×32 的 `.t-popup.t-tooltip` 盖住，且它自己的 `pointer-events` 是 `auto` ——
+ * 真鼠标点下去命中的是气泡，选项收不到 click，看起来就是「下拉里点了没反应」。
+ *
+ * 判据：气泡是纯文字说明，全站 9 处 Tooltip 的 content 里没有任何可交互元素
+ * （已逐个扫过 `<Tooltip>` 块），所以让它完全不吃指针是安全的。
+ *
+ * 只打 `.t-popup.t-tooltip`，**不要**打在共用的 `.t-popup__content` 上 ——
+ * 那个类下拉、Popconfirm、Dropdown 都在用，它们里面是有可点内容的。 */
+.t-popup.t-tooltip {
+  pointer-events: none;
 }
 
 /* Select 下拉弹窗（也覆盖 Tooltip / Popconfirm / Dropdown —— TDesign 的
@@ -2692,14 +2741,115 @@ html[data-opc-glass='1'].dark .tc-btn-brand:active:not(:disabled) {
   color: var(--td-text-color-primary) !important;
 }
 
-.t-button--variant-base {
+/* 「base 档按钮」中性化 —— 但**主按钮豁免**（A124）
+ *
+ * 这条原来无差别命中所有 `.t-button--variant-base`，本意是「不要腾讯默认的蓝按钮」。
+ * 但本项目的 `--td-brand-color` 早就被重写成近黑（浅 #1f1f1f / 深 #e5e5e5），
+ * 蓝色根本不存在了 —— 中性化只剩下副作用：`theme="primary"` 的「创建 / 保存」
+ * 被压成和 outline 的「取消」一样的浅灰底，**主操作失去主次**。
+ * 用户这轮说的「按钮填充不一致」，量出来就是这个（实测两颗按钮底色都是 #f5f5f5）。
+ *
+ * 豁免后主按钮走 `--td-brand-color` 实心 + `--tc-on-brand` 反色文字，
+ * 与项目自有的 `.tc-btn-brand`（发起群聊「完成」、资料页「发消息」）同一套语言 ——
+ * 全站从此只有一种「主按钮长什么样」。 */
+.t-button--variant-base:not(.t-button--theme-primary) {
   background-color: var(--td-bg-color-component) !important;
   color: var(--td-text-color-primary) !important;
   border-color: var(--td-component-stroke) !important;
 }
 
+.t-button--variant-base.t-button--theme-primary {
+  background-color: var(--td-brand-color) !important;
+  color: var(--tc-on-brand) !important;
+  border-color: var(--td-brand-color) !important;
+}
+
+.t-button--variant-base.t-button--theme-primary:hover:not(:disabled) {
+  background-color: var(--td-brand-color-hover) !important;
+  border-color: var(--td-brand-color-hover) !important;
+}
+
+/* 禁用态要退回中性灰：黑底灰字在浅主题上看着仍可点，是最难查的「假可点」 */
+.t-button--variant-base.t-button--theme-primary:disabled {
+  background-color: var(--td-bg-color-component-disabled) !important;
+  color: var(--td-text-color-disabled) !important;
+  border-color: var(--td-bg-color-component-disabled) !important;
+}
+
+/* 玻璃态：主按钮同样要走 `--tc-solid` 下限（A26 的结论，理由见那里）。
+ * 上面那组用了 `!important`，所以这里也必须带 —— 否则特异性/顺序都赢不了 important，
+ * 症状是「界面能透明，唯独主按钮在 100% 下是一块死黑」。 */
+html[data-opc-glass='1'] .t-button--variant-base.t-button--theme-primary:not(:disabled) {
+  background-color: var(--tc-solid) !important;
+  border-color: transparent !important;
+}
+
+html[data-opc-glass='1'] .t-button--variant-base.t-button--theme-primary:hover:not(:disabled) {
+  background-color: var(--tc-solid) !important;
+  background-image: linear-gradient(rgb(0 0 0 / 0.1), rgb(0 0 0 / 0.1));
+}
+
+html[data-opc-glass='1'].dark .t-button--variant-base.t-button--theme-primary:hover:not(:disabled) {
+  background-image: linear-gradient(rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.1));
+}
+
 .t-button--variant-base:hover {
   background-color: var(--td-bg-color-component-hover) !important;
+}
+
+/* ===== 审批卡的四档按钮（P4） =====
+ *
+ * 为什么必须带 !important + 专属类：上面 `variant-base` / `variant-text`
+ * 两条规则用 !important 把按钮统一压成中性灰（A124 的「全站只有一种主按钮」
+ * 语言）。审批卡是**例外**，它的颜色本身携带语义：
+ *   允许 = 成功色实心 · 拒绝 = 危险色文字 · 「始终」两档 = 同色描边。
+ *
+ * 内联 style 压不过 !important（A116 实测过），所以收敛到这里，用
+ * 同权重但位置在后、且作用域限定 `.tc-permission-option` 的规则覆盖。
+ * 离开审批卡，其它按钮仍走上面的中性规则 —— 这不是全局改皮肤。
+ *
+ * 数值是设计常量：字号 12px / 字重 500 / 圆角 6px / 间距由组件 gap-2=8px。
+ * verify-a128-permission-ui.mjs 会在浏览器里逐项量，被现有样式带跑就红。 */
+.tc-permission-option.t-button--variant-base,
+.tc-permission-option.t-button--variant-outline,
+.tc-permission-option.t-button--variant-text {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  border-radius: 6px !important;
+}
+
+.tc-permission-option[data-permission-kind='reject_once'],
+.tc-permission-option[data-permission-kind='reject_always'] {
+  color: var(--td-error-color) !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+}
+
+.tc-permission-option[data-permission-kind='reject_always'] {
+  border-color: var(--td-error-color-1) !important;
+}
+
+.tc-permission-option[data-permission-kind='reject_once']:hover,
+.tc-permission-option[data-permission-kind='reject_always']:hover {
+  color: var(--td-error-color-hover) !important;
+  background-color: var(--td-error-color-1) !important;
+}
+
+.tc-permission-option[data-permission-kind='allow_once'] {
+  color: #fff !important;
+  background-color: var(--td-success-color) !important;
+  border-color: var(--td-success-color) !important;
+}
+
+.tc-permission-option[data-permission-kind='allow_once']:hover:not(:disabled) {
+  background-color: var(--td-success-color-hover) !important;
+  border-color: var(--td-success-color-hover) !important;
+}
+
+.tc-permission-option[data-permission-kind='allow_always'] {
+  color: var(--td-success-color) !important;
+  background-color: transparent !important;
+  border-color: var(--td-success-color) !important;
 }
 
 /* ===== TDesign Tag 标签 ===== */
@@ -3231,6 +3381,16 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   flex-shrink: 0;
 }
 
+/* 轨迹汇总行的「结果未回传」标记（A125）。与行内圆点同一套语言：
+   空心圈 = 不确定，不用绿勾也不用红叉。 */
+.tc-unknown-dot {
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1.5px var(--td-text-color-placeholder);
+}
+
 .tc-live-core {
   position: absolute;
   inset: 0;
@@ -3672,6 +3832,13 @@ html[data-opc-glass='1'] t-chat-sender {
 .tc-step.is-error .tc-step-dot {
   background-color: var(--td-error-color);
 }
+/* 结果未回传：空心圈，不填任何状态色。
+   这一轮正常结束了，但这一步的工具从未报回结果 —— 画绿勾是撒谎，
+   画红叉是冤枉，留个空心圈最接近事实。 */
+.tc-step.is-interrupted .tc-step-dot {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--td-text-color-placeholder);
+}
 
 @keyframes tc-step-pulse {
   0%,
@@ -3895,6 +4062,22 @@ html[data-opc-glass='1'] t-chat-sender {
    现在来源标签走 `.tc-trace-src`（无 auto），右缘每行一致。 */
 .tc-trace-meta {
   margin-left: auto;
+}
+
+/* 「结果未回传」胶囊（A125）。数值取自设计稿：18px 高 / 10.8px 字 / 4px 圆角 /
+   左右 6px 内边距。刻意比 `.tc-trace-meta` 的基准字号小一档 —— 它是状态标记
+   而不是数字，和右边的耗时同大时，用户会把它读成第二个耗时。 */
+.tc-trace-meta[data-trace-status='interrupted'] {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background-color: var(--tc-hover-chrome);
+  color: var(--td-text-color-placeholder);
+  font-size: 10.8px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
 }
 
 /* A102：事件来源标签（A100）。字号跟随 `.tc-trace` 的 11px 基准，
@@ -4337,7 +4520,10 @@ html[data-opc-glass='1'] t-chat-sender {
   color: var(--td-text-color-secondary);
 }
 
-.tc-thinking.tc-think-note > summary {
+/* 被隐去的思考复用同一条排版规则：它没有正文可展开，所以是 div 而不是
+   <details>，但视觉上必须和普通思考行完全对齐（否则上下两行的图标会错位）。 */
+.tc-thinking.tc-think-note > summary,
+.tc-thinking.tc-think-note > .tc-think-note-redacted {
   display: flex;
   align-items: center;
   gap: 6px;

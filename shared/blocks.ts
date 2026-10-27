@@ -25,9 +25,23 @@
  * ⚠️ 本文件只放类型与纯函数，不许 import server/ 或 src/ 模块。
  */
 
+import type { CapabilityProfile } from './capabilities';
+import type { PermissionOption } from './permissions';
+
 // ============= 块 =============
 
-export type BlockState = 'streaming' | 'done' | 'error' | 'cancelled';
+/**
+ * 块的终态。
+ *
+ * `interrupted` 与 `cancelled` 的区别是**谁按的停**：
+ *   · `cancelled` —— 用户 / 宿主主动中止，我们确实知道它停在这一步
+ *   · `interrupted` —— 这一轮**正常结束**了，但这个块始终没回结果
+ *     （进程退出、适配器漏发 tool_result、超时）
+ *
+ * 后者既不是「成功」也不是「失败」：把它伪造成 `done` 会让用户以为工具跑完了，
+ * 伪造成 `error` 又凭空指控了一次失败。所以单列一档，界面才有话可说。
+ */
+export type BlockState = 'streaming' | 'done' | 'error' | 'cancelled' | 'interrupted';
 
 export interface TextBlock {
   id: string;
@@ -50,9 +64,29 @@ export interface ThinkingBlock {
   format: 'raw' | 'summary';
   startedAt: number;
   endedAt?: number;
+  /**
+   * 厂商把思考内容隐去了，只留下「有过一段思考」这个事实
+   * （如 Anthropic 的 `redacted_thinking`）。此时 `text` 为空，
+   * 界面显示「已隐去」，**不是**一个空白思考框。
+   */
+  redacted?: boolean;
 }
 
-export type ToolBlockStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+/**
+ * 工具块状态。
+ *
+ * `interrupted` 不是「还在跑」：它是本轮已经收尾、但这个工具从未报回结果。
+ * 之所以独立一档，是因为它同时是「后台任务」胶囊的数据来源 ——
+ * 那些调用可能真的还在子进程里跑，界面必须如实说「结果未回传」，
+ * 而不是永远转圈（running）或假装完成（completed）。
+ */
+export type ToolBlockStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted';
 
 /**
  * 工具事件的**来源可信度**（A100）。
@@ -197,6 +231,11 @@ export type RunEvent = Seq &
         messageId: string;
         agentId: string;
         model?: string;
+        /**
+         * 这一轮的过程能力档（P2）：key + declared（+ probed，标定过才有）。
+         * `observed` 此刻还不知道 —— 它要等这一轮真跑完，见 `run_end`。
+         */
+        capabilities?: CapabilityProfile;
       }
     | { type: 'block_open'; block: Block }
     | { type: 'block_delta'; blockId: string; channel: BlockDeltaChannel; delta: string }
@@ -208,6 +247,14 @@ export type RunEvent = Seq &
         durationMs?: number;
         cost?: number;
         tokens?: number;
+        /**
+         * 同一份能力档，此刻补上 `observed` —— 这一轮**真的出现过**哪几类事件。
+         *
+         * 为什么放在 run_end 而不是另发一条事件：客户端收到 run_end 常会立刻
+         * 刷新会话/写库，两件事挨在一起才不会出现「已结束但能力档还是空的」
+         * 那一瞬。空数组是有意义的结论（"这一轮一项都没出现"），不能省略。
+         */
+        capabilities?: CapabilityProfile;
       }
     | {
         type: 'error';
@@ -226,6 +273,8 @@ export type RunEvent = Seq &
         risk?: 'safe' | 'risky' | 'dangerous';
         /** 命中的规则名（人话），弹窗上显示「为什么问这一句」 */
         rule?: string;
+        /** P4：本次真实可选的答复档位；缺省 = 适配器没声明，前端用两按钮兜底 */
+        options?: PermissionOption[];
       }
     /**
      * 断线重连时先发的一条全量快照。
@@ -298,7 +347,9 @@ export function applyRunEvent(blocks: Block[], ev: RunEvent): boolean {
             ? 'completed'
             : ev.state === 'cancelled'
               ? 'cancelled'
-              : 'failed';
+              : ev.state === 'interrupted'
+                ? 'interrupted'
+                : 'failed';
         block.endedAt = block.endedAt ?? Date.now();
       } else if (block.type === 'text' || block.type === 'thinking') {
         block.state = ev.state;
@@ -391,7 +442,10 @@ export function toolCallsOfBlocks(blocks: readonly Block[]): LegacyToolCall[] {
       status:
         b.status === 'completed'
           ? 'completed'
-          : b.status === 'failed' || b.status === 'cancelled' || b.isError
+          : b.status === 'failed' ||
+              b.status === 'cancelled' ||
+              b.status === 'interrupted' ||
+              b.isError
             ? 'error'
             : 'running',
       result: b.output,

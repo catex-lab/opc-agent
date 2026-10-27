@@ -169,16 +169,28 @@ function viewOf(agentId: string): CredentialView | null {
 
 /** 全部「可在应用内配置凭据」的 Agent（设置页据此渲染） */
 export function listCredentials(): CredentialView[] {
-  // A114：用 allAgentDefs() 而不是 AGENT_DEFS —— 用户自建 Agent 的 Key
-  // 也归这份存储管（见 agents/customAgents.ts 顶部说明），不出现在这里
-  // 用户就没有地方换 Key，只能删掉重建。
-  return allAgentDefs().map(d => viewOf(d.descriptor.id)).filter(
-    (v): v is CredentialView => v !== null
-  );
+  // A129：自建厂商不再走这一列表。它们的 Key 由「自定义模型厂商」编辑器
+  // 统一管理（同一把 Key 在两个地方各有一个输入框，用户不知道该信哪个）。
+  // `saveCredential()` 仍然管它们 —— 只是入口换到 ProviderSettings 里。
+  return allAgentDefs()
+    .filter(d => !d.descriptor.custom)
+    .map(d => viewOf(d.descriptor.id))
+    .filter((v): v is CredentialView => v !== null);
 }
 
 export function getCredential(agentId: string): CredentialView | null {
   return viewOf(agentId);
+}
+
+/**
+ * 取**原始** Key，只给服务端内部用（目前是厂商连通性测试要拿它发一次请求）。
+ *
+ * 绝不能出现在任何 API 响应里 —— 对外只有 `getCredential()` 的掩码视图。
+ * 之所以测连通时要用明文：测试必须和真实调用发同样的鉴权头，否则测出来的
+ * 「通」不成立。
+ */
+export function getRawCredentialKey(agentId: string): string {
+  return (readStore()[agentId]?.key ?? '').trim();
 }
 
 /**

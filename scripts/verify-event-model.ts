@@ -176,17 +176,108 @@ function assertSeqMonotonic(events: RunEvent[], label: string) {
   ok(end.seq > closeSeqs[closeSeqs.length - 1], '中止：run_end 排在所有 block_close 之后');
 }
 
-// ============= 6. 正常结束：未回填的工具按 completed 收 =============
+// ============= 6. 正常结束：没回结果的工具标 interrupted，绝不伪造 completed =============
 
 {
   const projector = new RunProjector(meta);
   projector.push({ type: 'tool', id: 't2', name: 'Bash' });
-  const { end } = projector.finish('ok', { durationMs: 88, tokens: 10 });
+  const { closes, end } = projector.finish('ok', { durationMs: 88, tokens: 10 });
   const tool = projector.blockList.find(b => b.type === 'tool') as any;
-  eq(tool.status, 'completed', '正常结束：工具兜底 completed');
+  eq(tool.status, 'interrupted', '正常结束：没有 tool_result 的工具标 interrupted');
+  // 这条是 A125 的根因断言：「这一轮跑完了」不等于「这个工具做完了」。
+  // 以前这里断言 completed，于是「后台任务」永远数不出东西。
+  ok(tool.status !== 'completed', '正常结束：不把「本轮结束」当成「工具成功」');
+  const close = closes.find(
+    e => e.type === 'block_close' && (e as any).blockId === tool.id
+  ) as any;
+  eq(
+    close?.state,
+    'interrupted',
+    '正常结束：block_close 也带 interrupted，客户端才不会被改回 completed'
+  );
   eq(end.type, 'run_end', '正常结束：产生 run_end');
   eq((end as any).durationMs, 88, '正常结束：带耗时');
   eq((end as any).tokens, 10, '正常结束：带 token');
+}
+
+// ============= 6c. 不变式：completed 只能来自 tool_result =============
+
+{
+  const withResult = new RunProjector(meta);
+  withResult.push({ type: 'tool', id: 'ok1', name: 'Bash' });
+  withResult.push({ type: 'tool_result', toolId: 'ok1', content: 'done' });
+  withResult.finish('ok');
+  eq(
+    (withResult.blockList.find(b => b.type === 'tool') as any)?.status,
+    'completed',
+    '不变式：回过结果的工具才是 completed'
+  );
+
+  const errorRun = new RunProjector(meta);
+  errorRun.push({ type: 'tool', id: 'e1', name: 'Bash' });
+  errorRun.finish('error');
+  eq(
+    (errorRun.blockList.find(b => b.type === 'tool') as any)?.status,
+    'failed',
+    '不变式：报错收尾时未回结果的工具标 failed'
+  );
+}
+
+// ============= 6d. 思考的呈现方式由适配器声明，投影器不许猜 =============
+
+{
+  const { projector } = run([
+    { type: 'thinking', content: '摘要一句', format: 'summary' },
+    { type: 'thinking', content: '再补一句', format: 'summary' },
+  ]);
+  const th = projector.blockList.find(b => b.type === 'thinking') as any;
+  eq(th?.format, 'summary', '思考：summary 声明被原样落到块上');
+  eq(th?.text, '摘要一句再补一句', '思考：同格式的两段合并成一块');
+
+  const { projector: mixed } = run([
+    { type: 'thinking', content: '先想', format: 'raw' },
+    { type: 'thinking', content: '再给摘要', format: 'summary' },
+  ]);
+  eq(
+    mixed.blockList.filter(b => b.type === 'thinking').map(b => (b as any).format),
+    ['raw', 'summary'],
+    '思考：格式变了必须切块，不能混成一段'
+  );
+
+  const { projector: redacted } = run([{ type: 'thinking', content: '', redacted: true }]);
+  const r = redacted.blockList.find(b => b.type === 'thinking') as any;
+  ok(!!r, '思考：被隐去的思考即使没有正文也要占一个块');
+  eq(r?.redacted, true, '思考：redacted 标记落到块上');
+  eq(r?.text, '', '思考：隐去时正文为空，不伪造内容');
+}
+
+// ============= 6e. 不变式：run_end 之后不能有非终态块 =============
+
+{
+  const projector = new RunProjector(meta, () => 1_000);
+  const out: RunEvent[] = [];
+  const feed: AgentEvent[] = [
+    { type: 'init', sessionId: 'sess-1' },
+    { type: 'thinking', content: '想' },
+    { type: 'tool', id: 't1', name: 'Bash' },
+    { type: 'tool', id: 't2', name: 'Read' },
+    { type: 'tool_result', toolId: 't1', content: 'ok' },
+  ];
+  for (const e of feed) out.push(...projector.push(e));
+  const fin = projector.finish('ok');
+  out.push(...fin.closes, fin.end);
+
+  const client: Block[] = [];
+  for (const e of out) applyRunEvent(client, e);
+
+  const nonTerminal = client.filter(b => {
+    if (b.type === 'text' || b.type === 'thinking') return b.state === 'streaming';
+    if (b.type === 'tool') return b.status === 'running' || b.status === 'pending';
+    return false;
+  });
+  eq(nonTerminal.length, 0, '不变式：run_end 之后所有块都是终态');
+  eq(client, projector.blockList, '不变式：客户端与服务端的块逐字段一致（含 interrupted）');
+  eq(out[out.length - 1].type, 'run_end', '不变式：run_end 是最后一条事件');
 }
 
 // ============= 6b. 产物数据大小边界 =============
@@ -291,6 +382,9 @@ function asArray(ev: AgentEvent | AgentEvent[] | null): AgentEvent[] {
 
   const reason = asArray(map!({ type: 'item.completed', item: { id: 'r1', type: 'reasoning', text: '想一想' } }));
   eq(reason[0]?.type, 'thinking', 'codex：reasoning → thinking');
+  // codex 只给摘要。不标 format 的话 UI 会把它当原始思维链展示，
+  // 「摘要」徽标也永远不会出现 —— 描述符里的 thinking_summary 就成了空话。
+  eq((reason[0] as any)?.format, 'summary', 'codex：reasoning 是摘要，必须带 format 标注');
 
   const changes = asArray(map!({
     type: 'item.completed',

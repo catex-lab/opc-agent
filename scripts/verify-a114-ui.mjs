@@ -255,7 +255,7 @@ console.log(`静态服务器：${base}`);
 //   1. 「设置页右上角的关闭按钮往右上角适当调整，现在的位置不协调」
 //   2. 「增加用户自建联系人 agent，用户可以通过其他平台的 api 来实现」
 // 都是**位置 / 交互**问题，必须真派发事件、真量坐标。
-console.log('\n[G] 关闭按钮位置 / 自定义 Agent 对话框');
+console.log('\n[G] 关闭按钮位置 / 通讯录「+」→ 厂商编辑器');
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
 await ctx.route('**/api/**', async route => {
@@ -267,13 +267,48 @@ await ctx.route('**/api/**', async route => {
     return json({ session: s, messages: MESSAGES });
   }
   if (url.includes('/api/agents/probe')) return json({ agents: AGENTS });
+  // A129：厂商编辑器（GET 列表 / 拉模型 / 连通性测试 / 保存）
+  if (url.includes('/api/agents/custom/models')) {
+    return json({ ok: true, models: ['mock-model-a', 'mock-model-b'] });
+  }
+  if (url.includes('/api/agents/custom/test')) {
+    return json({
+      ok: true,
+      baseUrl: 'https://api.deepseek.com/v1',
+      chatUrl: 'https://api.deepseek.com/v1/chat/completions',
+      models: [],
+      steps: [
+        { step: 'models', ok: true, detail: '模型清单：2 个', latencyMs: 12 },
+        { step: 'chat', ok: true, detail: '对话成功：ping', latencyMs: 34 },
+      ],
+    });
+  }
+  if (url.includes('/api/agents/custom')) {
+    if (route.request().method() === 'GET') {
+      return json({
+        agents: [
+          {
+            id: 'custom-demo',
+            name: '示例厂商',
+            baseUrl: 'https://api.deepseek.com/v1',
+            dialect: 'openai',
+            models: ['deepseek-chat', 'deepseek-reasoner'],
+            createdAt: 1,
+          },
+        ],
+      });
+    }
+    // 保存接口按「缺字段」回 400，用来验前端的错误展示路径
+    return route.fulfill({
+      status: 400,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: '请填写 API 地址' }),
+    });
+  }
+  if (url.includes('/api/agent-credentials')) return json({ credentials: [] });
   if (/\/api\/agents(\?|$)/.test(url)) return json({ agents: AGENTS });
   if (/\/api\/models/.test(url)) return json({ models: MODELS });
   if (/\/api\/sessions/.test(url)) return json({ sessions: SESSIONS });
-  // 创建接口按「缺字段」回 400，用来验前端的错误展示路径
-  if (url.includes('/api/agents/custom')) {
-    return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: '请填写 API 地址' }) });
-  }
   return json({});
 });
 const page = await ctx.newPage();
@@ -317,7 +352,7 @@ try {
   console.log('  ⚠️ 关闭按钮用例异常：' + String(e).slice(0, 160));
 }
 
-// ── G2. 自定义 Agent 对话框 ─────────────────────────────────────────
+// ── G2. 通讯录「+」→ 设置页厂商编辑器（A129 合并入口）─────────────────
 try {
   // 通讯录是**左侧导航的一项**（NavRail 的 'contacts'），不是路由 ——
   // 直接 goto('/contacts') 只会落到默认的「聊天」栏。
@@ -328,57 +363,121 @@ try {
   // 展开右上角「+」菜单
   await page.locator('button[aria-label="添加"]').click();
   await page.waitForTimeout(250);
-  const menuItem = page.locator('[data-contacts-custom-agent]');
+  const menuItem = page.locator('[data-contacts-add-provider]');
   const hasItem = (await menuItem.count()) === 1;
-  if (!hasItem) failures.push('「+」菜单里没有「自定义 Agent」项');
-  console.log(hasItem ? '  ✓ 「+」菜单有「自定义 Agent」项' : '  ❌ 「+」菜单缺「自定义 Agent」项');
+  if (!hasItem) failures.push('「+」菜单里没有「添加模型厂商」项');
+  console.log(hasItem ? '  ✓ 「+」菜单有「添加模型厂商」项' : '  ❌ 「+」菜单缺「添加模型厂商」项');
 
   await menuItem.click();
+  await page.waitForTimeout(1200);
+  const inLogin =
+    page.url().includes('/settings') &&
+    page.url().includes('section=login') &&
+    page.url().includes('provider=add');
+  if (!inLogin) failures.push(`点菜单项后没落到设置页登录配置：${page.url()}`);
+  console.log(inLogin ? '  ✓ 跳到设置页登录配置（带 provider=add）' : `  ❌ 跳转错误 [${page.url()}]`);
+
+  const section = page.locator('[data-provider-section]');
+  // 登录配置有好几段，厂商编辑器在下面：滚到它再断言可见
+  await section.scrollIntoViewIfNeeded().catch(() => {});
+  const sectionVisible = (await section.count()) === 1 && (await section.isVisible());
+  if (!sectionVisible) failures.push('设置页里没有厂商编辑器分区');
+  console.log(sectionVisible ? '  ✓ 登录配置里有「自定义模型厂商」' : '  ❌ 缺厂商分区');
+
+  const row = page.locator('[data-provider-row="custom-demo"]');
+  const rowOk = (await row.count()) === 1;
+  if (!rowOk) failures.push('已保存的厂商没列出来');
+  console.log(rowOk ? '  ✓ 已保存厂商在列表里' : '  ❌ 已保存厂商没显示');
+
+  // 从通讯录过来时表单应已自动展开，不该让用户再找一次「添加厂商」
+  const editor = page.locator('[data-provider-editor]');
   await page.waitForTimeout(400);
-  const dlg = page.locator('[data-custom-agent-dialog]');
-  const opened = (await dlg.count()) === 1;
-  if (!opened) failures.push('点了菜单项后对话框没打开');
-  console.log(opened ? '  ✓ 对话框打开' : '  ❌ 对话框没打开');
+  const opened = (await editor.count()) === 1;
+  if (!opened) failures.push('从通讯录进来后厂商表单没自动打开');
+  console.log(opened ? '  ✓ 厂商表单自动打开' : '  ❌ 表单没自动打开');
 
   if (opened) {
-    await page.screenshot({ path: join(OUT, 'a114-custom-agent-dialog.png') });
-    // 四个字段都在
-    for (const f of ['name', 'baseUrl', 'model', 'apiKey']) {
-      const n = await page.locator(`[data-custom-field="${f}"] input`).count();
-      if (n === 0) failures.push(`缺字段 ${f}`);
-    }
-    const fieldCount = await page.locator('[data-custom-field]').count();
-    console.log(fieldCount === 4 ? '  ✓ 四个字段齐全' : `  ❌ 字段数 = ${fieldCount}`);
+    const fieldCount = await page.locator('[data-provider-field]').count();
+    if (fieldCount !== 5) failures.push(`编辑器字段数 = ${fieldCount}（期望 5：名称/格式/地址/Key/模型）`);
+    console.log(fieldCount === 5 ? '  ✓ 五个字段齐全' : `  ❌ 字段数 = ${fieldCount}`);
 
-    // 示例芯片：点一下要把地址和模型名填进去
-    await page.locator('button:has-text("DeepSeek")').first().click();
-    await page.waitForTimeout(200);
+    // 预设只填地址与格式，不写死模型
+    await page.locator('[data-provider-preset="deepseek"]').click();
+    await page.waitForTimeout(250);
     const filled = await page.evaluate(() => {
-      const get = k => document.querySelector(`[data-custom-field="${k}"] input`)?.value ?? '';
-      return { baseUrl: get('baseUrl'), model: get('model') };
+      const get = k => document.querySelector(`[data-provider-field="${k}"] input`)?.value ?? '';
+      const urls = Array.from(document.querySelectorAll('[data-provider-final-url]'))
+        .map(n => n.textContent ?? '')
+        .join('\n');
+      return { name: get('name'), baseUrl: get('baseUrl'), urls };
     });
-    const chipOk = filled.baseUrl === 'https://api.deepseek.com/v1' && filled.model === 'deepseek-chat';
-    if (!chipOk) failures.push(`示例芯片没填对：${JSON.stringify(filled)}`);
-    console.log(chipOk ? '  ✓ 示例芯片填充地址与模型名' : `  ❌ 示例芯片 [${JSON.stringify(filled)}]`);
+    const presetOk =
+      filled.name === 'DeepSeek' &&
+      filled.baseUrl === 'https://api.deepseek.com/v1' &&
+      filled.urls.includes('https://api.deepseek.com/v1/chat/completions');
+    if (!presetOk) failures.push(`预设填充/最终地址预览不对：${JSON.stringify(filled)}`);
+    console.log(presetOk
+      ? '  ✓ 预设填地址，并回显最终对话地址'
+      : `  ❌ 预设填充 [${JSON.stringify(filled)}]`);
 
-    // 空表单提交 → 后端 400 → 前端把 error 显示出来（不能静默）
-    await page.locator('[data-custom-field="name"] input').fill('测试自建');
-    await page.locator('[data-custom-agent-submit]').click();
+    // 换方言后最终地址必须跟着变（Gemini 的模型名在路径里）
+    await page.locator('[data-provider-preset="gemini"]').click();
+    await page.waitForTimeout(250);
+    const gemText = await page.locator('[data-provider-final-url]').innerText();
+    const gemName = await page.locator('[data-provider-field="name"] input').inputValue();
+    const gemOk =
+      gemText.includes('/v1beta/models/') &&
+      gemText.includes(':generateContent') &&
+      // 连点两个预设不能留下「名字 DeepSeek、地址 Google」
+      gemName === 'Gemini';
+    if (!gemOk) failures.push(`切到 Gemini 后名称/最终地址没跟上：${gemName} / ${gemText.slice(0, 160)}`);
+    console.log(gemOk ? '  ✓ 换方言后最终地址跟着变（模型名进路径）' : `  ❌ Gemini 地址 [${gemText.slice(0, 160)}]`);
+
+    // 拉清单 → 默认全选
+    await page.locator('[data-provider-fetch-models]').click();
     await page.waitForTimeout(500);
-    const errVisible = (await page.locator('[data-custom-agent-error]').count()) === 1;
-    if (!errVisible) failures.push('提交失败时没有展示错误提示');
-    console.log(errVisible ? '  ✓ 失败时有错误提示' : '  ❌ 没有错误提示');
+    const bound = await editor.innerText();
+    const listOk =
+      (await page.locator('[data-provider-model]').count()) === 2 && bound.includes('已选 2');
+    if (!listOk) failures.push(`拉取清单后没自动全选：${bound.replace(/\s+/g, ' ').slice(0, 120)}`);
+    console.log(listOk ? '  ✓ 拉取模型清单并默认全选' : '  ❌ 拉取清单后没全选');
 
-    // Esc 关闭
-    await page.keyboard.press('Escape');
+    // 手动补一个清单里没有的模型
+    await page.locator('[data-provider-field="model"] input').fill('gemini-private');
+    await page.locator('[data-provider-field="model"] input').press('Enter');
+    await page.waitForTimeout(250);
+    const manualOk = (await page.locator('[data-provider-manual-model="gemini-private"]').count()) === 1;
+    if (!manualOk) failures.push('手动输入的模型没加进清单');
+    console.log(manualOk ? '  ✓ 清单外模型可手动补充' : '  ❌ 手动模型没加上');
+
+    await page.screenshot({ path: join(OUT, 'a129-provider-editor.png') });
+
+    // 测试连接 → 展示两步结果
+    await page.locator('[data-provider-test]').click();
+    await page.waitForTimeout(600);
+    const resultOk = (await page.locator('[data-provider-result="ok"]').count()) === 1;
+    const steps = await page.locator('[data-provider-step]').count();
+    if (!resultOk || steps !== 2) failures.push(`测试连接结果不对：ok=${resultOk} steps=${steps}`);
+    console.log(resultOk && steps === 2 ? '  ✓ 测试连接展示两步结果' : `  ❌ 测试结果 [ok=${resultOk} steps=${steps}]`);
+
+    // 保存失败 → 后端 400 的文案必须显示出来（不能静默）
+    await page.locator('[data-provider-save]').click();
+    await page.waitForTimeout(500);
+    const errLoc = page.locator('[data-provider-error]');
+    const errText = (await errLoc.count()) === 1 ? await errLoc.innerText() : '';
+    if (!errText.includes('请填写 API 地址')) failures.push(`保存失败没展示后端错误：${errText}`);
+    console.log(errText.includes('请填写 API 地址') ? '  ✓ 保存失败显示后端错误' : '  ❌ 没有错误提示');
+
+    // 收起编辑器
+    await page.locator('[data-provider-editor] button:has-text("收起")').click();
     await page.waitForTimeout(300);
-    const closed = (await page.locator('[data-custom-agent-dialog]').count()) === 0;
-    if (!closed) failures.push('Esc 没能关掉对话框');
-    console.log(closed ? '  ✓ Esc 关闭对话框' : '  ❌ Esc 没关掉');
+    const closed = (await page.locator('[data-provider-editor]').count()) === 0;
+    if (!closed) failures.push('「收起」没能关掉编辑器');
+    console.log(closed ? '  ✓ 收起编辑器' : '  ❌ 收起无效');
   }
 } catch (e) {
-  failures.push('自定义 Agent 用例异常：' + String(e).slice(0, 160));
-  console.log('  ⚠️ 自定义 Agent 用例异常：' + String(e).slice(0, 160));
+  failures.push('厂商编辑器用例异常：' + String(e).slice(0, 160));
+  console.log('  ⚠️ 厂商编辑器用例异常：' + String(e).slice(0, 160));
 }
 
 if (errors.length) {

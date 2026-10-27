@@ -40,6 +40,11 @@ import type {
   RawBlock,
   RawEntry,
 } from '../../shared/blocks.js';
+import type {
+  CapabilityProfile,
+  EventCapability,
+} from '../../shared/capabilities.js';
+import { sortCapabilities } from '../../shared/capabilities.js';
 import { MAX_ARTIFACT_DATA_BYTES } from './types.js';
 
 /**
@@ -68,10 +73,29 @@ export interface RunMeta {
    * 全跑一遍探测 —— 那已经不叫单元测试了。
    */
   source?: EventSource;
+  /**
+   * 这一轮的能力档（P2）：key + declared（+ probed）。
+   *
+   * 由调用方组装（见 `agents/capability.ts`），投影器只负责把 `observed`
+   * 数出来后一起发出去。理由同上：引擎/模型的解析要读凭据与定义表，
+   * 而那些都不该进一个能被夹具单测的纯逻辑类。
+   */
+  capabilities?: CapabilityProfile;
 }
 
 /** 单个 run 的块上限：防止异常适配器把内存打爆 */
 const MAX_BLOCKS = 400;
+
+/**
+ * 思考事件上随行的那两个标记。只有 `thinking` 用得着，`text` 传进来也无害。
+ *
+ * 为什么由事件携带而不是投影器判断：这两个值只有产出事件的那一层知道
+ * （见 `server/agents/types.ts` 里 `AgentEvent.thinking` 的注释）。
+ */
+interface ThinkingOpts {
+  format?: 'raw' | 'summary';
+  redacted?: boolean;
+}
 
 export class RunProjector {
   private seq = 0;
@@ -90,6 +114,14 @@ export class RunProjector {
   private openType: 'text' | 'thinking' | null = null;
   private started = false;
   private counter = 0;
+  /**
+   * 这一轮**真的出现过**的事件能力（P2）。
+   *
+   * 刻意在投影器里数、而不是让适配器自己上报：适配器可以撒谎（清单已经撒过
+   * 一次谎），而块序列是它一手造成的既成事实 —— 有什么块，就有什么能力。
+   * 只有费用/token 这类不落块的数据才取自 done 载荷。
+   */
+  private observed = new Set<EventCapability>();
 
   constructor(meta: RunMeta, now: () => number = Date.now) {
     this.meta = meta;
@@ -107,6 +139,21 @@ export class RunProjector {
   private nextId(): string {
     this.counter += 1;
     return `${this.meta.runId}-b${this.counter}`;
+  }
+
+  /**
+   * 当前的能力档；调用方没给 key 时返回 undefined（不伪造一个 `unknown` 引擎）。
+   *
+   * @param withObserved `run_end` 传 true：此刻"这一轮出现过什么"才成为事实。
+   *   `run_start` 传 false —— 那时把 observed 写进去就是把声明冒充成观测。
+   */
+  private profile(withObserved: boolean): CapabilityProfile | undefined {
+    const base = this.meta.capabilities;
+    if (!base) return undefined;
+    return {
+      ...base,
+      ...(withObserved ? { observed: sortCapabilities(this.observed) } : {}),
+    };
   }
 
   private make<T extends object>(payload: T): RunEvent {
@@ -136,12 +183,18 @@ export class RunProjector {
     return out;
   }
 
-  private openText(kind: 'text' | 'thinking', delta: string): RunEvent[] {
+  private openText(kind: 'text' | 'thinking', delta: string, opts: ThinkingOpts = {}): RunEvent[] {
     if (this.blocks.length >= MAX_BLOCKS) {
-      // 超限时不再开新块，把内容并到最后一个同类型块上（宁可挤，不可丢）
-      const last = [...this.blocks].reverse().find(b => b.type === kind);
+      // 超限时不再开新块，把内容并到最后一个同类型块上（宁可挤，不可丢）。
+      // 思考块还要同格式：summary 与原文混进一个块，之后就没法回答
+      // 「这块到底是不是完整推理」了。
+      const format = opts.format ?? 'raw';
+      const last = [...this.blocks].reverse().find(b =>
+        kind === 'text' ? b.type === 'text' : b.type === 'thinking' && b.format === format
+      );
       if (last) {
         if (last.type === 'text' || last.type === 'thinking') last.text += delta;
+        if (!delta) return [];
         return [
           this.make({ type: 'block_delta', blockId: last.id, channel: 'text', delta }),
         ];
@@ -163,8 +216,10 @@ export class RunProjector {
         type: 'thinking',
         text: delta,
         state: 'streaming',
-        format: 'raw',
+        format: opts.format ?? 'raw',
         startedAt: this.now(),
+        // 只在真被隐去时才写这个字段：老数据 / 没声明的适配器保持原来的形状
+        ...(opts.redacted ? { redacted: true } : {}),
       };
       this.blocks.push(block);
       out.push(this.make({ type: 'block_open', block: { ...block } }));
@@ -177,19 +232,23 @@ export class RunProjector {
   }
 
   /** 追加一段文本/思考 */
-  private append(kind: 'text' | 'thinking', delta: string): RunEvent[] {
-    if (!delta) return [];
+  private append(kind: 'text' | 'thinking', delta: string, opts: ThinkingOpts = {}): RunEvent[] {
+    const format = opts.format ?? 'raw';
+    // 空内容正常情况下没有意义；但「被隐去的思考」恰恰是空正文 + redacted，
+    // 它必须开出一个块来（否则界面上这一轮像是什么都没想过）。
+    if (!delta && !(kind === 'thinking' && opts.redacted)) return [];
     if (this.openType === kind && this.openId) {
       const block = this.blocks.find(b => b.id === this.openId);
-      if (block && (block.type === 'text' || block.type === 'thinking')) {
+      const sameFormat = block?.type !== 'thinking' || block.format === format;
+      if (block && (block.type === 'text' || block.type === 'thinking') && sameFormat) {
         block.text += delta;
-        return [
-          this.make({ type: 'block_delta', blockId: block.id, channel: 'text', delta }),
-        ];
+        return delta
+          ? [this.make({ type: 'block_delta', blockId: block.id, channel: 'text', delta })]
+          : [];
       }
     }
     const closing = this.closeOpen('done');
-    return [...closing, ...this.openText(kind, delta)];
+    return [...closing, ...this.openText(kind, delta, opts)];
   }
 
   /** 处理一条 v1 事件，返回需要下发的 v2 事件（可能为空/多条） */
@@ -211,6 +270,7 @@ export class RunProjector {
           return [];
         }
         this.started = true;
+        const caps = this.profile(false);
         return [
           this.make({
             type: 'run_start',
@@ -218,6 +278,9 @@ export class RunProjector {
             messageId: this.meta.messageId,
             agentId: this.meta.agentId,
             model: this.meta.model,
+            // observed 此刻还空着：这一轮才刚开始，不能提前把 declared 抄过去
+            // 冒充事实（那正是「清单在撒谎」的复现方式）。
+            ...(caps ? { capabilities: caps } : {}),
           }),
         ];
       }
@@ -225,8 +288,18 @@ export class RunProjector {
       case 'text':
         return this.append('text', ev.content);
 
-      case 'thinking':
-        return this.append('thinking', ev.content);
+      case 'thinking': {
+        const out = this.append('thinking', ev.content, {
+          format: ev.format,
+          redacted: ev.redacted,
+        });
+        // 空块没产出事件就不算「观察到」：被隐去的思考是空正文 + redacted，
+        // 但它确实产出了块，所以按 out 判、不按 ev.content 判。
+        if (out.length > 0) {
+          this.observed.add(ev.format === 'summary' ? 'thinking_summary' : 'thinking');
+        }
+        return out;
+      }
 
       case 'tool': {
         const closing = this.closeOpen('done');
@@ -250,12 +323,14 @@ export class RunProjector {
           source: this.meta.source,
         };
         this.blocks.push(block);
+        this.observed.add('tool');
         return [...closing, this.make({ type: 'block_open', block: { ...block } })];
       }
 
       case 'tool_output': {
         const block = this.findTool(ev.toolId);
         if (!block) return [];
+        this.observed.add('tool_output');
         block.output = (block.output ?? '') + ev.content;
         return [
           this.make({
@@ -325,6 +400,7 @@ export class RunProjector {
         ];
 
       case 'permission_request':
+        this.observed.add('permission');
         return [
           this.make({
             type: 'permission_request',
@@ -334,11 +410,15 @@ export class RunProjector {
             input: ev.input,
             risk: ev.risk,
             rule: ev.rule,
+            // 缺省保持缺省：没有选项和「给了 0 个选项」是两种事实
+            ...(ev.options ? { options: ev.options } : {}),
           }),
         ];
 
       case 'usage':
-        // 用量不是块：由调用方（/api/chat）在 done 时并入 run_end
+        // 用量不是块：由调用方（/api/chat）在 done 时并入 run_end。
+        // 但「上报过用量」本身是观测到的事实，能力档要记下来。
+        this.observed.add('usage');
         return [];
 
       /**
@@ -442,9 +522,17 @@ export class RunProjector {
   /**
    * 收尾：关闭所有打开的块，并给仍未回填的工具一个终态。
    *
-   * 为什么要给工具兜底状态：适配器可能不发 tool_result（进程被杀、协议缺口），
-   * 留一个永久 running 的卡片会让 UI 一直转圈。正常结束按 completed 收，
-   * 报错按 failed，中止按 cancelled —— 这是「最不坏」的推断。
+   * ## 为什么兜底状态不能是 `completed`
+   *
+   * 「这一轮跑完了」不等于「这个工具做完了」。后者只有 `tool_result` 能证明，
+   * 而本函数面对的恰恰是**没有** `tool_result` 的那些块（进程被杀、协议缺口、
+   * 适配器漏发）。以前这里按 `completed` 收，后果是双重的：
+   *   · 界面显示成功，用户以为命令跑过了；
+   *   · `lingeringToolBlocks()` 只认 running/pending，于是「后台任务」永远是 0 ——
+   *     功能还在，数据被提前抹平了。
+   *
+   * 现在按「谁按的停」分三档：正常结束 → `interrupted`（结果未回传）、
+   * 用户中止 → `cancelled`、出错 → `failed`。
    */
   finish(status: RunStatus, usage?: { durationMs?: number; cost?: number; tokens?: number }): {
     closes: RunEvent[];
@@ -454,10 +542,12 @@ export class RunProjector {
     closes.push(...this.closeOpen(status === 'ok' ? 'done' : 'cancelled'));
 
     for (const b of this.blocks) {
-      if (b.type !== 'tool' || b.status !== 'running') continue;
+      // pending 也算：它开了口却从没开始，同样没有结果可回
+      if (b.type !== 'tool' || (b.status !== 'running' && b.status !== 'pending')) continue;
       const next: BlockState =
-        status === 'ok' ? 'done' : status === 'aborted' ? 'cancelled' : 'error';
-      b.status = status === 'ok' ? 'completed' : status === 'aborted' ? 'cancelled' : 'failed';
+        status === 'ok' ? 'interrupted' : status === 'aborted' ? 'cancelled' : 'error';
+      b.status =
+        status === 'ok' ? 'interrupted' : status === 'aborted' ? 'cancelled' : 'failed';
       b.endedAt = this.now();
       closes.push(
         this.make({
@@ -484,12 +574,18 @@ export class RunProjector {
       );
     }
 
+    // 费用/token 不落块，只有 done 载荷能证明「这一轮确实报了」。
+    if (usage?.tokens != null) this.observed.add('usage');
+    if (usage?.cost != null) this.observed.add('cost');
+
+    const caps = this.profile(true);
     const end = this.make({
       type: 'run_end',
       status,
       durationMs: usage?.durationMs,
       cost: usage?.cost,
       tokens: usage?.tokens,
+      ...(caps ? { capabilities: caps } : {}),
     });
     return { closes, end };
   }

@@ -26,6 +26,7 @@ import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, Ke
 import { PanelHeader } from './PanelHeader';
 import { HintTip } from './HintTip';
 import { AgentCredentialSettings } from './AgentCredentialSettings';
+import { ProviderSettings } from './ProviderSettings';
 import { ModelCatalogSettings } from './ModelCatalogSettings';
 import { MemoryPanel } from './MemoryPanel';
 import { PermissionRulesPanel } from './PermissionRulesPanel';
@@ -137,7 +138,7 @@ const SETTINGS_SECTIONS: Array<{
   { key: 'appearance', label: '外观', hint: '主题、界面透明度、鼠标光斑', Icon: Monitor },
   { key: 'login', label: '登录配置', hint: 'API Key 或命令行登录', Icon: KeyRound },
   { key: 'models', label: '模型清单', hint: '枚举来源与手动刷新', Icon: Layers },
-  { key: 'agents', label: '自定义 Agent', hint: '本地提示词与工具权限', Icon: Bot },
+  { key: 'agents', label: '助手人设', hint: '本地提示词与工具权限', Icon: Bot },
   // 排最后：这是「偶尔来一次」的分区，不该抢占前六项的位置
   { key: 'about', label: '关于与隐私', hint: '版本、官方入口与统计开关', Icon: Info },
 ];
@@ -446,6 +447,12 @@ export function SettingsPage({
   // A28：当前所在分区。默认外观 —— 它是唯一「一进来就该看到」的一组，
   // 且不依赖任何后端数据（登录检查还在转圈时主题已经能改）。
   const [section, setSection] = useState<SettingsSectionKey>('appearance');
+
+  // A129：通讯录「+ → 添加模型厂商」带 `provider=add` 过来时，厂商表单
+  // 直接展开。不这么做的话，用户落在「登录配置」顶部还得自己往下找。
+  const [autoOpenProvider] = useState(
+    () => new URLSearchParams(window.location.search).get('provider') === 'add'
+  );
 
   return (
     <div
@@ -926,6 +933,24 @@ export function SettingsPage({
             </h3>
             <AgentCredentialSettings onSaved={onCredentialsSaved} />
           </div>
+
+          {/* ── 自定义模型厂商（A129）────────────────────────────────
+              原先这个入口在通讯录「+ → 自定义 Agent」，与这里的 Key 配置
+              各存一半：那边存地址和模型，这边存 Key。合并到同一页之后，
+              用户填完地址能立刻拉模型清单、测连通，再保存。 */}
+          <div className="mt-8" data-provider-section>
+            <h3
+              className="mb-3 flex items-center gap-1.5 text-sm font-medium"
+              style={{ color: 'var(--td-text-color-primary)' }}
+            >
+              方式四：自定义模型厂商
+              <HintTip
+                label="自定义模型厂商说明"
+                text="任何 OpenAI / Anthropic / Gemini 兼容的接口都能接：填地址和 Key，拉取模型清单并测试连通后保存。保存后通讯录出现一条联系人，模型下拉列出它全部模型。"
+              />
+            </h3>
+            <ProviderSettings onChanged={onCredentialsSaved} autoOpen={autoOpenProvider} />
+          </div>
         </div>
         )}
 
@@ -947,7 +972,7 @@ export function SettingsPage({
         </div>
         )}
 
-        {/* ── 自定义 Agent ──────────────────────────────────────── */}
+        {/* ── 助手人设（A129 改名：原「自定义 Agent」与通讯录里的自建厂商同名） */}
         {section === 'agents' && (
         <div>
           <div className="mb-4">
@@ -955,7 +980,7 @@ export function SettingsPage({
               className="text-lg font-medium"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              Agent 配置
+              助手人设
             </h2>
           </div>
 

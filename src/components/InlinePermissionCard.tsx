@@ -9,12 +9,29 @@ import {
   DeleteIcon
 } from 'tdesign-icons-react';
 import { PermissionRequest } from '../types';
+import type { PermissionOption } from '../types';
 
 interface InlinePermissionCardProps {
   request: PermissionRequest;
-  onAllow: () => void;
-  onDeny: () => void;
+  /**
+   * 用户选了某一档（P4）。
+   *
+   * 只回传选项本身，翻译成 behavior / 原因码由 hook 统一做 —— 卡片不碰
+   * 网络，也不替适配器决定「始终允许」能不能落地。
+   */
+  onResolve: (option: PermissionOption) => void;
 }
+
+/**
+ * 服务端没下发目录时的兜底（历史路径）。
+ *
+ * 只有两档：没有 always 的承诺，就不摆 always 的按钮。带 always 的选项
+ * 必须由真正能记住决定的适配器声明。
+ */
+const FALLBACK_OPTIONS: PermissionOption[] = [
+  { id: 'reject_once', kind: 'reject_once', label: '拒绝' },
+  { id: 'allow_once', kind: 'allow_once', label: '允许' },
+];
 
 // 工具名称到图标和颜色的映射
 // 颜色走 index.css 的 --tool-color-* 语义变量（腾讯调色板），
@@ -82,9 +99,11 @@ const RISK_BADGE: Record<'risky' | 'dangerous', { text: string; bg: string; fg: 
   },
 };
 
-export function InlinePermissionCard({ request, onAllow, onDeny }: InlinePermissionCardProps) {
+export function InlinePermissionCard({ request, onResolve }: InlinePermissionCardProps) {
   const toolConfig = getToolConfig(request.toolName);
   const mainInfo = getMainInfo(request.toolName, request.input);
+  // 服务端给了几档就画几档，不补齐 —— 摆了做不到的档位就是假功能
+  const options = request.options?.length ? request.options : FALLBACK_OPTIONS;
   // 老口径只按工具名猜；门禁给了结论就以门禁为准
   const nameLooksDangerous = request.toolName === 'Bash' || request.toolName === 'Delete' || request.toolName === 'DeleteFile';
   const gateVerdict = request.risk === 'risky' || request.risk === 'dangerous' ? RISK_BADGE[request.risk] : null;
@@ -141,34 +160,30 @@ export function InlinePermissionCard({ request, onAllow, onDeny }: InlinePermiss
         </span>
       )}
       
-      {/* 操作按钮 */}
+      {/* 操作按钮（P4）：按服务端下发顺序渲染。
+          颜色 / 字重 / 字号写在 index.css 的 `.tc-permission-option` 里，
+          不写内联 —— 全局按钮规则带 !important，内联压不过（A116 的教训）。 */}
       <div className="flex items-center gap-2 ml-auto">
-        <Button 
-          size="small"
-          theme="danger"
-          variant="text"
-          onClick={onDeny}
-          style={{ 
-            color: 'var(--td-error-color)',
-            fontWeight: 500
-          }}
-        >
-          拒绝
-        </Button>
-        <Button 
-          size="small"
-          theme="success"
-          variant="base"
-          onClick={onAllow}
-          style={{ 
-            backgroundColor: 'var(--td-success-color)',
-            borderColor: 'var(--td-success-color)',
-            color: '#fff',
-            fontWeight: 500
-          }}
-        >
-          允许
-        </Button>
+        {options.map(option => {
+          const isAllow = option.kind.startsWith('allow');
+          const isPrimary = option.kind === 'allow_once';
+          const isAlways = option.kind.endsWith('_always');
+          return (
+            <Button
+              key={option.id}
+              className="tc-permission-option"
+              size="small"
+              theme={isAllow ? 'success' : 'danger'}
+              variant={isPrimary ? 'base' : isAlways ? 'outline' : 'text'}
+              onClick={() => onResolve(option)}
+              title={option.note}
+              data-permission-option={option.id}
+              data-permission-kind={option.kind}
+            >
+              {option.label}
+            </Button>
+          );
+        })}
       </div>
     </div>
   );

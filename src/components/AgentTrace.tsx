@@ -198,20 +198,38 @@ function ThinkingNode({ item, collapse = false }: { item: TraceItem; collapse?: 
   const t = item.thinking;
   if (!t) return null;
   const running = t.state === 'streaming';
+  // 被厂商隐去的思考：正文是密的，但「确实想过一段」是事实。
+  // 这里既不能伪造内容，也不能什么都不显示 —— 空一行、标明「已隐去」最诚实。
+  const redacted = !!t.redacted;
   const secs = item.durationMs != null ? Math.max(1, Math.round(item.durationMs / 1000)) : null;
+
+  const row = (
+    <>
+      <Sparkles size={12} style={{ flexShrink: 0 }} />
+      <span className="tc-think-note-title">
+        {redacted ? '已隐去' : running ? '深度思考中' : '深度思考'}
+      </span>
+      {!redacted && t.format === 'summary' && <span className="tc-think-badge">摘要</span>}
+      <span className="tc-think-note-meta">
+        {redacted ? '内容被厂商隐去' : `${t.text.length} 字`}
+      </span>
+      {secs != null && <span className="tc-think-note-meta">{secs}s</span>}
+    </>
+  );
 
   return (
     <div className="tc-trace-nested" data-trace-thinking={item.id}>
-      <details className="tc-thinking tc-think-note" open={running && !collapse}>
-        <summary>
-          <Sparkles size={12} style={{ flexShrink: 0 }} />
-          <span className="tc-think-note-title">{running ? '深度思考中' : '深度思考'}</span>
-          {t.format === 'summary' && <span className="tc-think-badge">摘要</span>}
-          <span className="tc-think-note-meta">{t.text.length} 字</span>
-          {secs != null && <span className="tc-think-note-meta">{secs}s</span>}
-        </summary>
-        <div className="tc-think-note-body">{t.text}</div>
-      </details>
+      {redacted ? (
+        // 没有正文就没有可展开的东西：渲染成一行静态说明，而不是一个点了没反应的折叠条
+        <div className="tc-thinking tc-think-note" data-redacted="1">
+          <div className="tc-think-note-redacted">{row}</div>
+        </div>
+      ) : (
+        <details className="tc-thinking tc-think-note" open={running && !collapse}>
+          <summary>{row}</summary>
+          <div className="tc-think-note-body">{t.text}</div>
+        </details>
+      )}
     </div>
   );
 }
@@ -285,13 +303,24 @@ function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boole
   const meta =
     item.status === 'running'
       ? '执行中…'
+      : item.status === 'interrupted'
+        ? // 与「失败」分开说：失败是确定的坏消息，未回传可能还在后台跑
+          '结果未回传'
+        : item.status === 'error'
+          ? '失败'
+          : formatStepDuration(item.durationMs) ?? '';
+  const stepState =
+    item.status === 'running'
+      ? 'running'
       : item.status === 'error'
-        ? '失败'
-        : formatStepDuration(item.durationMs) ?? '';
+        ? 'error'
+        : item.status === 'interrupted'
+          ? 'interrupted'
+          : 'done';
 
   return (
     <div
-      className={`tc-step is-${item.status === 'done' ? 'done' : item.status === 'error' ? 'error' : 'running'}`}
+      className={`tc-step is-${stepState}`}
       data-tool-step={item.id}
       data-trace-verb={item.verb}
     >
@@ -336,7 +365,11 @@ function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boole
             文本解析
           </span>
         )}
-        {meta && <span className="tc-trace-meta">{meta}</span>}
+        {meta && (
+          <span className="tc-trace-meta" data-trace-status={item.status}>
+            {meta}
+          </span>
+        )}
       </div>
       {open && (
         <>
@@ -415,6 +448,7 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
 
   const running = items.some(i => i.status === 'running');
   const failed = items.some(i => i.status === 'error');
+  const interrupted = items.some(i => i.status === 'interrupted');
   const stepCount = items.filter(i => i.kind === 'tool').length;
   const totalMs = items.reduce((s, i) => s + (i.durationMs ?? 0), 0);
   const durationText = formatHandledDuration(totalMs);
@@ -481,6 +515,10 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
           </span>
         ) : failed ? (
           <CloseCircleFilledIcon size={13} style={{ color: 'var(--td-error-color)', flexShrink: 0 }} />
+        ) : interrupted ? (
+          // 不画绿勾：这一轮结束了，但至少有一个工具没回结果。
+          // 空心圈 = 「不确定」，比打勾诚实，也比打叉克制。
+          <span className="tc-unknown-dot" aria-hidden="true" data-unknown-dot />
         ) : (
           <CheckCircleFilledIcon size={13} style={{ color: 'var(--td-success-color)', flexShrink: 0 }} />
         )}

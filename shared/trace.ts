@@ -22,7 +22,14 @@ import type { Block, ThinkingBlock, ToolBlock } from './blocks';
 
 // ============= 工具语义 =============
 
-export type TraceStatus = 'running' | 'done' | 'error';
+/**
+ * 轨迹行的三种可见状态 + 一种「说不清」。
+ *
+ * `interrupted`（结果未回传）与 `error`（失败）必须分开：前者可能还在跑，
+ * 后者是确定的坏消息。混成一档之后，界面对「命令挂了」和「命令没回话」
+ * 只能给出同一句措辞，用户没法判断该不该重跑。
+ */
+export type TraceStatus = 'running' | 'done' | 'error' | 'interrupted';
 
 /** 增删行数。`known=false` 表示「没有可靠数据」，UI 据此决定显示 `+N` 还是 `±0` */
 export interface TraceDiff {
@@ -249,6 +256,7 @@ export function hasFileEdits(blocks: readonly Block[] | undefined | null): boole
 
 function statusOf(b: ToolBlock): TraceStatus {
   if (b.status === 'running' || b.status === 'pending') return 'running';
+  if (b.status === 'interrupted') return 'interrupted';
   if (b.status === 'failed' || b.isError) return 'error';
   return 'done';
 }
@@ -396,19 +404,24 @@ export function formatHandledDuration(ms?: number): string | null {
 }
 
 /**
- * 后台任务：本轮已经结束，但工具调用还停在 running 的那些。
+ * 后台任务：本轮已经结束，但工具调用没有拿到结果的那些。
  *
  * 这不是「造一个概念」——它就是真实存在的一种状态：CLI 在工具还没回结果时
  * 就结束了这一轮（用户中止、进程退出、适配器漏发 tool_result）。这些调用
  * 确实还在（或已经卡在）后台，界面上必须说清楚，否则用户看到的是一个
  * 永远转圈的圆点。判定只依赖块数据，刷新后仍然成立。
+ *
+ * A125 起 `RunProjector.finish()` 会把这类工具标成 `interrupted` 而不是
+ * 伪造 `completed`，所以这里必须把 `interrupted` 一并算进来 —— 否则
+ * 「修好了终态」的代价是「胶囊永远消失」，等于用一个假数据换掉另一个。
+ * 仍在 running/pending 的也算（老数据、以及还没经过 finish 的实时快照）。
  */
 export function lingeringToolBlocks(blocks: readonly Block[], runFinished: boolean): ToolBlock[] {
   if (!runFinished) return [];
   return blocks.filter(
     (b): b is ToolBlock =>
       b.type === 'tool' &&
-      (b.status === 'running' || b.status === 'pending') &&
+      (b.status === 'running' || b.status === 'pending' || b.status === 'interrupted') &&
       // 老数据（legacyToBlocks / contentBlocks）的 startedAt 是 0 —— 那些块根本
       // 没有时间戳，`running` 只说明「当年没记完成状态」，不代表现在还在跑。
       // 不排掉的话，用户历史上任何一条被中止的老消息都会变成一颗

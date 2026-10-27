@@ -179,7 +179,7 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {method === 'npm' && install.command && (
           <button
             type="button"
-            className="tc-btn-brand px-3 py-1.5 text-secondary"
+            className="tc-btn-brand"
             onClick={onCopy}
             data-install-copy
           >
@@ -191,7 +191,7 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {(method === 'script' || method === 'installer') && install.url && (
           <button
             type="button"
-            className="tc-btn-brand px-3 py-1.5 text-secondary"
+            className="tc-btn-brand"
             onClick={() => open(install.url!)}
             data-install-open
           >
@@ -203,7 +203,7 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {method === 'script' && install.command && (
           <button
             type="button"
-            className="tc-btn-secondary px-3 py-1.5 text-secondary"
+            className="tc-btn-secondary"
             onClick={onCopy}
             data-install-copy
           >
@@ -215,7 +215,7 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {method === 'npm' && install.url && (
           <button
             type="button"
-            className="tc-btn-secondary px-3 py-1.5 text-secondary"
+            className="tc-btn-secondary"
             onClick={() => open(install.url!)}
             data-install-open
           >
@@ -227,7 +227,7 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {method === 'key' && onOpenCredential && (
           <button
             type="button"
-            className="tc-btn-brand px-3 py-1.5 text-secondary"
+            className="tc-btn-brand"
             onClick={() => onOpenCredential(agent.id)}
             data-install-open-settings
           >
@@ -240,8 +240,7 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
         {onReprobe && (
           <button
             type="button"
-            className="ml-auto flex items-center gap-1 px-2 py-1.5 text-secondary"
-            style={{ color: 'var(--td-text-color-secondary)' }}
+            className="tc-btn-secondary ml-auto"
             onClick={onReprobe}
             data-install-reprobe
           >

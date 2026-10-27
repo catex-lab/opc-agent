@@ -11,6 +11,14 @@ release-latest/
 release-builds/
 .trash-*/
 .tmp/
+# 根级 `.tmp-*` 是各棒会话留下的研究草稿（一次 A12x 调研留下 38 个文件、17.5 MB 的
+# 页面快照与 AST dump）。上面 `.tmp/` 那条只挡目录，挡不住这些散在根上的文件 ——
+# 与 release-latest 同一个理由：漏一次 `git add -A` 就是 17.5 MB 进历史。
+.tmp-*
+# esbuild 产物：`scripts/build-electron.mjs` 写的是 `${OUT_DIR}/main.cjs`，
+# 而 `package.json` 的 `main` 指向 `dist-electron/bootstrap.cjs` —— 根级这份是
+# 用错误 cwd 跑构建留下的 stray 产物，不是源码。
+/main.cjs
 *.log
 .DS_Store
 Thumbs.db

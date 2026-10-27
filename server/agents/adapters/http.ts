@@ -35,6 +35,7 @@ import https from 'node:https';
 import tls from 'node:tls';
 import { AsyncQueue, linkAbort } from '../channel.js';
 import type { AgentDefinition, HttpSpec } from '../definitions.js';
+import { chatUrlOf } from '../../../shared/providerUrl.js';
 import { withMemoryContext } from '../../memory.js';
 import { checkHostReachable } from '../probe.js';
 import type {
@@ -57,8 +58,13 @@ function safeProtocol(url: string): string {
   }
 }
 
-/** 读环境代理，规则与 probe.ts 的 proxyUrl 完全一致（否则两条链路会分叉） */
-function proxyUrl(): URL | null {
+/**
+ * 读环境代理，规则与 probe.ts 的 proxyUrl 完全一致（否则两条链路会分叉）。
+ *
+ * 导出给 providerTest.ts：厂商连通性测试必须和真实调用走**同一条路**，
+ * 否则又会出现「测试说通、对话不通」那个老坑。
+ */
+export function proxyUrl(): URL | null {
   const raw =
     process.env.https_proxy ||
     process.env.HTTPS_PROXY ||
@@ -78,7 +84,7 @@ function proxyUrl(): URL | null {
  * 复用 probe.ts `reachViaProxy` 的相同做法：先 CONNECT 拿裸 socket，
  * 再在上面包 TLS。返回可直接交给 https.request 的 TLSSocket。
  */
-function tunneledTls(
+export function tunneledTls(
   proxy: URL,
   host: string,
   port: number,
@@ -161,6 +167,38 @@ function geminiSse(payload: unknown, emit: (ev: AgentEvent) => void): void {
     .filter((t): t is string => typeof t === 'string' && t.length > 0)
     .join('');
   if (text) emit({ type: 'text', content: text });
+}
+
+/**
+ * 从**非流式**响应体里抽出正文。
+ *
+ * 为什么需要：有的兼容网关（自建中转、部分 Ollama / vLLM 版本）收到
+ * `stream:true` 仍返回一整段 `application/json`。原来只按 SSE 行解析，
+ * 结果是一段合法回复被静默吞掉 —— 界面上表现为「调用成功但没有任何输出」，
+ * 比报错更难查。这里对三种方言各取一次完整回复。
+ */
+function extractWholeText(payload: unknown, dialect: HttpSpec['dialect']): string {
+  const o = payload as {
+    choices?: Array<{ message?: { content?: string | null } }>;
+    content?: Array<{ type?: string; text?: string }>;
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    error?: { message?: string };
+  };
+  if (o?.error?.message) throw new Error(o.error.message);
+  if (dialect === 'openai') {
+    const c = o.choices?.[0]?.message?.content;
+    return typeof c === 'string' ? c : '';
+  }
+  if (dialect === 'anthropic') {
+    return (o.content ?? [])
+      .filter(b => b.type === 'text' && typeof b.text === 'string')
+      .map(b => b.text!)
+      .join('');
+  }
+  return (o.candidates?.[0]?.content?.parts ?? [])
+    .map(p => p.text)
+    .filter((t): t is string => typeof t === 'string')
+    .join('');
 }
 
 export class HttpAdapter implements AgentProvider {
@@ -254,11 +292,22 @@ export class HttpAdapter implements AgentProvider {
     }
     const key = process.env[keyName]!.trim();
 
-    yield { type: 'init', sessionId: ctx.sessionId, model: ctx.model ?? this.spec.defaultModel, source: 'native' };
+    // 本次请求用的模型。Gemini 的模型名在路径里，所以模型必须在拼 URL 之前定下来。
+    // 也必须先于 init 事件声明：init 要把本轮实际使用的模型报给前端。
+    const model = ctx.model ?? this.spec.defaultModel ?? '';
+
+    yield { type: 'init', sessionId: ctx.sessionId, model: model || undefined, source: 'native' };
 
     const queue = new AsyncQueue<AgentEvent>();
     const started = Date.now();
     const timeoutMs = this.spec.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    /**
+     * 请求地址。有 `baseUrl` 就按**当前模型**重拼（自建厂商切换模型时，
+     * 模型名可能同时出现在路径里）；否则用定义里那条固定地址（内置条目）。
+     */
+    const requestUrl = this.spec.baseUrl
+      ? chatUrlOf(this.spec.baseUrl, this.spec.dialect, model, true)
+      : this.spec.url;
 
     const emit = (ev: AgentEvent) => queue.push(ev);
     const handler: SseHandler =
@@ -290,7 +339,7 @@ export class HttpAdapter implements AgentProvider {
     void (async () => {
       try {
         await new Promise<void>((resolve, reject) => {
-        const parsed = new URL(this.spec.url);
+        const parsed = new URL(requestUrl);
         const isHttps = parsed.protocol === 'https:';
         const port = Number(parsed.port) || (isHttps ? 443 : 80);
 
@@ -313,7 +362,7 @@ export class HttpAdapter implements AgentProvider {
           ];
           if (systemPrompt) messages.unshift({ role: 'system', content: systemPrompt });
           body = {
-            model: ctx.model ?? this.spec.defaultModel,
+            model,
             messages,
             stream: true,
           };
@@ -322,7 +371,7 @@ export class HttpAdapter implements AgentProvider {
           headers['x-api-key'] = key;
           headers['anthropic-version'] = '2023-06-01';
           body = {
-            model: ctx.model ?? this.spec.defaultModel,
+            model,
             max_tokens: this.spec.maxTokens ?? 8192,
             messages: [{ role: 'user', content: ctx.prompt }],
             stream: true,
@@ -393,6 +442,25 @@ export class HttpAdapter implements AgentProvider {
                 // 单行解析失败不该中断整条流：SSE 里常见心跳/注释行
               }
             };
+
+            // 非 SSE 响应：部分网关无视 `stream: true`，直接回一整段 JSON。
+            // 不认这种响应的话，回复会被逐行当 SSE 丢掉，表现为「成功但无输出」。
+            if (!String(res.headers['content-type'] ?? '').includes('text/event-stream')) {
+              let raw = '';
+              res.setEncoding('utf8');
+              res.on('data', c => (raw += c));
+              res.on('end', () => {
+                try {
+                  const text = extractWholeText(JSON.parse(raw), this.spec.dialect);
+                  if (text) emit({ type: 'text', content: text });
+                  resolve();
+                } catch (err) {
+                  reject(err instanceof Error ? err : new Error(String(err)));
+                }
+              });
+              res.on('error', reject);
+              return;
+            }
 
             res.setEncoding('utf8');
             let lineBuf = '';

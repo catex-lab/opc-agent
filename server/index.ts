@@ -34,7 +34,9 @@ import {
   deleteCustomSpec,
   loadCustomSpecs,
   normalizeCustomInput,
+  updateCustomSpec,
 } from "./agents/customAgents.js";
+import { listProviderModels, testProvider } from "./agents/providerTest.js";
 import {
   getImageProvider,
   imageProvidersStatus,
@@ -45,6 +47,12 @@ import {
 } from "./agents/adapters/image.js";
 import { cacheImage, imageFilePath } from "./image-store.js";
 import { validateDirectory } from "./workspaceDir.js";
+// A131：「最近目录」的忽略清单落到服务端 —— localStorage 按端口分源，换端口就全忘。
+import {
+  dismissedCount,
+  dismiss,
+  restoreAllDismissed,
+} from "./dismissed-dirs.js";
 import { detectVerifyCommands } from "./verify-commands.js";
 import { runVerifyCommand } from "./verify-runner.js";
 import { summarizeEvidence, verifyFileChanges } from "./file-evidence.js";
@@ -55,11 +63,14 @@ import {
   listCredentials,
   saveCredential,
   clearCredential,
+  getRawCredentialKey,
 } from "./agent-credentials.js";
 import { runOrchestration, isInternalPhase, type TurnPhase } from "./orchestrator.js";
 import { createTurnRunner } from "./turn-runner.js";
 import { runWorkflow, WORKFLOW_TEMPLATE } from "./workflow.js";
 import { RunProjector } from "./agents/projector.js";
+import { runProfileOf } from "./agents/capability.js";
+import { probeCapabilities } from "./agents/capability-probe.js";
 import { publishRunEvent, runHub } from "./run-hub.js";
 
 // A38 记忆层（Hermes 式四层记忆）。注入发生在适配器拼 systemPrompt 时
@@ -89,6 +100,7 @@ import {
 } from "./permission-rules.js";
 import { distillSkill } from "./skill-distill.js";
 import { legacyToBlocks, textOfBlocks, toolCallsOfBlocks } from "../shared/blocks.js";
+import type { CapabilityProfile } from "../shared/capabilities.js";
 import type { RunEvent } from "../shared/blocks.js";
 import {
   resolveModelForAgent,
@@ -102,7 +114,9 @@ import { loadUserProfile, saveUserProfile } from "./user-profile.js";
 import { mapSdkModels } from "./agents/sdk-models.js";
 import { readDeclaredModels } from "./agents/wbProductConfig.js";
 import type { ModelOption } from "./agents/modelCatalog.js";
-import { getScenario } from "../shared/scenarios.js";
+import { getScenario, PERMISSION_MODE_LABEL } from "../shared/scenarios.js";
+import { parsePermissionBody } from "../shared/permissions.js";
+import { isProviderDialect } from "../shared/providerUrl.js";
 
 /**
  * 注册用户自建 Agent，再把应用内保存的凭据注入进程环境。
@@ -417,17 +431,36 @@ app.get("/api/models", async (req, res) => {
 
 // ============= Agent 名册 API =============
 
+/**
+ * 给名册条目挂上「最近一次观测到的过程能力」（P2）。
+ *
+ * 为什么不并进 `registry.toInfo()`：那层不碰数据库（探测要能被纯单测驱动），
+ * 而这份数据在 SQLite 里。放这里合并，注册表仍然只回答「声明了什么」。
+ */
+function withObservedCapabilities<T extends { id: string }>(agents: T[]): Array<T & { observedCapabilities?: CapabilityProfile }> {
+  return agents.map(a => {
+    try {
+      const observed = db.latestCapabilityProfileFor(a.id);
+      return observed ? { ...a, observedCapabilities: observed } : a;
+    } catch {
+      // 老库还没建这张表 / 读失败：不挂字段。界面按「未观察到」显示，
+      // 比挂一个空对象冒充「观察到零项」更诚实。
+      return a;
+    }
+  });
+}
+
 // 列出全部 Agent（含探测状态）。带 TTL 缓存，不会每次都重探。
 app.get("/api/agents", async (req, res) => {
   try {
     const force = req.query.refresh === '1' || req.query.refresh === 'true';
     if (force) {
-      return res.json({ agents: await registry.probeAll(true) });
+      return res.json({ agents: withObservedCapabilities(await registry.probeAll(true)) });
     }
     // 冷启动时缓存是空的，此时名册里全是 unknown（前端会显示成「未接入」）。
     // 这里把探测在后台启动起来，本次仍按当前缓存如实返回，由前端轮询补齐。
     registry.ensureProbedInBackground();
-    res.json({ agents: registry.list() });
+    res.json({ agents: withObservedCapabilities(registry.list()) });
   } catch (error: any) {
     console.error("[Agents] Error:", error);
     res.status(500).json({ error: error?.message || "获取 Agent 列表失败" });
@@ -438,7 +471,7 @@ app.get("/api/agents", async (req, res) => {
 app.post("/api/agents/probe", async (req, res) => {
   try {
     const agents = await registry.probeAll(true);
-    res.json({ agents });
+    res.json({ agents: withObservedCapabilities(agents) });
   } catch (error: any) {
     console.error("[Agents] Probe error:", error);
     res.status(500).json({ error: error?.message || "探测失败" });
@@ -516,6 +549,91 @@ app.post("/api/agents/custom", async (req, res) => {
   }
 });
 
+/**
+ * 解析连通性测试要用的 Key。
+ *
+ * 三级来源：表单里刚填的（还没保存）→ 已保存的（编辑时没重填）→ 进程环境
+ * （开发态 export 的）。只对 `custom-` 开头的 id 读已保存值：否则这个接口
+ * 就成了「拿内置 Agent 的凭据去打任意地址」的通道。
+ */
+function resolveProviderKey(body: Record<string, unknown>): { key: string; error?: string } {
+  const typed = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+  if (typed) return { key: typed };
+  const agentId = typeof body.agentId === "string" ? body.agentId.trim() : "";
+  if (agentId.startsWith("custom-")) {
+    const stored = getRawCredentialKey(agentId);
+    if (stored) return { key: stored };
+    const envName = findDef(agentId)?.authEnvs?.find(n => (process.env[n] ?? "").trim());
+    if (envName) return { key: process.env[envName]!.trim() };
+  }
+  return { key: "", error: "请填写 API Key" };
+}
+
+// 拉模型清单。没保存也能调：用户填完地址和 Key 先看有什么模型，再勾选。
+app.post("/api/agents/custom/models", async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const baseUrl = String(body.baseUrl ?? "").trim();
+    const dialect = isProviderDialect(body.dialect) ? body.dialect : "openai";
+    if (!baseUrl) return res.status(400).json({ error: "请填写 API 地址" });
+    const { key, error } = resolveProviderKey(body);
+    if (error) return res.status(400).json({ error });
+    res.json(await listProviderModels({ baseUrl, dialect, apiKey: key }));
+  } catch (error: any) {
+    console.error("[CustomAgents] List models error:", error);
+    res.status(500).json({ error: error?.message || "拉取模型清单失败" });
+  }
+});
+
+// 连通性测试：地址/Key 是否被接受 + 指定模型能否应答。
+// 失败也用 200 返回（结果里 ok:false），这是**测试结论**而不是服务端故障。
+app.post("/api/agents/custom/test", async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const baseUrl = String(body.baseUrl ?? "").trim();
+    const dialect = isProviderDialect(body.dialect) ? body.dialect : "openai";
+    if (!baseUrl) return res.status(400).json({ error: "请填写 API 地址" });
+    const { key, error } = resolveProviderKey(body);
+    if (error) return res.status(400).json({ error });
+    const model = String(body.model ?? "").trim();
+    res.json(await testProvider({ baseUrl, dialect, apiKey: key, model: model || undefined }));
+  } catch (error: any) {
+    console.error("[CustomAgents] Test error:", error);
+    res.status(500).json({ error: error?.message || "连通性测试失败" });
+  }
+});
+
+// 编辑一条自建厂商。`/test` 与 `/models` 必须注册在它之前吗？不用 ——
+// 那两条是精确路径，Express 会先匹配到它们；但 `:agentId` 会吞掉 GET 列表
+// 之外的任何两段路径，所以**仍按顺序写在前面**，少一层心智负担。
+app.patch("/api/agents/custom/:agentId", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    if (!agentId.startsWith("custom-")) {
+      return res.status(400).json({ error: "只能修改自建 Agent" });
+    }
+    const norm = normalizeCustomInput(req.body);
+    if (!norm.ok) return res.status(400).json({ error: norm.error });
+    const spec = updateCustomSpec(agentId, norm.value);
+    if (!spec) return res.status(404).json({ error: "自建 Agent 不存在" });
+
+    // 定义表换新 → 实例换新。顺序不能反：`saveCredential()` 要按新定义找变量名，
+    // 而 `registerCustom()` 是幂等的（已存在直接 return），必须先注销再注册。
+    registerCustomDefs(loadCustomSpecs().map(customSpecToDefinition));
+    registry.unregisterCustom(agentId);
+    registry.registerCustom(customSpecToDefinition(spec));
+
+    // Key 留空 = 不换 Key（用户只改了模型清单的情况）
+    const apiKey = String((req.body as any)?.apiKey ?? "").trim();
+    if (apiKey) saveCredential(agentId, { key: apiKey });
+    const agent = await registry.probeOne(agentId, true);
+    res.json({ agent, id: agentId });
+  } catch (error: any) {
+    console.error("[CustomAgents] Update error:", error);
+    res.status(500).json({ error: error?.message || "修改自建 Agent 失败" });
+  }
+});
+
 app.delete("/api/agents/custom/:agentId", async (req, res) => {
   try {
     const { agentId } = req.params;
@@ -543,7 +661,7 @@ app.get("/api/agents/:agentId", async (req, res) => {
     if (req.query.probe === '1') await registry.probeOne(agentId, true);
     const agent = registry.get(agentId);
     if (!agent) return res.status(404).json({ error: "Agent 不存在" });
-    res.json({ agent });
+    res.json({ agent: withObservedCapabilities([agent])[0] });
   } catch (error: any) {
     console.error("[Agent] Error:", error);
     res.status(500).json({ error: error?.message || "获取 Agent 失败" });
@@ -566,6 +684,28 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
     res.json({ models, defaultModel });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "获取模型列表失败" });
+  }
+});
+
+// 真实标定：跑一条极短的 CLI 任务，数它实际给出哪些过程事件（P3）。
+//
+// 这是**显式动作**，不挂在任何自动路径上：标定会真起 CLI、真花 token，
+// 不能在打开资料页或启动应用时偷偷跑。force=true 才忽略 TTL 重跑。
+app.post("/api/agents/:agentId/capabilities/probe", async (req, res) => {
+  try {
+    const agentId = req.params.agentId;
+    if (!findDef(agentId)) return res.status(404).json({ error: "Agent 不存在" });
+    const body = (req.body ?? {}) as { model?: unknown; force?: unknown };
+    const model =
+      typeof body.model === "string" && body.model.trim() ? body.model.trim() : undefined;
+    const outcome = await probeCapabilities(agentId, model, { force: body.force === true });
+    if (!outcome.ok) {
+      return res.status(400).json({ error: outcome.error, key: outcome.key, argv: outcome.argv });
+    }
+    res.json(outcome);
+  } catch (error: any) {
+    console.error("[Capability] 标定失败:", error);
+    res.status(500).json({ error: error?.message || "标定失败" });
   }
 });
 
@@ -827,6 +967,30 @@ app.get("/api/sessions/:sessionId", (req, res) => {
   }
 });
 
+/**
+ * A123：权限档位的合法值。判据直接取共享表，不在这里再抄一份枚举 ——
+ * 前端加一档（或改名）时后端会跟着变，不会出现「前端能选、后端判非法」。
+ */
+const PERMISSION_MODES = Object.keys(PERMISSION_MODE_LABEL);
+
+/**
+ * 校验请求体里的权限档位。
+ *
+ * 非法值一律 **400，不静默纠正成 default**（与 A119 的 project_tasks.status 同一条规矩）：
+ * 静默纠正会把「前端写错了枚举」变成「用户的设置莫名没生效」，
+ * 而那正是这一档曾经的状态 —— 芯片显示全放行、发出去的是 default。
+ *
+ * 返回 `undefined` = 这一项不动；返回 `null` = 清空（回到「没选过」）。
+ */
+function permissionModeOf(raw: unknown): { error?: string; value?: string | null } {
+  if (raw === undefined) return {};
+  if (raw === null || raw === '') return { value: null };
+  if (typeof raw !== 'string' || !PERMISSION_MODES.includes(raw)) {
+    return { error: `权限模式不合法：${JSON.stringify(raw)}（可选：${PERMISSION_MODES.join(' | ')}）` };
+  }
+  return { value: raw };
+}
+
 // 创建新会话
 app.post("/api/sessions", (req, res) => {
   try {
@@ -844,7 +1008,12 @@ app.post("/api/sessions", (req, res) => {
       reasoningEffort = null,
       scenarioId = null,
       systemPrompt = null,
+      // A123：会话级权限模式（可选）。新建时就选了要一起落库，
+      // 否则「新建页选了全放行、第一条消息却按 default 弹窗问人」。
+      permissionMode = null,
     } = req.body;
+    const modeCheck = permissionModeOf(permissionMode);
+    if (modeCheck.error) return res.status(400).json({ error: modeCheck.error });
     const now = new Date().toISOString();
 
     // A63：与 PATCH /api/sessions/:id 同一把尺子 —— 确定不存在的目录不落库。
@@ -884,6 +1053,8 @@ app.post("/api/sessions", (req, res) => {
       reasoning_effort: typeof reasoningEffort === 'string' && reasoningEffort ? reasoningEffort : null,
       scenario_id: typeof scenarioId === 'string' && scenarioId ? scenarioId : null,
       system_prompt: typeof systemPrompt === 'string' && systemPrompt ? systemPrompt : null,
+      // A123：新建时就选了档位要随会话落库（`permissionModeOf` 已校验过合法性）
+      permission_mode: modeCheck.value ?? null,
       project_id: project?.id ?? null,
       created_at: now,
       updated_at: now
@@ -911,7 +1082,10 @@ app.post("/api/sessions", (req, res) => {
 app.patch("/api/sessions/:sessionId", (req, res) => {
   try {
     const { sessionId } = req.params;
-    const { title, model, orchestration, agentIds, cwd, reasoningEffort, scenarioId, systemPrompt, pinned, agentId } = req.body;
+    const { title, model, orchestration, agentIds, cwd, reasoningEffort, scenarioId, systemPrompt, pinned, agentId, permissionMode } = req.body;
+    // A123：权限档位。非法值 400，不静默纠正 —— 见 permissionModeOf 的说明
+    const modeCheck = permissionModeOf(permissionMode);
+    if (modeCheck.error) return res.status(400).json({ error: modeCheck.error });
 
     const updates: Parameters<typeof db.updateSession>[1] = { title, model };
     /**
@@ -951,6 +1125,9 @@ app.patch("/api/sessions/:sessionId", (req, res) => {
     if (typeof reasoningEffort === 'string') updates.reasoning_effort = reasoningEffort || null;
     if (typeof scenarioId === 'string') updates.scenario_id = scenarioId || null;
     if (typeof systemPrompt === 'string') updates.system_prompt = systemPrompt || null;
+    // A123：`undefined` = 这次没带这一项（不动）；`null` = 清空回「没选过」。
+    // 用 `in req.body` 而不是真值判断，否则清空档位会被当成「没改」。
+    if ('permissionMode' in req.body) updates.permission_mode = modeCheck.value ?? null;
     // 置顶开关（消息列表右键菜单）。只认布尔，避免 "false" 字符串被当成真
     if (typeof pinned === 'boolean') updates.pinned = pinned ? 1 : 0;
 
@@ -980,11 +1157,40 @@ app.patch("/api/sessions/:sessionId", (req, res) => {
 app.get("/api/recent-directories", (_req, res) => {
   try {
     const directories = db.getRecentDirectories();
-    res.json({ directories });
+    // 顺带带上已忽略几条：面板要用它决定「全部恢复」那一行出不出现。
+    // 不另开一个端点，是为了让打开面板只发一次请求。
+    res.json({ directories, dismissedCount: dismissedCount() });
   } catch (error: any) {
     console.error("[Recent Directories] Error:", error);
     res.status(500).json({ error: error?.message || "获取最近目录失败" });
   }
+});
+
+/**
+ * A131：点 × 忽略一个最近目录。
+ *
+ * 落在服务端而不是 localStorage：打包态端口每次都不一样，localStorage 按源隔离，
+ * 用户点完下次打开就全忘了（原因写在 `server/dismissed-dirs.ts` 文件头）。
+ * 只改忽略清单，**不动任何会话的 cwd** —— 用户不想在快捷列表里看见它，
+ * 不等于想把所有会话的工作目录清空。
+ */
+app.post("/api/recent-directories/dismiss", (req, res) => {
+  const { path: dir } = req.body ?? {};
+  if (typeof dir !== "string" || !dir.trim()) {
+    res.status(400).json({ error: "path 不能为空" });
+    return;
+  }
+  res.json({ ok: true, dismissed: dismiss(dir) });
+});
+
+/**
+ * 撤销全部忽略。
+ *
+ * 只做「全部恢复」不做单条恢复：列表里已经没有已忽略项的展示位，
+ * 逐条找回要先把它们列出来，那是另一套 UI。清掉重来最诚实，也不会误恢复。
+ */
+app.post("/api/recent-directories/restore", (_req, res) => {
+  res.json({ ok: true, restored: restoreAllDismissed() });
 });
 
 /**
@@ -1310,17 +1516,26 @@ app.post("/api/sessions/:sessionId/branch", (req, res) => {
 // 权限请求可能来自任意 Agent（SDK 的 canUseTool、ACP 的 session/request_permission），
 // 所以这里不绑定具体 Agent —— 直接问注册表谁能认领这个 requestId。
 app.post("/api/permission-response", (req, res) => {
-  const { requestId, behavior, message } = req.body;
+  const parsed = parsePermissionBody(req.body);
+  if (!parsed.ok) {
+    // 非法 behavior 静默改成 deny，用户会看到「我点了允许，它却拒了」，
+    // 而日志里一切正常 —— 必须在边界上报错（与 A119/A123 的口径一致）
+    return res.status(400).json({ error: parsed.error });
+  }
 
-  console.log(`[Permission] Response received: requestId=${requestId}, behavior=${behavior}`);
+  const { requestId } = req.body ?? {};
+  if (typeof requestId !== 'string' || !requestId.trim()) {
+    return res.status(400).json({ error: 'requestId 必须是非空字符串' });
+  }
 
-  const decision = {
-    behavior: behavior === 'allow' ? 'allow' : 'deny',
-    message,
-  } as const;
+  const { decision } = parsed;
+  console.log(
+    `[Permission] Response: requestId=${requestId}, behavior=${decision.behavior}`
+    + (decision.optionId ? `, option=${decision.optionId}` : '')
+    + (decision.reasonCode ? `, reason=${decision.reasonCode}` : '')
+  );
 
-  const ids = ['workbuddy', 'hermes']; // 目前只有这两类会产生权限请求
-  const hit = ids.find(id => registry.resolvePermission(id, requestId, decision));
+  const hit = registry.resolvePermissionAnywhere(requestId.trim(), decision);
 
   if (!hit) {
     console.log(`[Permission] Request not found: ${requestId}`);
@@ -1531,6 +1746,12 @@ app.post("/api/chat", async (req, res) => {
   /** 客户端是否已断开：断开后继续跑（等重连），但不再往死连接里写 */
   let clientGone = false;
   runHub.create(runId);
+  // A122：界面上的「停止」按 runId 即时中止。断开宽限那条路要等 20 秒，
+  // 而「停止」的语义是「现在就别跑了」——子进程继续跑等于继续花用户的额度。
+  runHub.setAbortHandler(runId, () => {
+    if (!ac.signal.aborted) ac.abort();
+    registry.abort(agentId, session!.id);
+  });
   const projector = new RunProjector({
     runId,
     sessionId: session.id,
@@ -1540,6 +1761,9 @@ app.post("/api/chat", async (req, res) => {
     // A100：事件来源。纯文本解析出来的工具事件与 SDK 原生事件在界面上
     // 长得一样，必须让用户能分辨。
     source: registry.eventSourceOf(agentId),
+    // P2：过程能力档的 key 是 (引擎 · 模型 · 网关)，不是 Agent —— 同一个 codex
+    // 接官方模型与接第三方网关是两种事件形态。
+    capabilities: runProfileOf(agentId, selectedModel),
   });
 
   /** 写一条 v2 事件：带 SSE id（断线重放按它续传） */
@@ -1588,7 +1812,10 @@ app.post("/api/chat", async (req, res) => {
     // 免得给 CLI 传一个空串档位。
     reasoningEffort: (session.reasoning_effort ?? undefined) || undefined,
     resumeToken,
-    permissionMode: permissionMode || 'default',
+    // A123：生效顺序与 cwd / 档位一致 —— 请求体 > 会话里存的值 > 'default'。
+    // 中间那一级是这轮补上的：以前这一档只活在请求体里，而前端读的是会话对象，
+    // 于是「芯片显示全放行、发出去的是 default」—— 会话里存了也没人看。
+    permissionMode: permissionMode || session.permission_mode || 'default',
     allowedTools: allowedToolsFor(scenarioId, session.scenario_id),
     signal: ac.signal,
   });
@@ -1698,6 +1925,15 @@ app.post("/api/chat", async (req, res) => {
   }
 
   // 落库之后才发 run_end：客户端收到它可能立刻刷新会话
+  // P2：能力档的 observed 只在 run_end 上是事实，跟着这一条一起落库。
+  if (end.type === 'run_end' && end.capabilities) {
+    try {
+      db.saveCapabilityProfile(end.capabilities);
+    } catch (e: any) {
+      // 能力档是过程统计，写失败不该让已经完成的这一轮变成失败
+      console.error('[Capability] 保存观测结果失败:', e?.message ?? e);
+    }
+  }
   writeEvent(end);
 
   console.log(`[Chat] 请求完成 ✓ (${agentId})`);
@@ -1996,6 +2232,26 @@ app.get("/api/runs/active", (req, res) => {
 });
 
 /**
+ * 即时停止一个还在跑的 run（A122）。
+ *
+ * 为什么必须有这么一个接口，而不是让前端直接把 fetch 掐掉：
+ * 断线后的子进程**故意**继续跑 20 秒（E5 的断线宽限，为了网络抖动时能接回来），
+ * 而「点了停止」不是网络抖动 —— 让它等 20 秒等于用户的 Agent 还在改文件、还在烧额度。
+ *
+ * 语义：只对「还在跑且注册过中止动作」的 run 有效。已结束 / 不存在的 run 回 404，
+ * 因为这里没有任何东西可停；不返回 200 假装成功，否则前端会以为停过了一次已结束的对话。
+ */
+app.post("/api/runs/:runId/stop", (req, res) => {
+  const { runId } = req.params;
+  const stopped = runHub.stop(runId);
+  if (!stopped) {
+    return res.status(404).json({ error: "该运行已结束或不存在，无需中止" });
+  }
+  console.log(`[Stop] 已中止 run ${runId}`);
+  res.json({ ok: true, runId });
+});
+
+/**
  * 断线重放的流端点（E5）。
  *
  * 前端在流中断后带着 `after=<最后收到的 seq>` 重新连上来：
@@ -2199,10 +2455,15 @@ app.post("/api/group-chat", async (req, res) => {
     model,
     cwd,
     reasoningEffort: reasoningEffort || session.reasoning_effort || undefined,
-    permissionMode,
+    // A123：每一棒也要吃会话里存的权限档（请求体没带时兜住），与一对一同一口径
+    permissionMode: permissionMode || session.permission_mode || undefined,
     scenarioId,
     triggerPrompt: message,
     signal: ac.signal,
+    // A122：界面上的「停止」走这里按下 controller
+    abortTurn: () => {
+      if (!ac.signal.aborted) ac.abort();
+    },
     emitBlocks: events => {
       for (const e of events) {
         try {
@@ -2336,10 +2597,15 @@ app.post("/api/workflow/run", async (req, res) => {
     model,
     cwd,
     reasoningEffort: reasoningEffort || session.reasoning_effort || undefined,
-    permissionMode,
+    // A123：同群聊
+    permissionMode: permissionMode || session.permission_mode || undefined,
     scenarioId,
     triggerPrompt,
     signal: ac.signal,
+    // A122：工作流与群聊同一个停止入口
+    abortTurn: () => {
+      if (!ac.signal.aborted) ac.abort();
+    },
     emitBlocks: events => {
       for (const e of events) {
         try {
@@ -2867,9 +3133,9 @@ const HOST = process.env.OPC_HOST || '127.0.0.1';
 bootMemory();
 // A98：老会话按 cwd 回填项目归属。幂等，失败不阻断启动 ——
 // 回填不上只会退化成「这个会话用全局记忆」，与改造前的行为一致。
+// A131：明细日志挪进 `backfillSessionProjects()` —— 只有它知道跳过了几个已不存在的目录。
 try {
-  const linked = backfillSessionProjects();
-  if (linked > 0) console.log(`[DB] 项目回填：${linked} 个会话已关联到项目`);
+  backfillSessionProjects();
 } catch (e) {
   console.warn('[DB] 项目回填失败（不影响启动）:', (e as Error).message);
 }

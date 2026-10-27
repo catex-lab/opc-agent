@@ -260,6 +260,22 @@ async function drain(q: AsyncQueue<AgentEvent>): Promise<AgentEvent[]> {
 }
 
 {
+  // A125：redacted_thinking 正文是密的，但「想过一段」是事实。
+  // 它不该进 raw 旁路（用户看到的是一条看不懂的原生事件），也不该被丢掉；
+  // 正确落点是「已隐去」的思考块。
+  const q = new AsyncQueue<AgentEvent>();
+  mapSdkMessage(
+    { type: 'assistant', message: { content: [{ type: 'redacted_thinking', data: 'ENCRYPTED' }] } },
+    ctx, q, newTurnState()
+  );
+  const got = await drain(q);
+  const ev = got[0] as { type?: string; content?: string; redacted?: boolean };
+  say('2-11 redacted_thinking 落成 thinking 块', got.length === 1 && ev?.type === 'thinking');
+  say('2-11 带 redacted 标记', ev?.redacted === true);
+  say('2-11 不伪造正文', ev?.content === '');
+}
+
+{
   // 同一批内容里混着认识的块和不认识的块：认识的照常出，不认识的进 raw
   const q = new AsyncQueue<AgentEvent>();
   mapSdkMessage(

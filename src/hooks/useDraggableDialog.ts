@@ -1,5 +1,11 @@
 import { useRef, useCallback } from 'react';
 
+/**
+ * ⚠️ A130（用户决定）：弹窗改为固定在应用窗口内，三处调用点已全部摘除，
+ * 本文件当前**没有调用方**。留着是因为项目纪律「不得擅自删文件」；
+ * 要重新启用拖动前先想清楚：DOM 浮层出不了视口，拖到边上只会被窗口裁掉。
+ */
+
 interface DragState {
   pointerId: number;
   startX: number;

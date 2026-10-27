@@ -161,7 +161,57 @@ eq(runHub.subscribe('no-such-run', () => {}), null, '不存在的 run：subscrib
   for (const e of out) applyRunEvent(client, e);
   eq(client, p.blockList, '回放：客户端还原的块与服务端一致');
   eq(textOfBlocks(client), textOfBlocks(p.blockList), '回放：正文文本一致');
-  ok(runHub.isFinished(runId) === false || true, '回放：未结束的 run 仍可订阅');
+  // 只发了 closes、没发 end —— 这个 run 不该被认成已结束。
+  // 原来这里写的是 `isFinished(runId) === false || true`，恒为真的一条假守卫
+  // （A116 教训的同一类病：条件里带了 `|| true` 就等于没断言）。
+  ok(runHub.isFinished(runId) === false, '回放：只闭合块未发 run_end 时 run 仍未结束');
+}
+
+// ============= 6. 即时中止（A122：界面上的「停止」） =============
+{
+  const runId = 'rh-stop';
+  runHub.create(runId);
+  const p = new RunProjector({ ...meta, runId }, () => 1_000);
+
+  let aborted = 0;
+  runHub.setAbortHandler(runId, () => {
+    aborted++;
+  });
+
+  eq(runHub.stop(runId), true, '停止：还在跑的 run 停得动');
+  eq(aborted, 1, '停止：中止动作被执行一次');
+  eq(runHub.isFinished(runId), false, '停止：不把 run 自己标成已结束（收尾归路由）');
+  eq(runHub.activeRuns().some(r => r.runId === runId), true, '停止：run 仍在 active 清单里，等路由发 run_end');
+
+  // 停一次之后才收尾：动作不能被重复触发
+  const fin = p.finish('aborted');
+  for (const out of [...fin.closes, fin.end]) publishRunEvent(out);
+  eq(aborted, 1, '收尾后不会再触发中止动作');
+  eq(runHub.stop(runId), false, '停止：已结束的 run 没什么可停（接口据此回 404）');
+  eq(runHub.activeRuns().some(r => r.runId === runId), false, '停止：run_end 后从 active 清单消失');
+}
+
+// 没注册中止动作 / run 不存在：一律 false，不假装停成功
+{
+  runHub.create('rh-nohandler');
+  eq(runHub.stop('rh-nohandler'), false, '停止：没注册过中止动作时返回 false');
+  eq(runHub.stop('rh-does-not-exist'), false, '停止：run 不存在时返回 false');
+}
+
+// 中止动作里抛错：不能把 stop 的调用方一起带崩
+{
+  runHub.create('rh-throw');
+  runHub.setAbortHandler('rh-throw', () => {
+    throw new Error('stub-abort-boom');
+  });
+  let threw = false;
+  try {
+    runHub.stop('rh-throw');
+  } catch {
+    threw = true;
+  }
+  eq(threw, false, '停止：中止动作抛错被吞住，不把异常甩给调用方');
+  eq(runHub.isFinished('rh-throw'), false, '停止：抛错也不会把 run 标成已结束');
 }
 
 // ============= 结果 =============

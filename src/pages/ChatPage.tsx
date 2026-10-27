@@ -15,6 +15,7 @@ import {
   RegisteredAgent,
   OrchestrationMode,
 } from '../types';
+import type { PermissionOption } from '../types';
 import { NewChatView } from '../components/NewChatView';
 import { SCENARIOS, getScenario, enforcementGap, isModeGap, supportLimitation, PERMISSION_MODE_LABEL } from '../scenarios';
 import { DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE } from '../imageOptions';
@@ -91,8 +92,7 @@ interface ChatPageProps {
   onStop: () => void;
   onInputChange: (value: string) => void;
   onModelChange: (modelId: string) => void;
-  onPermissionAllow: () => void;
-  onPermissionDeny: () => void;
+  onPermissionResolve: (option: PermissionOption) => void;
   onPermissionModeChange: (mode: PermissionMode) => void;
   /** 群聊：改编排模式（本地 + PATCH 后端） */
   onOrchestrationChange: (mode: OrchestrationMode) => void;
@@ -168,8 +168,7 @@ export function ChatPage({
   onStop,
   onInputChange,
   onModelChange,
-  onPermissionAllow,
-  onPermissionDeny,
+  onPermissionResolve,
   onPermissionModeChange,
   onOrchestrationChange,
   onMembersChange,
@@ -463,7 +462,14 @@ export function ChatPage({
     [onInputChange]
   );
 
-  const handleStop = isGroup ? undefined : onStop;
+  /**
+   * 停止按钮的落点（A122）。
+   *
+   * 以前群聊这里给的是 `undefined`，于是下面 `handleStop ?? onStop` 把群聊的
+   * 停止也接到了 1:1 的把手上 —— 而那一轮有多个 run、走的是另一条流，
+   * 1:1 的把手根本不知道它们的 id，点了等于没点。停哪一轮，就必须由跑它的那个 hook 来停。
+   */
+  const handleStop = isGroup ? group.stopRun : onStop;
   const loading = isGroup ? group.isLoading : isLoading;
 
   /**
@@ -661,8 +667,9 @@ export function ChatPage({
                 groupMode={isGroup}
                 imageMode={imageMode}
                 permissionRequest={isGroup ? group.permissionRequest : permissionRequest}
-                onPermissionAllow={onPermissionAllow}
-                onPermissionDeny={onPermissionDeny}
+                // 群聊必须用群聊自己的答复口：卡片显示的是 group.permissionRequest，
+                // 而 useChat 那条流的 permissionRequest 永远是 null，点按钮不会发请求
+                onPermissionResolve={isGroup ? group.resolvePermission : onPermissionResolve}
                 onShowAgentDetail={setDetailAgentId}
                 // A33：重新生成 / 分支。群聊里这两个能力不接
                 // （语义说不清，见 App.tsx 的同名注释），不传即不渲染按钮。
