@@ -11,11 +11,9 @@ import {
   Message,
   PermissionMode,
   CustomAgent,
-  PermissionRequest,
   RegisteredAgent,
   OrchestrationMode,
 } from '../types';
-import type { PermissionOption } from '../types';
 import { NewChatView } from '../components/NewChatView';
 import { SCENARIOS, getScenario, enforcementGap, isModeGap, supportLimitation, PERMISSION_MODE_LABEL } from '../scenarios';
 import { DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE } from '../imageOptions';
@@ -86,13 +84,11 @@ interface ChatPageProps {
   upsertGroupMessage: (sessionId: string, message: Message) => void;
   isLoading: boolean;
   inputValue: string;
-  permissionRequest: PermissionRequest | null;
   permissionMode: PermissionMode;
   onSendMessage: (message: string, newChatOptions?: NewChatOptions, onNavigate?: (path: string) => void) => void;
   onStop: () => void;
   onInputChange: (value: string) => void;
   onModelChange: (modelId: string) => void;
-  onPermissionResolve: (option: PermissionOption) => void;
   onPermissionModeChange: (mode: PermissionMode) => void;
   /** 群聊：改编排模式（本地 + PATCH 后端） */
   onOrchestrationChange: (mode: OrchestrationMode) => void;
@@ -162,13 +158,11 @@ export function ChatPage({
   upsertGroupMessage,
   isLoading,
   inputValue,
-  permissionRequest,
   permissionMode,
   onSendMessage,
   onStop,
   onInputChange,
   onModelChange,
-  onPermissionResolve,
   onPermissionModeChange,
   onOrchestrationChange,
   onMembersChange,
@@ -666,10 +660,6 @@ export function ChatPage({
                 agent={currentAgent}
                 groupMode={isGroup}
                 imageMode={imageMode}
-                permissionRequest={isGroup ? group.permissionRequest : permissionRequest}
-                // 群聊必须用群聊自己的答复口：卡片显示的是 group.permissionRequest，
-                // 而 useChat 那条流的 permissionRequest 永远是 null，点按钮不会发请求
-                onPermissionResolve={isGroup ? group.resolvePermission : onPermissionResolve}
                 onShowAgentDetail={setDetailAgentId}
                 // A33：重新生成 / 分支。群聊里这两个能力不接
                 // （语义说不清，见 App.tsx 的同名注释），不传即不渲染按钮。

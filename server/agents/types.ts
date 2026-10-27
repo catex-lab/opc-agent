@@ -138,6 +138,13 @@ export type AgentEvent =
        * 缺省 = 该适配器没有声明（老路径），前端退回「拒绝 / 允许」两个按钮。
        */
       options?: PermissionOption[];
+      /**
+       * A132：服务端兜底兑现的时刻（epoch ms）。
+       *
+       * 缺省 = 该适配器没有超时兜底（ACP 的 `pendingPerms` 是裸 Map，无 setTimeout）。
+       * 此时 UI 显示「无超时」——**不许伪造一个倒计时**。
+       */
+      expiresAt?: number;
     };
 
 // ============= Agent 描述 =============

@@ -37,6 +37,7 @@ import {
   setGroupRemark,
 } from '../sessionFlags';
 import { useAgentRemarks, setAgentRemark } from '../agentRemarks';
+import { countFor, usePermissionSnapshot } from '../permissions/permissionStore';
 import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
 
 const LAST_READ_KEY = 'opc:lastRead';
@@ -120,6 +121,9 @@ export function ConversationList({
   const lastRead = useMemo(() => readLastReadMap(), [sessions, currentSessionId]);
   /** 免打扰 / 手动标记未读（本地标记，见 sessionFlags.ts） */
   const flags = useSessionFlags();
+  // A132：「等授权」角标。**必须调这个 hook** —— `countFor()` 只是普通函数，
+  // 光调它组件不会订阅 store，角标会永久停在旧值（切走会话前是 0 就永远是 0）。
+  usePermissionSnapshot();
   /** Agent 备注（本地别名，见 agentRemarks.ts） */
   const remarks = useAgentRemarks();
   /** 正在改备注的那一行（null = 没开弹窗） */
@@ -343,6 +347,9 @@ export function ConversationList({
                   setMenu({ targetId: session.id, x: e.clientX, y: e.clientY });
                 }}
                 className={`tc-list-item group relative mb-0.5 flex cursor-pointer items-center gap-2.5 px-2.5 py-2.5${isActive ? ' is-active' : ''}`}
+                // A132：给列表项一个稳定锚点。以前只能靠 `.tc-list-item` 序号选，
+                // 排序一变断言就指向别的会话 —— 那种「点了但不是它」的假绿最难查。
+                data-conversation-item={session.id}
               >
                 {/* 头像悬停出名片：扫列表时想确认「这是谁」不必点进会话。
                     未注册的 Agent（后端已下线）没有资料可看，就不挂名片。 */}
@@ -401,6 +408,22 @@ export function ConversationList({
                     >
                       {preview}
                     </span>
+                    {/* A132：「等授权」是独立的一维状态 —— 它不是「有新消息」，
+                        用户必须能在切走的会话上看见「这条正卡着等人批」，
+                        否则六个并行 Agent 里那个卡住的永远不会被想起来。
+                        用 warning 色而不是未读红：红点是「来看」，这是「要你动手」。 */}
+                    {countFor(session.id) > 0 && (
+                      <span
+                        className="shrink-0 rounded px-1 text-caption"
+                        data-permission-waiting={session.id}
+                        style={{
+                          backgroundColor: 'var(--td-warning-color-1)',
+                          color: 'var(--td-warning-color)',
+                        }}
+                      >
+                        等授权
+                      </span>
+                    )}
                     {/* 未读与免打扰：
                         · 免打扰**不隐藏**未读点，只把它从红色降为灰色 ——
                           用户说的是「别打扰我」，不是「别让我知道」。

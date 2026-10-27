@@ -412,6 +412,13 @@ export class RunProjector {
             rule: ev.rule,
             // 缺省保持缺省：没有选项和「给了 0 个选项」是两种事实
             ...(ev.options ? { options: ev.options } : {}),
+            /**
+             * A132：**投影器必须逐字段透传**，这里漏一个字段，前面适配器
+             * 带得再对，前端也永远收不到 —— 而「收不到」的表现是倒计时不显示，
+             * 看起来像 UI 没做，实际是链路断在中间。
+             * 与 options 同样保持「缺省即缺省」：ACP 真没有超时，不许补一个。
+             */
+            ...(typeof ev.expiresAt === 'number' ? { expiresAt: ev.expiresAt } : {}),
           }),
         ];
 

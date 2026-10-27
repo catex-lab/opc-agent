@@ -739,6 +739,21 @@ select:focus-visible {
   --leading-normal: 1.5;
   --leading-loose: 1.7;
 
+  /* ── 等宽字体（代码 / 命令 / 路径 / 终端）──
+   *
+   * A132 补：这个令牌此前**从来没有定义过**，而 6 处在引用它
+   * （`WorkspaceBrowser` / `WorkspacePanel` / `WorkspaceTerminal`×3 / `InstallCard`）。
+   * 其中 5 处写的是裸 `var(--font-mono)`，没有 fallback —— 变量不存在时整条
+   * `font-family` 声明被丢弃，于是文件预览、代码块、终端回落到**继承的比例字体**。
+   * 只有 `InstallCard` 因为带了 `ui-monospace, …` 兜底才是真的等宽，
+   * 结果同一屏里「命令条」和「文件预览」是两种字体，而这件事没有任何报错。
+   *
+   * 与 A133 修掉的 `--tc-surface-sunken`、A84 删掉的 `ease-spring` 是同一类坑：
+   * **指向不存在变量的引用编译不报错、运行时静默降级**。
+   * 改这里请同时看 `verify:uiux-tokens` 的令牌接线断言。 */
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+
   /* ── 栏宽 ──
      会话列表 / 通讯录共用同一个宽度令牌，切栏时中栏不会忽宽忽窄。
      原先两处各写 `w-[272px] lg:w-[300px]`：靠「记得两个文件都改」来保持一致，
@@ -2864,6 +2879,56 @@ html[data-opc-glass='1'].dark .t-button--variant-base.t-button--theme-primary:ho
   color: var(--td-success-color) !important;
   background-color: transparent !important;
   border-color: var(--td-success-color) !important;
+}
+
+/* ===== A132 审批浮层 Dock =====
+ *
+ * 三条纪律一起满足（AGENTS.md「浮层的可读性不能靠 backdrop-filter」A27）：
+ *   1. 底色走 `--tc-overlay-surface`，它已含 `--opc-overlay-alpha`（下限 0.9），
+ *      **不写内联 backgroundColor** —— 内联会盖掉 `.tc-glass` 的底（ContactsPanel 就这么漏过）；
+ *   2. 同时带 `backdrop-filter`，但**不假设它生效**：可读性只由底色 alpha 保证；
+ *   3. 类名挂上 `.tc-glass`，由 `scripts/verify-overlay.mjs` 量有效 alpha ≥ 0.88。
+ *
+ * 落点右下角是 A130 的**已批豁免**：A130「居中固定」约束模态弹窗，不约束非模态
+ * 常驻浮层。Dock 不提供拖拽（A130 的拖拽禁令照守，`verify:a124-button-spec` 的
+ * 「src 里没有任何弹窗再接拖拽」契约因此仍然绿）。
+ */
+.tc-permission-dock {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 55;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  border-radius: var(--td-radius-large);
+  border: 1px solid var(--td-border-level-2-color);
+  box-shadow: var(--td-shadow-3);
+  overflow: hidden;
+}
+
+/* 命令整段可读：默认最多 4 行，超出交给「展开全部」，不再 truncate 成省略号。
+   截断即假授权 —— 看不清就点了允许。
+   ⚠️ 字号与行高都走令牌：max-height 由它们算出来，改字号时行数不会偷偷变成 3 行或 5 行。
+   ⚠️ 内边距必须在**这里**声明，不能靠 JSX 上的 `p-2`：全局是 `box-sizing: border-box`，
+   max-height 含内边距，只算 4 行字高会实得 3.1 行（实测 72px 高 / 18px 行高 / 16px 内边距）。
+   上下各 8px 由 `--tc-cmd-pad` 一处给出，算式才自洽。 */
+.tc-permission-cmd {
+  --tc-cmd-lines: 4;
+  --tc-cmd-pad: 8px;
+  padding: var(--tc-cmd-pad);
+  font-family: var(--font-mono);
+  font-size: var(--text-secondary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  max-height: calc(var(--text-secondary) * 1.5 * var(--tc-cmd-lines) + var(--tc-cmd-pad) * 2);
+  overflow: hidden;
+}
+
+.tc-permission-cmd[data-expanded='true'] {
+  max-height: 240px;
+  overflow: auto;
 }
 
 /* ===== TDesign Tag 标签 ===== */

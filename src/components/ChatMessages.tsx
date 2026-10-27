@@ -2,14 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loading, MessagePlugin } from 'tdesign-react';
 import { Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, Sparkles, TextSelect, Image as ImageIcon } from 'lucide-react';
-import { Message, Model, PermissionRequest, RegisteredAgent, Block, ThinkingBlock, ToolBlock, RawBlock } from '../types';
-import type { PermissionOption } from '../types';
+import { Message, Model, RegisteredAgent, Block, ThinkingBlock, ToolBlock, RawBlock } from '../types';
 import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
 import { BackgroundTasksPill } from './BackgroundTasksPill';
 import { useBackgroundTasks } from '../hooks/useBackgroundTasks';
 import { formatHandledDuration, hasFileEdits, lingeringToolBlocks } from '../../shared/trace';
-import { InlinePermissionCard } from './InlinePermissionCard';
 import { VerifyPanel } from './VerifyPanel';
 import { FileEvidencePanel } from './FileEvidencePanel';
 import { useVerifications } from '../hooks/useVerifications';
@@ -942,10 +940,6 @@ interface ChatMessagesProps {
    * 用它的头像会让人误以为「Hermes 会画图」。
    */
   imageMode?: boolean;
-  // 内联权限确认相关
-  permissionRequest?: PermissionRequest | null;
-  /** P4：选某一档答复（由审批卡原样回传服务端下发的选项） */
-  onPermissionResolve?: (option: PermissionOption) => void;
   /**
    * 点 Agent 头像 → 弹该 Agent 的详情（P7）。
    *
@@ -994,8 +988,6 @@ export function ChatMessages({
   agent,
   groupMode = false,
   imageMode = false,
-  permissionRequest,
-  onPermissionResolve,
   /** 点 Agent 头像 → 弹该 Agent 的详情（P7） */
   onShowAgentDetail,
   onRegenerate,
@@ -1657,18 +1649,9 @@ export function ChatMessages({
         );
       })}
       
-      {/* 内联权限确认 - 横向简洁展示。
-          A35：去掉 `ml-12` —— 那是给「头像 36 + 间距 12」让位的旧缩进，
-          现在助手侧正文已经整宽铺满（头像在头部那一行），再缩 48px 就会
-          比上下消息都往右错一截。 */}
-      {permissionRequest && onPermissionResolve && (
-        <div className="flex gap-3">
-          <InlinePermissionCard
-            request={permissionRequest}
-            onResolve={onPermissionResolve}
-          />
-        </div>
-      )}
+      {/* 审批卡不再挂在这里（A132）：它已搬到 App 层的 PermissionDock。
+          原因不是「换个位置好看」，而是消息流末尾这个槽位会随会话卸载 ——
+          切走会话时那张卡就消失了，可服务端那条流还在等答复。 */}
       
       <div ref={messagesEndRef} />
       {/* 后台任务胶囊（A36）：整条列表只挂一颗 —— 每条消息都挂的话，

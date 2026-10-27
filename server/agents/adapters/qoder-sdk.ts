@@ -682,6 +682,9 @@ export class QoderSdkAdapter implements AgentProvider {
         input: (input ?? {}) as Record<string, unknown>,
         risk: verdict.risk,
         rule: verdict.rule,
+        // A132：把服务端的兜底时刻如实带下去，前端才能画倒计时而不是自己猜。
+        // 三家都有 PERMISSION_TIMEOUT；ACP 没有，所以 acp.ts 不带这个字段。
+        expiresAt: Date.now() + PERMISSION_TIMEOUT,
       });
 
       const decision = await this.replies.register(

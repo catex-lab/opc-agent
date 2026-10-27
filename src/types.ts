@@ -344,6 +344,13 @@ export interface PermissionRequest {
   /** 命中的规则名（人话），弹窗上解释「凭什么问这一句」 */
   rule?: string;
   /**
+   * A132：服务端兜底兑现的时刻（epoch ms）。
+   *
+   * 缺省 = 该适配器没有超时兜底（ACP 的 `pendingPerms` 是裸 Map，无 setTimeout）。
+   * 此时 UI 显示「无超时」——**不许伪造一个倒计时**。
+   */
+  expiresAt?: number;
+  /**
    * P4：本次真实可选的答复档位，由适配器决定、原样渲染。
    *
    * 缺省 = 该适配器没声明（历史路径），卡片退回「拒绝 / 允许」两个按钮。

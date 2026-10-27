@@ -11,6 +11,15 @@ import {
 import { PermissionRequest } from '../types';
 import type { PermissionOption } from '../types';
 
+/**
+ * A132：组件本体 `InlinePermissionCard` 已不再被渲染（审批改走右下角浮层，
+ * 见 `PermissionDock.tsx`）。按 AGENTS §6「不得删除已有文件」不删。
+ *
+ * `TOOL_CONFIG` / `getToolConfig` / `RISK_BADGE` / `FALLBACK_OPTIONS` 四个映射
+ * 被 `PermissionCard` 复用 —— 同一个工具在气泡里和审批卡上必须是同一个颜色、
+ * 同一句人话、同一套兜底档位。抄两份必然漂移，所以这里是唯一来源。
+ */
+
 interface InlinePermissionCardProps {
   request: PermissionRequest;
   /**
@@ -28,7 +37,7 @@ interface InlinePermissionCardProps {
  * 只有两档：没有 always 的承诺，就不摆 always 的按钮。带 always 的选项
  * 必须由真正能记住决定的适配器声明。
  */
-const FALLBACK_OPTIONS: PermissionOption[] = [
+export const FALLBACK_OPTIONS: PermissionOption[] = [
   { id: 'reject_once', kind: 'reject_once', label: '拒绝' },
   { id: 'allow_once', kind: 'allow_once', label: '允许' },
 ];
@@ -37,7 +46,7 @@ const FALLBACK_OPTIONS: PermissionOption[] = [
 // 颜色走 index.css 的 --tool-color-* 语义变量（腾讯调色板），
 // 与 ToolCallsCollapse 里的分类色保持一一对应，避免同一工具
 // 在「气泡里」和「权限卡里」显示成两种颜色。
-const TOOL_CONFIG: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
+export const TOOL_CONFIG: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
   'Bash': { icon: <TerminalIcon />, color: 'var(--tool-color-danger)', label: '执行命令' },
   'Write': { icon: <EditIcon />, color: 'var(--tool-color-file)', label: '写入文件' },
   'Edit': { icon: <EditIcon />, color: 'var(--tool-color-file)', label: '编辑文件' },
@@ -51,7 +60,7 @@ const TOOL_CONFIG: Record<string, { icon: React.ReactNode; color: string; label:
 };
 
 // 获取工具配置
-const getToolConfig = (toolName: string) => {
+export const getToolConfig = (toolName: string) => {
   return TOOL_CONFIG[toolName] || { 
     icon: <Code1Icon />, 
     color: 'var(--td-text-color-secondary)', 
@@ -86,7 +95,7 @@ const getMainInfo = (toolName: string, input: Record<string, unknown>): string =
 // 门禁分级（A40）。safe 不显示徽标；risky/dangerous 由服务端判定后带下来。
 // 注意：risk 缺失不等于 safe —— 说明这条请求没经过门禁（CLI/ACP 适配器），
 // 此时退回按工具名猜，并且要在气泡上写清楚「未经服务端门禁判定」。
-const RISK_BADGE: Record<'risky' | 'dangerous', { text: string; bg: string; fg: string }> = {
+export const RISK_BADGE: Record<'risky' | 'dangerous', { text: string; bg: string; fg: string }> = {
   risky: {
     text: '需确认',
     bg: 'var(--td-warning-color-1)',

@@ -1,9 +1,10 @@
 import { useState, useCallback, useRef } from 'react';
 import { MessagePlugin } from 'tdesign-react';
 import { v4 as uuidv4 } from 'uuid';
-import { Message, PermissionRequest, PermissionMode, Session, CustomAgent, ImageBlock } from '../types';
-import type { PermissionOption } from '../types';
-import { behaviorOfKind, reasonCodeOfKind } from '../../shared/permissions';
+import { Message, PermissionMode, Session, CustomAgent, ImageBlock } from '../types';
+// A132：答复口与待授权队列都收到全局 store 里，这里只负责把流事件喂进去。
+// 以前这里既攥单值 state、又自己 fetch 答复，导致并行会话后来的顶掉前一条。
+import { push as pushPermission, markSessionEnded } from '../permissions/permissionStore';
 import {
   applyRunEvent,
   textOfBlocks,
@@ -87,8 +88,6 @@ export function useChat(options: UseChatOptions) {
   const [inputValue, setInputValue] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.draftInput) || '';
   });
-  const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
-
   /**
    * 本轮的「停止」把手（A122）。
    *
@@ -442,26 +441,38 @@ export function useChat(options: UseChatOptions) {
             break;
 
           case 'error':
+            // 服务端明确报错 = 本轮结束，挂在它上面的待答复项不会再有人兑现
+            markSessionEnded(realSessionId);
             errorText = data.message || '未知错误';
             patchAssistant({ error: errorText });
             break;
 
           case 'permission_request':
-            setPermissionRequest({
-              requestId: data.requestId,
-              toolUseId: data.toolUseId || '',
-              toolName: data.toolName,
-              input: data.input,
-              sessionId: realSessionId,
-              timestamp: Date.now(),
-              risk: data.risk,
-              rule: data.rule,
-              // 缺省保持缺省：没声明选项 ≠ 给了 0 个选项
-              options: Array.isArray(data.options) ? data.options : undefined,
-            });
+            pushPermission(
+              {
+                requestId: data.requestId,
+                toolUseId: data.toolUseId || '',
+                toolName: data.toolName,
+                input: data.input,
+                sessionId: realSessionId,
+                timestamp: Date.now(),
+                risk: data.risk,
+                rule: data.rule,
+                // 缺省保持缺省：没声明选项 ≠ 给了 0 个选项
+                options: Array.isArray(data.options) ? data.options : undefined,
+                // 没有超时兜底的适配器（ACP）不带这个字段，UI 画「无超时」——
+                // 不许在这里补一个 Date.now()+5min 冒充
+                expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : undefined,
+              },
+              'single',
+              Date.now()
+            );
             break;
 
           case 'run_end':
+            // 本轮收尾：服务端 `PendingReplies.clear()` 已把这些按 cancelled 兑现，
+            // 前端再留一张卡就是永远批不掉的僵尸卡
+            markSessionEnded(realSessionId);
             if (typeof data.seq === 'number') lastSeq = data.seq;
             flushNow();
             patchAssistant({
@@ -616,42 +627,15 @@ export function useChat(options: UseChatOptions) {
     )));
   }, [setSessions]);
 
-  /**
-   * 回一次权限请求（P4）。
-   *
-   * `option` 由审批卡原样传回（来自服务端下发的目录），这里只做翻译：
-   * kind → behavior，reject_always → user_denied_always。不传 option 是
-   * 老路径兜底，按「拒绝」处理 —— 但必须带上原因码，否则服务端无法区分
-   * 「用户拒绝」和「超时 / 收尾」。
-   */
-  const resolvePermission = useCallback(async (option?: PermissionOption) => {
-    if (!permissionRequest) return;
-
-    const behavior = option ? behaviorOfKind(option.kind) : 'deny';
-    const reasonCode = option ? reasonCodeOfKind(option.kind) : 'user_rejected';
-
-    await fetch('/api/permission-response', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId: permissionRequest.requestId,
-        behavior,
-        ...(option ? { optionId: option.id } : {}),
-        ...(reasonCode ? { reasonCode } : {}),
-      }),
-    });
-
-    setPermissionRequest(null);
-  }, [permissionRequest]);
-
+  // A132：`resolvePermission` 与 `permissionRequest` 都搬走了。
+  // 答复的唯一出口是 `permissionStore.answer()`（它做送达判定：只有 200 才摘卡），
+  // 队列也由 store 统一持有 —— 这里不再需要对外暴露任何权限相关的东西。
   return {
     isLoading,
     inputValue,
     setInputValue: saveInput,
-    permissionRequest,
     sendMessage,
     regenerate,
     handleStop,
-    resolvePermission,
   };
 }

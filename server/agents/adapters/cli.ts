@@ -680,6 +680,9 @@ export class CliAdapter implements AgentProvider {
         // 弹窗上要显示「为什么问这一句」，否则用户只看到一堵墙
         risk: verdict.risk,
         rule: verdict.rule,
+        // A132：把服务端的兜底时刻如实带下去，前端才能画倒计时而不是自己猜。
+        // 三家都有 PERMISSION_TIMEOUT；ACP 没有，所以 acp.ts 不带这个字段。
+        expiresAt: Date.now() + PERMISSION_TIMEOUT,
         // 双向协议只有 allow / deny 两种答复，只摆这两档
         options: [...CLI_PERMISSION_OPTIONS],
       });

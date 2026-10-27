@@ -125,7 +125,11 @@ async function newPage(permission, opts = {}) {
   page.on('pageerror', e => consoleErrors.push(String(e)));
 
   const posts = [];
-  const streamBody = sse([permission, { type: 'done' }]);
+  // A132：群聊在**流结束**（`done`）时会摘掉未答复项 —— 那是对的：流都收尾了，
+  // 没人再等这个答复。但夹具里紧跟一条 `done` 会让卡片刚出现就被收走，
+  // 而「发完请求立刻收尾」的流在真机上不存在（服务端会挂着等答复）。
+  // 所以凡是要「卡片在场」的场景，必须让流停在那儿不结束（keepOpen）。
+  const streamBody = sse(opts.keepOpen ? [permission] : [permission, { type: 'done' }]);
 
   await ctx.route('**/api/**', async route => {
     const req = route.request();
@@ -329,7 +333,7 @@ console.log('\n[5] 服务端没给 options → 只画两档兜底');
 // ============= [6] 群聊审批 =============
 console.log('\n[6] 群聊：卡片与答复口是同一个请求');
 {
-  const { ctx, page, posts } = await newPage(permissionEvent({ requestId: 'req-group' }), { group: true });
+  const { ctx, page, posts } = await newPage(permissionEvent({ requestId: 'req-group' }), { group: true, keepOpen: true });
   await page.goto(base + '/chat/s2', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1000);
   await sendMessage(page);

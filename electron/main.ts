@@ -17,7 +17,7 @@
  *   那一层，天然早于所有模块初始化。
  */
 
-import { app, BrowserWindow, screen, shell, nativeTheme, ipcMain, dialog, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, screen, shell, nativeTheme, ipcMain, dialog, Tray, Menu, nativeImage, Notification } from 'electron';
 import { once } from 'node:events';
 import { join, isAbsolute } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -547,6 +547,38 @@ function registerIpc() {
   };
   terminal.onData(pushTerminalData);
   terminal.onState(pushTerminalState);
+
+  /**
+   * A132：权限申请的前台召回 —— **只提醒，不批准**。
+   *
+   * 通知里刻意不放 `buttons`：脱离应用、没看清完整命令就点「允许」，
+   * 等于免密授权。点通知只做一件事：把窗口拉到前台，再让渲染进程定位到
+   * 那条会话。授权动作必须在应用内、看着完整命令完成。
+   *
+   * 节流放在主进程而不是 store：只有这里知道「窗口是不是在前台」，
+   * 也只有这里能保证「同一会话的多条请求只响一次」不被两次并发 push 击穿。
+   */
+  const notified = new Set<string>();
+  ipcMain.on('opc:permission-notify', (_e, payload: unknown) => {
+    const p = payload as { requestId?: string; sessionId?: string; title?: string; body?: string };
+    if (!p?.requestId || !p.sessionId) return;
+    if (notified.has(p.sessionId)) return;
+    // 在前台就只弹 Dock —— 屏幕上都看见了还弹系统横幅是二次打扰
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) return;
+    notified.add(p.sessionId);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(true);
+    if (!Notification.isSupported()) return;
+    const n = new Notification({ title: p.title ?? 'OPC Agent · 等待授权', body: p.body ?? '' });
+    n.on('click', () => {
+      showMainWindow();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('opc:permission-focus', p.sessionId);
+      }
+    });
+    // 关掉横幅就允许同一会话再提醒一次：用户没点进去，说明还没看到
+    n.on('close', () => notified.delete(p.sessionId!));
+    n.show();
+  });
 }
 
 async function createWindow() {

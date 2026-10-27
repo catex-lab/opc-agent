@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Message, PermissionRequest, OrchestrationMode } from '../types';
-import type { PermissionOption } from '../types';
-import { behaviorOfKind, reasonCodeOfKind } from '../../shared/permissions';
+import { Message, OrchestrationMode } from '../types';
+// A132：与单聊共用同一个待授权队列与唯一答复出口
+import { push as pushPermission, markSessionEnded } from '../permissions/permissionStore';
 import {
   applyRunEvent,
   textOfBlocks,
@@ -73,7 +73,6 @@ interface UseGroupChatOptions {
 function createEventStreamSession(opts: {
   upsertMessage: (message: Message) => void;
   currentSessionId: string | null;
-  onPermissionRequest: (p: PermissionRequest) => void;
   onOrchestrationSync?: (mode: OrchestrationMode) => void;
 }) {
   const { upsertMessage } = opts;
@@ -239,23 +238,35 @@ function createEventStreamSession(opts: {
         break;
 
       case 'permission_request':
-        opts.onPermissionRequest({
-          requestId: data.requestId,
-          toolUseId: data.toolUseId || '',
-          toolName: data.toolName,
-          input: data.input,
-          // 会话 id 可能还是空壳（本地新建的群没落库）：用空串占位，
-          // resolvePermission 走 requestId 反查，本来就不依赖这个字段
-          sessionId: opts.currentSessionId ?? '',
-          timestamp: Date.now(),
-          risk: data.risk,
-          rule: data.rule,
-          // P4：群聊卡片同样按服务端下发的目录渲染
-          options: Array.isArray(data.options) ? data.options : undefined,
-        });
+        pushPermission(
+          {
+            requestId: data.requestId,
+            toolUseId: data.toolUseId || '',
+            toolName: data.toolName,
+            input: data.input,
+            // 会话 id 可能还是空壳（本地新建的群没落库）：用空串占位。
+            // 答复按 requestId 反查，本来就不依赖这个字段；这里只影响「排在第几位」。
+            sessionId: opts.currentSessionId ?? '',
+            timestamp: Date.now(),
+            risk: data.risk,
+            rule: data.rule,
+            // P4：群聊卡片同样按服务端下发的目录渲染
+            options: Array.isArray(data.options) ? data.options : undefined,
+            expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : undefined,
+          },
+          'group',
+          Date.now()
+        );
         break;
 
       case 'done':
+        // 流结束 = 这一轮彻底收尾（群聊每条 run 结束只发 turn_done，
+        // done 才是整条流的终点）。此刻还挂着的待答复项已被服务端按 cancelled
+        // 兑现，前端留着就是永远批不掉的僵尸卡。
+        //
+        // 刻意**不**在 `error` 里清：群聊的 error 是**单条 run** 级别的，
+        // 一个 Agent 报错不该把同会话里另一条还在等授权的卡一起抹掉。
+        markSessionEnded(opts.currentSessionId ?? '');
         break;
     }
   };
@@ -366,7 +377,6 @@ export function useGroupChat(options: UseGroupChatOptions) {
   } = options;
 
   const [isLoading, setIsLoading] = useState(false);
-  const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
 
   /**
    * 当前这条流。群聊发言与工作流脚本共用一个槽位 —— 同一时刻只有一轮在发
@@ -379,7 +389,6 @@ export function useGroupChat(options: UseGroupChatOptions) {
     createEventStreamSession({
       upsertMessage,
       currentSessionId,
-      onPermissionRequest: setPermissionRequest,
       onOrchestrationSync,
     });
 
@@ -510,39 +519,16 @@ export function useGroupChat(options: UseGroupChatOptions) {
   }, []);
 
   /**
-   * 群聊审批的答复口（P4）。
+   * 群聊审批的答复口**已删除**（A132）。
    *
-   * 之前群聊卡片拿到的是 useChat 的 handler —— 而 useChat 那条流的
-   * permissionRequest 永远是 null，点了「允许」什么都不会发生。
-   * 这里用群聊自己的 requestId 直接回服务端，顺手把选项带上。
+   * 旧缺陷是「卡片显示群请求、按钮却回复了 null」—— 因为 ChatPage 把 useChat 的
+   * handler 递给了群聊卡片。现在 requestId 全局唯一、答复口全局唯一
+   * （`permissionStore.answer()`），这类「接错线」在结构上不可能再发生。
    */
-  const resolvePermission = useCallback(async (option?: PermissionOption) => {
-    if (!permissionRequest) return;
-
-    const behavior = option ? behaviorOfKind(option.kind) : 'deny';
-    const reasonCode = option ? reasonCodeOfKind(option.kind) : 'user_rejected';
-
-    await fetch('/api/permission-response', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId: permissionRequest.requestId,
-        behavior,
-        ...(option ? { optionId: option.id } : {}),
-        ...(reasonCode ? { reasonCode } : {}),
-      }),
-    });
-
-    setPermissionRequest(null);
-  }, [permissionRequest]);
-
   return {
     isLoading,
-    permissionRequest,
     sendGroupMessage,
     runWorkflowScript,
-    resolvePermission,
-    setPermissionRequest,
     stopRun,
   };
 }

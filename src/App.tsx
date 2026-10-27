@@ -36,6 +36,8 @@ import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { ChatHeader } from './components/ChatHeader';
 import { WorkspacePanel } from './components/WorkspacePanel';
 import { SettingsPage } from './components/SettingsPage';
+import { PermissionDock } from './components/PermissionDock';
+import { setSessionTitleResolver } from './permissions/permissionStore';
 import type { Message } from './types';
 
 /**
@@ -245,11 +247,9 @@ function AppContent() {
     isLoading,
     inputValue,
     setInputValue,
-    permissionRequest,
     sendMessage,
     regenerate,
     handleStop,
-    resolvePermission,
   } = useChat({
     currentSession,
     currentSessionId,
@@ -494,6 +494,32 @@ function AppContent() {
     },
     [navigate, setCurrentSessionId]
   );
+
+  /**
+   * A132：把「会话 id → 标题」注册给权限 store，供系统通知用。
+   *
+   * store 在 App 之外（不依赖 React），拿不到会话列表；反过来由 App 注册进去，
+   * 通知标题才写得出「研发小组 等待授权」而不是一串 UUID。
+   */
+  useEffect(() => {
+    setSessionTitleResolver(id => sessions.find(s => s.id === id)?.title || '未知会话');
+    return () => setSessionTitleResolver(null);
+  }, [sessions]);
+
+  /**
+   * A132：点系统通知 → 跳到那条会话。
+   *
+   * 只做「定位」，**不做任何答复** —— 通知里没有批准按钮，这条桥也不提供
+   * 「批准」通道（`preload.cjs` 里刻意没有 permission-response）。
+   * 浏览器开发态没有 `window.opc`，可选链直接跳过。
+   */
+  useEffect(() => {
+    const bridge = (window as unknown as {
+      opc?: { onPermissionFocus?: (cb: (sessionId: string) => void) => () => void };
+    }).opc;
+    const off = bridge?.onPermissionFocus?.(id => handleSelectSession(id));
+    return () => off?.();
+  }, [handleSelectSession]);
 
   /**
    * A119：选中一个项目 —— 状态与 URL 一起改。
@@ -1285,13 +1311,11 @@ function AppContent() {
                         upsertGroupMessage={upsertGroupMessage}
                         isLoading={isLoading}
                         inputValue={inputValue}
-                        permissionRequest={permissionRequest}
                         permissionMode={permissionMode}
                         onSendMessage={sendMessage}
                         onStop={handleStop}
                         onInputChange={setInputValue}
                         onModelChange={updateCurrentSessionModel}
-                        onPermissionResolve={resolvePermission}
                         onPermissionModeChange={setPermissionMode}
                         onOrchestrationChange={handleOrchestrationChange}
                         onMembersChange={handleMembersChange}
@@ -1383,6 +1407,14 @@ function AppContent() {
             </div>
           </div>
         )}
+
+        {/* A132 审批浮层：挂在 App 层而不是会话页 —— 它必须**不随会话卸载**。
+            会话切走了，服务端那条流还在等答复，卡片跟着消失等于把人晾死。
+            自己 createPortal 到 body，所以放在这层不影响布局。 */}
+        <PermissionDock
+          currentSessionId={currentSessionId}
+          titleOf={id => sessions.find(s => s.id === id)?.title || '未知会话'}
+        />
       </div>
     </div>
   );

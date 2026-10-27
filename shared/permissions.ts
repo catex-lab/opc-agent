@@ -256,3 +256,75 @@ export function parsePermissionBody(raw: unknown): ParsedPermissionBody {
     },
   };
 }
+
+/* ===== A132：审批浮层的四个纯函数 =====
+ *
+ * 放这里而不是放组件里，是因为这四条全是「用户看到什么 ≠ 实际发生什么」的
+ * 判定点，必须在脱机态就能断言（DOM 行为在 Node 里造不出来，但这四条能）。
+ */
+
+/**
+ * `/api/permission-response` 的响应分类。
+ *
+ * 旧实现 POST 完不看响应就清空待办槽位：服务端返 404（不存在或已超时）时，
+ * 用户以为批过了、实际被拒，而界面上一切正常。三种结果必须分开走。
+ *
+ * @param status HTTP 状态码；`0` = 请求根本没发出去（断网 / 进程挂了）
+ */
+export type PermissionAck =
+  | { kind: 'settled' }
+  | { kind: 'stale' }
+  | { kind: 'rejected'; error: string };
+
+export function classifyPermissionAck(status: number, body: unknown): PermissionAck {
+  if (status === 200) return { kind: 'settled' };
+  if (status === 404) return { kind: 'stale' };
+  if (status === 0) return { kind: 'rejected', error: '网络中断，答复未送达' };
+  if (body && typeof body === 'object') {
+    const err = (body as { error?: unknown }).error;
+    if (typeof err === 'string' && err) return { kind: 'rejected', error: err };
+  }
+  return { kind: 'rejected', error: `HTTP ${status}` };
+}
+
+/**
+ * 快捷键选档。
+ *
+ * 不写死 `allow_once` / `reject_once` 这两个 id —— ACP 的选项 id 由上游给
+ * （`normalizePermissionOptions` 只认 kind）。一个候选都没有时返回 undefined，
+ * 调用方**什么都不发**：把「没有允许档」兜底成 deny 就是替用户做决定。
+ */
+export function pickOptionByKind(
+  options: readonly PermissionOption[],
+  prefix: 'allow' | 'reject'
+): PermissionOption | undefined {
+  return options.find(o => o.kind.startsWith(prefix));
+}
+
+/** 剩余毫秒；缺省（该适配器没有超时兜底）返回 null，UI 据此画「无超时」。 */
+export function remainingMs(expiresAt: number | undefined, now: number): number | null {
+  if (typeof expiresAt !== 'number') return null;
+  return Math.max(0, expiresAt - now);
+}
+
+/** `m:ss`，不进位到小时（兜底超时最长就 5 分钟）。 */
+export function formatCountdown(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/**
+ * 队列排序：当前会话的排前，组内按到达时间升序。
+ *
+ * 先来先批而不是后来先批 —— 长任务一直压着短任务，用户会觉得「刚来的没显示」。
+ */
+export function sortPendingPermissions<T extends { sessionId: string; receivedAt: number }>(
+  items: readonly T[],
+  currentSessionId: string | null
+): T[] {
+  return [...items].sort((a, b) => {
+    const am = a.sessionId === currentSessionId ? 0 : 1;
+    const bm = b.sessionId === currentSessionId ? 0 : 1;
+    return am !== bm ? am - bm : a.receivedAt - b.receivedAt;
+  });
+}

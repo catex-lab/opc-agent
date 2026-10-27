@@ -322,4 +322,26 @@ contextBridge.exposeInMainWorld('opc', {
       return () => ipcRenderer.removeListener('opc:window-state', handler);
     },
   },
+
+  /**
+   * A132：把「有命令在等授权」告诉主进程。只发不返 ——
+   * **批准永远发生在应用里**，桌面壳这条路上不存在任何「一键允许」。
+   *
+   * @param {{requestId: string, sessionId: string, title?: string, body?: string}} payload
+   */
+  notifyPermission(payload) {
+    try { ipcRenderer.send('opc:permission-notify', payload); } catch { /* 开发态没有这层桥 */ }
+  },
+
+  /**
+   * 订阅「点通知后请聚焦到这条会话」。返回取消订阅函数。
+   *
+   * @param {(sessionId: string) => void} cb
+   * @returns {() => void}
+   */
+  onPermissionFocus(cb) {
+    const handler = (_e, sessionId) => { try { cb(sessionId); } catch { /* 回调自己炸不该拖垮桥 */ } };
+    ipcRenderer.on('opc:permission-focus', handler);
+    return () => ipcRenderer.removeListener('opc:permission-focus', handler);
+  },
 });
