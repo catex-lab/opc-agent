@@ -231,6 +231,27 @@ console.log('\n[1] Dock 承载审批卡，长命令默认 4 行且不丢字');
   }
 
   await page.screenshot({ path: join(OUT, 'dock-long-command.png'), fullPage: false });
+
+  // 四档中文标签在 360px 宽的浮层里排得下吗？排不下会被 `overflow:hidden` 裁掉，
+  // 而「本会话始终允许」被裁半个字，用户就分不清它是哪一档 —— 这颗还是权限最大的那颗。
+  const fit = await page.evaluate(() => {
+    const dock = document.querySelector('[data-permission-dock]');
+    const btns = [...document.querySelectorAll('[data-permission-option]')];
+    const dr = dock.getBoundingClientRect();
+    const last = btns[btns.length - 1]?.getBoundingClientRect();
+    return {
+      dockRight: dr.right,
+      lastRight: last ? last.right : dr.right,
+      clipped: dock.scrollWidth - dock.clientWidth,
+    };
+  });
+  ok(
+    fit.lastRight <= fit.dockRight - 4,
+    '最右一颗按钮没有顶到浮层边缘（不被裁掉）',
+    `右缘 ${Math.round(fit.lastRight)} / 浮层 ${Math.round(fit.dockRight)}`
+  );
+  eq(fit.clipped, 0, '浮层内容没有横向溢出（scrollWidth 等于 clientWidth）');
+
   await ctx.close();
 }
 
