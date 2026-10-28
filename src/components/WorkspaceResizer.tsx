@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { pushPrefs } from '../prefs';
 import {
   WORKSPACE_MAX,
   WORKSPACE_MIN,
@@ -114,6 +115,8 @@ export function WorkspaceResizer({ onCommit }: WorkspaceResizerProps) {
       onDoubleClick={() => {
         document.documentElement.style.removeProperty('--tc-workspace-width');
         localStorage.removeItem('opc.workspace-width');
+        // A135：服务端那份也要清，否则下次启动又变回用户刚放弃的宽度
+        pushPrefs({ workspaceWidth: null });
       }}
       title="拖动调整宽度（← 变宽），双击恢复默认；聚焦后可用方向键"
       className="group absolute inset-y-0 left-0 z-10 -ml-[2px] w-[5px] cursor-col-resize"

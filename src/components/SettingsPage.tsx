@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, type CSSProperties } from 'react';
+import { useOverflowY } from '../hooks/useOverflowY';
 import { 
   Form, 
   Input, 
@@ -234,6 +235,23 @@ export function SettingsPage({
     isLoggedIn: false,
     checking: true,
   });
+
+  /**
+   * A137：右侧内容区装不下时底边渐隐。
+   *
+   * 这不是新需求，是 DESIGN-SYSTEM §4 的 A134 硬规矩：**任何会被容器裁切的内容区
+   * 都必须给出「还有更多」的信号** —— Windows 的 overlay 滚动条静止时完全不画，
+   * 用户看到的不是「可以往下滚」，而是一行被硬切在字中间的文字。
+   *
+   * 触发点：A137 把自建厂商表单的输入框从 24 升到 32，内容高了约 32px，
+   * 登录配置分区的 API Key 那一行正好被弹窗底边切断（截图实证）。
+   * 之前 24px 时刚好卡在边缘，所以这个问题一直没被发现。
+   */
+  const {
+    ref: panelScrollRef,
+    el: panelScrollEl,
+    overflowing: panelOverflowing,
+  } = useOverflowY<HTMLDivElement>();
   
   // 环境变量配置
   const [showEnvConfig, setShowEnvConfig] = useState(false);
@@ -439,6 +457,21 @@ export function SettingsPage({
   // 且不依赖任何后端数据（登录检查还在转圈时主题已经能改）。
   const [section, setSection] = useState<SettingsSectionKey>('appearance');
 
+  /**
+   * A138：切换分区时内容区回到顶部。
+   *
+   * 这是「弹窗固定高度」的配套，不是可选项。改成固定 700px 之后，短内容分区
+   * 也会有一个固定高度的滚动容器：从「记忆」滚到一半切到「关于与隐私」，
+   * 两边的内容都比容器高，浏览器**不会**帮你把 scrollTop 夹回来 ——
+   * 用户会落在新分区的半截，看着像内容丢了。
+   *
+   * 用 `scrollTop = 0` 而不是 `scrollTo({ behavior:'smooth' })`：
+   * 切分区是「换了一页」，不该有滚动动画抢在内容替换之前跑。
+   */
+  useEffect(() => {
+    if (panelScrollEl) panelScrollEl.scrollTop = 0;
+  }, [section, panelScrollEl]);
+
   // A129：通讯录「+ → 添加模型厂商」带 `provider=add` 过来时，厂商表单
   // 直接展开。不这么做的话，用户落在「登录配置」顶部还得自己往下找。
   const [autoOpenProvider] = useState(
@@ -574,7 +607,11 @@ export function SettingsPage({
           })}
         </div>
 
-        <div className="min-w-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6">
+        <div
+          ref={panelScrollRef}
+          className="tc-scroll-fade min-w-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6"
+          data-fade={panelOverflowing ? '1' : undefined}
+        >
           <div className="w-full space-y-8" data-settings-panel={section}>
 
         {/* ── 我的资料（A115）────────────────────────────────────
@@ -758,6 +795,11 @@ export function SettingsPage({
             
             {showEnvConfig ? (
               <div className="space-y-3">
+                {/* A137：这 4 个字段是**表单**（带 label、两列网格、要往里填东西），
+                    走 32 档；原来 24，与同屏「模型清单」的 32 输入框并排时像没做完。
+                    下面「保存/取消」是它们的伴生按钮，跟着输入框走同一档 ——
+                    同一行里 32 输入 + 24 按钮是最容易被看成 bug 的组合。
+                    列表行内的圆形「编辑/删除」不动（那是行内动作，24 是对的）。 */}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label 
@@ -768,7 +810,6 @@ export function SettingsPage({
                     </label>
                     <Input
                       type="password"
-                      size="small"
                       value={envConfig.apiKey}
                       onChange={(v) => setEnvConfig(prev => ({ ...prev, apiKey: v as string }))}
                       placeholder="API 密钥（推荐）"
@@ -783,7 +824,6 @@ export function SettingsPage({
                     </label>
                     <Input
                       type="password"
-                      size="small"
                       value={envConfig.authToken}
                       onChange={(v) => setEnvConfig(prev => ({ ...prev, authToken: v as string }))}
                       placeholder="认证令牌"
@@ -797,7 +837,6 @@ export function SettingsPage({
                       CODEBUDDY_INTERNET_ENVIRONMENT
                     </label>
                     <Select
-                      size="small"
                       value={envConfig.internetEnv}
                       onChange={(v) => setEnvConfig(prev => ({ ...prev, internetEnv: v as any }))}
                       placeholder="网络环境（可选）"
@@ -816,7 +855,6 @@ export function SettingsPage({
                       CODEBUDDY_BASE_URL
                     </label>
                     <Input
-                      size="small"
                       value={envConfig.baseUrl}
                       onChange={(v) => setEnvConfig(prev => ({ ...prev, baseUrl: v as string }))}
                       placeholder="自定义 URL（可选）"
@@ -825,7 +863,6 @@ export function SettingsPage({
                 </div>
                 <div className="flex items-center gap-2">
                   <Button 
-                    size="small"
                     theme="primary" 
                     onClick={saveEnvConfig}
                     loading={savingEnv}
@@ -833,7 +870,6 @@ export function SettingsPage({
                     保存
                   </Button>
                   <Button 
-                    size="small"
                     variant="text" 
                     onClick={() => {
                       setShowEnvConfig(false);
@@ -853,7 +889,6 @@ export function SettingsPage({
             ) : (
               <Button 
                 variant="outline" 
-                size="small"
                 onClick={() => setShowEnvConfig(true)}
               >
                 配置环境变量
@@ -1127,10 +1162,12 @@ export function SettingsPage({
                       比上面的模板卡片还显眼 —— 它只是一个入口，不该抢主位；
                       改成和「配置环境变量」同规格的 outline 小按钮，左对齐。 */}
                   <div>
+                    {/* A137：分区级入口，与「配置环境变量」同档 —— A37 的注释里
+                        就写明「改成和「配置环境变量」同规格的 outline 小按钮」，
+                        所以这两颗必须一起动，不能只升一颗（那就破了 A37 的约定）。 */}
                     <Button
                       icon={<Plus />}
                       variant="outline"
-                      size="small"
                       onClick={() => setIsCreating(true)}
                       data-create-agent
                     >

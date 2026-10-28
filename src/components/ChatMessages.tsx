@@ -1555,9 +1555,13 @@ export function ChatMessages({
             className={`flex flex-col gap-2 ${message.role === 'user' ? 'items-end max-w-[80%] ml-auto tc-user-msg' : 'min-w-0 max-w-full'}`}
           >
 
-            {/* 用户消息 */}
+            {/* 用户消息。
+                A136：去掉 `leading-relaxed`（1.625）—— 行高与字号现在都在
+                `.tc-bubble-user` 里定义（1.75，与助手正文同档）。留着一个
+                Tailwind 行高类会和那条规则抢同一个属性，谁赢取决于打包后的
+                样式顺序，改一次打包可能就变一次。 */}
             {message.role === 'user' && (
-              <div className="tc-bubble-user px-4 py-3 leading-relaxed break-words">
+              <div className="tc-bubble-user px-4 py-3 break-words">
                 {message.content}
               </div>
             )}

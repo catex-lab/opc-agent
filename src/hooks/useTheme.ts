@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Theme, ThemePreference } from '../types';
+import { bootPref, pushPrefs } from '../prefs';
 
 const STORAGE_KEY = 'theme';
 const MEDIA = '(prefers-color-scheme: dark)';
@@ -23,6 +24,9 @@ function syncNativeTheme(mode: ThemePreference) {
 
 /** 旧版本只存过 'light' / 'dark'，读出来仍然是合法的偏好值 */
 function readPreference(): ThemePreference {
+  // A135：服务端注入的那份优先（打包态换端口 ⇒ localStorage 每次归零）
+  const injected = bootPref('theme');
+  if (injected) return injected;
   const saved = localStorage.getItem(STORAGE_KEY);
   return saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system';
 }
@@ -80,6 +84,7 @@ export function useTheme() {
   const setPreference = useCallback((next: ThemePreference) => {
     setPreferenceState(next);
     localStorage.setItem(STORAGE_KEY, next);
+    pushPrefs({ theme: next });
     // 立刻同步，不等 effect —— 用户点下去的瞬间标题栏就该变色，
     // 而不是等下一个渲染周期。
     syncNativeTheme(next);

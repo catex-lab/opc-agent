@@ -432,8 +432,10 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
       )}
 
       {!draft && (
+        /* A137：列表底部的主入口，不是列表行内动作 —— 走 32 档（A124 单档）。
+           行内那颗「编辑/删除」仍是 24，两者不同档是**故意的层级区分**：
+           进得来（主入口）要显眼，进来后的逐条操作要收着。 */
         <Button
-          size="small"
           variant="outline"
           icon={<Plus size={14} />}
           onClick={openCreate}
@@ -490,6 +492,9 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
             </div>
           )}
 
+          {/* A137：名称 / 上游格式 / 地址 / Key 四颗都是**表单字段**，按 DESIGN-SYSTEM
+              §4「输入框尺寸」走 32 档 —— 与编辑器底部的保存/测试连接同高。
+              同一行里 24 的输入框配 32 的按钮是最刺眼的错配。 */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label
@@ -499,7 +504,6 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                 名称（通讯录里显示）
               </label>
               <Input
-                size="small"
                 value={draft.name}
                 maxlength={20}
                 onChange={v => patch({ name: v as string })}
@@ -517,7 +521,6 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
               {/* TDesign 的 Select 不透传 data-*，标记挂外层容器 */}
               <div data-provider-field="dialect">
                 <Select
-                  size="small"
                   value={draft.dialect}
                   onChange={v => patch({ dialect: v as ProviderDialect })}
                 >
@@ -539,7 +542,6 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
               API 地址（填到版本号那一层即可）
             </label>
             <Input
-              size="small"
               value={draft.baseUrl}
               onChange={v => patch({ baseUrl: v as string })}
               placeholder="例如：https://api.deepseek.com/v1"
@@ -568,7 +570,6 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
             </label>
             <Input
               type="password"
-              size="small"
               value={draft.apiKey}
               onChange={v => patch({ apiKey: v as string })}
               placeholder={draft.id ? '留空则保持现有 Key' : '粘贴 API Key'}
@@ -700,8 +701,12 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
           )}
 
           <div className="flex items-center gap-2">
+            {/* A137：这两颗原来是 size="small"（实测 24px / 内边距 7 / 字号 12），
+                而全站动作按钮是 32/15/14 单档（A124 定，`--tc-btn-height`）。
+                自建厂商表单是 A129 才搬进设置页的，整块漏了这道规范。
+                这里只修**表单提交类**的两颗；同文件里其余 small 是字段级控件
+                （输入框、模型 chip、移除键），它们和 24px 的 Input 同高，不该升。 */}
             <Button
-              size="small"
               theme="primary"
               loading={busy === 'save'}
               disabled={busy === 'test' || busy === 'fetch'}
@@ -711,14 +716,17 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
               保存
             </Button>
             <Button
-              size="small"
               variant="outline"
               loading={busy === 'test'}
               disabled={busy === 'save' || busy === 'fetch'}
               onClick={() => void runTest()}
               data-provider-test
+              /* A137：图标原来手写在 children 里（`<Zap size={12} className="mr-1" />`），
+                 不受 TDesign 的按钮内部布局管，实测中心比按钮中心高 5px。
+                 改走 `icon` prop —— 它会被放进 `.t-button__icon`，垂直居中由组件保证
+                 （「刷新」「添加规则」那几颗一直这么写，所以它们从来没过这条断言）。 */
+              icon={<Zap size={12} />}
             >
-              <Zap size={12} className="mr-1" />
               测试连接
             </Button>
           </div>

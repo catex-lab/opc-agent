@@ -357,6 +357,119 @@ ok(
 );
 ok(/const hasActions = canCopy \|\| canOpen \|\| canFillKey \|\| canReprobe;/.test(installSrc), '按钮整行按 hasActions 决定渲不渲染（不留空白行）', '会留下 12px 的幽灵间距');
 
+// ── F：控件尺寸的两套写法（A137 棘轮）──────────────────────────────
+/**
+ * 为什么要有这一组
+ *
+ * A124 定了「动作按钮 32 / 内边距 15 / 字号 14」，但那条规范只写在
+ * `.tc-btn-brand` / `.tc-btn-secondary` 两个选择器上 —— **没有一条规则作用在
+ * `.t-button` 上**。于是全仓实际是两套写法：
+ *
+ *   · 走令牌 `.tc-btn-*`  16 处 → 几何被 `--tc-btn-height` 强制
+ *   · 裸 `<Button>`       46 处 → 几何由 TDesign 的 `size` 决定（默认 32 / small 24）
+ *
+ * 「全站按钮统一 32」这句话，实际只覆盖 16/62。同理 `.t-input` 根本没定 height，
+ * 所以输入框 24 与 32 混用不是「违规」而是「没规定」（同一页里登录配置的 Input
+ * 是 24、模型清单的是 32）。
+ *
+ * 这一组**不判对错，只做棘轮**：把当前数冻成基线，只许减不许增。
+ *
+ * ⚠️ 基线**不是「待清零的欠账」**。收口三轮之后剩下的 18/1/0 已经全是
+ * 「说得清为什么是 24」的地方（清单见 DESIGN-SYSTEM §4「刻意 24 档」）：
+ *   · 列表行内动作（圆形图标 / 行尾文字按钮）—— 比行高还高会撑开每一行
+ *   · 密集列表工具条、预设芯片、chip 输入框及其伴生键
+ *   · `.tc-permission-option` 审批选项 —— 设计常量 24 高 / 12px 字号，
+ *     由 `verify-a128-permission-ui` 逐项量着
+ * 所以**不要为了把数字压到 0 而去动它们**；目标是「每一处都有理由」。
+ *
+ * 为什么不干脆一次全改成 32：`a124` 只能量到夹具开出来的那几个弹窗，
+ * 改 28 处里大部分**闸门看不见**。大批量改动 + 极低验证覆盖是最差的组合，
+ * 所以按文件分批，而这道棘轮保证「不再变多」。
+ *
+ * Tag / Loading 不计入：Tag 是标签不是控件（24px 合理），Loading 的 size
+ * 控制转圈直径，与控件几何无关。
+ */
+const SIZE_BASELINE = { Button: 18, Input: 1, Select: 0 };
+/**
+ * 基线变更记录（只许往下调）：
+ *   28 / 9 / 2  ← 2026-10-28 A137 首次冻结
+ *   27 / 6 / 1  ← 同批收口 ProviderSettings：表单字段 4 处升 32
+ *                 （名称 / 上游格式 / 地址 / Key），「添加厂商」主入口升 32；
+ *                 列表行内编辑删除、工具条（拉取/全选/清空）、预设芯片、
+ *                 手动模型名的 chip 输入框**刻意留 24**，见 DESIGN-SYSTEM §4。
+ *   23 / 3 / 0  ← 第二批 SettingsPage 登录配置：3 个 Input + 1 个 Select 升 32
+ *                 （它们就是 DESIGN-SYSTEM §4 点名的反例）；
+ *                 「保存/取消」跟着输入框升 32（同一行不许混档）；
+ *                 「配置环境变量」与「创建 Agent」是分区级入口、A37 明写同规格，
+ *                 一起升 32；列表行内圆形「编辑/删除」留 24。
+ *                 Select 归零 —— 之后任何新 Select 加 small 都是红灯。
+ *   18 / 1 / 0  ← 第三批「逐处定性」：AgentCredentialSettings 展开区的
+ *                 2 Input + 保存/清除 升 32（与登录配置表单同形态）、
+ *                 ModelCatalogSettings 的「刷新模型清单」升 32（分区级动作）、
+ *                 MemoryPanel 编辑器提交档「取消/保存技能」升 32。
+ *                 **到此剩下的全是登记在案的 24 档**，不是欠账。
+ */
+const sizeSmall = { Button: 0, Input: 0, Select: 0 };
+const sizeSmallByFile = new Map();
+
+for (const file of files) {
+  if (!/\.tsx$/.test(file)) continue;
+  const rel = path.relative(SRC, file).split(path.sep).join('/');
+  const lines = blankComments(fs.readFileSync(file, 'utf8')).split(/\r?\n/);
+  lines.forEach((line, i) => {
+    if (!/size="small"/.test(line)) return;
+    // 向上找最近的开标签：JSX 里 `size` 与组件名常常隔好几行
+    let kind = null;
+    for (let k = i; k >= Math.max(0, i - 8); k--) {
+      const m = lines[k].match(/<(Button|Input|Select|Tag|Loading|Link|Textarea)\b/);
+      if (m) {
+        kind = m[1];
+        break;
+      }
+    }
+    if (!kind || !(kind in sizeSmall)) return;
+    sizeSmall[kind]++;
+    const key = `${kind} @ ${rel}`;
+    sizeSmallByFile.set(key, (sizeSmallByFile.get(key) ?? 0) + 1);
+  });
+}
+
+for (const [kind, base] of Object.entries(SIZE_BASELINE)) {
+  const now = sizeSmall[kind];
+  /**
+   * 变多时把分布一起打出来。
+   *
+   * 只报「多了 1 处」的话，得自己去翻 8 个文件找是哪一处 —— 上一轮我就是在
+   * 这一步靠 `--dump` 反复来回。按 kind 过滤一下就有了。
+   */
+  const byFile =
+    now > base
+      ? [...sizeSmallByFile.entries()]
+          .filter(([k]) => k.startsWith(`${kind} @ `))
+          .sort((a, b) => b[1] - a[1])
+          .map(([k, n]) => `${k.slice(kind.length + 3)}×${n}`)
+          .join(' · ')
+      : '';
+  ok(
+    now <= base,
+    `[F] 裸 <${kind} size="small"> 只许减不许增（基线 ${base}，当前 ${now}）`,
+    now > base
+      ? `多了 ${now - base} 处 —— 新控件请走 .tc-btn-* 或默认尺寸，别加第三套；` +
+        `现分布：${byFile}`
+      : now < base
+        ? `已降到 ${now}，可以把 SIZE_BASELINE 下调到 ${now}`
+        : undefined
+  );
+}
+
+if (DUMP) {
+  console.log('\nsize="small" 欠账分布（Button / Input / Select）：');
+  const rows = [...sizeSmallByFile.entries()].sort((a, b) => b[1] - a[1]);
+  if (rows.length === 0) console.log('  （无）');
+  for (const [k, v] of rows) console.log(`  ${String(v).padStart(2)}  ${k}`);
+  console.log('');
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────
 if (DUMP) {
   console.log(`\n命中明细（含白名单放行，共 ${hits.length} 处）：`);

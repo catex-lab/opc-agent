@@ -120,6 +120,8 @@ export function PermissionCard({ item, sessionLabel, isCurrentSession, onResolve
             <Button
               key={option.id}
               className="tc-permission-option"
+              /* A137：同 InlinePermissionCard —— `.tc-permission-option` 是设计常量档
+                 （24 高 / 12px 字号），不是尺寸欠账，别照着 32 单档改它。 */
               size="small"
               theme={isAllow ? 'success' : 'danger'}
               variant={isPrimary ? 'base' : isAlways ? 'outline' : 'text'}

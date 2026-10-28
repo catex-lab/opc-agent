@@ -325,6 +325,9 @@ export function AgentConfigDialog({
                           </div>
                           <div className="flex gap-1">
                             <Tooltip content="编辑">
+                              {/* A137：列表行内的圆形图标动作，留 24 —— 与设置页
+                                  「我的 Agent」、自建厂商列表同一档。别因为"看着小"
+                                  就升 32：行内动作比行高还高会撑开每一行。 */}
                               <Button 
                                 variant="text" 
                                 shape="circle" 

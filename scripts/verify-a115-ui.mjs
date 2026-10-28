@@ -388,13 +388,12 @@ console.log('\n[4] 弹窗：四层外影 + 两条厚度边');
     const { ctx, page } = await newPage({ dark });
     await page.goto(base + '/', { waitUntil: 'networkidle' });
     await page.waitForTimeout(1200);
-    // 通讯录是左侧导航的一项（不是路由），「+」→「自定义 Agent」弹窗
-    await page.locator('button[aria-label="通讯录"]').click();
-    await page.waitForTimeout(800);
-    await page.locator('button[aria-label="添加"]').click();
-    await page.waitForTimeout(250);
-    await page.locator('[data-contacts-custom-agent]').click();
-    await page.waitForTimeout(400);
+    // A137：这里原来开的是「自定义 Agent」弹窗。A129 把自建厂商收进设置页、
+    // `CustomAgentDialog.tsx` 已删除 ⇒ `[data-contacts-custom-agent]` 在 src 里 0 处，
+    // 本组一直卡在 click 超时（链断在第 49 条）。
+    // 本组只关心 `.tc-dialog` 的阴影层数与边线，与弹窗内容无关，换「设置」弹窗即可。
+    await page.locator('button[aria-label="设置"]').click();
+    await page.waitForTimeout(900);
 
     const m = await page.evaluate(() => {
       const el = document.querySelector('.tc-dialog');
@@ -406,7 +405,7 @@ console.log('\n[4] 弹窗：四层外影 + 两条厚度边');
         border: cs.borderTopWidth,
       };
     });
-    ok(!!m, `${dark ? '深色' : '浅色'}：自定义 Agent 弹窗挂上了 .tc-dialog`);
+    ok(!!m, `${dark ? '深色' : '浅色'}：设置弹窗挂上了 .tc-dialog`);
     if (m) {
       const layers = splitLayers(m.shadow);
       const inset = layers.filter(l => /inset/.test(l));
@@ -427,15 +426,16 @@ console.log('\n[4] 弹窗：四层外影 + 两条厚度边');
     await ctx.close();
   }
 
-  // 源码兜底：六个弹窗必须都走 .tc-dialog。漏一个不会报错，
+  // 源码兜底：弹窗必须都走 .tc-dialog。漏一个不会报错，
   // 只会「那个弹窗的影跟别的不一样」—— 而这种不一致没有任何运行时信号。
+  // A137：`CustomAgentDialog.tsx` 已随 A129 删除，从清单移除（不是漏检）。
   const { readFileSync } = await import('node:fs');
-  const dialogFiles = ['ConfirmDialog.tsx', 'RemarkDialog.tsx', 'GetAgentsDialog.tsx', 'AgentDetailModal.tsx', 'NewGroupDialog.tsx', 'CustomAgentDialog.tsx'];
+  const dialogFiles = ['ConfirmDialog.tsx', 'RemarkDialog.tsx', 'GetAgentsDialog.tsx', 'AgentDetailModal.tsx', 'NewGroupDialog.tsx'];
   const missing = dialogFiles.filter(f => {
     const src = readFileSync(join(ROOT, 'src', 'components', f), 'utf-8');
     return !/tc-dialog/.test(src);
   });
-  ok(missing.length === 0, '六个模态弹窗全部挂 .tc-dialog', missing.join(', ') || 'all covered');
+  ok(missing.length === 0, '五个模态弹窗全部挂 .tc-dialog', missing.join(', ') || 'all covered');
   // WorkflowDialog 走 TDesign Dialog，不套类名 —— 靠 index.css 的
   // .workflow-dialog .t-dialog 覆盖，同样要有
   const css = readFileSync(join(ROOT, 'src', 'index.css'), 'utf-8');

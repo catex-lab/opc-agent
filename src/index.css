@@ -737,7 +737,10 @@ select:focus-visible {
   /* ── 行高（与字号绑定，避免每处手写）── */
   --leading-tight: 1.4;
   --leading-normal: 1.5;
-  --leading-loose: 1.7;
+  /* A136：从 1.7 改成 1.75 —— 这一档**此前没有任何消费者**，而长文正文
+   * （`.chat-markdown` 的 md_p）一直手写 1.75。令牌要么描述现实、要么删掉；
+   * 留一个 1.7 在那儿只会让下一个人以为「长文该用 1.7」，改了就与正文不同步。 */
+  --leading-loose: 1.75;
 
   /* ── 等宽字体（代码 / 命令 / 路径 / 终端）──
    *
@@ -3129,6 +3132,22 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   color: var(--tc-on-brand);
   border-radius: 14px 14px 4px 14px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px -2px var(--td-brand-color-light);
+  /* A136：字号与行高必须与助手正文**同档**。
+   *
+   * 改之前这里没有 font-size，于是用户气泡吃的是 TDesign 的默认 16px，
+   * 而助手正文是 A113 定的 14px —— 实测（1080×800，真 Chrome）：
+   *   用户气泡 16px / 26px，助手正文 14px / 24.5px。
+   * 结果是一段话问出去比答回来还大，整屏里最响的是问题。
+   *
+   * 层级不该靠字号分：这里靠**对齐 + 底色**（右对齐深底 vs 左对齐浅底）
+   * 已经足够，两边同档才读得顺 —— 长会话里来回切换字号，眼睛要重新适应。
+   *
+   * 为什么是 `--text-body-lg`(14px) 而不是把正文抬到 16px：A113 明确把正文
+   * 降到 14px 是为了「行内 code 别比正文还跳」，抬回去等于推翻它；而且
+   * 16px 不在 8 档语义里（DESIGN-SYSTEM 的 16 档是 `--text-title-lg`，
+   * 语义是标题）。要更大的阅读档得先加一条令牌并说明为什么现有档不够。 */
+  font-size: var(--text-body-lg);
+  line-height: var(--leading-loose);
 }
 
 .tc-bubble-assistant {
@@ -3138,6 +3157,11 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   border-radius: 14px 14px 14px 4px;
   border: 1px solid var(--tc-edge);
   box-shadow: var(--shadow-subtle), var(--tc-bevel);
+  /* A136：同上。markdown 正文的 `::part(md_p)` 自己写了 14px / var(--leading-loose)，
+   * 这一行管的是**没有走 markdown 的纯文本回答**（以及还没解析出块的那一帧）——
+   * 不写它就又回到 16px，表现为「流式刚开始时字大一号、解析完缩回去」。 */
+  font-size: var(--text-body-lg);
+  line-height: var(--leading-loose);
 }
 
 /* 消息入场（A83：加高斯模糊）
@@ -3693,7 +3717,8 @@ html[data-opc-glass='1'] t-chat-sender {
 .chat-markdown t-chat-md-content::part(md_ul),
 .chat-markdown t-chat-md-content::part(md_ol) {
   font-size: 14px;
-  line-height: 1.75;
+  /* A136：改走令牌（值与原来相同），长文行高只有这一处定义 */
+  line-height: var(--leading-loose);
   color: var(--td-text-color-primary);
 }
 

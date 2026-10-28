@@ -181,6 +181,10 @@ export function InlinePermissionCard({ request, onResolve }: InlinePermissionCar
             <Button
               key={option.id}
               className="tc-permission-option"
+              /* A137：这一档**刻意**是 24/12px，不是欠账。
+                 它是 `.tc-permission-option` 设计常量（index.css 2868 起，12px 字号
+                 + 500 字重 + 6px 圆角），由 `verify-a128-permission-ui` 逐项量着。
+                 审批选项是叠在气泡里的多颗并排，32 会把卡片撑高一倍。 */
               size="small"
               theme={isAllow ? 'success' : 'danger'}
               variant={isPrimary ? 'base' : isAlways ? 'outline' : 'text'}

@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { SIDEBAR_MAX, SIDEBAR_MIN, saveSidebarWidth } from '../uiPrefs';
+import { pushPrefs } from '../prefs';
 
 /**
  * 左侧二栏（会话列表 / 通讯录）的宽度拖拽手柄。
@@ -104,6 +105,8 @@ export function SidebarResizer({ onCommit }: SidebarResizerProps) {
       onDoubleClick={() => {
         document.documentElement.style.removeProperty('--tc-sidebar-width');
         localStorage.removeItem('opc.sidebar-width');
+        // A135：服务端那份也要清，否则下次启动又变回用户刚放弃的宽度
+        pushPrefs({ sidebarWidth: null });
       }}
       title="拖动调整宽度，双击恢复默认"
       className="group relative z-10 -mr-1 w-[5px] shrink-0 cursor-col-resize"

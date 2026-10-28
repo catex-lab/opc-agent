@@ -242,7 +242,9 @@ console.log('\n[2] 分区导航：只剩图标 + 标签');
     appearance: '外观',
     login: '登录配置',
     models: '模型清单',
-    agents: '自定义 Agent',
+    // A137：A129 改名（自定义 Agent → 助手人设）。上一行注释说「两处都要改」，
+    // 但 A129 那次两处都漏了 —— 说明「靠注释提醒」不管用，只能靠链真的跑起来才会发现。
+    agents: '助手人设',
     about: '关于与隐私',
   };
   ok(nav.length === Object.keys(LABELS).length, `${Object.keys(LABELS).length} 个分区都在`, String(nav.length));

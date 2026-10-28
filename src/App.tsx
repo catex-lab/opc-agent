@@ -38,6 +38,7 @@ import { WorkspacePanel } from './components/WorkspacePanel';
 import { SettingsPage } from './components/SettingsPage';
 import { PermissionDock } from './components/PermissionDock';
 import { setSessionTitleResolver } from './permissions/permissionStore';
+import { bootPref, pushPrefs } from './prefs';
 import type { Message } from './types';
 
 /**
@@ -160,6 +161,9 @@ function AppContent() {
    * 首屏渲染路径上的一次读取 —— 为它崩掉整个应用不值得。
    */
   const [workspaceOpen, setWorkspaceOpen] = useState<boolean>(() => {
+    // A135：服务端注入的那份优先（打包态每次启动换端口 ⇒ localStorage 归零）
+    const injected = bootPref('workspaceOpen');
+    if (injected !== undefined) return injected;
     try {
       return localStorage.getItem('opc.workspace-open') === '1';
     } catch {
@@ -175,6 +179,7 @@ function AppContent() {
       } catch {
         /* 写不进去只影响下次启动的默认值，本次行为不受影响 */
       }
+      pushPrefs({ workspaceOpen: next });
       return next;
     });
   }, []);
@@ -441,6 +446,9 @@ function AppContent() {
   const updateCurrentSessionModel = useCallback(
     (modelId: string) => {
       setSelectedModel(modelId);
+      // A135：用户亲手选过的模型成为下次启动的默认（原来只落在 localStorage，
+      // 打包态换端口就没了）。会话级那份仍由 updateSessionModel 管，两者不冲突。
+      pushPrefs({ defaultModel: modelId });
       if (currentSessionId) updateSessionModel(currentSessionId, modelId);
     },
     [currentSessionId, updateSessionModel, setSelectedModel]
@@ -1386,7 +1394,19 @@ function AppContent() {
                  把玻璃底盖回实色，那种失效没有报错，只是「看起来没变」。
                  A130（用户决定）：弹窗固定在窗口内、不许拖动。A120 接的
                  拖拽已摘 —— DOM 浮层出不了视口，拖到边上只会被裁成半截文字。 */
-              className="tc-dialog relative flex max-h-[min(700px,100%)] h-auto w-[min(900px,100%)] overflow-hidden rounded-2xl [&_header]:select-none"
+              /* A138（用户反馈）：**高度固定，不再跟内容走**。
+                 原来是 `h-auto max-h-[…]`，于是切换分区时整块弹窗在 419 ~ 700px
+                 之间弹跳（实测极差 281px：「我的资料 / 权限门禁 / 外观 / 模型清单 /
+                 助手人设」都是 419，「记忆 / 关于与隐私」顶到 700）。用户的原话是
+                 「每打开一个设置页的选项，窗口大小都会重新变化」。
+                 设置浮层是**同一块面板换内容**，不是每次开一个新窗口 ——
+                 外框跟着内容伸缩，读起来就像每次都重新开了一个窗口。
+                 固定后高度恒定：内容多的分区自己滚（滚动容器本来就有
+                 `overflow-y-auto` + `.tc-scroll-fade`），少的分区下方留白。
+                 ⚠️ 别再改回 `h-auto`，那是这个问题的直接成因。
+                 `100%` 相对的是 `absolute inset-0` 那一层（高度确定），
+                 所以窗口矮时自动退成「铺满可用高度」，不会顶出视口。 */
+              className="tc-dialog relative flex h-[min(700px,100%)] w-[min(900px,100%)] overflow-hidden rounded-2xl [&_header]:select-none"
               data-settings-panel
             >
               <SettingsPage

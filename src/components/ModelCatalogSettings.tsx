@@ -228,8 +228,9 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
       )}
 
       <div className="flex items-center gap-3">
+        {/* A137：分区级动作（整块模型清单的唯一操作），与「配置环境变量」
+            「添加厂商」同档走 32。它原来 24，同屏下面就是 32 的输入框。 */}
         <Button
-          size="small"
           variant="outline"
           loading={refreshing}
           onClick={() => void refresh()}

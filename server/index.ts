@@ -111,6 +111,14 @@ import { ensureCatalogLoaded, getCatalogSummary, getDefaultModelForAgent, invali
 // A115：用户资料（昵称 + 头像）。昵称由 registry.stream 注入 systemPrompt，
 // 这里只负责 HTTP 读写。
 import { loadUserProfile, saveUserProfile } from "./user-profile.js";
+// A135：界面偏好。打包态每次启动换端口 ⇒ localStorage 等于没有（A131 实测），
+// 所以偏好必须落到 dataDir，并在返回 index.html 时内联给前端做首帧同步读取。
+import {
+  loadPrefs,
+  savePrefs,
+  validatePrefsPatch,
+  prefsAsInlineScript,
+} from "./preferences.js";
 import { mapSdkModels } from "./agents/sdk-models.js";
 import { readDeclaredModels } from "./agents/wbProductConfig.js";
 import type { ModelOption } from "./agents/modelCatalog.js";
@@ -505,6 +513,38 @@ app.put("/api/user-profile", (req, res) => {
   } catch (error: any) {
     console.error("[UserProfile] Save error:", error);
     res.status(500).json({ error: error?.message || "保存用户资料失败" });
+  }
+});
+
+// ============= 界面偏好（A135）=============
+// 主题 / 透明度 / 两侧栏宽 / 工作区开关 / 光斑 / 默认模型。
+//
+// 前端**启动时不读这个接口** —— 它读的是 index.html 里内联的
+// `window.__OPC_PREFS__`（见 sendIndexHtml）。留 GET 是为了闸门能直接对账
+// 「磁盘上到底是什么」，以及将来别处（比如移动端壳）需要一个正常接口。
+
+app.get("/api/preferences", (_req, res) => {
+  try {
+    res.json(loadPrefs());
+  } catch (error: any) {
+    console.error("[Preferences] Get error:", error);
+    res.status(500).json({ error: error?.message || "读取界面偏好失败" });
+  }
+});
+
+app.patch("/api/preferences", (req, res) => {
+  // 校验失败一律 400 并回原文，**不夹紧、不忽略未知字段**：
+  // 静默纠正会让「设了但没生效」这种问题只能靠肉眼发现。
+  const result = validatePrefsPatch(req.body);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  try {
+    res.json(savePrefs(result.patch));
+  } catch (error: any) {
+    console.error("[Preferences] Save error:", error);
+    res.status(500).json({ error: error?.message || "保存界面偏好失败" });
   }
 });
 
@@ -3106,13 +3146,53 @@ const webDir = process.env.OPC_WEB_DIR
   ? path.resolve(process.env.OPC_WEB_DIR)
   : path.join(process.cwd(), 'dist');
 
+/**
+ * 返回 index.html，并把界面偏好**内联**进 `<head>`（A135）。
+ *
+ * ## 为什么内联，而不是让前端 `fetch('/api/preferences')`
+ *
+ * 透明度与栏宽必须在**首帧之前**写到 `<html>` 上，否则启动会先按默认值画一遍
+ * 再跳过去（界面先实色一下、列表栏先窄后宽）。fetch 是异步的，赶不上首帧。
+ *
+ * ## 为什么不改成 `<script src="/api/preferences.js">`
+ *
+ * 那会多一个请求，而 `verify:*` 的浏览器闸门普遍把 `**\/api/**` 全量拦成夹具
+ * JSON —— 脚本标签拿到 JSON 会当 JS 解析、在控制台报语法错，而多条闸门
+ * （`verify:p6-ui` 等）断言「控制台无错误」。内联不产生任何额外请求。
+ *
+ * ## 为什么不缓存
+ *
+ * 这份 HTML 每个进程只生成一次、内容随偏好变。缓存住等于「改了偏好要清缓存
+ * 才生效」，而这个文件只有几十 KB、又是启动时唯一一次请求。
+ */
+function sendIndexHtml(res: express.Response) {
+  const indexPath = path.join(webDir, 'index.html');
+  let html: string;
+  try {
+    html = fs.readFileSync(indexPath, 'utf-8');
+  } catch {
+    // 产物被删了一半：退回 sendFile 让浏览器拿到正常的 404/500，
+    // 而不是这里抛出去把进程带崩。
+    res.sendFile(indexPath);
+    return;
+  }
+  const script = `<script>${prefsAsInlineScript()}</script>`;
+  // 没有 </head> 的 HTML 不合法，但真遇到也不该整页打不开 —— 那就退化成
+  // 「没注入」，前端会回落到 localStorage（见 src/prefs.ts 的读取顺序）。
+  const injected = html.includes('</head>')
+    ? html.replace('</head>', `${script}</head>`)
+    : html;
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('html').send(injected);
+}
+
 if (fs.existsSync(path.join(webDir, 'index.html'))) {
+  // 必须先于 express.static 注册：静态中间件会把 `/` 直接吃成未注入的 index.html。
+  app.get(['/', '/index.html'], (_req, res) => sendIndexHtml(res));
   app.use(express.static(webDir));
   // SPA 兜底：非 /api 的路径一律回 index.html。
   // 必须注册在所有 /api 路由**之后**，否则会把接口请求一起吃掉。
-  app.get(/^(?!\/api\/).*/, (_req, res) => {
-    res.sendFile(path.join(webDir, 'index.html'));
-  });
+  app.get(/^(?!\/api\/).*/, (_req, res) => sendIndexHtml(res));
   console.log(`[Web] 静态资源目录: ${webDir}`);
 } else {
   console.log(`[Web] 未找到前端产物（${webDir}），仅提供 API —— 开发态由 Vite 托管前端`);

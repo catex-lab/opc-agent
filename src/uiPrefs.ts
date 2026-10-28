@@ -15,8 +15,17 @@
  * 走 state 会多一层「渲染 → effect → 改 CSS 变量」的延迟，滑动条拖动时
  * 能看出滞后；直接 `style.setProperty` 是同步的，拖动跟手。
  * 代价是 React 不知道当前值 —— 所以设置页自己保存一份 state 用于显示数字，
- * 初始值从 `readTransparency()` 读，两边不会分叉（都从 localStorage 来）。
+ * 初始值从 `readTransparency()` 读，两边不会分叉（同源）。
+ *
+ * ## A135：值的来源变了，读取顺序是「注入 > localStorage > 默认」
+ *
+ * 打包态每次启动换端口 ⇒ localStorage 按源隔离 ⇒ 偏好每次归零（A131 实测）。
+ * 现在服务端把偏好内联进 index.html（`window.__OPC_PREFS__`），这里同步读它，
+ * 首帧就位；localStorage 退化成镜像（开发态与既有闸门仍用它）。
+ * 写入是**两边都写**：localStorage 立即可读，服务端负责跨启动持久。
+ * 详见 `src/prefs.ts` 顶部注释。
  */
+import { bootPref, pushPrefs } from './prefs';
 
 const TRANSPARENCY_KEY = 'opc.transparency';
 const SIDEBAR_KEY = 'opc.sidebar-width';
@@ -138,6 +147,9 @@ const OVERLAY_ALPHA_FLOOR = 0.9;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 export function readTransparency(): number {
+  // 服务端注入的值优先 —— 它才是跨启动持久的那份（见文件头 A135 注释）
+  const injected = bootPref('transparency');
+  if (injected !== undefined) return clamp(injected, TRANSPARENCY_MIN, TRANSPARENCY_MAX);
   // ⚠️ 不能写成 `Number(localStorage.getItem(...))`：没存过时 getItem 返回
   //    null，Number(null) === 0，与「用户真的把滑动条拖到 0」撞在一起，
   //    于是默认值会被读成 0（界面全不透明）。
@@ -207,6 +219,7 @@ export function applyTransparency(transparency: number) {
 export function saveTransparency(transparency: number) {
   const t = clamp(Math.round(transparency), TRANSPARENCY_MIN, TRANSPARENCY_MAX);
   localStorage.setItem(TRANSPARENCY_KEY, String(t));
+  pushPrefs({ transparency: t });
   applyTransparency(t);
   return t;
 }
@@ -220,6 +233,8 @@ export const SIDEBAR_MIN = 220;
 export const SIDEBAR_MAX = 460;
 
 export function readSidebarWidth(): number | null {
+  const injected = bootPref('sidebarWidth');
+  if (injected !== undefined) return clamp(injected, SIDEBAR_MIN, SIDEBAR_MAX);
   const raw = localStorage.getItem(SIDEBAR_KEY);
   if (raw === null) return null;
   const n = Number(raw);
@@ -237,6 +252,7 @@ export function applySidebarWidth(width: number) {
 export function saveSidebarWidth(width: number) {
   const w = Math.round(clamp(width, SIDEBAR_MIN, SIDEBAR_MAX));
   localStorage.setItem(SIDEBAR_KEY, String(w));
+  pushPrefs({ sidebarWidth: w });
   applySidebarWidth(w);
   return w;
 }
@@ -256,6 +272,8 @@ export const WORKSPACE_DEFAULT = 300;
 const WORKSPACE_KEY = 'opc.workspace-width';
 
 export function readWorkspaceWidth(): number | null {
+  const injected = bootPref('workspaceWidth');
+  if (injected !== undefined) return clamp(injected, WORKSPACE_MIN, WORKSPACE_MAX);
   const raw = localStorage.getItem(WORKSPACE_KEY);
   if (raw === null) return null;
   const n = Number(raw);
@@ -273,6 +291,7 @@ export function applyWorkspaceWidth(width: number) {
 export function saveWorkspaceWidth(width: number) {
   const w = Math.round(clamp(width, WORKSPACE_MIN, WORKSPACE_MAX));
   localStorage.setItem(WORKSPACE_KEY, String(w));
+  pushPrefs({ workspaceWidth: w });
   applyWorkspaceWidth(w);
   return w;
 }
@@ -357,22 +376,29 @@ export function defaultGlow(): GlowPrefs {
   return { enabled: false, size: null, brightness: null };
 }
 
+/** 把任意来路的光斑设置收敛成合法形状。注入值与 localStorage 走同一套。 */
+function normalizeGlow(input: unknown): GlowPrefs {
+  const o = (input ?? {}) as Partial<GlowPrefs>;
+  const size = o.size == null ? null : clamp(Number(o.size), GLOW_SIZE_MIN, GLOW_SIZE_MAX);
+  const brightness =
+    o.brightness == null ? null : clamp(Number(o.brightness), GLOW_BRIGHT_MIN, GLOW_BRIGHT_MAX);
+  return {
+    // 只有**显式**存了 true 才算开。原来写的是 `o.enabled !== false`——
+    // 那意味着「字段缺失」等于开着，与 A66 的「默认关闭」相矛盾。
+    // 现在改成 fail-closed：认不出来就是关，用户点一下就能开回来。
+    enabled: o.enabled === true,
+    size: Number.isFinite(size) ? size : null,
+    brightness: Number.isFinite(brightness) ? brightness : null,
+  };
+}
+
 export function readGlow(): GlowPrefs {
+  const injected = bootPref('glow');
+  if (injected) return normalizeGlow(injected);
   try {
     const raw = localStorage.getItem(GLOW_KEY);
     if (!raw) return defaultGlow();
-    const o = JSON.parse(raw) as Partial<GlowPrefs>;
-    const size = o.size == null ? null : clamp(Number(o.size), GLOW_SIZE_MIN, GLOW_SIZE_MAX);
-    const brightness =
-      o.brightness == null ? null : clamp(Number(o.brightness), GLOW_BRIGHT_MIN, GLOW_BRIGHT_MAX);
-    return {
-      // 只有**显式**存了 true 才算开。原来写的是 `o.enabled !== false`——
-      // 那意味着「字段缺失」等于开着，与 A66 的「默认关闭」相矛盾。
-      // 现在改成 fail-closed：认不出来就是关，用户点一下就能开回来。
-      enabled: o.enabled === true,
-      size: Number.isFinite(size) ? size : null,
-      brightness: Number.isFinite(brightness) ? brightness : null,
-    };
+    return normalizeGlow(JSON.parse(raw));
   } catch {
     // 存的内容坏了（手改过 localStorage）就当没设置过 ——
     // 绝不让一个坏值把界面卡成没有光斑。
@@ -404,6 +430,7 @@ export function saveGlow(prefs: GlowPrefs): GlowPrefs {
         : clamp(Math.round(prefs.brightness), GLOW_BRIGHT_MIN, GLOW_BRIGHT_MAX),
   };
   localStorage.setItem(GLOW_KEY, JSON.stringify(clean));
+  pushPrefs({ glow: clean });
   applyGlow(clean);
   return clean;
 }

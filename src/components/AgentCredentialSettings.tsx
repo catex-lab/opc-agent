@@ -193,6 +193,9 @@ export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProp
             </button>
 
             {isEditing && (
+              /* A137：展开区是**表单**（带 label 的输入 + 保存/清除），走 32 档。
+                 折叠头那一行是列表行，不在此列 —— 行内动作仍留 24。
+                 与「设置 → 登录配置」的环境变量表单同一套判断，别在这里另立一档。 */
               <div className="space-y-2 px-3 pb-3">
                 <div>
                   <label
@@ -204,7 +207,6 @@ export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProp
                   </label>
                   <Input
                     type="password"
-                    size="small"
                     value={draftKey}
                     onChange={v => setDraftKey(v as string)}
                     placeholder={configured ? '留空则保持现有 Key' : '粘贴 API Key'}
@@ -221,7 +223,6 @@ export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProp
                       {item.baseUrlEnv}（可选，指向兼容网关）
                     </label>
                     <Input
-                      size="small"
                       value={draftBaseUrl}
                       onChange={v => setDraftBaseUrl(v as string)}
                       placeholder="留空则用官方端点"
@@ -238,7 +239,6 @@ export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProp
 
                 <div className="flex items-center gap-2">
                   <Button
-                    size="small"
                     theme="primary"
                     loading={busy === item.agentId}
                     onClick={() => void save(item)}
@@ -247,7 +247,6 @@ export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProp
                   </Button>
                   {configured && (
                     <Button
-                      size="small"
                       variant="text"
                       theme="danger"
                       disabled={busy === item.agentId}

@@ -62,9 +62,20 @@ const SPEC = {
  * 芯片那一档另有一条「同一组内部必须彼此一致」的断言兜着。
  */
 const ACTION_LABELS = [
-  '取消', '创建', '完成', '保存', '检索', '添加规则',
+  // A137：「创建」是已删除的「自定义 Agent 弹窗」里的按钮，换成自建厂商表单的
+  // 「测试连接」（A129 之后自建厂商的入口就搬到这里了）。
+  //
+  // ⚠️ 「添加」**故意不收**：它站在 `Input size="small"`（24px）右边、与输入框同高，
+  //    属于**字段级**操作，不是表单提交类的动作按钮。原来把它和「保存」并列是分类错误 ——
+  //    真按 32px 渲染，它会比旁边输入框高一头，反而更难看。
+  '取消', '完成', '保存', '检索', '添加规则', '测试连接',
   '复制命令', '已复制', '打开项目页', '打开下载页', '打开安装页',
   '填写 API Key', '重新检测',
+  // A137：分区级入口，展开后才变成表单。它一直是 24，从来没被收进清单；
+  // 第二批把它升到 32（与「添加厂商」「创建 Agent」同档），现在按动作按钮管。
+  '配置环境变量',
+  // A137 第三批：模型清单分区唯一的操作，同为分区级动作，已升 32。
+  '刷新模型清单',
 ];
 
 let pass = 0;
@@ -224,6 +235,40 @@ async function main() {
   await page.route('**/api/**', route => {
     const url = route.request().url();
     const send = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    /**
+     * A137：登录配置分区缺的两条接口。
+     *
+     * 这两条是用真服务端把「设置 → 登录配置 → 添加厂商」走一遍、记录所有 /api 请求
+     * 查出来的（`.tmp/api-scan.mjs`）：真实后端会返回 `credentials` / `agents`，
+     * 而本夹具兜底 `{}`，于是 `credentials.map` 直接 undefined 崩掉整页。
+     * 只补这两条，登录分区就能正常渲染出 6 颗预设芯片。
+     *
+     * ⚠️ `/api/agents/custom` 必须排在 `/api/agents` 前面 —— 它也会被
+     *    `/api/agents(\/|$)/` 命中，排后面就永远走不到（且返回全量 agents，语义也错）。
+     */
+    if (/\/api\/agents\/custom/.test(url)) return send({ agents: [] });
+    /**
+     * A137 第三批：凭据折叠区（`AgentCredentialSettings`）要**展开**才看得到
+     * 里面的 2 个 Input 和「保存/清除」。原来这里返回空数组，那一整块
+     * 从来没渲染过 —— 又是一次「样本没收齐」。给一条已配置的条目，
+     * `baseUrlEnv` 也带上，否则第二个 Input 仍然不渲染。
+     */
+    if (/\/api\/agent-credentials/.test(url)) {
+      return send({
+        credentials: [
+          {
+            agentId: 'claude',
+            name: 'Claude Code',
+            keyEnvs: ['ANTHROPIC_API_KEY'],
+            baseUrlEnv: 'ANTHROPIC_BASE_URL',
+            masked: 'sk-ant-••••7f2a',
+            fromEnv: false,
+            configured: true,
+            hint: '留空则沿用环境变量里的值',
+          },
+        ],
+      });
+    }
     if (/\/api\/agents(\/|$)/.test(url) && !/probe/.test(url)) {
       return send({
         /**
@@ -259,10 +304,31 @@ async function main() {
         ],
       });
     }
-    if (/\/api\/memory/.test(url)) return send({ core: '', user: '', skills: [], budget: { used: 0, limit: 800 } });
+    if (/\/api\/memory/.test(url)) {
+      // A137 第三批：给一条技能，否则「编辑」进不去，编辑器里的
+      // 「取消/保存技能」永远不渲染 —— 又是一处「量不到还说量到了」。
+      return send({
+        core: '# 核心记忆\n\n- 用户偏好简体中文',
+        user: '# 用户画像\n\n- 在做 OPC Agent',
+        skills: [{ name: 'demo-skill', tokens: 128 }],
+        budget: { used: 320, limit: 800 },
+      });
+    }
     if (/\/api\/permission-rules/.test(url)) return send({ rules: [] });
     if (/\/api\/sessions/.test(url)) return send({ sessions: [] });
     if (/\/api\/models/.test(url)) return send({ models: [] });
+    /**
+     * A137：登录配置分区会 GET /api/check-login。夹具原来兜底 `{}`，
+     * 于是 `envVars` 等字段全变成 undefined，整页白成「界面出错了」。
+     *
+     * ⚠️ 这个坑差点被误判成产品 bug：a124 报的是「脚本自身异常」，
+     *    看起来像页面坏了。是起真服务端跑了一遍才分清 —— 真实数据下
+     *    登录配置渲染完全正常（1 个 panel、零崩溃），所以是**夹具缺口**。
+     *    判据：夹具缺接口 ⇒ 只有该脚本崩；产品真坏 ⇒ 真服务端也崩。
+     */
+    if (/\/api\/check-login/.test(url)) {
+      return send({ isLoggedIn: false, envConfigured: false, cliConfigured: false, envVars: {} });
+    }
     return send({});
   });
 
@@ -278,21 +344,82 @@ async function main() {
 
   const groups = [];
 
-  // 1) 通讯录 → 「+」→ 自定义 Agent
-  await page.locator('[aria-label="通讯录"]').first().click();
-  await page.waitForTimeout(500);
-  await page.locator('[aria-label="添加"]').first().click();
-  await page.waitForTimeout(400);
-  await page.getByText('自定义 Agent', { exact: true }).first().click();
+  // 1) 设置弹窗 → 登录配置（含「添加厂商」表单，6 颗预设芯片就在里面）
+  //
+  // A137：这里原来点的是通讯录「+」里的「自定义 Agent」弹窗。A129 把自建厂商收进
+  // 设置页之后那个弹窗**不存在了**，于是本脚本从第一组就 getByText 超时崩掉 ——
+  // 后面 5 组、21 项按钮规格断言整整一个版本都没跑过。
+  // ⚠️ 这类红最难发现：它不出现在断言列表里，报的是「脚本自身异常」，
+  //    而 `verify:ui` 用 && 串联，只会看到链在第 59 条断掉。
+  // 现在改到登录配置（自建厂商的新家）：先切分区，再展开「添加厂商」表单。
+  await page.locator('[aria-label="设置"]').first().click();
   await page.waitForTimeout(700);
-  groups.push(['① 自定义 Agent 弹窗', await measureIn(page, '[role="dialog"]', '自定义 Agent')]);
-  await shot('01-custom-agent');
-  const customClose = await closeBtnOffset(page, '[role="dialog"]');
-  console.log(`\n  自定义 Agent 关闭按钮落点：${JSON.stringify(customClose)}`);
+  await page.locator('[data-settings-section="login"]').first().click();
+  await page.waitForTimeout(900);
+  const addVendor = page.getByRole('button', { name: /添加厂商/ }).first();
+  if (await addVendor.count()) {
+    await addVendor.click();
+    await page.waitForTimeout(900);
+  }
+  groups.push(['① 设置 · 登录配置（添加厂商表单展开）', await measureIn(page, '[data-settings-panel="login"]', '登录配置')]);
+  await shot('01-settings-login');
+
+  /**
+   * ①b 环境变量配置表单（默认收起，`showEnvConfig` 初值 false）。
+   *
+   * A137 第二批改的就是这里：4 个字段从 24 升 32，连带「保存/取消」也升 32。
+   * 上一版闸门从来没展开过它 —— 那两颗按钮**一次都没被量到**，而 ACTION_LABELS
+   * 里明明有「保存」「取消」（由权限门禁和发起群聊兜着），所以"每颗都量到了"
+   * 一直是假绿。这就是「样本没收齐就宣布通过」，比断言写错更难查。
+   */
+  const envToggle = page.getByRole('button', { name: '配置环境变量', exact: true }).first();
+  if (await envToggle.count()) {
+    await envToggle.click();
+    await page.waitForTimeout(700);
+  }
+  groups.push(['①b 设置 · 登录配置（环境变量表单展开）', await measureIn(page, '[data-settings-panel="login"]', '登录配置 · 环境变量')]);
+  await shot('01b-settings-env');
+
+  /**
+   * A134 硬规矩：**会被裁掉的内容区必须给「还有更多」的信号**。
+   *
+   * 源码级已经断言过「类挂上了」，但那只证明 `tc-scroll-fade` 在 JSX 里；
+   * 挡不住 `useOverflowY` 没算出溢出（元素晚挂、观察器没触发）——
+   * 那种失效下类在、规则在、界面照样硬切。所以这里量**运行时**。
+   *
+   * ⚠️ 配一条肯定式（下面「夹具把内容撑到溢出」）：否则 overflow<=2 时
+   *    第一条恒真，等于什么都没测。
+   */
+  const envPanelFade = await page.evaluate(() => {
+    const panel = document.querySelector('[data-settings-panel="login"]');
+    const box = panel && panel.parentElement;
+    if (!box) return null;
+    return {
+      overflow: box.scrollHeight - box.clientHeight,
+      fade: box.getAttribute('data-fade'),
+      hasClass: String(box.className).includes('tc-scroll-fade'),
+    };
+  });
+
+  /**
+   * ①c 凭据折叠区展开态（`AgentCredentialSettings`）。
+   *
+   * A137 第三批把这里的 2 个 Input + 「保存/清除」从 24 升到 32。
+   * 之前夹具的 credentials 是空数组，这一整块**从来没渲染过**。
+   */
+  const credToggle = page.locator('[data-credential-toggle="claude"]').first();
+  if (await credToggle.count()) {
+    await credToggle.click();
+    await page.waitForTimeout(700);
+  }
+  groups.push(['①c 设置 · 登录配置（凭据折叠展开）', await measureIn(page, '[data-settings-panel="login"]', '登录配置 · 凭据')]);
+  await shot('01c-settings-credential');
   await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
 
-  // 2) 发起群聊
+  // 2) 通讯录 → 「+」→ 发起群聊（第 ① 组在设置弹窗里，先回通讯录）
+  await page.locator('[aria-label="通讯录"]').first().click();
+  await page.waitForTimeout(500);
   await page.locator('[aria-label="添加"]').first().click();
   await page.waitForTimeout(400);
   await page.getByText('发起群聊', { exact: true }).first().click();
@@ -308,6 +435,10 @@ async function main() {
   await page.waitForTimeout(400);
   groups.push(['② 发起群聊弹窗（已勾 1 名成员）', await measureIn(page, '[data-new-group-dialog]', '发起群聊')]);
   await shot('02-new-group');
+  // 关闭键落点（距弹窗顶 / 距右）：原来挂在「自定义 Agent 弹窗」上，
+  // 那个弹窗没了之后就没测过。挪到这个真实存在的弹窗上。
+  const groupClose = await closeBtnOffset(page, '[data-new-group-dialog]');
+  console.log(`\n  发起群聊关闭按钮落点：${JSON.stringify(groupClose)}`);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
 
@@ -454,10 +585,74 @@ async function main() {
   await page.waitForTimeout(600);
   groups.push(['④ 设置 · 记忆', await measureIn(page, '[data-settings-panel="memory"]', '记忆')]);
   await shot('04-settings-memory');
+
+  /**
+   * ④b 技能编辑器展开态。
+   *
+   * A137 第三批把编辑器底部「取消/保存技能」从 24 升到 32（提交档跟 Textarea 走），
+   * 而列表行内「编辑/删除」留 24。同一面板里两档是**故意的**，
+   * 但只有把编辑器打开，这两档才会同时出现在量测里。
+   */
+  const skillEdit = page
+    .locator('[data-settings-panel="memory"]')
+    .getByRole('button', { name: '编辑', exact: true })
+    .first();
+  if (await skillEdit.count()) {
+    await skillEdit.click();
+    await page.waitForTimeout(700);
+  }
+  groups.push(['④b 设置 · 记忆（技能编辑器展开）', await measureIn(page, '[data-settings-panel="memory"]', '记忆 · 技能编辑器')]);
+  await shot('04b-settings-memory-editor');
+
+  /**
+   * 「点了有反馈」：编辑器的**提交键**必须整颗落在面板可视区里。
+   *
+   * 实测过的坏状态：点行尾那颗 24 的「编辑」，编辑器渲染在折叠线以下，
+   * 屏幕上唯一的变化是底边多出一行渐隐的小字 —— 看起来像没反应。
+   *
+   * ⚠️ 第一版判据是「编辑器顶边在可视区内」，**反向探针当场判它是假绿**：
+   *    停用滚动后实测 `顶边距面板顶 619px / 面板高 637px` —— 只露 18px 的边，
+   *    断言照样绿。判据必须落在「用户能不能看到那颗要按的按钮」上。
+   */
+  const editorReveal = await page.evaluate(() => {
+    const panel = document.querySelector('[data-settings-panel="memory"]');
+    const box = panel && panel.parentElement;
+    const editor = document.querySelector('[data-memory-editor]');
+    if (!box || !editor) return { found: !!editor, hasPanel: !!box };
+    const b = box.getBoundingClientRect();
+    const e = editor.getBoundingClientRect();
+    const btns = editor.querySelectorAll('button');
+    const last = btns[btns.length - 1];
+    const lb = last ? last.getBoundingClientRect() : null;
+    return {
+      found: true,
+      hasPanel: true,
+      editorTop: Math.round(e.top - b.top),
+      editorH: Math.round(e.height),
+      boxH: Math.round(b.height),
+      commitInside: !!lb && lb.top >= b.top - 1 && lb.bottom <= b.bottom + 1,
+      commitBottomGap: lb ? Math.round(b.bottom - lb.bottom) : null,
+      // 诊断：滚到哪了、还能不能继续滚
+      scrollTop: Math.round(box.scrollTop),
+      scrollH: box.scrollHeight,
+      clientH: box.clientHeight,
+      maxScroll: box.scrollHeight - box.clientHeight,
+    };
+  });
+
   await page.locator('[data-settings-section="permission"]').first().click();
   await page.waitForTimeout(600);
   groups.push(['⑤ 设置 · 权限门禁', await measureIn(page, '[data-settings-panel="permission"]', '权限门禁')]);
   await shot('05-settings-permission');
+
+  /**
+   * ⑥ 模型清单。A137 第三批把「刷新模型清单」从 24 升到 32（分区级动作）。
+   * 这个面板此前**一次都没被打开过** —— 它一直挂着欠账却没人看见。
+   */
+  await page.locator('[data-settings-section="models"]').first().click();
+  await page.waitForTimeout(700);
+  groups.push(['⑥ 设置 · 模型清单', await measureIn(page, '[data-settings-panel="models"]', '模型清单')]);
+  await shot('07-settings-models');
 
   // ── 断言 / 汇总 ──
   const all = groups.flatMap(([, rows]) => rows);
@@ -486,11 +681,37 @@ async function main() {
      */
     const seen = new Set(actions.map(r => r.text));
     const REQUIRED = [
-      '取消', '创建', '完成', '保存', '检索', '添加规则',
+      // A137：「创建」随「自定义 Agent 弹窗」一起消失了，换成自建厂商表单的「测试连接」。
+      // **不是放宽** —— 清单仍然逐颗点名，只是点的是现存的按钮。
+      // 「添加」不在此列（字段级按钮，见 ACTION_LABELS 上方说明）。
+      '取消', '测试连接', '完成', '保存', '检索', '添加规则',
       '复制命令', '打开项目页', '打开安装页', '打开下载页', '填写 API Key', '重新检测',
+      // A137 第三批：这三个只在**展开态**才存在，是这次新开的样本。
+      // 点名它们，才能防止「分组加了但面板没真展开」那种假绿。
+      '保存技能', '刷新模型清单', '配置环境变量',
     ];
     const missing = REQUIRED.filter(l => !seen.has(l));
     ok(missing.length === 0, '用户点名的每一颗都真的量到了', missing.length ? `缺：${missing.join(' ')}` : `${REQUIRED.length} 颗齐`);
+
+    // ── 溢出信号（A134 硬规矩）──
+    ok(!!envPanelFade && envPanelFade.hasClass, '登录配置滚动区挂了 tc-scroll-fade',
+      envPanelFade ? '' : '没找到 [data-settings-panel] 的父容器');
+    ok(!!envPanelFade && envPanelFade.overflow > 2, '夹具把登录配置撑到真的溢出了（否则下一条是空断言）',
+      envPanelFade ? `溢出 ${envPanelFade.overflow}px` : '');
+    ok(!!envPanelFade && (envPanelFade.overflow <= 2 || envPanelFade.fade === '1'),
+      '溢出时给了「还有更多」的信号（data-fade=1）',
+      envPanelFade ? `溢出 ${envPanelFade.overflow}px，data-fade=${envPanelFade.fade}` : '');
+
+    // ── 「点了有反馈」──
+    ok(!!editorReveal.found, '技能编辑器真的打开了（否则下一条是空断言）',
+      editorReveal.found ? '已打开' : editorReveal.hasPanel ? '夹具没给 skills，或行内「编辑」没点到' : '记忆面板没找到');
+    ok(!!editorReveal.commitInside, '点「编辑」后编辑器的提交键整颗可见（点了要有反馈）',
+      editorReveal.found
+        ? `编辑器顶边距面板顶 ${editorReveal.editorTop}px、高 ${editorReveal.editorH}px，` +
+          `面板高 ${editorReveal.boxH}px；提交键下沿距面板底 ${editorReveal.commitBottomGap}px；` +
+          `scrollTop ${editorReveal.scrollTop} / 最大 ${editorReveal.maxScroll}` +
+          `（scrollH ${editorReveal.scrollH} / clientH ${editorReveal.clientH}）`
+        : '');
     ok(bad.length === 0, `动作按钮全部落在同一档（高 ${SPEC.height} / 内边距 ${SPEC.padX} / 字号 ${SPEC.fontSize}）`,
       bad.slice(0, 8).map(r => `${r.text}=${r.h}h/${r.padL}p/${r.fs}f`).join(' '));
 
@@ -563,15 +784,21 @@ async function main() {
       JSON.stringify(settingsDrag).slice(0, 110)
     );
 
-    if (customClose && settingsClose) {
-      ok(
-        Math.abs(customClose.top - settingsClose.top) <= 2 && Math.abs(customClose.right - settingsClose.right) <= 2,
-        '自定义 Agent 的关闭键与设置弹窗同一落点',
-        `自定义 ${customClose.top}/${customClose.right} vs 设置 ${settingsClose.top}/${settingsClose.right}`
-      );
-    } else {
-      ok(false, '两处关闭按钮都量到了落点', `自定义 ${JSON.stringify(customClose)} 设置 ${JSON.stringify(settingsClose)}`);
-    }
+    /**
+     * 关闭键落点：直接钉 A114/A116 定的基准（距顶 12 / 距右 16）。
+     *
+     * A137：原来这条是「自定义 Agent 弹窗 vs 设置弹窗，两者相差 ≤2px」。
+     * 那个弹窗没了之后改成比「获取 Agent」，实测 45/461 —— 不是落点不同，
+     * 而是它的关闭键根本不在右上角（overlay 结构与 .tc-dialog 不同），取样就取错了。
+     *
+     * 顺手把这条**变强**了：原来两个弹窗互相比，两个一起漂到 20/30 也会绿；
+     * 现在钉绝对值，谁漂谁红。基准值来自 settingsClose 的既有实测。
+     */
+    ok(
+      settingsClose && Math.abs(settingsClose.top - 12) <= 2 && Math.abs(settingsClose.right - 16) <= 2,
+      '弹窗关闭键落在基准位置（距顶 12 / 距右 16）',
+      settingsClose ? `${settingsClose.top}/${settingsClose.right}` : '没量到'
+    );
 
     ok(detail.opened, '资料页能打开（否则下面两条是空断言）');
     ok(detail.opened && detail.dotsInDialog === 0, '资料页头像右下角不再有状态点', `实测 ${detail.dotsInDialog} 颗`);

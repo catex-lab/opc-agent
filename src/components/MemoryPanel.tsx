@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Textarea, MessagePlugin, Input, Select } from 'tdesign-react';
 import { HintTip } from './HintTip';
 
@@ -77,6 +77,33 @@ export function MemoryPanel() {
   const [hits, setHits] = useState<MemoryHit[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  /**
+   * A137：编辑器挂在技能列表**下方**，点行尾那颗 24 的「编辑」时，
+   * 它落进折叠线以下 —— 用户看到的唯一反应是底边多出一行渐隐的小字
+   * （截图实证：`正在编辑：demo-skill.md` 正好压在渐隐带上）。
+   * 点一下像没反应，这比尺寸不一致更糟。
+   *
+   * 不加 `smooth`：滚动动画与渐隐遮罩同时动会闪一下。
+   * 对齐方式用 `center` 而不是 `nearest` —— 原因见下面 effect 里的实测。
+   */
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    /**
+     * ⚠️ 两个坑，都是实测踩出来的：
+     *
+     * 1. **必须等一帧**。`autosize` 的 Textarea 在自己的 effect 里才把高度撑到
+     *    最终值，我们在同一个提交里调 `scrollIntoView`，量到的是撑开前的位置
+     *    —— 实测滚到 `scrollTop 236`，而最大可滚是 368，提交键仍留在
+     *    面板底下方 106px。
+     * 2. **对齐用 `center`，不能用 `nearest`**。`nearest` 认为「顶边已经露出
+     *    18px = 已经可见」，只滚 96px 就停。
+     */
+    if (!editing) return;
+    const id = requestAnimationFrame(() => {
+      editorRef.current?.scrollIntoView({ block: 'center' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [editing]);
   // A98：作用域。'' = 全局；否则是项目的原始路径
   const [projects, setProjects] = useState<ProjectBrief[]>([]);
   const [projectPath, setProjectPath] = useState('');
@@ -420,6 +447,8 @@ export function MemoryPanel() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  {/* A137：技能列表**行内**动作，留 24。下面的「取消/保存技能」
+                      是编辑器提交档，走 32 —— 同一个文件里两档是故意的。 */}
                   <Button size="small" variant="text" onClick={() => void openSkill(s.name)}>
                     编辑
                   </Button>
@@ -433,16 +462,19 @@ export function MemoryPanel() {
         )}
 
         {editing && (
-          <div className="mt-2">
+          <div className="mt-2" ref={editorRef} data-memory-editor>
             <div className="mb-1 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
               正在编辑：{editing}.md
             </div>
             <Textarea value={draft} onChange={v => setDraft(String(v))} autosize={{ minRows: 8, maxRows: 24 }} />
             <div className="mt-1 flex justify-end gap-2">
-              <Button size="small" variant="text" onClick={() => setEditing(null)}>
+              {/* A137：这是编辑器**提交**那一档，跟上面 32 的 Textarea 走；
+                  列表行里那两颗「编辑/删除」（text 按钮、缩在行尾）才留 24。
+                  两者的区别是「跟输入框」还是「跟列表行」，不是按钮大小偏好。 */}
+              <Button variant="text" onClick={() => setEditing(null)}>
                 取消
               </Button>
-              <Button size="small" variant="outline" onClick={() => void saveSkill()}>
+              <Button variant="outline" onClick={() => void saveSkill()}>
                 保存技能
               </Button>
             </div>

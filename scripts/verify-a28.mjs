@@ -358,13 +358,17 @@ console.log('\n[6] 设置页分区：互斥渲染 + 副标题跟着走');
   // A83–A95 又加了「关于与隐私」→ 7 个；A115 加了「我的资料」→ 8 个。
   // 按**显式标签表**断言而不是「有几项」——A37 已经证明按数量断言的探针
   // 每次加分区都会误报一次，而按标签断言只会漏掉「该在的没在」。
-  const NAV_LABELS = ['我的资料', '记忆', '权限门禁', '外观', '登录配置', '模型清单', '自定义 Agent', '关于与隐私'];
+  // A137：A129 把「自定义 Agent」改名为「助手人设」（理由：与通讯录里用户自建的厂商同名），
+  // 当时只同步了前两项（权限门禁 / 登录配置），漏了这一项 —— 于是本闸门红了整整一版。
+  // 文案变更属于契约变更，改断言是**对的**；但改的时候要显式记下是哪次改名，
+  // 否则下一个人看到这里只会以为「当初就写错了」。
+  const NAV_LABELS = ['我的资料', '记忆', '权限门禁', '外观', '登录配置', '模型清单', '助手人设', '关于与隐私'];
   const navTexts = await page.locator('[data-settings-section]').allInnerTexts();
   const navCount = navTexts.length;
   const navOk =
     navCount === NAV_LABELS.length &&
     NAV_LABELS.every((label, i) => navTexts[i]?.trim().startsWith(label));
-  ok(navOk, '分区导航为八项且顺序正确（我的资料/记忆/权限/外观/登录/模型清单/Agent/关于）', navTexts.map(t => t.trim()).join(' | '));
+  ok(navOk, '分区导航为八项且顺序正确（我的资料/记忆/权限门禁/外观/登录配置/模型清单/助手人设/关于）', navTexts.map(t => t.trim()).join(' | '));
   ok(await page.locator('[data-settings-panel="appearance"]').count() > 0, '默认落在「外观」');
   ok(await page.locator('[data-settings-panel="appearance"] .t-switch').count() > 0, '外观分区含光斑开关');
 
