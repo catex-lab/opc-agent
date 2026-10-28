@@ -966,7 +966,10 @@ export function ChatInput({
                      Tailwind 的 hover:bg-[...]，非 important，被 TDesign 的
                      `.t-select .t-input--medium` 一族压过去，于是三颗芯片里
                      只有这颗 hover 不亮、展开后也不亮，并排一眼能看出来。 */
-                  /* A141：宽度从固定 `w-[140px]` 改成「内容自适应 + 上限」。
+                  /* A141：宽度从「固定 140px」改成「内容自适应 + 上限」。
+                     （⚠️ 注释里别写旧类名的字面量 —— Tailwind 的 JIT 扫描的是**文件全文**，
+                     注释里出现过的类名照样会生成一条没人用的 CSS 规则。实测：
+                     旧类名只在注释里出现，dist 的 CSS 里却仍有它。）
                      实测固定 140 时，`Auto` 的名字只占 27.8px，剩下 112px 全是空气；
                      而 `DeepSeek-V4.1-Flash (sg)` 只给到 96px，直接被截成
                      「DeepSeek-V4.1-Flas…」—— 两头都不对。
