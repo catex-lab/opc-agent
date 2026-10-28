@@ -1386,7 +1386,7 @@ function AppContent() {
                  把玻璃底盖回实色，那种失效没有报错，只是「看起来没变」。
                  A130（用户决定）：弹窗固定在窗口内、不许拖动。A120 接的
                  拖拽已摘 —— DOM 浮层出不了视口，拖到边上只会被裁成半截文字。 */
-              className="tc-dialog relative flex h-[min(700px,100%)] w-[min(900px,100%)] overflow-hidden rounded-2xl [&_header]:select-none"
+              className="tc-dialog relative flex max-h-[min(700px,100%)] h-auto w-[min(900px,100%)] overflow-hidden rounded-2xl [&_header]:select-none"
               data-settings-panel
             >
               <SettingsPage

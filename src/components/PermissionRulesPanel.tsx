@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Input, Select, MessagePlugin } from 'tdesign-react';
-import { PlusIcon, DeleteIcon } from 'tdesign-icons-react';
+import { Plus, Trash2 } from 'lucide-react';
 
 /**
  * 权限门禁规则（A40）。
@@ -158,7 +158,7 @@ export function PermissionRulesPanel() {
               variant="text"
               onClick={() => setRules(prev => prev.filter((_, idx) => idx !== i))}
             >
-              <DeleteIcon />
+              <Trash2 size={14} />
             </Button>
           </div>
         ))}
@@ -169,7 +169,7 @@ export function PermissionRulesPanel() {
             改走 TDesign 的 icon 插槽 —— 对齐由组件负责，不再靠手写 margin 猜。 */}
         <Button
           variant="outline"
-          icon={<PlusIcon size={14} />}
+          icon={<Plus size={14} />}
           onClick={() => setRules(prev => [...prev, { ...EMPTY_ROW }])}
         >
           添加规则

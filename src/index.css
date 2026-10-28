@@ -1249,14 +1249,15 @@ svg.t-icon {
 
 /* 当前会话在选中底色上再与主导航共用同一条品牌色提示。
    只标记正在打开的会话，普通联系人/群聊行不增加装饰；深浅主题自动
-   使用各自的中性品牌色，让用户扫列表时能快速定位当前所在会话。 */
+   使用各自的中性品牌色，让用户扫列表时能快速定位当前所在会话。
+   A134：宽度从 3px 减到 2px，缓解「过强的黑色边条」感。 */
 .tc-list-item.is-active::before {
   content: '';
   position: absolute;
-  left: 3px;
+  left: 4px;
   top: 12px;
   bottom: 12px;
-  width: 3px;
+  width: 2px;
   border-radius: 999px;
   background-color: var(--td-brand-color);
 }

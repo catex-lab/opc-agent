@@ -25,7 +25,7 @@
  */
 
 import { useState } from 'react';
-import { CloseIcon } from 'tdesign-icons-react';
+import { X } from 'lucide-react';
 
 export interface DanglingNoticeProps {
   /** 那条没有回答的用户消息时间（ISO） */
@@ -89,7 +89,7 @@ export function DanglingNotice({ at }: DanglingNoticeProps) {
           marginTop: 1,
         }}
       >
-        <CloseIcon size={12} />
+        <X size={12} />
       </button>
     </div>
   );

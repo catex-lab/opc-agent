@@ -25,11 +25,19 @@ export function ProfilePanel() {
   const profile = useUserProfile();
   const [draft, setDraft] = useState(profile.nickname);
   const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
 
   // 外部变化（比如另一处入口改了昵称）要能反映到输入框里
   useEffect(() => {
     setDraft(profile.nickname);
   }, [profile.nickname]);
+
+  // 「已保存」提示 1.5 秒后自动消失
+  useEffect(() => {
+    if (!savedAt) return;
+    const t = setTimeout(() => setSavedAt(null), 1500);
+    return () => clearTimeout(t);
+  }, [savedAt]);
 
   const commit = async (next: string) => {
     const trimmed = next.trim().slice(0, 24);
@@ -41,10 +49,11 @@ export function ProfilePanel() {
     try {
       await saveUserProfile({ nickname: trimmed });
       setDraft(trimmed);
-      // 不写「已保存」—— 两个字段都是即时生效的，弹一条 toast 反而像
-      // 「还得去做点什么」。清空时给一句确认，因为「没有昵称」是个可逆但
-      // 不明显的状态，用户需要知道 Agent 下次不会再用称呼。
-      if (!trimmed) MessagePlugin.success('已清空昵称，Agent 将不再使用称呼');
+      if (!trimmed) {
+        MessagePlugin.success('已清空昵称，Agent 将不再使用称呼');
+      } else {
+        setSavedAt(Date.now());
+      }
     } catch (err) {
       setDraft(profile.nickname);
       MessagePlugin.error(`保存失败：${err instanceof Error ? err.message : String(err)}`);
@@ -73,10 +82,15 @@ export function ProfilePanel() {
           <div>
             <label
               htmlFor="opc-user-nickname"
-              className="mb-1.5 block text-body font-medium"
+              className="mb-1.5 flex items-center justify-between text-body font-medium"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              昵称
+              <span>昵称</span>
+              {savedAt && (
+                <span className="text-caption" style={{ color: 'var(--td-brand-color)' }}>
+                  已保存
+                </span>
+              )}
             </label>
             <input
               id="opc-user-nickname"

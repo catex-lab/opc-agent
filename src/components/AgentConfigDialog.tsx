@@ -10,14 +10,8 @@ import {
   Popconfirm,
   MessagePlugin
 } from 'tdesign-react';
-import { 
-  AddIcon, 
-  EditIcon, 
-  DeleteIcon,
-  CheckIcon
-} from 'tdesign-icons-react';
-import { Bot, Sparkles, Code, FileText, Globe, Lightbulb } from 'lucide-react';
 import { CustomAgent } from '../types';
+import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Plus, PencilLine, Trash2, Check } from 'lucide-react';
 
 interface AgentConfigProps {
   visible: boolean;
@@ -218,7 +212,7 @@ export function AgentConfigDialog({
                           style={{ backgroundColor: color }}
                           onClick={() => setFormData(prev => ({ ...prev, color }))}
                         >
-                          {formData.color === color && <CheckIcon style={{ color: 'white' }} size="14px" />}
+                          {formData.color === color && <Check style={{ color: 'white' }} size={14} />}
                         </button>
                       ))}
                     </div>
@@ -295,7 +289,7 @@ export function AgentConfigDialog({
 
             {/* 自定义创建按钮 */}
             <Button 
-              icon={<AddIcon />} 
+              icon={<Plus />} 
               variant="dashed" 
               block 
               onClick={() => setIsCreating(true)}
@@ -335,7 +329,7 @@ export function AgentConfigDialog({
                                 variant="text" 
                                 shape="circle" 
                                 size="small"
-                                icon={<EditIcon />}
+                                icon={<PencilLine />}
                                 onClick={() => handleEdit(agent)}
                               />
                             </Tooltip>
@@ -348,7 +342,7 @@ export function AgentConfigDialog({
                                   variant="text" 
                                   shape="circle" 
                                   size="small"
-                                  icon={<DeleteIcon />}
+                                  icon={<Trash2 />}
                                 />
                               </Tooltip>
                             </Popconfirm>

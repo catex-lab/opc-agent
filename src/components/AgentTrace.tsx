@@ -25,12 +25,6 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  ChevronDownIcon,
-  ChevronUpIcon,
-  CheckCircleFilledIcon,
-  CloseCircleFilledIcon,
-} from 'tdesign-icons-react';
-import {
   Terminal,
   Sparkles,
   Search,
@@ -43,6 +37,10 @@ import {
   FolderSearch,
   Image as ImageIcon,
   Zap,
+  ChevronDown,
+  ChevronUp,
+  CircleCheck,
+  CircleX,
   type LucideIcon,
 } from 'lucide-react';
 import type { Block } from '../../shared/blocks';
@@ -492,9 +490,9 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
         }}
       >
         {expanded ? (
-          <ChevronUpIcon size={13} style={{ color: 'var(--td-text-color-placeholder)', flexShrink: 0 }} />
+          <ChevronUp size={13} style={{ color: 'var(--td-text-color-placeholder)', flexShrink: 0 }} />
         ) : (
-          <ChevronDownIcon size={13} style={{ color: 'var(--td-text-color-placeholder)', flexShrink: 0 }} />
+          <ChevronDown size={13} style={{ color: 'var(--td-text-color-placeholder)', flexShrink: 0 }} />
         )}
         {running ? (
           <span className="tc-live-dot" aria-hidden="true">
@@ -502,13 +500,13 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
             <span className="tc-live-ring" style={{ borderColor: 'var(--td-brand-color)' }} />
           </span>
         ) : failed ? (
-          <CloseCircleFilledIcon size={13} style={{ color: 'var(--td-error-color)', flexShrink: 0 }} />
+          <CircleX size={13} style={{ color: 'var(--td-error-color)', flexShrink: 0 }} />
         ) : interrupted ? (
           // 不画绿勾：这一轮结束了，但至少有一个工具没回结果。
           // 空心圈 = 「不确定」，比打勾诚实，也比打叉克制。
           <span className="tc-unknown-dot" aria-hidden="true" data-unknown-dot />
         ) : (
-          <CheckCircleFilledIcon size={13} style={{ color: 'var(--td-success-color)', flexShrink: 0 }} />
+          <CircleCheck size={13} style={{ color: 'var(--td-success-color)', flexShrink: 0 }} />
         )}
         <span className="tc-trace-summary" data-trace-summary title={summary.text}>
           {barLabel}

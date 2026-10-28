@@ -1,13 +1,13 @@
 import { Button } from 'tdesign-react';
-import { 
-  TerminalIcon, 
-  FileIcon, 
-  FolderOpenIcon,
-  SearchIcon,
-  Code1Icon,
-  EditIcon,
-  DeleteIcon
-} from 'tdesign-icons-react';
+import {
+  Terminal,
+  File,
+  FolderOpen,
+  Search,
+  Code,
+  PencilLine,
+  Trash2,
+} from 'lucide-react';
 import { PermissionRequest } from '../types';
 import type { PermissionOption } from '../types';
 
@@ -47,22 +47,22 @@ export const FALLBACK_OPTIONS: PermissionOption[] = [
 // 与 ToolCallsCollapse 里的分类色保持一一对应，避免同一工具
 // 在「气泡里」和「权限卡里」显示成两种颜色。
 export const TOOL_CONFIG: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
-  'Bash': { icon: <TerminalIcon />, color: 'var(--tool-color-danger)', label: '执行命令' },
-  'Write': { icon: <EditIcon />, color: 'var(--tool-color-file)', label: '写入文件' },
-  'Edit': { icon: <EditIcon />, color: 'var(--tool-color-file)', label: '编辑文件' },
-  'Read': { icon: <FileIcon />, color: 'var(--tool-color-shell)', label: '读取文件' },
-  'ReadFile': { icon: <FileIcon />, color: 'var(--tool-color-shell)', label: '读取文件' },
-  'ListDir': { icon: <FolderOpenIcon />, color: 'var(--tool-color-file)', label: '列出目录' },
-  'Search': { icon: <SearchIcon />, color: 'var(--tool-color-search)', label: '搜索' },
-  'Grep': { icon: <SearchIcon />, color: 'var(--tool-color-search)', label: '文本搜索' },
-  'Delete': { icon: <DeleteIcon />, color: 'var(--tool-color-danger)', label: '删除文件' },
-  'DeleteFile': { icon: <DeleteIcon />, color: 'var(--tool-color-danger)', label: '删除文件' },
+  'Bash': { icon: <Terminal />, color: 'var(--tool-color-danger)', label: '执行命令' },
+  'Write': { icon: <PencilLine />, color: 'var(--tool-color-file)', label: '写入文件' },
+  'Edit': { icon: <PencilLine />, color: 'var(--tool-color-file)', label: '编辑文件' },
+  'Read': { icon: <File />, color: 'var(--tool-color-shell)', label: '读取文件' },
+  'ReadFile': { icon: <File />, color: 'var(--tool-color-shell)', label: '读取文件' },
+  'ListDir': { icon: <FolderOpen />, color: 'var(--tool-color-file)', label: '列出目录' },
+  'Search': { icon: <Search />, color: 'var(--tool-color-search)', label: '搜索' },
+  'Grep': { icon: <Search />, color: 'var(--tool-color-search)', label: '文本搜索' },
+  'Delete': { icon: <Trash2 />, color: 'var(--tool-color-danger)', label: '删除文件' },
+  'DeleteFile': { icon: <Trash2 />, color: 'var(--tool-color-danger)', label: '删除文件' },
 };
 
 // 获取工具配置
 export const getToolConfig = (toolName: string) => {
   return TOOL_CONFIG[toolName] || { 
-    icon: <Code1Icon />, 
+    icon: <Code />, 
     color: 'var(--td-text-color-secondary)', 
     label: toolName 
   };

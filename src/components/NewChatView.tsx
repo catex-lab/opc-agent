@@ -1,15 +1,6 @@
-import { Input, Select, Tooltip } from 'tdesign-react';
 import type { CSSProperties } from 'react';
-import { ChevronDownIcon, FolderOpenIcon } from 'tdesign-icons-react';
-import {
-  Briefcase,
-  HelpCircle,
-  Wrench,
-  Code,
-  PenLine,
-  Image as ImageIcon,
-  type LucideIcon,
-} from 'lucide-react';
+import { Input, Select, Tooltip } from 'tdesign-react';
+import { Briefcase, HelpCircle, Wrench, Code, PenLine, Image as ImageIcon, type LucideIcon, ChevronDown, FolderOpen } from 'lucide-react';
 import { APP_CONFIG } from '../config';
 import { Model, Agent, PermissionMode } from '../types';
 import { ScenarioTemplate, enforcementGap } from '../scenarios';
@@ -235,7 +226,7 @@ export function NewChatView({
               value={newChatCwd}
               onChange={(v) => onSetCwd(v as string)}
               placeholder="例如：/Users/username/projects/my-app"
-              prefixIcon={<FolderOpenIcon />}
+              prefixIcon={<FolderOpen />}
             />
             {/*
               A63：选择目录按钮（与会话栏头工作区面板的「切换目录」同一颗
@@ -259,7 +250,7 @@ export function NewChatView({
                 }}
                 data-newchat-pick-dir
               >
-                <FolderOpenIcon />
+                <FolderOpen />
                 选择目录
               </button>
             )}
@@ -297,7 +288,7 @@ export function NewChatView({
                 onChange={(v) => onSetReasoning(v as string)}
                 size="medium"
                 style={{ width: '100%' }}
-                suffixIcon={<ChevronDownIcon />}
+                suffixIcon={<ChevronDown />}
                 /* A74：触发器占满表单宽度（512px），但浮层不能跟着那么宽 ——
                    TDesign 的 dropdown 默认与触发器同宽，实测会得到一条 512px 的
                    下拉里只放「低 / 快」几个字，右边整片留白。这里把浮层宽度钉到

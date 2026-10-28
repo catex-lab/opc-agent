@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { Select, Tooltip, MessagePlugin } from 'tdesign-react';
 import { ChatSender } from '@tdesign-react/chat';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
-import { ChevronDownIcon, LockOnIcon, LockOffIcon, EditIcon, TaskIcon } from 'tdesign-icons-react';
 import {
   Paperclip,
   FileUp,
@@ -23,6 +22,11 @@ import {
   ClipboardPaste,
   TextCursorInput,
   Eraser,
+  ChevronDown,
+  Lock,
+  Unlock,
+  PencilLine,
+  ListChecks,
 } from 'lucide-react';
 import { Model, PermissionMode, RegisteredAgent } from '../types';
 import { IMAGE_SIZES, IMAGE_SIZE_LABELS, IMAGE_MODELS } from '../imageOptions';
@@ -187,14 +191,14 @@ const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
   'default': {
     label: '默认模式',
     shortLabel: '默认',
-    icon: <LockOnIcon />,
+    icon: <Lock />,
     color: 'var(--tc-perm-default)',
     description: '每次操作都需要确认'
   },
   'acceptEdits': {
     label: '自动编辑',
     shortLabel: '自动编辑',
-    icon: <EditIcon />,
+    icon: <PencilLine />,
     color: 'var(--tc-perm-accept)',
     description: '自动允许文件编辑操作'
   },
@@ -204,7 +208,7 @@ const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
     // 在提示里看到一个选择器里找不到的名字。verify:permission 有断言守着。
     label: '只读',
     shortLabel: '只读',
-    icon: <TaskIcon />,
+    icon: <ListChecks />,
     color: 'var(--tc-perm-plan)',
     description: '只生成计划，不执行操作'
   },
@@ -212,7 +216,7 @@ const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
     // 同上：与 PERMISSION_MODE_LABEL 对齐（「全放行」）
     label: '全放行',
     shortLabel: '全放行',
-    icon: <LockOffIcon />,
+    icon: <Unlock />,
     color: 'var(--tc-perm-bypass)',
     description: '跳过所有权限确认（危险）'
   },
@@ -848,7 +852,7 @@ export function ChatInput({
                   placeholder="生图模型"
                   size="medium"
                   style={{ width: 190 }}
-                  suffixIcon={<ChevronDownIcon />}
+                  suffixIcon={<ChevronDown />}
                   popupVisible={openSelect === 'imageModel'}
                   onPopupVisibleChange={v => setOpenSelect(v ? 'imageModel' : null)}
                   popupProps={{
@@ -886,7 +890,7 @@ export function ChatInput({
                   placeholder="尺寸"
                   size="medium"
                   style={{ width: 170 }}
-                  suffixIcon={<ChevronDownIcon />}
+                  suffixIcon={<ChevronDown />}
                   popupVisible={openSelect === 'imageSize'}
                   onPopupVisibleChange={v => setOpenSelect(v ? 'imageSize' : null)}
                   popupProps={{
@@ -955,7 +959,7 @@ export function ChatInput({
                   <span className="truncate">{selectedModelName}</span>
                   {/* A74：箭头用二级色，与右侧两颗 Select 的箭头同色
                       （原来继承正文色，比它们黑一档，并排时一眼看出是两套） */}
-                  <ChevronDownIcon style={{ color: 'var(--td-text-color-secondary)' }} />
+                  <ChevronDown style={{ color: 'var(--td-text-color-secondary)' }} />
                 </button>
                 {openSelect === 'model' && modelAnchor && (
                   <ModelSelectPopup
@@ -1026,7 +1030,7 @@ export function ChatInput({
                     onChange={(value) => onReasoningEffortChange?.(value as string)}
                     size="medium"
                     style={{ width: 100 }}
-                    suffixIcon={<ChevronDownIcon />}
+                    suffixIcon={<ChevronDown />}
                     popupVisible={openSelect === 'reasoning'}
                     onPopupVisibleChange={v => setOpenSelect(v ? 'reasoning' : null)}
                     prefixIcon={<Brain size={16} />}
@@ -1080,7 +1084,7 @@ export function ChatInput({
                   onChange={(value) => onPermissionModeChange(value as PermissionMode)}
                   size="medium"
                   style={{ width: 112 }}
-                  suffixIcon={<ChevronDownIcon />}
+                  suffixIcon={<ChevronDown />}
                   popupVisible={openSelect === 'permission'}
                   onPopupVisibleChange={v => setOpenSelect(v ? 'permission' : null)}
                   prefixIcon={

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Dialog, Textarea, Button, MessagePlugin } from 'tdesign-react';
-import { PlayIcon, FileCodeIcon } from 'tdesign-icons-react';
+import { Play, FileCode } from 'lucide-react';
 
 /**
  * 动态工作流入口（A41）。
@@ -98,7 +98,7 @@ export function WorkflowDialog({
               disabled={!sessionId || memberIds.length === 0}
               onClick={run}
             >
-              <PlayIcon className="mr-1" />
+              <Play className="mr-1" />
               运行
             </Button>
           </div>
@@ -135,7 +135,7 @@ export function WorkflowDialog({
         />
 
         <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          <FileCodeIcon size={13} />
+          <FileCode size={13} />
           <span>跑飞了也不怕：每次调用有独立超时，整体的看门狗会兜底。</span>
         </div>
       </div>

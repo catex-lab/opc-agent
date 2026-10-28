@@ -13,16 +13,7 @@ import {
   Select,
   Switch
 } from 'tdesign-react';
-import { 
-  AddIcon, 
-  EditIcon, 
-  DeleteIcon,
-  CheckIcon,
-  CheckCircleFilledIcon,
-  CloseCircleFilledIcon,
-  RefreshIcon
-} from 'tdesign-icons-react';
-import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info, UserRound } from 'lucide-react';
+import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info, UserRound, Plus, PencilLine, Trash2, Check, CircleCheck, CircleX, RefreshCw } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
 import { HintTip } from './HintTip';
 import { AgentCredentialSettings } from './AgentCredentialSettings';
@@ -532,16 +523,10 @@ export function SettingsPage({
                 className="relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--tc-fill-hover)]"
                 style={{
                   backgroundColor: active ? 'var(--td-brand-color-light)' : 'transparent',
-                  /* A115（用户要求）：「对设置页的菜单文字进行高亮设计，提高对比度」。
-                     未选中项原来是 `--td-text-color-secondary`（浅色 #737373），
-                     压在 #f5f5f5 的设置面板上对比度约 3.6:1 —— 小字号下读着发虚，
-                     扫一遍找不到自己想改的那一区。现在提到 primary（#171717），
-                     与正文同档；选中项保留品牌色。
-                     A116（用户要求）：「选中回显态不要加粗，使用原字体」——
-                     A115 曾额外加一档 font-semibold，本意是让「在哪一区」不只靠
-                     12% 浅底说话。但加粗会改变文字宽度，选中/取消时那一行会轻微
-                     横向跳动，而底色 + 品牌色已经是两层足够的提示。故撤掉字重，
-                     只留颜色。 */
+                  /* A134：选中态加 1px 内嵌品牌色边框，与悬停态的淡底明显区分。
+                     用 inset box-shadow 而不是 border，避免改变按钮尺寸（border
+                     会让宽度 +2px，选中/取消时整行横向跳动）。 */
+                  boxShadow: active ? 'inset 0 0 0 1px var(--td-brand-color)' : 'none',
                   color: active ? 'var(--td-brand-color)' : 'var(--td-text-color-primary)',
                 }}
                 data-settings-section={key}
@@ -590,7 +575,7 @@ export function SettingsPage({
         </div>
 
         <div className="min-w-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6">
-          <div className="mx-auto max-w-3xl space-y-8" data-settings-panel={section}>
+          <div className="w-full space-y-8" data-settings-panel={section}>
 
         {/* ── 我的资料（A115）────────────────────────────────────
             用户要求「增加用户更换自己头像和昵称的功能，昵称可以被 agent 识别」。
@@ -700,7 +685,7 @@ export function SettingsPage({
             </div>
             <Button 
               variant="text" 
-              icon={<RefreshIcon />}
+              icon={<RefreshCw />}
               onClick={checkLoginStatus}
               loading={loginStatus.checking}
               /* A116（用户反馈）：「暗色模式下，图标、文字使用亮白色，不要灰色，
@@ -727,9 +712,9 @@ export function SettingsPage({
               </>
             ) : loginStatus.isLoggedIn ? (
               <>
-                <CheckCircleFilledIcon 
-                  size="20px" 
-                  style={{ color: 'var(--td-success-color)' }} 
+                <CircleCheck
+                  size={20}
+                  style={{ color: 'var(--td-success-color)' }}
                 />
                 <span style={{ color: 'var(--td-text-color-primary)' }}>
                   已登录
@@ -748,9 +733,9 @@ export function SettingsPage({
               </>
             ) : (
               <>
-                <CloseCircleFilledIcon 
-                  size="20px" 
-                  style={{ color: 'var(--td-text-color-placeholder)' }} 
+                <CircleX
+                  size={20}
+                  style={{ color: 'var(--td-text-color-placeholder)' }}
                 />
                 <span style={{ color: 'var(--td-text-color-secondary)' }}>
                   未登录
@@ -1047,7 +1032,7 @@ export function SettingsPage({
                                 style={{ backgroundColor: color }}
                                 onClick={() => setFormData(prev => ({ ...prev, color }))}
                               >
-                                {formData.color === color && <CheckIcon style={{ color: 'white' }} size="14px" />}
+                                {formData.color === color && <Check style={{ color: 'white' }} size={14} />}
                               </button>
                             ))}
                           </div>
@@ -1143,7 +1128,7 @@ export function SettingsPage({
                       改成和「配置环境变量」同规格的 outline 小按钮，左对齐。 */}
                   <div>
                     <Button
-                      icon={<AddIcon />}
+                      icon={<Plus />}
                       variant="outline"
                       size="small"
                       onClick={() => setIsCreating(true)}
@@ -1191,7 +1176,7 @@ export function SettingsPage({
                                       variant="text" 
                                       shape="circle" 
                                       size="small"
-                                      icon={<EditIcon />}
+                                      icon={<PencilLine />}
                                       onClick={() => handleEdit(agent)}
                                     />
                                   </Tooltip>
@@ -1204,7 +1189,7 @@ export function SettingsPage({
                                         variant="text" 
                                         shape="circle" 
                                         size="small"
-                                        icon={<DeleteIcon />}
+                                        icon={<Trash2 />}
                                       />
                                     </Tooltip>
                                   </Popconfirm>
@@ -1532,7 +1517,7 @@ function AppearanceSliders() {
             border: '1px solid var(--tc-edge-strong)',
           }}
         >
-          <RefreshIcon size={13} />
+          <RefreshCw size={13} />
           恢复默认
         </button>
       </div>
