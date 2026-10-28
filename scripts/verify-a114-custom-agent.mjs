@@ -26,6 +26,14 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 const ROOT = process.cwd();
+/**
+ * 反向探针开关：`--probe-old-restart` 把重启段退回「killTree 不等待」的旧行为。
+ *
+ * 2026-10-28 这条闸门红过一阵（`POST /api/agents/probe` 处 ECONNRESET），
+ * 根因就是旧写法在跟「正在被杀的老进程」对话。用这个开关可以复现那条红，
+ * 证明新断言不是摆设。
+ */
+const PROBE_OLD_RESTART = process.argv.includes('--probe-old-restart');
 const TMP = path.join(ROOT, '.tmp', 'a114-e2e');
 const DATA = path.join(TMP, 'data');
 const REPLY = '自建端点回复：链路通了';
@@ -82,7 +90,13 @@ function startMockLlm() {
   });
 }
 
-function killTree(child) {
+/**
+ * 反向探针用：把 killTree 退回「发完就走」的旧行为。
+ *
+ * `--probe-old-restart` 走这条路径，用来证明新断言真的守住了那条竞态 ——
+ * 不加这个开关的话，「修复有效」只是一句自述。
+ */
+function killTreeNoWait(child) {
   if (!child || child.exitCode != null) return;
   const pid = child.pid;
   if (!pid) return;
@@ -90,6 +104,73 @@ function killTree(child) {
     spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
   } else {
     child.kill('SIGTERM');
+  }
+}
+
+function killTree(child) {
+  if (!child || child.exitCode != null) return Promise.resolve(0);
+  const pid = child.pid;
+  if (!pid) return Promise.resolve(0);
+  const t0 = Date.now();
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  } else {
+    child.kill('SIGTERM');
+  }
+  /*
+   * A139 修：**必须等进程真的退出**。
+   *
+   * 原来这里发完 taskkill 就返回，调用方 `await sleep(1200)` 后直接起新进程。
+   * 实测（本机 2026-10-28）：taskkill 发出 1200ms 后**老服务端仍在应答
+   * HTTP 200**，它真正退出要 **26.7 秒**（要收 SQLite、收后台探测拉起的
+   * 子进程）。于是「重启」段其实一直在跟一个**正在被杀的老进程**对话：
+   * 前面的断言全过（老进程内存里状态一样），随后那条 **94 秒**的全量探测
+   * 正好被 taskkill 掐死 → `ECONNRESET`。
+   *
+   * 这条竞态以前是偶发（10-27 复跑就 30/30），因为「老进程什么时候死」
+   * 取决于当时后台探测还剩多少活。现在明确等它死。
+   */
+  return new Promise(resolve => {
+    const t = setInterval(() => {
+      if (child.exitCode != null) {
+        clearInterval(t);
+        resolve(Date.now() - t0);
+      }
+    }, 50);
+    // 兜底：15s 还没退就继续（不能无限等，否则脚本卡死比红更糟）
+    setTimeout(() => {
+      clearInterval(t);
+      resolve(Date.now() - t0);
+    }, 15000);
+  });
+}
+
+/**
+ * 等端口真的不再应答。
+ *
+ * 只等 `child.exitCode` 还不够：shell 死了、真正 listen 的那个 node 可能还活着
+ * （`shell: true` 下 pid 是 cmd.exe）。所以再用一次请求自证 —— 连不上才算关干净。
+ */
+async function waitPortClosed(base, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(`${base}/api/sessions`, { signal: AbortSignal.timeout(2000) });
+      await new Promise(r => setTimeout(r, 200));
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 只探一次、不等待 —— 反向探针用，量的是「此刻」而不是「等到为止」 */
+async function portClosedOnce(base) {
+  try {
+    await fetch(`${base}/api/sessions`, { signal: AbortSignal.timeout(2000) });
+    return false;
+  } catch {
+    return true;
   }
 }
 
@@ -133,6 +214,33 @@ const j = async (res) => {
     return { _raw: text.slice(0, 300) };
   }
 };
+
+/**
+ * 触发一次全量探测，返回耗时（失败返回 0）。
+ *
+ * 为什么要单独包一层（A139）：这个接口实测 **94 秒**（16 个 Agent，ACP 握手
+ * 20s+）。原来直接 `await fetch(...)`，没有超时 —— 连接被任何一方掐掉时，
+ * 报错是 `TypeError: fetch failed / ECONNRESET`，**看起来像服务端崩了**，
+ * 实际只是这条请求太长。给 180s 超时 + 一次重试，并把耗时打出来：
+ * 下次再有人看到它慢，能直接判断「是探测慢」而不是「服务坏了」。
+ */
+async function probeWithRetry(base, attempts = 2) {
+  for (let i = 1; i <= attempts; i++) {
+    const t0 = Date.now();
+    try {
+      const r = await fetch(`${base}/api/agents/probe`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(180000),
+      });
+      if (r.ok) return Date.now() - t0;
+      console.log(`  （探测第 ${i} 次返回 ${r.status}）`);
+    } catch (e) {
+      console.log(`  （探测第 ${i} 次中断：${e.name} ${e.cause?.code ?? ''}，${Math.round((Date.now() - t0) / 1000)}s）`);
+    }
+    if (i < attempts) await new Promise(r => setTimeout(r, 1500));
+  }
+  return 0;
+}
 
 async function main() {
   fs.rmSync(TMP, { recursive: true, force: true });
@@ -298,8 +406,26 @@ async function main() {
     const rebootId = made?.agent?.id ?? '';
     ok(!!rebootId, '为重启验证另建一条', rebootId);
 
-    killTree(server.child);
-    await new Promise(r => setTimeout(r, 1200));
+    /*
+     * 重启段（A139 修）。
+     *
+     * 断言必须钉在**「起新进程之前，老进程是否真的死了」**上，而不是钉在
+     * 「等完之后端口通不通」—— 后者是自我实现：只要等待逻辑存在，它必然绿。
+     * 第一版就写成了后者，反向探针 32/32 照样过，等于没探。
+     */
+    const oldChild = server.child;
+    let killMs;
+    if (PROBE_OLD_RESTART) {
+      // 退回旧行为：发完 taskkill 就走，1200ms 后起新进程
+      killTreeNoWait(oldChild);
+      await new Promise(r => setTimeout(r, 1200));
+      killMs = 1200;
+    } else {
+      killMs = await killTree(oldChild);
+    }
+    ok(oldChild.exitCode != null, '起新进程前老进程已退出', `killTree 耗时 ${killMs}ms`);
+    const closed = PROBE_OLD_RESTART ? await portClosedOnce(base) : await waitPortClosed(base);
+    ok(closed, '起新进程前端口已释放（否则新进程 EADDRINUSE，waitReady 会误连老进程）');
     server = await startServer(port);
     if (!server.ready) {
       ok(false, '重启后服务端就绪', server.log.slice(-400));
@@ -314,7 +440,12 @@ async function main() {
       // 全量强制探测：如果启动时 Key 没注进进程环境，这里探出来就是
       // needs-auth；是 ready 才证明 registerCustomDefs() 确实跑在了
       // loadAgentCredentials() 之前。
-      await fetch(`${base}/api/agents/probe`, { method: 'POST' });
+      //
+      // A139：这条请求**实测要 94 秒**（16 个 Agent 全量探测），所以必须给足
+      // 超时并允许重试一次 —— 原来没有任何超时，机器稍慢就被掐成 ECONNRESET，
+      // 而报错位置（fetch failed）看起来像服务端崩了，极易误判。
+      const probeMs = await probeWithRetry(base);
+      ok(probeMs > 0, '全量探测请求完成（失败会重试一次）', `${Math.round(probeMs / 1000)}s`);
       const after = await j(await fetch(`${base}/api/agents`));
       const probed = (after.agents ?? []).find(a => a.id === rebootId);
       ok(probed?.status?.availability === 'ready', '重启后 Key 仍认得（启动注入顺序正确）',
