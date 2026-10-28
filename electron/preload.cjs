@@ -138,29 +138,6 @@ contextBridge.exposeInMainWorld('opc', {
   },
 
   /**
-   * 关于与隐私：匿名使用统计的开关。
-   *
-   * 真正的生效点在主进程（electron/analytics.ts），这里只是转发 ——
-   * 前端拿到的 available 为 false 时说明这个构建根本没配上报端点，
-   * 设置页应当显示"此版本不收集"而不是给一个无效的开关。
-   *
-   * @returns {Promise<{available: boolean, enabled: boolean, sessionActive: boolean}>}
-   */
-  analyticsState() {
-    return ipcRenderer.invoke('opc:analytics-state');
-  },
-
-  /**
-   * 切换统计开关。关闭后当前会话的收尾上报也会被拦住。
-   *
-   * @param {boolean} enabled
-   * @returns {Promise<{available: boolean, enabled: boolean, sessionActive: boolean}>} 切换后的最新状态
-   */
-  setAnalytics(enabled) {
-    return ipcRenderer.invoke('opc:analytics-set', !!enabled);
-  },
-
-  /**
    * 关于页：应用版本与构建信息。
    *
    * 版本号来自主进程的 app.getVersion()，读的是**打包后**的 package.json ——

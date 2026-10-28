@@ -181,6 +181,12 @@ function iconOf(kind: AttachmentKind) {
 // 还是黑色看不清」。四档原来各带一个彩色 hex，#1f1f1f 的锁在深色输入框底上
 // 几乎消失。现在全部走 index.css 的 --tc-perm-* 中性阶（跟随主题），
 // 颜色退出编码，只由形状区分四档。
+//
+// A141（用户指出「这个功能框的图标明显太大」）：四个图标**必须显式给 size={14}**。
+// 不给的话 lucide 默认渲染 24px —— 实测菜单行里 24px 的图标压在 13px 的
+// 「默认 / 自动编辑 / 只读 / 全放行」旁边，比文字大近一倍，行高被撑到 36px。
+// 14 与全站主流图标档一致（项目里 size={14} 有 70+ 处，13px 正文配 14px 图标）。
+// 不要改成 16：那一档是给「单独成行」的标题图标用的，与 13px 标签并排会偏重。
 const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
   label: string;
   shortLabel: string;
@@ -191,14 +197,14 @@ const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
   'default': {
     label: '默认模式',
     shortLabel: '默认',
-    icon: <Lock />,
+    icon: <Lock size={14} />,
     color: 'var(--tc-perm-default)',
     description: '每次操作都需要确认'
   },
   'acceptEdits': {
     label: '自动编辑',
     shortLabel: '自动编辑',
-    icon: <PencilLine />,
+    icon: <PencilLine size={14} />,
     color: 'var(--tc-perm-accept)',
     description: '自动允许文件编辑操作'
   },
@@ -208,7 +214,7 @@ const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
     // 在提示里看到一个选择器里找不到的名字。verify:permission 有断言守着。
     label: '只读',
     shortLabel: '只读',
-    icon: <ListChecks />,
+    icon: <ListChecks size={14} />,
     color: 'var(--tc-perm-plan)',
     description: '只生成计划，不执行操作'
   },
@@ -216,7 +222,7 @@ const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
     // 同上：与 PERMISSION_MODE_LABEL 对齐（「全放行」）
     label: '全放行',
     shortLabel: '全放行',
-    icon: <Unlock />,
+    icon: <Unlock size={14} />,
     color: 'var(--tc-perm-bypass)',
     description: '跳过所有权限确认（危险）'
   },
@@ -279,6 +285,17 @@ export function ChatInput({
 
   /** 当前展开的下拉（见 OpenSelect 注释：五个弹层互斥） */
   const [openSelect, setOpenSelect] = useState<OpenSelect | null>(null);
+
+  /**
+   * A141：权限模式说明 tooltip 的受控开关。
+   *
+   * 为什么必须自己管：TDesign 的 `Tooltip disabled` 只是**不再响应触发事件**，
+   * 已经弹出来的那块不会自己收回去。实测点开权限菜单时鼠标就停在触发器上，
+   * tooltip 早已显示，`disabled` 设成 true 后它照样压在菜单上，把第四档
+   * 「全放行」整块盖住（截图里直接看不见）。
+   * 改成受控：菜单一展开，`visible` 立刻算成 false —— 不依赖组件内部状态。
+   */
+  const [permTipVisible, setPermTipVisible] = useState(false);
 
   /**
    * A73：模型选择浮层的触发器几何（视口坐标）。
@@ -852,7 +869,7 @@ export function ChatInput({
                   placeholder="生图模型"
                   size="medium"
                   style={{ width: 190 }}
-                  suffixIcon={<ChevronDown />}
+                  suffixIcon={<ChevronDown size={14} />}
                   popupVisible={openSelect === 'imageModel'}
                   onPopupVisibleChange={v => setOpenSelect(v ? 'imageModel' : null)}
                   popupProps={{
@@ -890,7 +907,7 @@ export function ChatInput({
                   placeholder="尺寸"
                   size="medium"
                   style={{ width: 170 }}
-                  suffixIcon={<ChevronDown />}
+                  suffixIcon={<ChevronDown size={14} />}
                   popupVisible={openSelect === 'imageSize'}
                   onPopupVisibleChange={v => setOpenSelect(v ? 'imageSize' : null)}
                   popupProps={{
@@ -949,17 +966,35 @@ export function ChatInput({
                      Tailwind 的 hover:bg-[...]，非 important，被 TDesign 的
                      `.t-select .t-input--medium` 一族压过去，于是三颗芯片里
                      只有这颗 hover 不亮、展开后也不亮，并排一眼能看出来。 */
-                  className="opc-chip flex h-8 w-[140px] items-center justify-between gap-1 rounded-lg px-2 text-body"
+                  /* A141：宽度从固定 `w-[140px]` 改成「内容自适应 + 上限」。
+                     实测固定 140 时，`Auto` 的名字只占 27.8px，剩下 112px 全是空气；
+                     而 `DeepSeek-V4.1-Flash (sg)` 只给到 96px，直接被截成
+                     「DeepSeek-V4.1-Flas…」—— 两头都不对。
+                     现在：短名自己收紧（`Auto` 62px / `Hy3` 57px），长名按内容展开，
+                     只有病态长的名字才省略，完整名称始终在 `title` 里（上面已挂），
+                     展开的弹层里也完整显示。
+                     为什么不按最长名固定宽度：那样每颗短名芯片都带着 140px 空白，
+                     而这一行并排还有权限、工具两颗芯片，空白会连成一片。
+                     为什么上限是 208：固定开销实测 34px（左右内边距 16 + gap 4 + 箭头 14），
+                     于是文本预算 174px。把 `data/model-catalog.json` 里 **137 个真实
+                     模型名**逐个塞进真实 DOM 量过（不是估算），最宽的是
+                     `DeepSeek V4 Flash Vision Exp` = 170.7px，第二 `Nemotron 3.5
+                     Lightning Free` = 165.4px —— 208 让**全部 137 个名字都不省略**，
+                     还余 3px 给字体回退差异。208 而不是 205：留一点余量，
+                     免得换了字体栈就掉回省略态。
+                     为什么不拉到 244 让任意长度都完整：芯片在窄窗口下会把
+                     权限下拉挤到换行，为不存在的名字牺牲整行平衡不划算。 */
+                  className="opc-chip flex h-8 max-w-[208px] min-w-[56px] shrink-0 items-center justify-between gap-1 rounded-lg px-2 text-body"
                   style={{
                     color: selectedModel
                       ? 'var(--td-text-color-primary)'
                       : 'var(--td-text-color-placeholder)',
                   }}
                 >
-                  <span className="truncate">{selectedModelName}</span>
+                  <span className="min-w-0 truncate">{selectedModelName}</span>
                   {/* A74：箭头用二级色，与右侧两颗 Select 的箭头同色
                       （原来继承正文色，比它们黑一档，并排时一眼看出是两套） */}
-                  <ChevronDown style={{ color: 'var(--td-text-color-secondary)' }} />
+                  <ChevronDown size={14} style={{ color: 'var(--td-text-color-secondary)' }} />
                 </button>
                 {openSelect === 'model' && modelAnchor && (
                   <ModelSelectPopup
@@ -1030,10 +1065,10 @@ export function ChatInput({
                     onChange={(value) => onReasoningEffortChange?.(value as string)}
                     size="medium"
                     style={{ width: 100 }}
-                    suffixIcon={<ChevronDown />}
+                    suffixIcon={<ChevronDown size={14} />}
                     popupVisible={openSelect === 'reasoning'}
                     onPopupVisibleChange={v => setOpenSelect(v ? 'reasoning' : null)}
-                    prefixIcon={<Brain size={16} />}
+                    prefixIcon={<Brain size={14} />}
                     popupProps={{
                       overlayClassName: 'opc-choice-popup reasoning-select-popup',
                       overlayInnerStyle: { width: 180, padding: '6px 4px' }
@@ -1076,7 +1111,20 @@ export function ChatInput({
 
             {/* 权限模式选择器（外层壳带 data 属性，供 UI 测试定位；布局不变 —— 壳就是这一行的 flex 子项） */}
             <div data-permission-mode-select>
-              <Tooltip content={currentModeConfig.description} placement="top">
+              {/* A141：菜单展开时**收起**这个 tooltip（受控，见 permTipVisible）。
+                  两者的出现位置都是「触发器上方」，菜单一展开就被
+                  「每次操作都需要确认」整块盖住第四档（实测截图里
+                  「全放行」直接看不见）。加 `pointer-events: none` 只能
+                  保证点得到，看不见仍然是缺陷。
+                  为什么不是干脆删掉 tooltip：它讲的是**当前档位的语义**
+                  （菜单行只有图标+短标签，没有说明），菜单收起时仍然有用 ——
+                  要的是「两者不同时出现」，不是「删掉一个」。 */}
+              <Tooltip
+                content={currentModeConfig.description}
+                placement="top"
+                visible={permTipVisible && openSelect !== 'permission'}
+                onVisibleChange={v => setPermTipVisible(v)}
+              >
                 <Select
                   borderless
                   className="opc-chip-select"
@@ -1084,7 +1132,7 @@ export function ChatInput({
                   onChange={(value) => onPermissionModeChange(value as PermissionMode)}
                   size="medium"
                   style={{ width: 112 }}
-                  suffixIcon={<ChevronDown />}
+                  suffixIcon={<ChevronDown size={14} />}
                   popupVisible={openSelect === 'permission'}
                   onPopupVisibleChange={v => setOpenSelect(v ? 'permission' : null)}
                   prefixIcon={

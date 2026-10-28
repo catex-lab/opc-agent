@@ -1,28 +1,38 @@
 /**
  * 设置 → 关于与隐私
  *
- * 这一页承担三件事，缺一不可：
+ * 这一页承担四件事，缺一不可：
  *   1. 告诉用户「这是什么东西、什么版本」—— 开源项目的支持成本，一半来自
  *      用户报 issue 时说不清自己装的哪一版。
  *   2. 给出官方入口 —— 官网、源码、反馈。没有这些，用户只能去搜索引擎找，
  *      很容易装到改包。
- *   3. 把「收集什么」摊开讲，并给一个真的能关的开关。匿名统计虽然不含
- *      可识别信息，但知情权不该靠"反正不敏感"来省略。
+ *   3. 把隐私讲清楚。A141 之后**应用本身不收集任何信息**：遥测模块
+ *      （原 electron/analytics.ts）已整体删除，主进程没有任何出站上报，
+ *      也没有安装 ID。所以这里不再需要「会发送 / 绝不会发送」两栏和一个
+ *      开关 —— 开关存在的意义是「允许你少收集一点」，而现在没有可关的东西。
+ *      改成陈述句 + 可自行核验的源码入口。
+ *   4. 引导点星。点星对开源项目是零成本的支持，但**不能做成弹窗骚扰** ——
+ *      放在关于页里，用户主动看到，愿意点就点。
  *
- * 官网已确认；GitHub 仓库地址待用户提供后再加入，避免显示失效占位链接。
+ * 为什么不再给「完整说明」外链：旧文案指向 `${SITE_URL}/privacy.html`，
+ * 但该页在官网上是否存在从未核实过，而正文已经把该说的说完（数据在哪、
+ * 什么会离开本机、源码在哪）。宁可少一个可能 404 的链接。
  */
 import { useEffect, useState } from 'react';
-import { Switch } from 'tdesign-react';
 import {
   Globe,
+  Github,
+  Star,
   ExternalLink,
   ShieldCheck,
   Check,
-  X,
+  Bug,
 } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
 
 const SITE_URL = 'https://github.com/catex-lab/opc-agent';
+const REPO_URL = 'https://github.com/catex-lab/opc-agent';
+const ISSUE_URL = `${REPO_URL}/issues`;
 
 interface AppInfo {
   name: string;
@@ -34,54 +44,52 @@ interface AppInfo {
   arch: string;
 }
 
-interface AnalyticsState {
-  available: boolean;
-  enabled: boolean;
-  sessionActive: boolean;
-}
-
 interface AboutBridge {
   appInfo?: () => Promise<AppInfo>;
-  analyticsState?: () => Promise<AnalyticsState>;
-  setAnalytics?: (enabled: boolean) => Promise<AnalyticsState>;
 }
 
 function bridge(): AboutBridge | undefined {
   return (window as unknown as { opc?: AboutBridge }).opc;
 }
 
-const LINKS = [
-  { href: SITE_URL, label: 'OPC Agent 官网', hint: '项目介绍、下载与隐私说明', Icon: Globe },
+/**
+ * 「只存在本机」的清单。
+ *
+ * 刻意具体到目录/字段级 —— 「你的数据是安全的」这种话等于没说，
+ * 用户真正想知道的是「我删掉哪个文件夹就等于删干净了」。
+ */
+const LOCAL_ONLY = [
+  '会话记录与全部消息历史（data/chat.db）',
+  '生成的图片缓存（data/images/）',
+  'Agent 配置、模型厂商与凭据',
+  '工作区路径、偏好设置与界面状态',
 ];
 
-/** 收集 / 不收集两栏。文案刻意具体到字段名，含糊的"相关数据"等于没说。 */
-const COLLECTED = ['随机生成的安装 ID', '启动时间与使用时长', '应用版本、操作系统、架构'];
-const NOT_COLLECTED = ['聊天内容与模型输出', '文件路径与工作区内容', 'Agent 凭据与 API Key', 'IP 地址与设备指纹不会作为统计字段上报'];
+const LINKS = [
+  {
+    key: 'site',
+    href: SITE_URL,
+    label: 'OPC Agent 官网',
+    hint: 'catex-lab · 项目介绍与下载',
+    Icon: Globe,
+  },
+  {
+    key: 'github',
+    href: REPO_URL,
+    label: 'GitHub 开源仓库',
+    hint: 'catex-lab/opc-agent · 源码与更新日志',
+    Icon: Github,
+  },
+];
 
 export default function AboutPanel() {
   const [info, setInfo] = useState<AppInfo | null>(null);
-  const [state, setState] = useState<AnalyticsState | null>(null);
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    const b = bridge();
-    // 浏览器里跑（无 preload）时两个接口都不存在，页面降级成纯说明文字。
+    // 浏览器里跑（无 preload）时接口不存在，页面降级成纯说明文字。
     // 即便存在也要过滤掉空返回：桥返回 undefined 时不能让 state 变成 undefined。
-    void b?.appInfo?.().then(v => { if (v) setInfo(v); }).catch(() => undefined);
-    void b?.analyticsState?.().then(v => { if (v) setState(v); }).catch(() => undefined);
+    void bridge()?.appInfo?.().then(v => { if (v) setInfo(v); }).catch(() => undefined);
   }, []);
-
-  const toggle = async (next: boolean) => {
-    const b = bridge();
-    if (!b?.setAnalytics || busy) return;
-    setBusy(true);
-    try {
-      const updated = await b.setAnalytics(next);
-      if (updated) setState(updated);
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const buildLine = info
     ? `Electron ${info.electron} · Node ${info.node} · ${info.platform} ${info.arch}`
@@ -94,7 +102,7 @@ export default function AboutPanel() {
           关于与隐私
         </h2>
         <p className="mt-1 text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>
-          查看应用版本、官网入口和匿名统计的实际范围。
+          查看应用版本、隐私承诺与官方入口。
         </p>
       </div>
 
@@ -132,27 +140,99 @@ export default function AboutPanel() {
         </div>
       </div>
 
+      {/* ── 隐私承诺 ─────────────────────────────────────────── */}
+      <div
+        className="rounded-xl p-4 sm:p-5"
+        style={{
+          backgroundColor: 'var(--tc-layer-2)',
+          border: '1px solid var(--tc-edge-strong)',
+        }}
+        data-about-privacy
+      >
+        <div className="flex items-center gap-2">
+          <ShieldCheck size={16} style={{ color: 'var(--td-text-color-primary)' }} />
+          <h3 className="text-title font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+            不收集任何信息
+          </h3>
+        </div>
+
+        <p
+          className="mt-2 text-sm leading-relaxed"
+          style={{ color: 'var(--td-text-color-secondary)' }}
+          data-about-no-collect
+        >
+          本应用没有统计、没有埋点、没有崩溃上报，也没有安装 ID。
+          源码里不存在任何遥测模块，全部代码在 GitHub 公开，可自行核验。
+        </p>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div
+            className="rounded-lg p-3"
+            style={{ backgroundColor: 'var(--tc-layer-3)', border: '1px solid var(--tc-edge)' }}
+          >
+            <div className="mb-2 text-xs font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
+              只存在本机，从不外发
+            </div>
+            <ul className="space-y-1.5">
+              {LOCAL_ONLY.map(item => (
+                <li
+                  key={item}
+                  className="flex items-start gap-2 text-xs leading-5"
+                  style={{ color: 'var(--td-text-color-secondary)' }}
+                >
+                  <Check
+                    size={13}
+                    className="mt-0.5 shrink-0"
+                    style={{ color: 'var(--td-success-color)' }}
+                  />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div
+            className="rounded-lg p-3"
+            style={{ backgroundColor: 'var(--tc-layer-3)', border: '1px solid var(--tc-edge)' }}
+          >
+            <div className="mb-2 text-xs font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
+              什么会离开本机
+            </div>
+            {/* 整句写成一行、不留换行：JSX 会把换行折叠成一个空格，
+                于是「发送给 你自己配置的模型服务商 ，这是功能本身」——
+                中文里凭空多出两格空白。标点必须紧贴相邻元素。 */}
+            <p className="text-xs leading-5" style={{ color: 'var(--td-text-color-secondary)' }}>
+              只有你发消息时的对话内容 —— 它会被发送给<span style={{ color: 'var(--td-text-color-primary)' }}>你自己配置的模型服务商</span>，这是功能本身，不是统计。
+            </p>
+            <p className="mt-2 text-xs leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
+              应用不经过任何中转服务器，也没有自建后端。你点开的外链会交给系统浏览器打开。
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* ── 官方入口 ─────────────────────────────────────────── */}
       <div>
         <h3 className="mb-2 text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
           官方入口
         </h3>
-        <div className="grid grid-cols-1 gap-2">
-          {LINKS.map(({ href, label, hint, Icon }) => (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {LINKS.map(({ key, href, label, hint, Icon }) => (
             <a
-              key={href}
+              key={key}
               href={href}
               target="_blank"
               rel="noreferrer"
-              className="group flex items-center gap-3 rounded-xl p-3"
+              className="group flex items-center gap-3 rounded-xl p-3 transition-colors"
               style={{
                 backgroundColor: 'var(--tc-layer-2)',
                 border: '1px solid var(--tc-edge)',
                 // 全局 a 有品牌色 + 下划线，这里必须显式压掉 ——
-                // 否则卡片里的说明文字会变成一整片蓝色下划线
+                // 否则卡片里的说明文字会变成一整片下划线
                 textDecoration: 'none',
                 color: 'inherit',
               }}
+              data-about-link={key}
             >
               <span
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md"
@@ -165,12 +245,15 @@ export default function AboutPanel() {
               </span>
               <span className="min-w-0 flex-1">
                 <span
-                  className="block text-sm font-medium"
+                  className="block truncate text-sm font-medium"
                   style={{ color: 'var(--td-text-color-primary)' }}
                 >
                   {label}
                 </span>
-                <span className="block truncate text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                <span
+                  className="block truncate text-xs"
+                  style={{ color: 'var(--td-text-color-placeholder)' }}
+                >
                   {hint}
                 </span>
               </span>
@@ -180,92 +263,55 @@ export default function AboutPanel() {
         </div>
       </div>
 
-      {/* ── 隐私 ─────────────────────────────────────────────── */}
+      {/* ── 点星引导 ─────────────────────────────────────────── */}
       <div
-        className="rounded-xl p-4 sm:p-5"
+        className="flex flex-col gap-4 rounded-xl p-4 sm:flex-row sm:items-center sm:p-5"
         style={{
-          backgroundColor: 'var(--tc-layer-2)',
-          border: '1px solid var(--tc-edge)',
+          backgroundColor: 'var(--tc-layer-3)',
+          border: '1px solid var(--tc-edge-strong)',
         }}
+        data-about-star
       >
-        <div className="flex items-center gap-2">
-          <ShieldCheck size={16} style={{ color: 'var(--td-brand-color)' }} />
-          <h3 className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-            匿名使用统计
-          </h3>
+        <span
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+          style={{ backgroundColor: 'var(--tc-solid)', color: 'var(--tc-on-brand)' }}
+        >
+          <Star size={18} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+            觉得好用就给项目点个星
+          </div>
+          <div
+            className="mt-0.5 text-xs leading-5"
+            style={{ color: 'var(--td-text-color-secondary)' }}
+          >
+            这个项目不收费、不投放广告、不收集数据，唯一需要的就是一点关注度。
+          </div>
         </div>
-
-        <p className="mt-2 text-sm leading-relaxed" style={{ color: 'var(--td-text-color-secondary)' }}>
-            会话记录、生成图片和 Agent 配置保存在本机。仅在构建版本配置了统计端点且开关开启时，
-            应用才会上报下列匿名使用统计；统计请求不包含聊天内容或本地文件信息。
+        <div className="flex shrink-0 items-center gap-2">
           <a
-            href={`${SITE_URL}/privacy.html`}
+            href={ISSUE_URL}
             target="_blank"
             rel="noreferrer"
-            className="ml-1"
-            style={{ color: 'var(--td-brand-color)', textDecoration: 'none' }}
+            className="tc-btn-secondary inline-flex items-center gap-1.5"
+            style={{ textDecoration: 'none' }}
+            data-about-feedback
           >
-            完整说明
+            <Bug size={14} />
+            反馈问题
           </a>
-        </p>
-
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <div className="mb-2 text-xs font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
-              会发送
-            </div>
-            <ul className="space-y-1.5">
-              {COLLECTED.map(item => (
-                <li key={item} className="flex items-start gap-2 text-xs" style={{ color: 'var(--td-text-color-secondary)' }}>
-                  <Check size={13} className="mt-0.5 shrink-0" style={{ color: 'var(--td-success-color)' }} />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <div className="mb-2 text-xs font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
-              绝不会发送
-            </div>
-            <ul className="space-y-1.5">
-              {NOT_COLLECTED.map(item => (
-                <li key={item} className="flex items-start gap-2 text-xs" style={{ color: 'var(--td-text-color-secondary)' }}>
-                  <X size={13} className="mt-0.5 shrink-0" style={{ color: 'var(--td-error-color)' }} />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-
-        <div
-          className="mt-5 flex items-center justify-between gap-4 border-t pt-4"
-          style={{ borderColor: 'var(--td-component-border)' }}
-        >
-          <div className="min-w-0">
-            <div className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-              允许发送匿名统计
-            </div>
-          <div className="mt-0.5 text-xs leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              {/* 用 !state 而不是 state === null：桥返回异常值（undefined）时
-                  也必须落到「读取中」分支，不能直接读 .available 崩掉整页 */}
-              {!state
-                ? '正在读取当前状态…'
-                : !state.available
-                  ? '此版本未配置统计端点，不会发送任何数据。'
-                  : state.enabled
-                    ? state.sessionActive
-                      ? '已开启，本次使用正在被记录。关闭后立即停止。'
-                      : '已开启，下次启动开始记录。'
-                    : '已关闭，不会发送任何数据。'}
-            </div>
-          </div>
-          <Switch
-            value={!!state?.enabled}
-            disabled={!state?.available || busy}
-            onChange={v => void toggle(!!v)}
-            aria-label="匿名使用统计开关"
-          />
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="tc-btn-brand"
+            style={{ textDecoration: 'none' }}
+            data-about-star-cta
+          >
+            <Star size={14} />
+            去 GitHub 点星
+          </a>
         </div>
       </div>
 

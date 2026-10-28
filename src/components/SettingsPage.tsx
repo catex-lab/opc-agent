@@ -132,7 +132,7 @@ const SETTINGS_SECTIONS: Array<{
   { key: 'models', label: '模型清单', hint: '枚举来源与手动刷新', Icon: Layers },
   { key: 'agents', label: '助手人设', hint: '本地提示词与工具权限', Icon: Bot },
   // 排最后：这是「偶尔来一次」的分区，不该抢占前六项的位置
-  { key: 'about', label: '关于与隐私', hint: '版本、官方入口与统计开关', Icon: Info },
+  { key: 'about', label: '关于与隐私', hint: '版本、隐私承诺与官方入口', Icon: Info },
 ];
 
 interface LoginStatus {
@@ -1245,7 +1245,9 @@ export function SettingsPage({
         )}
 
         {/* ── 关于与隐私 ──────────────────────────────────────────
-            版本信息、官网/源码/反馈入口，以及匿名统计开关。
+            A141：版本信息、隐私承诺、官网/源码/反馈入口与点星引导。
+            遥测模块已整体删除，这一页不再有统计开关 —— 没有可关的东西，
+            给一个灰着的开关反而是误导。
             放在最后：用户平时不会来，但报 issue 前会被指引到这里。 */}
         {section === 'about' && <AboutPanel />}
           </div>

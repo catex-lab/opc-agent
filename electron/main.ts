@@ -25,7 +25,6 @@ import { server } from '../server/index.js';
 import { registry } from '../server/agents/registry.js';
 import { browserPanel, runBrowserSmoke } from './browser-view.js';
 import { terminal, type TerminalState } from './terminal.js';
-import { initAnalytics, endAnalytics, getAnalyticsState, setAnalyticsEnabled } from './analytics.js';
 import {
   enableCdp,
   initCdpEndpoint,
@@ -297,16 +296,6 @@ function registerIpc() {
   ipcMain.handle('opc:window-state', () => ({
     maximized: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized(),
   }));
-
-  // 关于与隐私：统计开关。真正的生效点在主进程（analytics.ts）——
-  // 前端只负责展示和切换。关闭后不仅下次启动不再上报，当前会话的
-  // 收尾请求也会被拦住（见 setAnalyticsEnabled 里的 ended 置位）。
-  ipcMain.handle('opc:analytics-state', () => getAnalyticsState());
-  ipcMain.handle('opc:analytics-set', (_e, value: unknown) => {
-    if (typeof value !== 'boolean') return getAnalyticsState();
-    setAnalyticsEnabled(value);
-    return getAnalyticsState();
-  });
 
   // 关于页：版本与构建信息。版本号必须走 app.getVersion()（读打包后的
   // package.json），不能在前端 import package.json —— 那样打进 bundle 的是
@@ -776,9 +765,6 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
     registerIpc();
-    // 匿名统计：未配置端点时内部直接 return，不会发出任何请求。
-    // 放在 createWindow 之前，避免窗口加载完才上报导致启动时长统计偏差。
-    initAnalytics();
     await createWindow();
     // 窗口起来之后再挂托盘：托盘图标从 dist-electron/ 读，与窗口图标同源
     createTray();
@@ -798,9 +784,7 @@ app.on('window-all-closed', () => {
 
 // 退出前回收 ACP 等长驻子进程（Hermes 是一个常驻的 Python 进程，
 // 不主动杀会变成孤儿进程留在系统里）
-let quitFlushed = false;
-
-app.on('before-quit', event => {
+app.on('before-quit', () => {
   try {
     registry.disposeAll();
   } catch (err) {
@@ -812,14 +796,5 @@ app.on('before-quit', event => {
     terminal.kill();
   } catch (err) {
     console.error('[Main] 清理终端失败:', (err as Error).message);
-  }
-
-  // 统计收尾：拦住退出最多 1.2 秒，把本次会话时长报上去，之后无论成败都放行。
-  // 未启用统计时 endAnalytics() 立即 resolve，这里几乎没有感知。
-  // quitFlushed 保证 app.quit() 引发的第二次 before-quit 直接放行，不会死循环。
-  if (!quitFlushed) {
-    quitFlushed = true;
-    event.preventDefault();
-    void endAnalytics().finally(() => app.quit());
   }
 });
