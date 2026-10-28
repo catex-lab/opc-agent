@@ -211,12 +211,21 @@ export function NewGroupDialog({
             {groupsOpen && (
               <div className="pb-1">
                 {filteredGroups.length === 0 ? (
-                  <p
-                    className="px-12 py-2.5 text-caption"
-                    style={{ color: 'var(--td-text-color-placeholder)' }}
-                  >
-                    {groups.length === 0 ? '还没有群聊' : '没有匹配的群聊'}
-                  </p>
+                  <div className="px-12 py-2.5 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                    <p>{groups.length === 0 ? '还没有群聊' : '没有匹配的群聊'}</p>
+                    {/* 只有「搜出空」才给出口；一条群都没有时清搜索也没用 */}
+                    {groups.length > 0 && kw && (
+                      <button
+                        type="button"
+                        onClick={() => setKeyword('')}
+                        className="mt-1.5 inline-flex text-caption underline"
+                        style={{ color: 'var(--td-brand-color)' }}
+                        data-new-group-clear-search
+                      >
+                        清除搜索
+                      </button>
+                    )}
+                  </div>
                 ) : (
                   filteredGroups.map(g => {
                     const members = (g.agentIds ?? [])
@@ -274,9 +283,20 @@ export function NewGroupDialog({
 
             {contactsOpen &&
               (filteredAgents.length === 0 ? (
-                <p className="px-12 py-3 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                  没有匹配的 AGENT
-                </p>
+                <div className="px-12 py-3 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                  <p>没有匹配的 AGENT</p>
+                  {agents.length > 0 && kw && (
+                    <button
+                      type="button"
+                      onClick={() => setKeyword('')}
+                      className="mt-1.5 inline-flex text-caption underline"
+                      style={{ color: 'var(--td-brand-color)' }}
+                      data-new-group-clear-search
+                    >
+                      清除搜索
+                    </button>
+                  )}
+                </div>
               ) : (
                 buckets.map(([letter, list]) => (
                   <div key={letter}>
@@ -367,12 +387,17 @@ export function NewGroupDialog({
 
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
             {selected.length === 0 ? (
-              <p
-                className="px-3 py-8 text-center text-caption"
-                style={{ color: 'var(--td-text-color-placeholder)' }}
-              >
-                从左侧勾选 AGENT
-              </p>
+              <div className="px-3 py-8 text-center">
+                {/* A139：把「为什么完成是灰的」写在用户正在看的地方。
+                    原来只有「从左侧勾选 AGENT」—— 那是操作指令，
+                    没说明「不选会怎样」，于是灰按钮看起来像坏了。 */}
+                <p className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                  从左侧勾选 AGENT
+                </p>
+                <p className="mt-1 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                  至少 1 名才能发起群聊
+                </p>
+              </div>
             ) : (
               selected.map(id => {
                 const a = getAgent(id);
@@ -422,6 +447,10 @@ export function NewGroupDialog({
               type="button"
               onClick={submit}
               disabled={selected.length === 0}
+              /* A139：禁用态必须说明「为什么点不了」。原来只有一颗灰按钮 ——
+                 用户（尤其第一次用的人）看不出是「还没选人」还是「坏了」。
+                 `title` 是鼠标侧的解释，界面侧的解释写在右栏空态里。 */
+              title={selected.length === 0 ? '先勾选至少 1 名 AGENT' : undefined}
               data-new-group-submit
               className="tc-btn-brand"
             >

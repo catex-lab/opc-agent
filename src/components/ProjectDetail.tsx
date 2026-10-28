@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FolderKanban, FolderOpen, Pencil, Trash2, MessageSquarePlus, Brain,
-  Check, X, ChevronDown, ChevronLeft,
+  Check, X, ChevronDown, ChevronLeft, Copy,
   Circle, CircleDot, CheckCircle2, Plus, ListTodo,
 } from 'lucide-react';
+import { MessagePlugin } from 'tdesign-react';
 import type { Project, ProjectTask, ProjectTaskStatus, Session, RegisteredAgent } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
 import { revealInFolder, hasNativeDialogs } from '../workspace';
+import { copyText } from '../clipboard';
 
 interface ProjectDetailProps {
   project: Project;
@@ -70,6 +72,15 @@ export function ProjectDetail({
   const [draftName, setDraftName] = useState(project.name);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /**
+   * 「复制路径」的成功反馈（A139）。
+   *
+   * 反馈不能只靠图标变一下：路径本身是 11px 的次级小字，用户点完不会盯着
+   * 那颗按钮看。所以同时改 `title`（悬停可复现）并在 1.5s 后复位 ——
+   * 复位是必须的，否则「已复制」会一直挂着，下一次点它就不再有反馈。
+   */
+  const [copiedPath, setCopiedPath] = useState(false);
+  const copyTimer = useRef<number | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
 
   /* ── 项目任务（A119）────────────────────────────────────────────
@@ -85,6 +96,33 @@ export function ProjectDetail({
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [draftTask, setDraftTask] = useState('');
+
+  /**
+   * 复制项目路径（A139）。
+   *
+   * 为什么值得单开一颗按钮：路径是 11px 的次级小字、`truncate` 之后只能靠
+   * `title` 悬停看全；而这个值恰恰是用户最常要拿去别处用的东西（终端里 cd、
+   * 报给同事、填进配置文件）。原来只能靠手动划选 —— 在一条被截断的
+   * 单行文本上划选，选到的往往只是可见的那半截。
+   *
+   * 失败时如实提示：静默失败会让用户以为剪贴板里是新路径，
+   * 粘出来是上一次的旧值，比不复制更坑。
+   */
+  const copyPath = useCallback(async () => {
+    const done = await copyText(project.path);
+    if (!done) {
+      MessagePlugin.warning('复制失败：剪贴板不可用');
+      return;
+    }
+    setCopiedPath(true);
+    if (copyTimer.current) window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => setCopiedPath(false), 1500);
+  }, [project.path]);
+
+  // 卸载时清掉待触发的定时器 —— 否则 1.5s 后会对已卸载组件 setState
+  useEffect(() => () => {
+    if (copyTimer.current) window.clearTimeout(copyTimer.current);
+  }, []);
 
   const fetchTasks = useCallback(async () => {
     setTasksLoading(true);
@@ -366,6 +404,21 @@ export function ProjectDetail({
               </div>
             )}
           </div>
+
+          {/* 复制路径（A139）：路径本身是截断的 11px 小字，靠悬停 title 看全，
+              却没法直接拿走用。与「在资源管理器打开」同一档（工具级图标按钮）。 */}
+          <button
+            type="button"
+            onClick={() => void copyPath()}
+            title={copiedPath ? '已复制路径' : '复制项目路径'}
+            aria-label={copiedPath ? '已复制路径' : '复制项目路径'}
+            className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-[var(--tc-hover-chrome)]"
+            style={{ color: copiedPath ? 'var(--td-success-color)' : 'var(--td-text-color-secondary)' }}
+            data-project-copy-path
+            data-copied={copiedPath ? '1' : undefined}
+          >
+            {copiedPath ? <Check size={15} /> : <Copy size={15} />}
+          </button>
 
           {/* 「在资源管理器里打开」只在有原生能力时出现 —— 浏览器开发态摆一颗
               点了没反应的按钮就是假控件（同 NewChatView 的选择目录按钮）。 */}

@@ -224,9 +224,22 @@ export function ProjectPanel({
             </button>
           </div>
         ) : visible.length === 0 ? (
-          <p className="px-3 py-6 text-body" style={{ color: 'var(--td-text-color-placeholder)' }}>
-            没有匹配「{keyword}」的项目
-          </p>
+          /* 搜出空态要给出口（A139）：原来只有一句「没有匹配」，用户得自己
+             回到上面的搜索框把字删掉 —— 空态里连搜索框在哪都不明显。 */
+          <div className="px-3 py-6" data-project-search-empty>
+            <p className="text-body" style={{ color: 'var(--td-text-color-placeholder)' }}>
+              没有匹配「{keyword}」的项目
+            </p>
+            <button
+              type="button"
+              onClick={() => setKeyword('')}
+              className="mt-1.5 inline-flex text-caption underline"
+              style={{ color: 'var(--td-brand-color)' }}
+              data-project-clear-search
+            >
+              清除搜索
+            </button>
+          </div>
         ) : (
           visible.map(p => {
             const active = p.id === selectedId;
