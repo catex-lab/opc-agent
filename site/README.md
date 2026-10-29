@@ -26,7 +26,7 @@ site/
 |------|--------|
 | `site/assets/config.js` | 确认正式 GitHub 仓库后填写 `repo`（`owner/repo`）；部署 Worker 后把 `apiBase` 填成 `https://github.com/catex-lab/opc-agent` |
 | `site/worker/wrangler.toml` | `database_id`（D1 创建后返回）、`STATS_KEY`、`GITHUB_REPO`、`ALLOWED_ORIGIN`、`R2_PUBLIC_BASE` |
-| `src/components/AboutPanel.tsx` | 顶部四个地址常量（`SITE_URL` / `REPO_URL` / `ISSUES_URL` / `RELEASES_URL`），必须与 `config.js` 一致 |
+| `src/components/AboutPanel.tsx` | 顶部三个地址常量（`SITE_URL` / `REPO_URL` / `ISSUE_URL`），必须与 `config.js` 一致 |
 
 > 正式 GitHub 仓库地址尚待提供。`repo` 为空时，下载 / GitHub 链接会禁用，不会跳到伪造仓库；更新日志会说明等待配置。取得真实仓库地址后再部署，页面即可启用相关链接。
 
