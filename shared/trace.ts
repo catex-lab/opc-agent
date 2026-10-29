@@ -223,7 +223,7 @@ function diffOf(name: string, input?: Record<string, unknown>): TraceDiff | unde
     return { added: content.split('\n').length, removed: 0, known: false };
   }
 
-  // 其余文件类工具：确实没有 diff 数据，报 ±0（用户口径：显示而不是隐藏）
+  // 其余文件类工具：确实没有 diff 数据，报 ±0（既定口径：显示而不是隐藏）
   if (name === 'read' || name === 'readfile' || name === 'delete' || name === 'deletefile') {
     return { added: 0, removed: 0, known: false };
   }

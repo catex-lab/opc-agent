@@ -67,10 +67,11 @@ async function read(p) {
   const fav16 = pngSize(await read('public/favicon-16.png'));
   ok(fav32?.width === 32, 'public/favicon.png 是 32×32', `${fav32?.width}`);
   ok(fav16?.width === 16, 'public/favicon-16.png 是 16×16', `${fav16?.width}`);
-  // 旧的几何 SVG 保留未删（资产不主动删），但不该再被任何地方引用 ——
-  // 「文件还在」是肯定式，防止把「整个删掉」当成通过。
-  ok(existsSync(join(ROOT, 'public/favicon.svg')), '旧 favicon.svg 仍保留（只停止引用，不删资产）');
-  ok(existsSync(join(ROOT, 'src/assets/app-logo.svg')), '旧 app-logo.svg 仍保留');
+  // 旧的几何 SVG 已删除 —— 只留 `build/logo-source.png` 这一个真源。
+  // 「文件不在」是肯定式，防止有人悄悄把旧资产加回来造成两套 Logo 并存。
+  ok(!existsSync(join(ROOT, 'public/favicon.svg')), '旧 favicon.svg 已删除（只留位图真源）');
+  ok(!existsSync(join(ROOT, 'src/assets/app-logo.svg')), '旧 app-logo.svg 已删除（只留位图真源）');
+  ok(!existsSync(join(ROOT, 'build/icon.svg')), '旧 build/icon.svg 已删除（真源是 logo-source.png）');
 }
 
 // 1c. ICO 容器：主图标 7 尺寸、托盘 4 尺寸，条目全是 PNG

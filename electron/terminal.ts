@@ -5,7 +5,7 @@
  *
  * A80 落地的是**管道版**（`child_process.spawn` + 三流管道）：能敲命令、能看输出、
  * `cd` 跨命令连续，但**没有终端语义** —— vim / top / less / 交互式提示拿不到 TTY，
- * 行为不可预期。A82 按用户拍板补上 PTY 版（`node-pty`）。
+ * 行为不可预期。A82 按定稿补上 PTY 版（`node-pty`）。
  *
  * PTY 版给的是真终端：光标寻址、颜色协商、窗口尺寸、回显都由 ConPTY/winpty 负责，
  * 于是 vim 能跑、top 能跑、`python` 交互式 REPL 能跑。

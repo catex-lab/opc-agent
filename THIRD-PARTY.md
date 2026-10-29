@@ -25,11 +25,14 @@
 | `@qodercn-ai/qodercn-agent-sdk` | Qoder Product Service Terms（见包内 `LICENSE`） |
 
 这两个包是 Qoder 官方 SDK，**不是开源许可**，使用受
-<https://qoder.com/product-service> 约束。它们只作为可选依赖被 `server/agents/definitions.ts`
-按需加载 —— 没安装或未登录 Qoder 时，对应 Agent 显示为「未安装」，其余功能不受影响。
+<https://qoder.com/product-service> 约束。
 
-**如果你要再分发本项目的安装包**，请自行确认这两个包的条款是否允许随包分发；只使用本仓库源码
-而不使用 Qoder Agent 时，可以不安装它们。
+因此它们被放在 `devDependencies`，**不会被打进安装包** —— 源码仓库可以自由分发，
+但发布的安装包里不含这两个包。代价是打包版里 Qoder 走 **CLI 通道**（`qodercli`），
+功能正常；只有「只读（plan）模式」需要 SDK 通道，打包版会明确报错而**不会**静默
+降级到没有沙箱的 CLI（见 `server/agents/adapters/qoder-sdk.ts` 的降级分支）。
+
+自己从源码构建时 `npm install` 会装上它们，SDK 通道与 plan 模式都可用。
 
 ## 字体与图标
 

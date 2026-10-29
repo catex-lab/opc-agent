@@ -123,9 +123,9 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
   /**
    * 点面板以外的地方收起。
    *
-   * ## 为什么监听 `pointerdown` 而不是 `click`（A118 用户反馈）
+   * ## 为什么监听 `pointerdown` 而不是 `click`（A118 反馈）
    *
-   * 用户原话：「切换新工作区后，我点击输入框，工作区弹窗没有关闭」。
+   * 原话：「切换新工作区后，我点击输入框，工作区弹窗没有关闭」。
    *
    * 根因不在这个面板，在**输入框**：TDesign 的 `<t-chat-sender>` 是 shadow
    * DOM，它在内部把 `mousedown` / `click` 吃掉了 —— 实测点它的 textarea 时，
@@ -161,7 +161,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
   /**
    * A86：新建工作区。
    *
-   * 用户反馈「选错了目录没法回头，也没法开一个新的」—— 这里补的就是这两件。
+   * 反馈「选错了目录没法回头，也没法开一个新的」—— 这里补的就是这两件。
    * 建目录落在主进程（见 `opc:create-workspace`），父目录必须用户亲手选；
    * 取消时什么都不做，**不**弹提示（取消是一次正常决定）。
    */
@@ -204,7 +204,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
       data-workspace-badge
       onToggle={e => setOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
-      {/* A84（用户要求）：常态不再铺一块 `--tc-hover-chrome`。
+      {/* A84（需求）：常态不再铺一块 `--tc-hover-chrome`。
           它是「当前工作目录」的状态徽标，不是一颗按下去会生效的按钮，
           常驻底色会让人误读成「这个已经开着」。现在只有**真的展开着**
           这个下拉时才给底色（选中回显态），其余时候靠 hover 浮现。 */}

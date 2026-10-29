@@ -101,7 +101,7 @@ function patch(sessionId: string, next: SessionFlags): void {
   else merged[sessionId] = flags;
 
   write(merged);
-  // A115（用户反馈）：「右键菜单改完标记后列表必须立刻重画」这句话只在
+  // A115（反馈）：「右键菜单改完标记后列表必须立刻重画」这句话只在
   // **右键菜单**那条路上成立 —— `patch()` 原先只写文件、不通知订阅者，
   // 于是会话行点击里的 `setManuallyUnread(id, false)` 是**静默**的：
   // 红点要等下一次无关重渲染才消失（有时一直挂着）。

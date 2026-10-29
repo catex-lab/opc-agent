@@ -3,7 +3,7 @@
  *
  * ## 为什么放服务端而不是 localStorage
  *
- * 用户原话是「昵称可以被 agent 识别」。Agent 跑在**服务端**（CLI 子进程、
+ * 原话是「昵称可以被 agent 识别」。Agent 跑在**服务端**（CLI 子进程、
  * SDK、HTTP 适配器），前端存什么都不够 —— 必须有一个服务端认得的值，
  * 在拼 systemPrompt 时注入进去。所以这里是唯一事实来源，
  * 前端只通过 `GET/PUT /api/user-profile` 读写。

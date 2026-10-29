@@ -380,7 +380,7 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
                 <RefreshCw size={14} className={loading ? 'animate-spin' : undefined} />
               </button>
             )}
-            {/* A84（用户要求）：这里原来是「×」。用户的意思是——面板一展开，
+            {/* A84（需求）：这里原来是「×」。用户的意思是——面板一展开，
                 聊天头部那枚「展开工作区」按钮就该搬到这个位置，由它自己
                 充当收起入口，且**不要 × 图标**。于是同一个图标（PanelRight）
                 在两种状态下只有一个落点：没收起时在聊天头部，收起了就在这儿。
@@ -562,7 +562,7 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
                   >
                     <button
                       type="button"
-                      // A86（用户反馈后改）：单击 = 面板内预览，双击 = 用系统程序打开。
+                      // A86（反馈后改）：单击 = 面板内预览，双击 = 用系统程序打开。
                       // A82 那版是「单击直接外部打开」，理由是对齐资源管理器；但真实
                       // 使用里它让整个面板读起来像假的（点 md 跳出应用）。目录仍然是
                       // 单击进入 —— 目录没有「预览」这回事。

@@ -7,6 +7,7 @@ import { unstable_v2_createSession, unstable_v2_authenticate } from "@tencent-ai
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import fs from "fs";
+import crypto from "node:crypto";
 import * as db from "./db.js";
 // A98：项目层。命名导入是为了让路由里读起来更直接（`db.` 前缀在
 // 这些一次性调用上只是噪音）；`import * as db` 仍然保留给既有调用点。
@@ -3176,13 +3177,33 @@ function sendIndexHtml(res: express.Response) {
     res.sendFile(indexPath);
     return;
   }
-  const script = `<script>${prefsAsInlineScript()}</script>`;
+  const prefsSrc = prefsAsInlineScript();
+  const script = `<script>${prefsSrc}</script>`;
   // 没有 </head> 的 HTML 不合法，但真遇到也不该整页打不开 —— 那就退化成
   // 「没注入」，前端会回落到 localStorage（见 src/prefs.ts 的读取顺序）。
   const injected = html.includes('</head>')
     ? html.replace('</head>', `${script}</head>`)
     : html;
   res.setHeader('Cache-Control', 'no-store');
+  // CSP（公开前 A145）：主窗口只有本地服务这一个 origin，静态资源全走 `self`。
+  //   · 内联的偏好脚本是唯一一处 inline，用 SHA-256 精确放行，不开放 `unsafe-inline`；
+  //   · `style-src 'unsafe-inline'` 保留 —— React 组件大量 `style={{…}}`，
+  //     这是 SPA 的常规低风险豁免（样式注入的危险性远低于脚本注入）；
+  //   · SSE 流（EventSource / fetch）走同源，`connect-src 'self'` 即覆盖。
+  const cspHash = 'sha256-' + crypto.createHash('sha256').update(prefsSrc, 'utf8').digest('base64');
+  res.setHeader(
+    'Content-Security-Policy',
+    `default-src 'self'; ` +
+      `script-src 'self' '${cspHash}'; ` +
+      `style-src 'self' 'unsafe-inline'; ` +
+      `img-src 'self' data: blob:; ` +
+      `font-src 'self' data:; ` +
+      `connect-src 'self'; ` +
+      `object-src 'none'; ` +
+      `base-uri 'self'; ` +
+      `frame-ancestors 'none'; ` +
+      `form-action 'self'`
+  );
   res.type('html').send(injected);
 }
 

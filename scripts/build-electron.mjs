@@ -54,7 +54,7 @@ await cp('electron/preload.cjs', `${OUT_DIR}/preload.cjs`);
  *
  * dist-electron/** 是被打进 asar 的，放在这里两种形态都能读到同一个相对路径。
  *
- * 两个图标都由 scripts/make-icons.mjs 从 build/icon.svg 生成：
+ * 两个图标都由 scripts/make-icons.mjs 从 build/logo-source.png 生成：
  *   icon.png      256×256，BrowserWindow 用
  *   tray-icon.ico 16/20/24/32 多尺寸，系统托盘用（ico 才能让 Windows 按 DPI 自选）
  */

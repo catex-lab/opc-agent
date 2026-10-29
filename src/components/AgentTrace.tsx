@@ -16,7 +16,7 @@
  * 底部还有一层**渐隐遮罩**：轨迹超过可视高度时，最后一行淡出，
  * 提示「下面还有」，而不是硬切一刀。
  *
- * ## 展开策略（用户口径）
+ * ## 展开策略（既定口径）
  *
  * 完成态**默认收起**（长会话里一条消息挂 20 行会把上下文冲散），
  * 但流式过程中默认展开 —— 用户此刻正在盯着它干活。
@@ -172,7 +172,7 @@ function DiffTag({ diff }: { diff: TraceDiff }) {
       </span>
     );
   }
-  // 没有 diff 数据：按用户口径显示 ±0，而不是留空 ——
+  // 没有 diff 数据：按既定口径显示 ±0，而不是留空 ——
   // 留空会让「读文件」和「没读到东西」看起来一样。
   return (
     <span className="tc-diff" data-diff="±0">
@@ -190,7 +190,7 @@ function DiffTag({ diff }: { diff: TraceDiff }) {
  * 为什么不再用 `.tc-step-detail`（等宽 12px + 3% 底）：那是**工具输出**的语言，
  * 机器文本等宽才对；思考是自然语言，套等宽 + 最淡一档灰，长推理比工具输出还难读。
  *
- * `collapse`：这条消息已经有正文了。用户口径是「输出正文前折叠上面的」——
+ * `collapse`：这条消息已经有正文了。既定口径是「输出正文前折叠上面的」——
  * 答案出现后，过程让位，不再自动铺开。
  */
 function ThinkingNode({ item, collapse = false }: { item: TraceItem; collapse?: boolean }) {
@@ -397,7 +397,7 @@ export interface AgentTraceProps {
   blocks: readonly Block[];
   /** 这一轮是否还在流式（决定默认展开 + 自动贴底） */
   isStreaming?: boolean;
-  /** 这条消息已经有正文：收起轨迹，把版面让给答案（用户口径） */
+  /** 这条消息已经有正文：收起轨迹，把版面让给答案（既定口径） */
   collapse?: boolean;
 }
 
@@ -408,7 +408,7 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
   const items = useMemo(() => buildTrace(blocks), [blocks]);
   const summary = useMemo(() => summarizeTrace(items), [items]);
 
-  // 用户口径：完成态默认收起；流式中默认展开。
+  // 既定口径：完成态默认收起；流式中默认展开。
   // 手动切过之后不再自动干预（否则用户刚展开就被「跑完」那一刻关掉）。
   const [expanded, setExpanded] = useState(!!isStreaming);
   const touched = useRef(false);

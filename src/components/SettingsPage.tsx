@@ -121,7 +121,7 @@ const SETTINGS_SECTIONS: Array<{
   hint: string;
   Icon: typeof Monitor;
 }> = [
-  // A115（用户要求「增加用户更换自己头像和昵称的功能」）：排第一。
+  // A115（需求「增加用户更换自己头像和昵称的功能」）：排第一。
   // 这是唯一一项「关于我而不是关于软件」的设置，放在最前面才找得到 ——
   // 设置页的通行做法是把个人资料摆在首位。
   { key: 'profile', label: '我的资料', hint: '昵称与头像，昵称会被 Agent 识别', Icon: UserRound },
@@ -488,11 +488,11 @@ export function SettingsPage({
           且没有 header 容器与底边线，是全应用最显眼的标题栏不一致。 */}
       <PanelHeader
         title="设置"
-        // A116（用户反馈）：「设置页的红框位置上下占了太多空间，请缩小」。
+        // A116（反馈）：「设置页的红框位置上下占了太多空间，请缩小」。
         // dense 把垂直留白 20px→12px、整栏 88px→60px。设置是浮层，
         // 没有「与旁边一栏标题对齐」的约束，可以单独压。
         dense
-        // A37：**不再传副标题**。用户要求「取消组件内的小字」——
+        // A37：**不再传副标题**。需求「取消组件内的小字」——
         // 分区副标题（「主题、界面透明度、鼠标光斑」）与左侧导航里那行小字
         // 是同一句话说了两遍，而且它描述的正是下面三个分区按钮的内容，
         // 属于「导航能自解释」的重复信息。
@@ -509,7 +509,7 @@ export function SettingsPage({
               className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-[var(--tc-hover-chrome)]"
               style={{
                 color: 'var(--td-text-color-secondary)',
-                // A114（用户反馈）：「设置页右上角的关闭按钮往右上角适当调整，
+                // A114（反馈）：「设置页右上角的关闭按钮往右上角适当调整，
                 // 现在的位置不协调」。实测原位置是距弹窗顶 22px、右侧 25px ——
                 // 它跟着 `actionsAlign="title"` 与「设置」标题行对齐，结果是
                 // 悬在标题旁边、离 16px 圆角还有一段距离：既不像「角落里的
@@ -549,7 +549,7 @@ export function SettingsPage({
                 type="button"
                 onClick={() => setSection(key)}
                 aria-current={active ? 'page' : undefined}
-                // A37：每一项下面那行灰色小字去掉了（用户要求「取消组件内的小字」）。
+                // A37：每一项下面那行灰色小字去掉了（需求「取消组件内的小字」）。
                 // 信息没有丢 —— 挂到 title 上，悬停仍能看到这一区管什么；
                 // 常驻显示时它只是把三个按钮各撑高一行，读起来像目录。
                 title={hint}
@@ -615,7 +615,7 @@ export function SettingsPage({
           <div className="w-full space-y-8" data-settings-panel={section}>
 
         {/* ── 我的资料（A115）────────────────────────────────────
-            用户要求「增加用户更换自己头像和昵称的功能，昵称可以被 agent 识别」。
+            需求「增加用户更换自己头像和昵称的功能，昵称可以被 agent 识别」。
             昵称由服务端存（server/user-profile.ts）并在 registry.stream() 时
             注入 systemPrompt —— 所以这里的保存是一次 PUT，不是纯本地 state。
             头像只在本机界面上用，但和昵称放一起改，用户少一个入口。 */}
@@ -666,7 +666,7 @@ export function SettingsPage({
                     // 选中态用品牌色描边 + 淡底，不用实心填充：
                     // 三张卡片并排，填实心会让视觉重心全压在被选中的那张上。
                     backgroundColor: selected ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-component)',
-                    // A37：描边 1.5px → 1px（用户要求「选中按钮后的描边调整细一些」）。
+                    // A37：描边 1.5px → 1px（需求「选中按钮后的描边调整细一些」）。
                     // 1.5px 在 100% 不透明时像一圈实线，1px 才是「选中提示」的分量。
                     border: `1px solid ${selected ? 'var(--td-brand-color)' : 'transparent'}`,
                   }}
@@ -725,7 +725,7 @@ export function SettingsPage({
               icon={<RefreshCw />}
               onClick={checkLoginStatus}
               loading={loginStatus.checking}
-              /* A116（用户反馈）：「暗色模式下，图标、文字使用亮白色，不要灰色，
+              /* A116（反馈）：「暗色模式下，图标、文字使用亮白色，不要灰色，
                  例如刷新按钮图标及文案」。
                  ⚠️ 这里**不能**用内联 style 改色：index.css 的
                  `.t-button--variant-text { color: ... !important }` 带 !important，
@@ -783,7 +783,7 @@ export function SettingsPage({
           
           {/* 环境变量配置 */}
           <div className="mb-6">
-            {/* A115（用户要求「设置页的菜单文字高亮、提高对比度」）：
+            {/* A115（需求「设置页的菜单文字高亮、提高对比度」）：
                 子标题原来是 secondary(#737373)，压在 #f5f5f5 上约 3.6:1，
                 比正文虚一档。提到 primary，与分区标题同一刻度。 */}
             <h3
@@ -1126,7 +1126,7 @@ export function SettingsPage({
                         return (
                           <div 
                             key={template.name} 
-                            // A37：内置助手不再用彩色块（用户要求「不要彩色填充」）。
+                            // A37：内置助手不再用彩色块（需求「不要彩色填充」）。
                             // 四个模板各一个高饱和色块，一屏看下来像四条色带，
                             // 而它们只是「快捷入口」—— 真正的身份色属于用户自己
                             // 创建的 Agent（下面「我的 Agent」里仍保留）。
@@ -1197,7 +1197,7 @@ export function SettingsPage({
                                 >
                                   <Icon size={20} />
                                 </div>
-                                {/* A37：名称下那行描述去掉了（用户要求「取消 agent 下方的小字」）。
+                                {/* A37：名称下那行描述去掉了（需求「取消 agent 下方的小字」）。
                                     描述仍在 title 里，悬停可见 —— 列表要的是「一眼扫完」，
                                     每行多一行小字会把行高翻倍、扫读反而更慢。 */}
                                 <div
@@ -1280,7 +1280,7 @@ export function SettingsPage({
  *      在底下垫一层自己画的轨道，把 input 做成「只有滑块可见」。
  * 自己画 12 行 CSS 比给组件库打补丁更可控。
  *
- * ## A44（用户反馈）：不画圆形滑块
+ * ## A44（反馈）：不画圆形滑块
  *
  * 轨道上那颗圆点去掉了（`.tc-range--flat`，见 index.css）—— 现在靠
  * 「已选段到哪儿结束」读数。input 本身和 14px 的滑块都还在，只是透明，
@@ -1292,7 +1292,7 @@ export function SettingsPage({
 function TransparencySlider({ resetToken = 0 }: { resetToken?: number }) {
   const [value, setValue] = useState(readTransparency);
   /**
-   * 拖动中：在滑块正上方浮出**精确数值**气泡（A35 用户反馈）。
+   * 拖动中：在滑块正上方浮出**精确数值**气泡（A35 反馈）。
    *
    * 标题行右侧本来就有 `{value}%`，但那是视线之外的一行小字 —— 手指按在
    * 滑块上拖动时，眼睛盯着的是滑块，不会抬头去读右上角。气泡跟着滑块走，
@@ -1515,7 +1515,7 @@ function GlowSettings({ resetToken = 0 }: { resetToken?: number }) {
 /**
  * 外观区的三个滑杆 + 一个**统一**的「恢复默认」（A35）。
  *
- * 用户原话：「恢复默认按钮的控制要将界面透明度也纳入统一恢复默认管理」。
+ * 原话：「恢复默认按钮的控制要将界面透明度也纳入统一恢复默认管理」。
  *
  * 改前：透明度只能靠双击滑杆复位，而光斑那颗「恢复默认」只清光斑两个参数，
  * 还藏在 `prefs.enabled` 里面 —— 关掉光斑之后连按钮都看不见，用户没有任何
@@ -1656,7 +1656,7 @@ function GlowRange({
           </div>
         )}
       </div>
-      {/* A44（用户反馈）：默认刻度下方补一个「默认」字样。
+      {/* A44（反馈）：默认刻度下方补一个「默认」字样。
           原先只有一根 3px 的短竖线，不解释就只是轨道上的一个杂点 ——
           用户看不出那是「默认值在这儿」。位置复用 posOf()，与刻度同源，
           刻度挪了文案跟着挪，不会各写一份公式。

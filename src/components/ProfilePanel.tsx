@@ -6,7 +6,7 @@ import { AvatarPickerGrid, UserAvatar } from './UserAvatar';
 /**
  * 「我的资料」分区（A115）。
  *
- * 用户原话：「增加用户更换自己头像和昵称的功能，昵称可以被 agent 识别」。
+ * 原话：「增加用户更换自己头像和昵称的功能，昵称可以被 agent 识别」。
  *
  * ## 为什么昵称走服务端
  *

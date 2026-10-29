@@ -51,7 +51,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
       {/*
-        A115（用户反馈）：「切换会话时选中的列表上下回跳、新会话内容屏闪」。
+        A115（反馈）：「切换会话时选中的列表上下回跳、新会话内容屏闪」。
 
         ⚠️ `useTransitions={false}` 是这一条的**根因修复**，不要当无关紧要的
         参数删掉。React Router v7 的 BrowserRouter 默认把路由状态更新包在

@@ -171,7 +171,7 @@ const SURFACE_CONTENT = { light: '#ffffff', dark: '#121212' } as const;
  * 会变成一块透明缺口。
  *
  * `backgroundMaterial: 'acrylic'` 是系统**自己**画的一层毛玻璃：
- * 桌面被模糊 + 提亮之后才透上来（正是用户说的「隐约看到桌面」），
+ * 桌面被模糊 + 提亮之后才透上来（正是原话里的「隐约看到桌面」），
  * 窗口阴影、圆角、贴靠、高对比度模式全都保留。
  *
  * 代价是它只在 **Windows 11 22H2（build 22621）及以上**可用。更低版本
@@ -609,7 +609,7 @@ async function createWindow() {
     // 窗口左上角与任务栏都用它。图标由 scripts/build-electron.mjs 拷到
     // dist-electron/ —— 不能指向 build/icon.png，那个目录是构建资源、
     // 不进 app.asar，打包态会静默失效。
-    // 设计源是 build/icon.svg（同人卦徽章），位图由 scripts/make-icons.mjs
+    // 设计源是 build/logo-source.png（彩色徽章），位图由 scripts/make-icons.mjs
     // 栅格化生成；托盘图标是同源的 tray-icon.ico（见 createTray）。
     icon: join(__dirname, 'icon.png'),
     show: false, // 等首帧渲染完再显示，避免白屏闪一下

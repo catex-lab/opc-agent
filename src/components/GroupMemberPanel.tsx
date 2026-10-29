@@ -69,7 +69,7 @@ export function GroupMemberPanel({ members, allAgents, onMembersChange }: GroupM
   const [keyword, setKeyword] = useState('');
   const [searching, setSearching] = useState(false);
   /**
-   * 默认**折叠**（A72，用户要求）。
+   * 默认**折叠**（A72，需求）。
    *
    * 理由：这一栏是"谁在群里"的查阅面板，不是聊天主路径。236px 常驻会把
    * 消息区挤掉四分之一，而用户九成时间不需要看它。折叠后右缘只留 10px
@@ -352,7 +352,7 @@ export function GroupMemberPanel({ members, allAgents, onMembersChange }: GroupM
                     {availabilityLabelOf(member)}
                   </span>
                 )}
-                {/* 移出。A35（用户反馈）：**常驻可见**（45% 对比），悬停整行
+                {/* 移出。A35（反馈）：**常驻可见**（45% 对比），悬停整行
                     才提到 100%。
                     改前是 `opacity-0` —— 按钮在 DOM 里、功能也通，但默认完全
                     透明，用户在这一栏里看到的是一条「没有任何操作」的成员行，

@@ -124,7 +124,7 @@ export function GroupChatHeader({
   return (
     <PanelHeader
       compact
-      // A103（用户要求）：与 ChatHeader 同步 —— 会话头部改用框架面 chrome，
+      // A103（需求）：与 ChatHeader 同步 —— 会话头部改用框架面 chrome，
       // 和左边消息列表栏同色。一对一与群聊是同一个位置的两副内容，
       // 只有一套配色，不能一个白一个灰。
       surface="chrome"
@@ -304,7 +304,7 @@ export function GroupChatHeader({
             style={{
               /* A75：展开态 = 选中回显，走 selected 档（与导航、会话行、下拉
                  选中同一档）。
-                 A84（用户要求）：关着的时候不再保留那层「常态浅底」。原来的
+                 A84（需求）：关着的时候不再保留那层「常态浅底」。原来的
                  理由是「它在一片白里是唯一入口，看不见就等于没有」—— 但图标
                  本身（16px 的齿轮描边，secondary 色）在浅底上本来就看得见，
                  垫一块灰只是让它看起来像已经被按下了。真正需要「显形」的是

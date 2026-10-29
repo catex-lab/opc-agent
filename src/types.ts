@@ -367,7 +367,7 @@ export interface PermissionResponse {
   behavior: 'allow' | 'deny';
   /** P4：选中的档位 id（适配器据此精确回选；缺省按 behavior 找第一档） */
   optionId?: string;
-  /** P4：拒绝原因码，用来区分用户决定 / 超时 / 收尾 / 门禁 */
+  /** P4：拒绝原因码，用来区分定稿 / 超时 / 收尾 / 门禁 */
   reasonCode?: PermissionReasonCode;
   message?: string;
 }
