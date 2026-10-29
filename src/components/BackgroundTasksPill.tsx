@@ -31,6 +31,21 @@ export function BackgroundTasksPill({
   const total = tasks.length + lingering;
   if (total <= 0) return null;
 
+  /**
+   * 文案必须按来源分档：「运行中」只能用在**真的还有 run 在跑**的时候。
+   *
+   * `lingering` 里最多的是 `interrupted` 块 —— 本轮已经正常结束，只是那个
+   * 工具调用没收到结果（适配器漏发、进程退出）。这些块会落库，刷新后还在，
+   * 所以如果统一说「N 个后台任务运行中」，用户会看到一条**永远消不掉**的
+   * 「有任务在跑」，而他其实什么都没在跑 —— 点「查看」也无处可去。
+   */
+  const label =
+    lingering === 0
+      ? `${total} 个后台任务运行中`
+      : tasks.length === 0
+        ? `${total} 个工具调用未回结果`
+        : `${total} 个任务未结束`;
+
   const target = tasks.find(t => t.sessionId);
   const clickable = !!(target?.sessionId && onOpen);
 
@@ -57,7 +72,7 @@ export function BackgroundTasksPill({
           <span className="tc-live-core" style={{ backgroundColor: 'var(--td-brand-color)' }} />
           <span className="tc-live-ring" style={{ borderColor: 'var(--td-brand-color)' }} />
         </span>
-        <span>{total} 个后台任务运行中</span>
+        <span>{label}</span>
         {clickable && <span className="tc-bg-tasks-go">查看</span>}
       </button>
     </div>

@@ -23,7 +23,14 @@
  *     与每个影子根（hover 重建按钮）各一路。
  */
 
-/** lucide「复制」图标的 SVG（尺寸与操作行的 15px 图标视觉对齐） */
+/**
+ * lucide「复制」图标的 SVG（尺寸与操作行的 15px 图标视觉对齐）。
+ *
+ * 来源：lucide（https://lucide.dev），**ISC 许可**，与 `lucide-react` 同一套图标。
+ * 这里内联而不是用 `<Copy />` 组件，是因为目标节点在 Cherry 的 **shadow DOM** 里 ——
+ * React 组件没法跨影子根插入，只能拿 path 数据手工造一个节点。
+ * 许可见 THIRD-PARTY.md。
+ */
 const COPY_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
   'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +

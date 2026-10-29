@@ -180,6 +180,15 @@ await mkdir(OUT, { recursive: true });
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 const errors = [];
 
+/**
+ * 夹具开关：`/api/runs/active` 返回「有后台 run」还是空。
+ *
+ * [7b] 要用它模拟「用户点了停止，服务端那边这条 run 已经没了」。
+ * 放在模块级是因为 route handler 在 Node 侧执行、能闭包到这个变量；
+ * a36 各段是串行的（每段 newPage → close），不存在并发串味。
+ */
+let bgRunsEmpty = false;
+
 async function newPage() {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
   const page = await ctx.newPage();
@@ -189,7 +198,8 @@ async function newPage() {
     const url = route.request().url();
     const json = o => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(o) });
     if (url.includes('/api/runs/active')) {
-      // 另一个会话（s3）还在跑 → 后台任务 1 个
+      // 另一个会话（s3）还在跑 → 后台任务 1 个；[7b] 会把它切成空
+      if (bgRunsEmpty) return json({ runs: [] });
       return json({ runs: [{ runId: 'r-bg', sessionId: 's3', agentId: 'workbuddy', startedAt: Date.now() - 60000 }] });
     }
     if (url.includes('/api/chat')) return route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"type":"done"}\n' });
@@ -358,7 +368,7 @@ console.log('\n[7] 后台任务胶囊');
   const pill = page.locator('[data-bg-tasks]').first();
   ok(await pill.count() > 0, '出现后台任务胶囊');
   const text = (await pill.textContent().catch(() => '')) ?? '';
-  ok(text.includes('后台任务运行中'), '文案是「N 个后台任务运行中」', text.trim());
+  ok(text.includes('任务未结束'), '文案按来源分档（真 run + 未回结果混在一起时说「未结束」，不谎称「运行中」）', text.trim());
   ok((await pill.getAttribute('data-bg-tasks-runs')) === '1', '来源一：别的会话还在跑的 run = 1');
   ok((await pill.getAttribute('data-bg-tasks-lingering')) === '1', '来源二：本轮未收到完成事件的工具 = 1');
   ok((await pill.getAttribute('data-bg-tasks')) === '2', '两者合并成 2', await pill.getAttribute('data-bg-tasks'));
@@ -367,6 +377,64 @@ console.log('\n[7] 后台任务胶囊');
   await page.waitForTimeout(600);
   ok(page.url().includes('/chat/s3'), '点「查看」跳到那个还在跑的会话', page.url().replace(base, ''));
 
+  await ctx.close();
+}
+
+// ============= [7b] 停止后 pill 立刻重拉 =============
+console.log('\n[7b] 停止后 pill 立即重拉（不等 5 秒轮询）');
+{
+  bgRunsEmpty = false;
+  const { ctx, page } = await newPage();
+  await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1000);
+
+  const pill = page.locator('[data-bg-tasks]').first();
+  const runsAttr = async () => ((await pill.count()) ? await pill.getAttribute('data-bg-tasks-runs') : null);
+  const r0 = await runsAttr();
+  ok(r0 === '1', '初始：后台 run = 1（先证明有东西可减）', String(r0));
+
+  /**
+   * 先让轮询跑过一次，把下一次轮询推到约 4.5 秒之后。
+   *
+   * 不这么做的话，「1.5 秒内数字变了」也可能只是恰好撞上轮询 ——
+   * 那就证明不了是 `notifyRunsChanged` 起的作用（假绿）。
+   */
+  await page.waitForTimeout(5200);
+
+  bgRunsEmpty = true; // 服务端那边这条 run 已经结束（用户点了停止）
+
+  /* 反证：**不派发事件**的 2 秒内，数字必须还是 1。
+     没有这一条，「2 秒内变 0」也可能只是轮询恰好撞上（5s 周期里 2s 的窗口
+     并非不可能）。先证明「不通知就不会变」，后面那句「通知后 68ms 就变」
+     才真的说明是事件起的作用 —— 等价于把监听删掉再跑一次的反向探针，
+     但不用重新 build。 */
+  await page.waitForTimeout(2000);
+  const r1 = await runsAttr();
+  ok(r1 === '1', '不派发事件时 2 秒内不会自己更新（轮询还没到）', String(r1));
+
+  const t0 = Date.now();
+  await page.evaluate(() => window.dispatchEvent(new Event('opc:runs-changed')));
+  let changed = true;
+  await page
+    .waitForFunction(
+      () => document.querySelector('[data-bg-tasks]')?.getAttribute('data-bg-tasks-runs') === '0',
+      { timeout: 2000 }
+    )
+    .catch(() => { changed = false; });
+  const dt = Date.now() - t0;
+
+  ok(changed, '事件触发后立刻重拉到空列表', `${dt}ms`);
+  ok(dt < 2000, '远早于 5s 轮询间隔（证明靠的是事件，不是轮询）', `${dt}ms`);
+  // 肯定式：胶囊本身还在（s1 还有 1 个未回结果的工具块），不是整块消失造成的假绿
+  ok((await pill.count()) > 0, '胶囊仍在（只有 run 那一项被减掉）');
+
+  /* 文案必须跟着来源变：此时 run 已经没了，只剩 interrupted 块。
+     还写「后台任务运行中」就是在说「有个任务还在跑」—— 而它早就结束了，
+     而且这个提示永久消不掉（块已落库）。 */
+  const onlyLingering = ((await pill.textContent()) ?? '').trim();
+  ok(onlyLingering.includes('未回结果'), '只剩工具块时改说「未回结果」，不谎称运行中', onlyLingering);
+
+  bgRunsEmpty = false;
   await ctx.close();
 }
 

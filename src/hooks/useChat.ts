@@ -5,6 +5,7 @@ import { Message, PermissionMode, Session, CustomAgent, ImageBlock } from '../ty
 // A132：答复口与待授权队列都收到全局 store 里，这里只负责把流事件喂进去。
 // 以前这里既攥单值 state、又自己 fetch 答复，导致并行会话后来的顶掉前一条。
 import { push as pushPermission, markSessionEnded } from '../permissions/permissionStore';
+import { notifyRunsChanged } from './useBackgroundTasks';
 import {
   applyRunEvent,
   textOfBlocks,
@@ -480,6 +481,13 @@ export function useChat(options: UseChatOptions) {
           case 'run_start':
             runId = data.runId ?? null;
             turn.runId = runId;
+            /* 用户在 run_start 到达之前就点了停止：那一刻 `turn.runId` 还是 null，
+               handleStop 里那句 stop 请求根本发不出去，服务端只能等 20s 断线宽限
+               —— 这 20 秒里后台任务胶囊一直显示「1 个运行中」，正是「我明明停了，
+               那边还在跑」的观感。runId 一到就补发一次，把 20 秒压到一次往返。 */
+            if (turn.stopped && turn.runId) {
+              fetch(`/api/runs/${turn.runId}/stop`, { method: 'POST' }).catch(() => {});
+            }
             if (typeof data.seq === 'number') lastSeq = data.seq;
             applyInit(data.sessionId, data.messageId, data.model);
             break;
@@ -687,6 +695,11 @@ export function useChat(options: UseChatOptions) {
             )),
           }
     )));
+    /* 让后台任务胶囊立刻重拉。
+       不加这句的话，用户点完停止马上切会话，那一刻拿到的还是停止前的快照 ——
+       界面上挂着一颗「1 个后台任务运行中」，看起来就像停止没生效（实测反馈）。
+       轮询间隔是 5 秒，靠它自己刷太晚。 */
+    notifyRunsChanged();
   }, [currentSessionId, setSessions]);
 
   // A132：`resolvePermission` 与 `permissionRequest` 都搬走了。

@@ -176,6 +176,14 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
     if (!stream) {
       errorMsg = `Agent ${agentId} 不可用`;
       emit(projector.push({ type: 'error', message: errorMsg }));
+      /* 这一棒到此为止，但 runHub 里那条记录还没收尾。
+         上面 `runHub.create(runId)` 已经建了它，而 `run_start` 只在本分支
+         **之外**发 —— 于是它既没有 sessionId 也没有 finishedAt：
+           · 会作为「后台任务」挂满 MAX_AGE_MS（30 分钟）；
+           · 因为 sessionId 是 undefined，前端 `?exclude=` 永远排除不掉它，
+             切到任何会话都会看到「1 个后台任务运行中」。
+         补一条 run_end 让它立刻收尾。群里有未安装的成员时这条路径真的会走到。 */
+      emit([projector.finish('error').end]);
     } else {
       // run_start 额外带上 phase/round：前端据此把「路由/执行/汇总」区分开
       emit(
