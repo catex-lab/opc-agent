@@ -41,3 +41,14 @@
 
 构建、跑测试、打包的完整说明在 [DEVELOPMENT.md](./DEVELOPMENT.md)。界面相关的约定
 （颜色、字号、间距、控件）在 [DESIGN-SYSTEM.md](./DESIGN-SYSTEM.md)，动手前建议先看。
+
+clone 之后建议先装一次提交钩子：
+
+```bash
+npm run hooks:install
+```
+
+它会在每次提交前扫描暂存区，拦住疑似密钥。仓库是私有的，GitHub 的 push protection
+需要付费许可证，所以这一层放在本地。误报就在那一行加 `secret-scan:ignore`，
+确实要跳过用 `git commit --no-verify`。规则与验收见 `scripts/secret-scan.mjs`
+和 `npm run verify:hooks`。

@@ -1,0 +1,25 @@
+#!/bin/sh
+#
+# 提交前密钥扫描。
+#
+# 为什么在本地做而不是靠 GitHub：仓库是私有的，仓库级 push protection 需要
+# Secret Protection 许可证（前置订阅 Team/Enterprise），免费计划没有那个开关。
+# 详细理由见 scripts/secret-scan.mjs 顶部的注释。
+#
+# 安装：npm run hooks:install（设置 core.hooksPath=.githooks）
+# 跳过：git commit --no-verify
+
+HOOK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$HOOK_DIR/.." && pwd)
+
+if ! command -v node >/dev/null 2>&1; then
+  # 不阻断提交：钩子环境里缺 node 时把人锁死，比漏扫一次更糟。
+  # 但必须把话说出来 —— 静默放过等于假装扫过了。
+  echo "" >&2
+  echo "⚠️  跳过密钥扫描：PATH 里找不到 node" >&2
+  echo "    本项目要求 Node >= 22。装好后重跑：npm run hooks:install" >&2
+  echo "" >&2
+  exit 0
+fi
+
+exec node "$ROOT/scripts/secret-scan.mjs"

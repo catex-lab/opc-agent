@@ -110,6 +110,9 @@ npm run verify:package # 打包产物逐字节核对
 
 漏洞请走私密报告通道，不要开公开 issue。详见 [SECURITY.md](./SECURITY.md)。
 
+仓库自带提交前密钥扫描：clone 后跑一次 `npm run hooks:install`，之后每次提交都会检查
+暂存区里有没有疑似密钥。规则与验收见 `scripts/secret-scan.mjs` 与 `npm run verify:hooks`。
+
 ## 参与
 
 本仓库暂不接收外部 PR。问题与建议请开 issue，安全漏洞走上面的私密通道，
