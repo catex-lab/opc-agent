@@ -215,6 +215,16 @@ export default function AboutPanel() {
             </p>
           </div>
         </div>
+
+        {/* 2026-10-29：把「只存在本机」限定到本应用自身 —— 你接入的第三方 Agent
+            （腾讯 WorkBuddy、Anthropic Claude Code 等）是各自厂商的产品，
+            其自身行为（含各自的遥测/条款）不受本应用控制。
+            这句是必要的：应用自身零遥测（A141），但依赖 @tencent-ai/agent-sdk
+            的 CLI 内置腾讯内部上报端点（*.woa.com），不声明会被误解为
+            「WorkBuddy 也不外发」。 */}
+        <p className="mt-3 text-xs leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
+          以上是本应用自身的承诺。你接入的第三方 Agent（如腾讯 WorkBuddy、Anthropic Claude Code 等）是各自厂商的产品，其自身行为不受本应用控制。
+        </p>
       </div>
 
       {/* ── 官方入口 ─────────────────────────────────────────── */}
