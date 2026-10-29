@@ -1,175 +1,104 @@
-# Web Agent
+# OPC Agent
 
-一个基于 CodeBuddy Agent SDK 构建的 Web Agent 应用模板。
+本机多 Agent 团队协作桌面应用 —— 把本机安装的各类 Agent 当作通讯录里的联系人，可以单聊，也可以拉群分派任务。
 
-## 特性
+## 它解决什么问题
 
-- 💬 **流式对话** - 实时显示 AI 回复
-- 🔧 **工具调用** - 可视化展示 Agent 工具使用
-- 🔒 **权限控制** - 支持多种权限模式
-- 📝 **会话管理** - 多会话切换和持久化
-- 🎨 **主题切换** - 支持深色/浅色主题
-- 🤖 **自定义 Agent** - 创建和管理多个 Agent 配置
+本机往往同时装着好几个 Agent CLI（Claude Code、Codex、Gemini、Cursor……），每个都有自己的会话与上下文。想让它们在同一个人物里接力或分工，过去只能手动复制粘贴结果。
+
+OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个联系人，左边选人、右边干活，需要协作时把几个拉进一个群，任务按人分派。Agent 的读取、执行、搜索过程折叠成一行，点开是全部细节。
+
+## 功能
+
+- **多 Agent 编排** —— 单聊与群聊分派，统一事件协议与块模型
+- **执行轨迹** —— 工具调用逐条可查，文件改动展开成行级 diff
+- **验证闭环** —— Agent 说「完成了」之后，真的去跑一遍再回报
+- **权限门** —— 全局审批中心，越权操作必须人工放行，通知只提醒不代替批准
+- **运行续传** —— 断线重连按 `seq` 续上，不丢已产出的内容
+- **工作区面板** —— 文件树、浏览器预览、终端三个面板，与对话同屏
+- **思考过程展示** —— 按 Agent 能力开关，三态视觉区分
+- **项目视图** —— 任务面板与项目维度归档
+- **四层记忆** —— 会话 / 用户 / 项目 / 全局，各自独立作用域
+
+## 内置 Agent
+
+共 16 条接入定义：
+
+| Agent | Agent | Agent | Agent |
+|---|---|---|---|
+| WorkBuddy | Codex | Gemini | OpenCode |
+| Claude Code | Hermes | Cursor | Qoder |
+| Qoder CN | 豆包 | ZCode | Kimi |
+| Pi | Antigravity CLI | Kimi Code CLI | Trae |
+
+探测方式是**白名单**：只认这 16 条定义里写死的命令名，在 `PATH` 与各自约定目录里查找可执行文件。名单外的 CLI 即使装了也不会被自动发现 —— 这是刻意的，避免把 IDE 的图形启动器误判成 CLI。
 
 ## 技术栈
 
-- **后端**: Node.js + Express + TypeScript
-- **前端**: React 18 + TypeScript + Vite
-- **UI**: TDesign React 组件库
-- **AI**: CodeBuddy Agent SDK
-- **数据库**: SQLite (better-sqlite3)
+| 层 | 选型 |
+|---|---|
+| 桌面壳 | Electron |
+| 前端 | React 18 + TypeScript + Vite + TDesign |
+| 后端 | Express，构建时内联进主进程 |
+| 数据库 | `node:sqlite`（Node 22 内置模块，**不是** better-sqlite3） |
+| Agent 接入 | `@tencent-ai/agent-sdk`、`@qoder-ai/qoder-agent-sdk` 等 |
+| 终端 | `node-pty` |
 
-## 快速开始
-
-### 1. 安装依赖
-
-```bash
-npm install
-```
-
-### 2. 启动开发服务器
-
-```bash
-npm run dev
-```
-
-这会同时启动前端（端口 5173）和后端（端口 3000）
-
-### 3. 访问应用
-
-打开浏览器访问 http://localhost:5173
-
-## 项目结构
+## 目录结构
 
 ```
-web-agent/
-├── server/                    # 后端服务
-│   ├── index.ts              # Express 服务器
-│   └── db.ts                 # 数据库操作
-├── src/                      # 前端源码
-│   ├── components/           # React 组件
-│   ├── hooks/                # 自定义 Hooks
-│   ├── pages/                # 页面组件
-│   ├── types.ts              # 类型定义
-│   ├── config.ts             # 应用配置
-│   └── App.tsx               # 应用入口
-├── data/                     # 数据存储
-│   └── chat.db               # SQLite 数据库
-├── package.json
-├── tsconfig.json
-├── vite.config.ts
-├── README.md                 # 项目说明
-└── DEVELOPMENT.md            # 二次开发指南
+opc-agent/
+├── electron/          主进程：窗口、托盘、CDP、终端、更新
+├── server/            内联后端：路由、Agent 注册表、数据库、运行中枢
+│   └── agents/        16 条 Agent 定义与探测逻辑
+├── shared/            前后端共用的类型与事件协议
+├── src/               渲染进程（React）
+│   ├── components/    界面组件
+│   ├── hooks/         数据与状态钩子
+│   └── assets/        图标等静态资源
+├── scripts/           构建、打包与验证脚本（见下）
+├── site/              官网落地页与统计 Worker
+├── build/             打包资源（图标源图与 ICO）
+└── patches/           依赖补丁
 ```
-
-## 核心功能
-
-### Agent SDK 集成
-
-- 使用 `query()` API 发送消息并接收流式响应
-- 使用 `unstable_v2_createSession()` 创建和管理 Agent 会话
-- 使用 `unstable_v2_authenticate()` 处理身份认证
-- 支持会话恢复（使用 `resume` 参数）
-
-### 权限控制
-
-支持四种权限模式：
-- `default` - 每次工具调用需要确认
-- `acceptEdits` - 自动接受编辑类操作
-- `plan` - 计划模式（只读）
-- `bypassPermissions` - 跳过所有权限检查
-
-### 流式响应
-
-使用 Server-Sent Events (SSE) 实现实时流式响应：
-- 文本内容流式输出
-- 工具调用实时展示
-- 权限请求实时弹窗
-
-### 数据持久化
-
-使用 SQLite 存储：
-- 会话信息和配置
-- 消息历史记录
-- Agent SDK 的 session_id（用于恢复对话）
-
-## API 端点
-
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/api/health` | GET | 健康检查 |
-| `/api/check-login` | GET | 检查 CodeBuddy 登录状态 |
-| `/api/models` | GET | 获取可用模型列表 |
-| `/api/sessions` | GET | 获取所有会话 |
-| `/api/sessions` | POST | 创建新会话 |
-| `/api/sessions/:id` | GET | 获取单个会话 |
-| `/api/sessions/:id` | PATCH | 更新会话 |
-| `/api/sessions/:id` | DELETE | 删除会话 |
-| `/api/chat` | POST | 发送消息（SSE 流式响应） |
-| `/api/permission-response` | POST | 响应权限请求 |
-
-## 环境要求
-
-- Node.js 18+
-- npm 或 yarn
-
-## 配置
-
-### 方式一：环境变量配置
-
-创建 `.env` 文件：
-
-```bash
-PORT=3000
-CODEBUDDY_API_KEY=your_api_key
-CODEBUDDY_AUTH_TOKEN=your_auth_token
-CODEBUDDY_BASE_URL=https://api.example.com
-CODEBUDDY_INTERNET_ENVIRONMENT=external
-```
-
-### 方式二：使用 CodeBuddy CLI 登录
-
-```bash
-# 登录 CodeBuddy
-codebuddy login
-
-# 启动应用（会自动使用 CLI 的登录信息）
-npm run dev
-```
-
-### 方式三：Web UI 配置
-
-在应用的设置页面中配置环境变量（仅在当前服务器进程有效）。
 
 ## 开发
 
 ```bash
-# 开发模式（同时启动前后端）
-npm run dev
+npm install
 
-# 单独启动后端
-npm run dev:server
-
-# 单独启动前端
-npm run dev:client
-
-# 构建生产版本
-npm run build
-
-# 运行生产版本
-npm start
+npm run dev            # 同时起前端（5173）与后端（3000）
+npm run build          # 构建前端与主进程
+npm run electron:build # 打包安装程序
 ```
 
-## 二次开发
+Node.js **22+** 是硬性要求 —— 数据库用的是 `node:sqlite`，低版本没有这个内置模块。
 
-如果你想基于这个模板进行定制化开发，请查看 [DEVELOPMENT.md](./DEVELOPMENT.md) 获取详细指南，包括：
+## 验证
 
-- 项目架构详解
-- 核心功能实现原理
-- 10+ 常见定制场景示例
-- API 完整参考
-- 调试和部署指南
+仓库里有一套自建的验证链，不是单元测试，而是**在真实界面里断言可观测行为**：用 Playwright 驱动本机 Chrome 打开真实页面，必要时用真实鼠标坐标点击并自证命中。
 
-## License
+```bash
+npm run verify:ui      # 主链，70+ 段串行
+npm run verify:logo    # 图标资产与界面标记的一致性
+npm run verify:package # 打包产物逐字节核对
+```
 
-MIT
+共 100+ 条 `verify:*` 脚本，覆盖并发、主题、密度、深链、停止链路等易回归点。改动前先看 `package.json` 里的实际条数。
+
+## 数据与隐私
+
+运行时数据全部落在 `data/` 目录，**不进版本库**（`.gitignore` 已挡）：
+
+| 文件 | 内容 |
+|---|---|
+| `chat.db` | 会话与消息，真实对话内容 |
+| `agent-credentials.json` | 各 Agent 的 API Key / 访问令牌 |
+| `permission-rules.json` | 自定义权限规则 |
+| `images/` | 生成的图片 |
+
+应用内不收集统计、不埋点、不做崩溃上报，也没有安装 ID —— 代码里不存在遥测模块。密钥一律从环境变量或本地凭据文件读取，不写进源码。
+
+## 状态
+
+版本 `1.0.0`。私有项目，未授权分发。

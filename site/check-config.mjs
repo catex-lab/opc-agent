@@ -47,9 +47,13 @@ const CHECKS = [
   },
   {
     file: 'site/worker/wrangler.toml',
-    label: 'Worker：看板密钥已设置',
-    test: (s) => !/STATS_KEY\s*=\s*"REPLACE/.test(s),
-    hint: 'STATS_KEY 换成随机长字符串（openssl rand -hex 24）',
+    label: 'Worker：toml 里没有真实看板密钥',
+    // 2026-10-29 改判：原规则是「STATS_KEY 不能还是 REPLACE 占位符」，
+    // 逼着人把真密钥写进 toml —— 而 toml 是进版本库的，等于逼人泄密
+    // （历史上就这么漏过一次）。现在改成反向守：密钥走 wrangler secret，
+    // toml 里必须保持占位符，出现 32 位以上十六进制就判红。
+    test: (s) => !/STATS_KEY\s*=\s*"[0-9a-fA-F]{32,}"/.test(s),
+    hint: 'STATS_KEY 不要写进 toml，用 wrangler secret put STATS_KEY 设置',
   },
   {
     file: 'src/components/AboutPanel.tsx',
@@ -57,12 +61,11 @@ const CHECKS = [
     test: (s) => !/github\.com\/OWNER\//.test(s),
     hint: 'AboutPanel.tsx 顶部的 REPO_URL 还是占位符，用户点「问题反馈」会跳到别人的仓库',
   },
-  {
-    file: 'electron/analytics.ts',
-    label: '客户端：统计端点已启用',
-    test: (s) => /TELEMETRY_ENDPOINT = process\.env\.OPC_TELEMETRY_URL \|\| 'https?:\/\//.test(s),
-    hint: `发布带统计的版本前，把 TELEMETRY_ENDPOINT 改成 'https://${DOMAIN}'（留空 = 完全不上报）`,
-  },
+  // 2026-10-29 删除「客户端：统计端点已启用」这一项。
+  // 它指向 electron/analytics.ts，而该文件已在 A141 整体删除（遥测彻底移除），
+  // 于是这条检查永远判「文件缺失」—— 一个永远不会变绿的检查，等于没有检查，
+  // 还会让人以为站点配置有问题是配置造成的。要恢复统计能力时再加回来，
+  // 那时也该先补回 electron/analytics.ts。
 ];
 
 const CONSISTENCY = [

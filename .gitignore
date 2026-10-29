@@ -35,14 +35,46 @@ Thumbs.db
 # ── data/ 整个目录都是本机运行时数据，一律不进版本库 ──────────────────
 # 逐项说明（漏任何一条都可能把隐私推上远端）：
 #   chat.db / *.db-shm / *.db-wal  sessions / messages 真实对话内容
-#                                  （历史上曾被提交：29cfa11、7ec1f0f）
 #   agent-credentials.json         各 Agent 的 API Key / 访问令牌（最敏感）
 #   permission-rules.json          用户自定义权限规则，含本机路径
 #   cdp.json                       浏览器调试端口 / CDP 地址
 #   model-catalog.json             模型目录，含已授权 provider
 #   memory/                        MEMORY.md / USER.md / skills，含个人偏好
 #   images/                        生成的图片，可能含隐私内容
+#
+# 2026-10-29 核查订正：这里原先写着「历史上曾被提交：29cfa11、7ec1f0f」。
+# 全量对象名扫描（git rev-list --objects --all | grep ' data/'）结果为 **0**，
+# 那两个 sha 在本仓也根本不存在 —— 即 data/ 从未真正进过版本库，原记录有误。
+# 保留这条的正确写法是只讲「为什么不能进」，不要再编造提交号。
 data/
 
 # Wrangler 本地缓存（site/worker 部署统计后端时产生）
 site/worker/.wrangler/
+# wrangler 的本地密钥覆盖文件（STATS_KEY 等），只在本机生效
+site/worker/.dev.vars
+
+# ── 内部开发文档：不进版本库 ─────────────────────────────────────────
+# 这些文件是给自己和后续会话看的施工记录，不是产品的一部分。它们含
+# 需求原话（TASKS 46 处、HANDOFF 39 处直接引用用户提问）、本机绝对路径
+# （D:\work\...）、内部决策与踩坑记录 —— 推到远端既泄露上下文，也让
+# 仓库读起来像草稿堆。**文件本身保留在本地，只是不再被 git 跟踪。**
+#
+# 留在库里的三份是「产品的一部分」：
+#   README.md          对外说明
+#   DEVELOPMENT.md     怎么构建/跑测试
+#   DESIGN-SYSTEM.md   设计规范（4 表面 / 8 档字号 / 8pt 网格 / 15 控件类）
+/AGENTS.md
+/TASKS.md
+/HANDOFF.md
+/GAP-CHECKLIST.md
+/DIAGNOSIS-PERF.md
+/UIUX-AUDIT.md
+/PLAN-*.md
+/preview-thinking.html
+
+# ── 站点截图：等用新 Logo 重拍后再入库 ───────────────────────────────
+# 现存的 13 张是「同人卦」旧 Logo 时期的产物，且画面里是内部调试对话
+# （「结论：确实存在两套品牌蓝」+ legacy.css 等内部文件名 + 用户提问原话），
+# 直接当宣传图既过时又泄上下文。文件已移到 .trash-a144/ 隔离，不进库。
+# site/index.html 与 site/v2/index.html 的 <img> 结构保留，重拍后同名放回即可。
+/site/assets/screenshot-*
