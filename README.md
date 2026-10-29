@@ -99,6 +99,17 @@ npm run verify:package # 打包产物逐字节核对
 
 应用内不收集统计、不埋点、不做崩溃上报，也没有安装 ID —— 代码里不存在遥测模块。密钥一律从环境变量或本地凭据文件读取，不写进源码。
 
+## 许可
+
+[MIT](./LICENSE) —— 可自由使用、修改、分发、商用，保留版权声明即可。
+
+`src/assets/agent-logos/` 下的图标是各 Agent 厂商的商标，**不在 MIT 范围内**，
+详见 [TRADEMARKS.md](./TRADEMARKS.md)。
+
+## 安全
+
+漏洞请走私密报告通道，不要开公开 issue。详见 [SECURITY.md](./SECURITY.md)。
+
 ## 状态
 
-版本 `1.0.0`。私有项目，未授权分发。
+版本 `1.0.0`。

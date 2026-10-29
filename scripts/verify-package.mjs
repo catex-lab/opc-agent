@@ -34,6 +34,7 @@
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readdirSync, statSync } from 'node:fs';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
@@ -78,6 +79,33 @@ const ok = (cond, name, extra = '') => {
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/**
+ * 等某个端口彻底不再应答（返回 true）或超时（返回 false）。
+ *
+ * 为什么需要它：重启验收的旧写法是 `child.kill()` 后固定 sleep 2500ms。
+ * 但 `kill()` 返回只代表「信号发出去了」，Electron 的 gpu / utility /
+ * renderer 子进程会晚于主进程退出，仍占着同一个 userData 的实例锁 ——
+ * 于是新实例一启动就自己退出，表现是「重启后 30s 拿不到端口」，
+ * **间歇性**红（实测三次里红一次）。与 A114 的 killTree 是同一类坑：
+ * kill 返回 ≠ 进程已死。所以这里改成等真实可观测量。
+ *
+ * 注意它只是**同步手段**，不能单独当断言用 —— 「等完之后端口不通」
+ * 是自我实现。真正的判据在下面：断言新起的是另一个 PID。
+ */
+const waitPortClosed = async (port, timeoutMs = 25000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const open = await new Promise(resolve => {
+      const sock = net.connect(port, '127.0.0.1');
+      sock.once('connect', () => { sock.destroy(); resolve(true); });
+      sock.once('error', () => resolve(false));
+    });
+    if (!open) return true;
+    await sleep(250);
+  }
+  return false;
+};
+
 if (!existsSync(EXE)) {
   console.error(`✗ 找不到可执行文件: ${EXE}\n  先跑 npm run electron:build，或显式传入路径。`);
   process.exit(2);
@@ -85,6 +113,13 @@ if (!existsSync(EXE)) {
 console.log(`测试对象: ${EXE}（${new Date(statSync(EXE).mtimeMs).toLocaleString()}）`);
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'opc-pkg-smoke-'));
+
+// 夹具的工作目录必须是**真实存在**的目录。POST /api/sessions 对 cwd 做了
+// `validateDirectory` 校验，不存在直接 400（见 server/index.ts 的
+// 「工作目录不存在」分支）—— 所以这里现建一个临时目录，而不是编一个
+// 看起来合理但盘符都不存在的路径，否则脚本会因「目录不存在」而红，
+// 与打包产物无关。断言也统一拿这个变量比对，避免字面量两处漂移。
+const projectDir = mkdtempSync(path.join(tmpdir(), 'opc-pkg-proj-'));
 
 // 隔离断言用的真实 userData 快照。
 // 为什么需要它：光「我把 OPC_DATA_DIR 指向临时目录了」是一句**自我声明**，
@@ -281,7 +316,7 @@ try {
   const created = await post(first.port, '/api/sessions', {
     title: 'P5 冒烟会话',
     agentId: 'opencode',
-    cwd: 'D:/work/demo',
+    cwd: projectDir,
     scenarioId: 'dev',
     systemPrompt: 'P5 冒烟提示词',
   });
@@ -289,7 +324,7 @@ try {
   ok(!!sessionId, '创建会话成功');
   const readBack = await get(first.port, `/api/sessions/${sessionId}`);
   const s = readBack.json?.session;
-  ok(s?.cwd === 'D:/work/demo', 'cwd 落库并可读回', String(s?.cwd));
+  ok(s?.cwd === projectDir, 'cwd 落库并可读回', String(s?.cwd));
   ok(s?.scenario_id === 'dev', 'scenario_id 落库并可读回', String(s?.scenario_id));
   ok(s?.system_prompt === 'P5 冒烟提示词', 'system_prompt 落库并可读回');
 
@@ -332,15 +367,32 @@ try {
   }
 
   console.log('\n[5] 重启验收（P4-1 的真正判据）');
+  // 先证明老进程**真的死了**，再起新的。顺序反了就会「跟正在被杀的老进程
+  // 说话」，那样下面几条会全绿，但绿的是一具尸体（A114 的教训）。
+  const firstPid = first.child.pid;
+  const exited = new Promise(resolve => {
+    if (first.child.exitCode !== null) return resolve(true);
+    first.child.once('exit', () => resolve(true));
+    setTimeout(() => resolve(false), 20000);
+  });
   child.kill();
-  await sleep(2500);
+  const reallyExited = await exited;
+  ok(reallyExited, '老进程在起新进程之前真的退出了', `pid=${firstPid}`);
+  const portFreed = await waitPortClosed(first.port);
+  ok(portFreed, '老进程的端口已释放（不是还在应答）', `port=${first.port}`);
+
   const second = await launch();
   child = second.child;
   ok(second.port > 0, '重启后重新监听', `port=${second.port}`);
+  ok(
+    second.child.pid !== firstPid,
+    '重启的是新进程（不是还在跟老进程说话）',
+    `${firstPid} → ${second.child.pid}`
+  );
   const after = await get(second.port, `/api/sessions/${sessionId}`);
   const s2 = after.json?.session;
   ok(!!s2, '重启后会话仍在');
-  ok(s2?.cwd === 'D:/work/demo', '重启后 cwd 仍在', String(s2?.cwd));
+  ok(s2?.cwd === projectDir, '重启后 cwd 仍在', String(s2?.cwd));
   ok(s2?.scenario_id === 'dev', '重启后 scenario_id 仍在', String(s2?.scenario_id));
   ok(s2?.system_prompt === 'P5 冒烟提示词', '重启后 system_prompt 仍在');
 
@@ -373,6 +425,12 @@ try {
     rmSync(dataDir, { recursive: true, force: true, maxRetries: 3 });
   } catch {
     console.warn(`  （临时数据目录未能删除，可手动清理：${dataDir}）`);
+  }
+  // 夹具目录里可能被应用写过东西（会话 cwd 指向它），同样清掉
+  try {
+    rmSync(projectDir, { recursive: true, force: true, maxRetries: 3 });
+  } catch {
+    console.warn(`  （夹具工作目录未能删除，可手动清理：${projectDir}）`);
   }
 }
 

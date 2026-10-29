@@ -684,7 +684,7 @@ export function getSession(id: string): DbSession | undefined {
  * ## A131：分组键必须是归一化路径，不是原始字符串
  *
  * `sessions.cwd` 存的是用户当初怎么写就怎么落的原样字符串，所以同一个目录会有
- * 好几种写法。实测本机：`c:/users/me/downloads/ack-v1` 与
+ * 好几种写法。实测：`c:/users/me/downloads/ack-v1` 与
  * `C:\Users\me\Downloads\ACK-v1` 并存 —— 列表里于是出现「ack-v1 / ACK-v1」
  * 两条，点掉一条另一条照旧。这里按 `normalizeProjectPath` 归一之后再去重，
  * **代表值取该目录最近一次被使用时的那条原样写法**：显示成 `ack-v1` 还是

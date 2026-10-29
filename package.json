@@ -3,8 +3,21 @@
   "version": "1.0.0",
   "description": "本机多 Agent 团队协作桌面应用 —— 把本机安装的各类 Agent 当作通讯录里的联系人，可单聊也可拉群分派任务",
   "author": "OPC Agent",
+  "license": "MIT",
+  "private": true,
   "type": "module",
   "main": "dist-electron/bootstrap.cjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/catex-lab/opc-agent.git"
+  },
+  "homepage": "https://github.com/catex-lab/opc-agent#readme",
+  "bugs": {
+    "url": "https://github.com/catex-lab/opc-agent/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "tsx watch server/index.ts",

@@ -389,8 +389,12 @@ console.log('\n[5] 新建会话：先选 Agent，建出的会话带 cwd 并跳�
   // ⚠️ 第一版这里写的是 `document.body.textContent.includes('opc')` —— 假的：
   // 窗口标题栏就有「OPC Agent」，这条断言在任何页面上都成立。必须落到
   // 具体元素的文本上。
+  // 徽标显示的是 cwd 的**末段目录名**，所以从夹具路径现算，别写死字面量：
+  // 写死时只要有人换掉夹具路径，这条就会静默失配（A146 整理本机路径时踩过）。
+  const projectDirName = PROJECT_A.path.split(/[\\/]/).filter(Boolean).pop();
   const badge = await page.locator('[data-workspace-badge] summary').first().textContent();
-  ok(!!badge && badge.includes('opc'), '工作区徽标显示的是项目目录（cwd 已带上）', badge?.trim() || '未找到徽标');
+  ok(!!badge && badge.includes(projectDirName), '工作区徽标显示的是项目目录（cwd 已带上）',
+    `${badge?.trim() || '未找到徽标'} / 期望含「${projectDirName}」`);
 
   // 再回项目视图确认新会话已归属：本地会话（尚未落库）也要立刻出现在
   // 项目详情里 —— 否则用户「从项目建了会话，回到项目却看不见它」。

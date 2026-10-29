@@ -1707,7 +1707,7 @@ const RAW_DEFS: AgentDefinition[] = [
     // provider.options.apiKey。探测阶段只看配置文件在不在。
     authFiles: ['.zcode/cli/config.json'],
     // A105：ZCode **只通过桌面版分发**，官方设计就是引擎不进 PATH。
-    // 安装目录由用户自选（本机实测在 `E:\AI\ZCode`，默认在
+    // 安装目录由用户自选（常见装在 `D:\Apps\ZCode`，默认在
     // `%LOCALAPPDATA%\Programs\ZCode`），没有任何环境变量记录它 ——
     // 所以两条路一起走：默认安装位置猜一遍，再从开始菜单 / 桌面的
     // `ZCode.lnk` 反推真实安装根（`{root}` 会被替换成那个根）。
@@ -2018,7 +2018,7 @@ const RAW_DEFS: AgentDefinition[] = [
        * 只写文档名会把装好的用户判成未安装」。那个判断错了 ——
        * `trae-cn` 是 **Trae IDE 自带的 VS Code 官方垫片**，不是 agent CLI：
        *
-       *   E:\AI\Trae CN\bin\trae-cn.cmd
+       *   C:\Apps\Trae CN\bin\trae-cn.cmd
        *     @echo off
        *     set ELECTRON_RUN_AS_NODE=1
        *     "%~dp0..\Trae CN.exe" "%~dp0..\resources\app\out\cli.js" %*

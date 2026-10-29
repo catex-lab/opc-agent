@@ -204,7 +204,7 @@ console.log('\n[6] 真探测（起子进程，几秒内完成）');
   const { registry: reg } = await import('../server/agents/registry.ts');
 
   const trae = await reg.probeOne('trae', true);
-  // A119 之后这条是**本机状态断言**（与上面写死 `E:\AI\Trae CN\...` 同一性质）：
+  // A119 之后这条是**本机状态断言**（与上面写死 `C:\Apps\Trae CN\...` 同一性质）：
   // 本机只有 IDE、没有 traecli，所以正确结果是 not-installed。
   // 若哪天本机装了 traecli，这里应改成「ready 且版本号来自 traecli」。
   check(

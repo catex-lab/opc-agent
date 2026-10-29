@@ -41,7 +41,7 @@ const AGENTS = [
   { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', kind: 'cli', icon: 'claude', color: '#D97757', description: '擅长长上下文重构与代码审查', capabilities: ['chat'], status: { availability: 'ready', version: '1.0.44' } },
 ];
 const MODELS = [{ modelId: 'm', name: 'Sonnet 4.5' }];
-const CWD = 'D:\\work\\demo\\app';
+const CWD = 'D:\\work\\demo';
 const SESSIONS = [
   { id: 's1', title: 'WorkBuddy', agent_id: 'wb', model: 'm', cwd: CWD, created_at: new Date().toISOString() },
 ];

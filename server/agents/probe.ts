@@ -178,7 +178,7 @@ export function expandPath(template: string): string {
  * 从 Windows 快捷方式（.lnk）里挖出它指向的可执行文件。
  *
  * 为什么需要：ZCode 这类工具**只通过桌面版分发**（官方指引就是「装桌面版后
- * 把引擎软链到 PATH」），安装目录由用户在安装时自选（本机在 `E:\AI\ZCode`，
+ * 把引擎软链到 PATH」），安装目录由用户在安装时自选（常见装在 `D:\Apps\ZCode`，
  * 默认则在 `%LOCALAPPDATA%\Programs\ZCode`），没有任何环境变量记录它。
  * 而开始菜单 / 桌面的快捷方式**一定**指向真实路径 —— 这是唯一稳定的线索。
  *

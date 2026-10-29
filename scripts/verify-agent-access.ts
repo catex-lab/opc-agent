@@ -216,7 +216,8 @@ async function collect(
     '含 shell 元字符的 prompt 必须作为单个 argv 元素原样传递'
   );
 
-  // 行解析：下面几行逐字抄自 2026-10-18 本机真实输出
+  // 行解析：下面几行结构逐字抄自 2026-10-18 的真实 CLI 输出，
+  // 只把 cwd 换成了中性路径（原文是维护者本机目录）。
   const initLine =
     '{"type":"system","subtype":"init","apiKeySource":"login","cwd":"D:\\\\work\\\\demo","session_id":"8a5090de-4b76-48a0-bedd-e46eb5d9f76a","model":"Auto","permissionMode":"default"}';
   const assistantLine =
