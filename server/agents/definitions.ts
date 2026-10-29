@@ -2293,6 +2293,24 @@ export const AGENT_DEFS: AgentDefinition[] = RAW_DEFS.map(def => {
     : def;
 });
 
+/**
+ * A150：**暂时下架**的 Agent（用户 2026-10-29 决定）。
+ *
+ * 为什么是「下架」而不是「删定义」：Trae 的事件映射、argv 构造、安装说明全部
+ * 按官方文档写，本机**从未实跑过一次** —— 真正的 `traecli` 要企业版旗舰套餐，
+ * 本机只有 Trae IDE（它附带的 `trae-cn` 是 VS Code 垫片，见 `cli.bin` 的注释）。
+ * 删定义等于把「等有人装了再回来核对」的依据一起扔掉。
+ *
+ * 生效方式：注册表构造时跳过这些 id ⇒ 不进名册、不参与 `probeAll`、
+ * `GET /api/agents/:id` 直接 404。定义本身仍在 `AGENT_DEFS` 里，
+ * 所以 `findDef('trae')` 照样能解析出名字（历史数据不会退化成裸 id）。
+ *
+ * **恢复方式：把 id 从这个数组里删掉，别处一行都不用改。**
+ * 恢复后第一件事是跑 `traecli exec --json "say hi"` 核对真实事件结构 ——
+ * 现有映射一条都没被实测过。
+ */
+export const RETIRED_AGENT_IDS: readonly string[] = ['trae'];
+
 /** 安装链接允许出现的主机白名单（`verify:install-meta` 断言用） */
 export const INSTALL_HOSTS = [
   'github.com',

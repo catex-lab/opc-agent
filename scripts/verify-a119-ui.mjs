@@ -187,21 +187,19 @@ async function main() {
 
   let browser;
   try {
-    // ── [2] Trae 必须是「未安装」─────────────────────────────────
+    // ── [2] Trae 已暂时下架（A150）──────────────────────────────
     {
+      // A119 时这里断言的是「Trae 必须判为未安装、原因指向 traecli」。
+      // A150 用户决定把这条官方入口暂时移除 ⇒ 改成验**下架是否真的生效**，
+      // 而不是整段删掉：删掉之后就没有人盯「只改了界面、接口还活着」这种半截下架了。
       const trae = await probeOne(base, 'trae');
-      ok(!!trae, '[2] 名册里有 Trae');
-      ok(
-        trae?.status?.availability === 'not-installed',
-        '[2] Trae 判为未安装（bin 只留 traecli，不再把 IDE 启动器当 CLI）',
-        trae?.status?.availability
-      );
-      // 判定必须落在「找不到 traecli」上，而不是别的分支凑巧给了同一个状态
-      ok(
-        /traecli/.test(trae?.status?.message ?? ''),
-        '[2] 未安装原因指向 traecli',
-        (trae?.status?.message ?? '').slice(0, 80)
-      );
+      ok(trae === null, '[2] Trae 已下架：详情接口不再返回它', JSON.stringify(trae));
+
+      const roster = await json(await fetch(`${base}/api/agents`));
+      const ids = (roster.agents ?? []).map(a => a.id);
+      // 肯定式配套：名册非空。否则「不含 trae」在服务端整体坏掉时同样是绿的。
+      ok(ids.length > 0, '[2] 名册非空（否则下一条是假绿）', String(ids.length));
+      ok(!ids.includes('trae'), '[2] Trae 已下架：名册里没有它', ids.join(','));
     }
 
     // 造一个项目（用真实目录，后端会校验目录存在）

@@ -203,19 +203,30 @@ console.log('\n[6] 真探测（起子进程，几秒内完成）');
   process.env.OPC_DATA_DIR = dataDir;
   const { registry: reg } = await import('../server/agents/registry.ts');
 
+  // A150：Trae 已**暂时下架**（用户 2026-10-29 决定），注册表不再实例化它。
+  // 这两条不是删掉、而是换成肯定式断言：下架机制必须真的生效 —— 否则
+  // 「下架」只是界面上看不见，接口还活着，哪天深链一进来又冒出来。
+  // 同时盯住另一半：**定义本身必须还在**，否则历史数据里的 agentId 解析不出名字，
+  // 而且恢复时要重写那 100 行按官方文档写的（从未实测过的）事件映射。
   const trae = await reg.probeOne('trae', true);
-  // A119 之后这条是**本机状态断言**（与上面写死 `C:\Apps\Trae CN\...` 同一性质）：
-  // 本机只有 IDE、没有 traecli，所以正确结果是 not-installed。
-  // 若哪天本机装了 traecli，这里应改成「ready 且版本号来自 traecli」。
   check(
-    'trae 如实报未安装（IDE 垫片不算 CLI，不冒充 ready）',
-    trae?.status.availability === 'not-installed',
-    `${trae?.status.availability} / ${trae?.status.message ?? ''}`
+    'trae 已下架：probeOne 返回 undefined（不进名册、不参与 probeAll）',
+    trae === undefined,
+    String(trae)
   );
   check(
-    'trae 不把 IDE 版本号当 CLI 版本（不编造 version）',
-    !trae?.status.version,
-    String(trae?.status.version)
+    'trae 已下架：get() 也拿不到（这正是详情接口 404 的来源）',
+    reg.get('trae') === undefined,
+    String(reg.get('trae'))
+  );
+  check(
+    'trae 已下架：名册里查不到它',
+    !reg.list().some(a => a.id === 'trae'),
+    reg.list().map(a => a.id).join(',')
+  );
+  check(
+    'trae 定义仍在 AGENT_DEFS 里（恢复 = 从 RETIRED_AGENT_IDS 删一个 id）',
+    AGENT_DEFS.some(d => d.descriptor.id === 'trae')
   );
 
   const zcode = await reg.probeOne('zcode', true);

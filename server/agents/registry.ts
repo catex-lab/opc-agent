@@ -9,7 +9,7 @@
  * 显式调用 probeAll(true) 才强制刷新。
  */
 
-import { AGENT_DEFS, findDef, eventSourceOf } from './definitions.js';
+import { AGENT_DEFS, RETIRED_AGENT_IDS, findDef, eventSourceOf } from './definitions.js';
 import type { AgentDefinition } from './definitions.js';
 import { createProvider, AcpAdapter } from './adapters/index.js';
 import { familyHintsFor } from './familyHints.js';
@@ -56,6 +56,11 @@ class AgentRegistry {
 
   constructor() {
     for (const def of AGENT_DEFS) {
+      // A150：暂时下架的条目**不实例化**（见 RETIRED_AGENT_IDS 的注释）。
+      // 必须在 createProvider 之前 continue：只要进了 providers，就会同时进
+      // list()（名册）、probeAll()（每轮都去探一次）和 get()（详情 404 失效），
+      // 三者是同一个 Map 派生的，事后过滤必然漏掉一处。
+      if (RETIRED_AGENT_IDS.includes(def.descriptor.id)) continue;
       try {
         this.providers.set(def.descriptor.id, createProvider(def));
       } catch (err) {
