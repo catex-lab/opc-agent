@@ -184,7 +184,19 @@ async function gotoSession(page) {
   await page.goto(base + '/', { waitUntil: 'networkidle' });
   await page.waitForTimeout(700);
   await page.locator('[data-conversation-item="s1"]').click();
-  await page.waitForTimeout(900);
+  /**
+   * 2026-10-29：这里原来是固定 `waitForTimeout(900)`，赌「900ms 内会话页渲染完」。
+   *
+   * 赌输的形态是 [6] 段两条 `undefinedpx` 假红：`path` 已经是 `/chat/s1`（点击成功了），
+   * 但 `document.querySelector('[data-model-trigger]')` 返回 null —— React 还没把
+   * 输入区提交上去。用同一段单独跑 6 次全部量到 14px，说明**不是产品缺陷**，
+   * 而是「跑完整条脚本时机器更忙，900ms 不够」。
+   *
+   * 改成等元素真的出现。等不到就照旧红（不能因为等待失败就放行）——
+   * 所以 `catch` 里什么都不做，交给后面的断言去判。
+   */
+  await page.waitForSelector('[data-model-trigger]', { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(200);
   await applyProbe(page);
 }
 
@@ -426,7 +438,13 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
   const body = await page.locator('[data-settings-panel]').last().innerText();
   ok(/不收集任何信息/.test(body), '明说「不收集任何信息」');
   ok(!/允许发送匿名统计/.test(body), '旧文案「允许发送匿名统计」已消失');
-  ok(/没有统计、没有埋点、没有崩溃上报/.test(body), '逐项否认统计/埋点/崩溃上报');
+  /* 2026-10-29：原先这里断言「逐项否认统计/埋点/崩溃上报」那段文案存在。
+     用户要求整段删除，原因是它的后半句「全部代码在 GitHub 公开，可自行核验」
+     **兑现不了**（本仓远端 private，点进去 404）。
+     于是断言从「文案在」翻转成「不实承诺不在」——
+     否定式必须配肯定式（本函数上面的 `/不收集任何信息/`、下面的 `/只存在本机/`，
+     以及 `[data-about-privacy]` 的 count 断言），否则「整张隐私卡被删掉」也会绿。 */
+  ok(!/GitHub 公开/.test(body), '不再声称「代码在 GitHub 公开可核验」（仓库 private，兑现不了）');
   ok(/你自己配置的模型服务商/.test(body), '说清了唯一会离开本机的东西是什么');
   /* 中文标点前多一格空白，是 JSX 换行折叠成空格的典型产物 ——
      肉眼在缩略图上根本看不出来，只有取文本才抓得到。 */
