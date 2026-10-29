@@ -73,6 +73,22 @@ interface NewChatOptions {
     replaceMessageId: string;
   }
 
+/**
+ * 一轮对话的句柄（A142 起每会话一个）。
+ *
+ * `sessionId` 在 `run_start` 之前可能是前端自己造的临时会话 id，`applyInit()`
+ * 拿到后端真值后会改写它 —— 所以它必须是**可变字段**，而且改写时要同步搬
+ * `turnsRef` 的 key（否则停止键会按旧 id 找一个已经不存在的句柄）。
+ */
+interface Turn {
+  controller: AbortController;
+  runId: string | null;
+  stopped: boolean;
+  /** 流式气泡的落点；run_start 之后要换成后端返回的真 id */
+  sessionId: string;
+  messageId: string;
+}
+
 export function useChat(options: UseChatOptions) {
   const {
     currentSession,
@@ -84,7 +100,25 @@ export function useChat(options: UseChatOptions) {
     setSessions,
   } = options;
 
-  const [isLoading, setIsLoading] = useState(false);
+  /**
+   * A142：**每个会话一轮**，不是「全应用一轮」。
+   *
+   * 原来这里是一个 `useState(false)` 的布尔 + 一个 `turnRef` 单值，等于把整个
+   * 应用当成「一次只能干一件事」。后果实测（`.tmp/probe-concurrency.mjs`）：
+   * 会话 A 还在回复时切到会话 B，输入框仍然挂着「停止」态 ——
+   *   ① B 的消息根本发不出去（`POST /api/chat` 里没有 B，一次都没有）；
+   *   ② 更糟的是那颗按钮还是**停止键**，点下去停的是 **A** 的 run。
+   * 用户报的「提示后台一个任务进行中」就是这一条：后台任务胶囊在提示
+   * 另一个会话还在跑，而输入区把整个应用锁住了。
+   *
+   * 现在按会话记：`Map<sessionId, Turn>`。同一会话仍然互斥（CLI 一个进程
+   * 同时只跑一个 prompt，并发两轮会把上一轮顶掉 —— 见 sdk.ts 顶部注释），
+   * 但**不同会话之间互不影响**，这才是用户要的。
+   */
+  const turnsRef = useRef<Map<string, Turn>>(new Map());
+  /** 正在跑的会话 id。派生给 UI 的 `isLoading` 只反映**当前会话** */
+  const [runningIds, setRunningIds] = useState<string[]>([]);
+
   const [inputValue, setInputValue] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.draftInput) || '';
   });
@@ -98,15 +132,11 @@ export function useChat(options: UseChatOptions) {
    *   · stopped —— 「用户主动停」和「网络断了」在 catch 里长得一模一样
    *     （都是一个 AbortError / 读流异常）。没有这个标记，断线重连会把刚
    *     停掉的流又接回来，并且给用户贴一条「请求失败」。
+   *
+   * A142 起这些把手**每轮一个**（存在 `turnsRef` 里），不再是全局单值 ——
+   * 单值下停谁全看「最后一次发送是谁」，两个会话同时在跑就会停错人。
    */
-  const turnRef = useRef<{
-    controller: AbortController;
-    runId: string | null;
-    stopped: boolean;
-    /** 流式气泡的落点；run_start 之后要换成后端返回的真 id */
-    sessionId: string;
-    messageId: string;
-  } | null>(null);
+  const isLoading = currentSessionId ? runningIds.includes(currentSessionId) : false;
 
   // 保存输入框内容到 localStorage（防抖）
   const saveInput = useCallback((value: string) => {
@@ -121,7 +151,19 @@ export function useChat(options: UseChatOptions) {
     /** A33 重新生成：带上它就是「重跑最后一轮」，不是新提问 */
     regen?: RegenerateOptions
   ) => {
-    if (!messageContent.trim() || isLoading) return;
+    if (!messageContent.trim()) return;
+    /* A142：只拦「这个会话」自己。以前是 `|| isLoading`，全局一个布尔，
+       于是别的会话在跑 = 谁都发不出去，而且按钮还是停止键（点了停错人）。
+       同一会话仍然要拦：CLI 一个进程同时只跑一个 prompt，并发两轮会把上一轮
+       顶掉（`cli.ts` 的 `running.set(sessionId, child)` 是覆盖写）。
+       以前这里是**静默 return**，用户只看到「点了没反应」，现在给一句话。 */
+    const busy = currentSessionId ? turnsRef.current.get(currentSessionId) : undefined;
+    // `stopped` 的不算忙：用户按了停止之后 Map 里那条要等 finally 才摘掉，
+    // 这中间他完全可能马上重发一条 —— 那一下不该被自己刚才的停止挡住。
+    if (busy && !busy.stopped) {
+      MessagePlugin.warning('这个会话还在回复中 —— 等它结束，或先点停止');
+      return;
+    }
 
     let sessionId = currentSessionId;
     let currentCwd = currentSession?.cwd;
@@ -221,18 +263,22 @@ export function useChat(options: UseChatOptions) {
 
     setInputValue('');
     localStorage.removeItem(STORAGE_KEYS.draftInput);
-    setIsLoading(true);
 
     // A122：这一轮的停止把手。气泡此刻还是临时 id，run_start 到达后由
     // applyInit 换成后端真值（换错的后果是停止时点不到正在流的那条消息）。
     const controller = new AbortController();
-    turnRef.current = {
+    const turn: Turn = {
       controller,
       runId: null,
       stopped: false,
-      sessionId: sessionId!,
+      // sessionId 理论上一定有（新对话路径在上面已经造好本地会话），
+      // 但 `sessionId!` 是个谎：真为空时 Map 的 key 会变成 undefined，
+      // 停止键就永远找不到这一轮。用临时消息 id 兜底，applyInit 会搬走。
+      sessionId: sessionId || tempAssistantMessageId,
       messageId: tempAssistantMessageId,
     };
+    turnsRef.current.set(turn.sessionId, turn);
+    setRunningIds(prev => (prev.includes(turn.sessionId) ? prev : [...prev, turn.sessionId]));
 
     const agent = getAgent(currentAgentId);
     // 会话级（场景注入）的 systemPrompt 优先于 Agent 自带的：
@@ -375,10 +421,17 @@ export function useChat(options: UseChatOptions) {
         if (mid) realAssistantMessageId = mid;
         if (modelId) usedModel = modelId;
         // 停止要落在这条气泡上，而它的 id 在这里才从临时值换成后端真值
-        if (turnRef.current) {
-          turnRef.current.sessionId = realSessionId;
-          turnRef.current.messageId = realAssistantMessageId;
+        if (turn.sessionId !== realSessionId) {
+          // A142：key 跟着搬。不搬的话 `turnsRef` 里留着一条按旧 id 索引的
+          // 死句柄 —— 停止键按新 id 找不到它（点了没反应），而旧 id 又永远
+          // 不会再来第二次 send，那条记录就一直挂着。
+          const oldKey = turn.sessionId;
+          turnsRef.current.delete(oldKey);
+          turn.sessionId = realSessionId;
+          turnsRef.current.set(realSessionId, turn);
+          setRunningIds(prev => [...prev.filter(id => id !== oldKey), realSessionId]);
         }
+        turn.messageId = realAssistantMessageId;
 
         if (realSessionId !== sessionId) {
           setSessions(prev => prev.map(s => (s.id === sessionId ? { ...s, id: realSessionId } : s)));
@@ -426,7 +479,7 @@ export function useChat(options: UseChatOptions) {
         switch (data.type) {
           case 'run_start':
             runId = data.runId ?? null;
-            if (turnRef.current) turnRef.current.runId = runId;
+            turn.runId = runId;
             if (typeof data.seq === 'number') lastSeq = data.seq;
             applyInit(data.sessionId, data.messageId, data.model);
             break;
@@ -516,7 +569,7 @@ export function useChat(options: UseChatOptions) {
       } catch (err) {
         // 用户点了停止：这条异常是**我们自己**造成的，绝不能走重连 ——
         // 接回去等于「按了停止、字还在往下长」，而服务端还会白跑一轮。
-        if (turnRef.current?.stopped) throw err;
+        if (turn.stopped) throw err;
         // 断线重连（E5）：带着最后收到的 seq 接回去，不重发整轮
         if (runId && lastSeq > 0) {
           const resumed = await fetch(`/api/runs/${runId}/stream?after=${lastSeq}`);
@@ -528,7 +581,7 @@ export function useChat(options: UseChatOptions) {
       }
 
     } catch (error) {
-      const userStopped = turnRef.current?.stopped === true;
+      const userStopped = turn.stopped === true;
       if (!userStopped) console.error('Chat error:', error);
       // 必须按 realAssistantMessageId 匹配：applyInit() 早就把气泡 id 从
       // 临时值换成了后端真值，这里再用 tempAssistantMessageId 就一个都
@@ -561,9 +614,13 @@ export function useChat(options: UseChatOptions) {
       // blocks 里可能还闷着没提交的尾帧，先冲掉再关。
       flushNow();
       patchAssistant({ isStreaming: false });
-      setIsLoading(false);
+      // A142：只摘掉**这一轮**，别的会话继续跑。
+      // 用 turn.sessionId（applyInit 可能已经换成后端真值）而不是闭包里的
+      // sessionId —— 后者是发送那一刻的快照，换过 id 就摘错了。
+      turnsRef.current.delete(turn.sessionId);
+      setRunningIds(prev => prev.filter(id => id !== turn.sessionId));
     }
-  }, [currentSession, currentSessionId, selectedModel, getAgent, updateSessionModel, setCurrentSessionId, setSessions, isLoading]);
+  }, [currentSession, currentSessionId, selectedModel, getAgent, updateSessionModel, setCurrentSessionId, setSessions]);
 
   /**
    * A33 重新生成：用这条 assistant 回复**之前**的最近一条 user 消息重跑一轮。
@@ -604,8 +661,10 @@ export function useChat(options: UseChatOptions) {
    *   3. 关掉这条气泡的流式态，别留一个永久转圈的它
    */
   const handleStop = useCallback(() => {
-    setIsLoading(false);
-    const turn = turnRef.current;
+    // A142：停的是**当前会话**那一轮，不是「最后一次发送的那一轮」。
+    // 单值 `turnRef` 时代这里没有会话概念，于是「在 B 里点停止」会把 A 掐掉 ——
+    // 探针里就是这么复现的（B 的发送键当时还画着停止图标）。
+    const turn = currentSessionId ? turnsRef.current.get(currentSessionId) : undefined;
     if (!turn) return;
 
     turn.stopped = true;
@@ -615,6 +674,9 @@ export function useChat(options: UseChatOptions) {
       fetch(`/api/runs/${turn.runId}/stop`, { method: 'POST' }).catch(() => {});
     }
     turn.controller.abort();
+    // 立刻摘掉：不等 finally（abort 到 finally 之间还隔着一次读流 reject，
+    // 那段时间按钮仍是「停止」，用户会以为没点上）
+    setRunningIds(prev => prev.filter(id => id !== turn.sessionId));
     setSessions(prev => prev.map(s => (
       s.id !== turn.sessionId
         ? s
@@ -625,7 +687,7 @@ export function useChat(options: UseChatOptions) {
             )),
           }
     )));
-  }, [setSessions]);
+  }, [currentSessionId, setSessions]);
 
   // A132：`resolvePermission` 与 `permissionRequest` 都搬走了。
   // 答复的唯一出口是 `permissionStore.answer()`（它做送达判定：只有 200 才摘卡），

@@ -609,7 +609,14 @@ async function main() {
 
     const chat = read('src/hooks/useChat.ts');
     ok(/signal: controller\.signal/.test(chat), '[4] 一对一：fetch 带上了 AbortController');
-    ok(/turnRef\.current\?\.stopped\) throw err/.test(chat), '[4] 一对一：停止时躲过断线重连（不能把流接回来）');
+    /* A142 把全局 `turnRef.current` 换成了每会话一个 `turn` 局部句柄，
+       这一行跟着改。断言的**意图**没变：用户按了停止就必须 throw 出去，
+       不许落进下面的断线重连分支（接回去 = 「按了停止，字还在往下长」）。
+       所以除了匹配新写法，还要确认重连分支本身还在 —— 只钉住 if 那半句时，
+       把整个重连块删掉也能绿（TRAPS §4 的「否定式必须配肯定式」）。 */
+    ok(/if \(turn\.stopped\) throw err/.test(chat)
+      && /if \(runId && lastSeq > 0\)/.test(chat),
+    '[4] 一对一：停止时躲过断线重连（不能把流接回来）');
     ok(/api\/runs\/\$\{turn\.runId\}\/stop/.test(chat), '[4] 一对一：停止打的是后端即时中止接口');
 
     const group = read('src/hooks/useGroupChat.ts');
