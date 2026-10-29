@@ -192,7 +192,7 @@ console.log('\n[3] 单聊头部：名字 + 在线状态');
   ok(text.includes('WorkBuddy'), '头部显示联系人名', text.replace(/\n/g, ' ').slice(0, 30));
   ok(text.includes('在线'), '头部显示在线状态');
   const fs = await header.locator('h1, h2').first().evaluate(el => getComputedStyle(el).fontSize);
-  ok(fs === '16px', '会话名 16px（QQ 量级）', fs);
+  ok(fs === '16px', '会话名 16px（IM 量级）', fs);
 }
 
 // ============= [4] 会话右键菜单 =============

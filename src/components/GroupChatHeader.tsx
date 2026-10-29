@@ -190,7 +190,7 @@ export function GroupChatHeader({
           )}
         </div>
       }
-      // 群名后面直接带人数（QQ 的「群名（N）」），比单独一个徽标更容易一眼读到。
+      // 群名后面直接带人数（「群名（N）」），比单独一个徽标更容易一眼读到。
       // 群名本身是个按钮：点一下就地改名（见 onRename 的注释）。
       title={
         editing ? (

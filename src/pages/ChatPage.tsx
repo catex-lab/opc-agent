@@ -613,7 +613,7 @@ export function ChatPage({
         }}
       />
 
-      {/* 会话区：消息 + 输入区，群聊时右侧再挂一条成员栏（QQ 式）。
+      {/* 会话区：消息 + 输入区，群聊时右侧再挂一条成员栏。
           `relative` 是给成员栏的折叠热区做定位基准的（折叠后它 absolute
           贴在右缘，见 GroupMemberPanel 的注释）。
           `data-chat-page`：打靶脚本用它数「会话页被挂载了几次」——

@@ -51,7 +51,7 @@ const MESSAGES = [
   { id: 'm1', role: 'user', session_id: 's1', created_at: new Date().toISOString(), content: '这段怎么解释？' },
   {
     id: 'm2', role: 'assistant', session_id: 's1', model: 'm', created_at: new Date().toISOString(),
-    content: '结论：确实存在两套品牌蓝。\n\n统一到腾讯调色板即可。',
+    content: '结论：确实存在两套品牌蓝。\n\n统一到品牌色令牌即可。',
   },
 ];
 
@@ -68,7 +68,7 @@ const STREAM_EVENTS = [
   { seq: 3, type: 'block_delta', blockId: 'b-think', channel: 'text', delta: '先把所有硬编码搜一遍，再对比令牌定义，最后给统一方案。' },
   { seq: 4, type: 'block_close', blockId: 'b-think', state: 'done' },
   { seq: 5, type: 'block_open', block: { id: 'b-text', type: 'text', text: '已定位问题：两套品牌蓝同时在用。', state: 'streaming' } },
-  { seq: 6, type: 'block_delta', blockId: 'b-text', channel: 'text', delta: '统一到腾讯调色板即可修复。' },
+  { seq: 6, type: 'block_delta', blockId: 'b-text', channel: 'text', delta: '统一到品牌色令牌即可修复。' },
   { seq: 7, type: 'block_close', blockId: 'b-text', state: 'done' },
   { seq: 8, type: 'run_end', runId: 'r1', status: 'ok', durationMs: 1800 },
 ];

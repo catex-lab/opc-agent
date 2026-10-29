@@ -15,7 +15,7 @@
  *
  *   <tmp>/App/App.exe                        ← 主程序（内容无所谓，存在即可）
  *   <tmp>/App/resources/app/out/cli.js       ← IDE 的命令行入口
- *   <tmp>/App/bin/ide-cn.cmd                 ← VS Code 式垫片
+ *   <tmp>/App/bin/ide-cn.cmd                 ← Electron 式垫片
  *
  * 这样走的是与真机完全相同的解析路径（readTextFile → 正则 → isFile），
  * 而不是「我塞一个 LaunchTarget 进去看函数返回什么」。
@@ -43,7 +43,7 @@ function ok(cond: boolean, label: string, detail?: string): void {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'a119-probe-'));
 
-/** 造一个 VS Code 系 IDE 的目录 + 垫片，返回 .cmd 路径 */
+/** 造一个 Electron 系 IDE 的目录 + 垫片，返回 .cmd 路径 */
 function makeIdeShim(opts: {
   name: string;
   /** 入口 js 的相对路径（默认 resources/app/out/cli.js） */
@@ -69,7 +69,7 @@ function makeIdeShim(opts: {
 
 console.log('\nA119 纯函数：IDE 启动器守卫');
 
-// ── 正例：VS Code 式垫片 ──────────────────────────────────────────
+// ── 正例：Electron 式垫片 ──────────────────────────────────────────
 {
   const cmd = makeIdeShim({ name: 'ide-canonical' });
   const target = resolveAnyLaunchTarget(cmd);

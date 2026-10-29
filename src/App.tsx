@@ -794,7 +794,7 @@ function AppContent() {
    * 那一次昂贵的挂载根本不会发生。
    *
    * 注意「消息」页在**非**设置页时不清理 —— 那里点「消息」的语义是
-   * 「回到消息栏」，右侧正在看的会话应该留着（QQ 也是这样）。
+   * 「回到消息栏」，右侧正在看的会话应该留着。
    */
   const handleNavigate = useCallback((key: NavKey) => {
     setNav(key);

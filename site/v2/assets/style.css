@@ -410,7 +410,7 @@ code {
 .tool-row .ticon::after { content: ""; position: absolute; inset: 2px; background: var(--amber); opacity: .5; }
 .tool-row b { color: var(--fg-2); font-weight: 500; }
 
-/* 目标进度卡（致敬 zcode 的 GoalComplete） */
+/* 目标进度卡 */
 .goal-card {
   margin: 2px 0 14px;
   border: 1px solid rgba(74, 222, 128, .3);

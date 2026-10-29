@@ -782,7 +782,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// 退出前回收 ACP 等长驻子进程（Hermes 是一个常驻的 Python 进程，
+// 退出前回收 ACP 等长驻子进程（ACP 类 agent 是常驻的 Python 进程，
 // 不主动杀会变成孤儿进程留在系统里）
 app.on('before-quit', () => {
   try {

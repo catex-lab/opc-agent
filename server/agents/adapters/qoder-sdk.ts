@@ -40,7 +40,7 @@
  *
  * ## 实测依据（2026-10-22，本机 qodercli 1.1.73 + SDK 1.0.55）
  *
- * 事件形状来自两次真实探针（`.tmp/qoder-probe/probe*.mjs`），不是照抄文档：
+ * 事件形状来自两次真实探针（`.tmp/qoder-probe/probe*.mjs`），不是照文档臆测：
  *
  * ```
  * system/init                     { session_id, model, permissionMode, tools[50] }

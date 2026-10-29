@@ -1417,7 +1417,7 @@ const RAW_DEFS: AgentDefinition[] = [
        *   {"type":"result","subtype":"success","is_error":false,"result":"OK",
        *    "session_id":"...","usage":{"inputTokens":20170,"outputTokens":24}}
        *
-       * 与 stream-json 高度同构，所以按同一形状解析。
+       * 事件形状与 stream-json 高度同构，所以按同一形状解析。
        */
       // 与 stream-json 同构：assistant 行给 content blocks（text/thinking/tool_use），
       // user 行给 tool_result。之前只映射了 text，于是工具与思考全丢。

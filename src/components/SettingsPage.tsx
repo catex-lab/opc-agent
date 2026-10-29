@@ -123,7 +123,7 @@ const SETTINGS_SECTIONS: Array<{
 }> = [
   // A115（用户要求「增加用户更换自己头像和昵称的功能」）：排第一。
   // 这是唯一一项「关于我而不是关于软件」的设置，放在最前面才找得到 ——
-  // QQ / 微信的设置页也都把个人资料摆在首位。
+  // 设置页的通行做法是把个人资料摆在首位。
   { key: 'profile', label: '我的资料', hint: '昵称与头像，昵称会被 Agent 识别', Icon: UserRound },
   { key: 'memory', label: '记忆', hint: '跨会话记忆、用户画像与沉淀的技能', Icon: Brain },
   { key: 'permission', label: '权限门禁', hint: '危险命令分类与自定义规则', Icon: ShieldAlert },

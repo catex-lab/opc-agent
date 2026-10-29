@@ -148,7 +148,7 @@ export function ConversationList({
         // 群聊：优先会话标题，没起名就拼成员名 —— 之前这里直接退到「新对话」，
         // 于是消息列表里每个没起名的群都叫「新对话」，完全分不出是哪个群。
         //
-        // 备注**替换**显示名（QQ 的做法）：一对一路由 agentId 取备注，
+        // 备注**替换**显示名：一对一路由 agentId 取备注，
         // 群聊取群聊备注。用户写备注的目的就是不想再看到原名。
         const memberNames = (session.agentIds ?? [])
           .map(id => getAgent(id)?.name)

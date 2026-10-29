@@ -40,7 +40,7 @@ import { ChevronLeft } from 'lucide-react';
  *
  * ## 例外：通讯录不用本组件
  *
- * 通讯录（ContactsPanel）按 QQ 通讯录的版式做：顶部是「搜索胶囊 + Tab」，
+ * 通讯录（ContactsPanel）按 IM 通讯录的版式做：顶部是「搜索胶囊 + Tab」，
  * 没有标题行，所以不复用本组件。消息列表、会话头部（compact）、资料页在用。
  *
  * ## 紧凑变体（compact）
@@ -213,7 +213,7 @@ export function PanelHeader({
         >
           <div className="flex items-center gap-2">
             <TitleTag
-              // compact（会话头部）固定 16px：QQ 的会话名就是这个量级。
+              // compact（会话头部）固定 16px：会话名就是这个量级。
               // 用 text-page（17px）在 52px 单行里会显得头重脚轻，
               // 而且和下面的消息正文只差 3px，层级拉不开。
               className={`truncate font-semibold ${

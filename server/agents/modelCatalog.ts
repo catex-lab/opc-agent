@@ -267,7 +267,7 @@ const QODER_VERIFIED_EXTRA: ReadonlyArray<CatalogEntry> = [
   {
     id: 'GLM-5.3',
     name: 'GLM-5.3',
-    description: '智谱开源旗舰模型，代码能力对标国际顶尖水平，兼具安全审查与漏洞推理能力。',
+    description: '智谱开源旗舰模型，代码能力达到国际顶尖水平，兼具安全审查与漏洞推理能力。',
   },
 ];
 
@@ -505,10 +505,10 @@ interface CodexRawModel {
 /**
  * codex 推理档位的中文标签。
  *
- * **为什么可以沿用官方文案**：`codex debug models` 只给英文 effort 值，中文名来自
- * qoder 的官方文案表 `modelSelector.runtimeLabel.*` —— 两家前端用的是同一套
- * 中文档位名（低/中/高/最大/超高/无/开启/关闭/推荐）。这是官方自己的译法，
- * 不是我们翻译的。未覆盖的值（如 `ultra`）保留英文原文，不硬造中文。
+ * **为什么中文名可以直接沿用**：`codex debug models` 只给英文 effort 值，
+ * 中文名来自官方前端文案表 `modelSelector.runtimeLabel.*` —— 用的是官方自己的
+ * 译法（低/中/高/最大/超高/无/开启/关闭/推荐），不是我们翻译的。
+ * 未覆盖的值（如 `ultra`）保留英文原文，不硬造中文。
  */
 const CODEX_REASONING_LABEL: Record<string, string> = {
   none: '无',

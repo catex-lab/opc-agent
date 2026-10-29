@@ -386,7 +386,7 @@ export function runActivity(blocks: readonly Block[]): 'thinking' | 'tool' | 'wr
 /**
  * 流式状态行的阶段文案（A34）。
  *
- * spinner mode：不同阶段说不同的话，而不是一个笼统词。
+ * 分阶段的 spinner：不同阶段说不同的话，而不是一个笼统词。
  * 默认（刚发出、还没有任何块）是「正在处理」—— 中性、不借用任何厂商的
  * 专属说法。放在 shared 是为了能被单测直接调用，且与 runActivity 用同一套判据。
  */

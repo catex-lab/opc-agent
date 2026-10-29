@@ -145,12 +145,12 @@ const MESSAGES = [
       },
       {
         id: 't2', name: 'Bash', status: 'completed',
-        input: { command: 'grep -rn "0052D9" src/ --include=*.tsx', description: '搜索腾讯蓝的硬编码位置' },
+        input: { command: 'grep -rn "0052D9" src/ --include=*.tsx', description: '搜索旧品牌蓝的硬编码位置' },
         result: 'src/components/NavRail.tsx:58:  linear-gradient(135deg, #0052D9, #0594FA)\nsrc/components/ChatInput.tsx:30:  color: \'#0052d9\'',
       },
       {
         id: 't3', name: 'WebSearch', status: 'completed',
-        input: { query: '腾讯 TDesign 品牌色规范' },
+        input: { query: 'TDesign 品牌色规范' },
         result: 'TDesign 品牌色：#0052D9，hover #0594FA，active #003FB3……',
       },
       {
@@ -166,9 +166,9 @@ const MESSAGES = [
 | 位置 | 取值 | 来源 |
 | --- | --- | --- |
 | \`--td-brand-color\` | \`#3b82f6\` | Tailwind blue-500 |
-| \`NavRail\` 渐变 | \`#0052D9\` | 腾讯蓝 |
+| \`NavRail\` 渐变 | \`#0052D9\` | 旧品牌蓝 |
 
-统一到腾讯调色板即可：
+统一到品牌色令牌即可：
 
 \`\`\`css
 --td-brand-color: #0052d9;
@@ -198,7 +198,7 @@ const STREAM_EVENTS = [
   { seq: 1, type: 'run_start', runId: 'r-stream', sessionId: 's1', messageId: 'a-stream', agentId: 'wb', model: 'claude-sonnet-4-5' },
   // 思考：首段随 block_open 下发，后续走 delta（与 RunProjector 一致）
   { seq: 2, type: 'block_open', block: { id: 'r-stream-b1', type: 'thinking', text: '用户想确认品牌色不一致的原因。', state: 'streaming', format: 'raw', startedAt: 1710000000000 } },
-  { seq: 3, type: 'block_delta', blockId: 'r-stream-b1', channel: 'text', delta: '先读 CSS 变量定义，再全局搜一遍腾讯蓝的硬编码位置，最后给出统一方案。' },
+  { seq: 3, type: 'block_delta', blockId: 'r-stream-b1', channel: 'text', delta: '先读 CSS 变量定义，再全局搜一遍旧品牌蓝的硬编码位置，最后给出统一方案。' },
   { seq: 4, type: 'block_patch', blockId: 'r-stream-b1', patch: { endedAt: 1710000000500 } },
   { seq: 5, type: 'block_close', blockId: 'r-stream-b1', state: 'done' },
   // 工具一：流式输出 → 收尾 patch（工具块不进「续写」，两次工具各占一个块）
@@ -207,13 +207,13 @@ const STREAM_EVENTS = [
   { seq: 8, type: 'block_patch', blockId: 'r-stream-b2', patch: { status: 'completed', isError: false, output: ':root { --td-brand-color: #3b82f6; }', endedAt: 1710000001200 } },
   { seq: 9, type: 'block_close', blockId: 'r-stream-b2', state: 'done' },
   // 工具二：Bash 的长输出，验证「输出中」与流式贴底
-  { seq: 10, type: 'block_open', block: { id: 'r-stream-b3', type: 'tool', toolId: 'st2', name: 'Bash', input: { command: 'grep -rn "0052D9" src/', description: '搜索腾讯蓝硬编码位置' }, status: 'running', startedAt: 1710000001300 } },
+  { seq: 10, type: 'block_open', block: { id: 'r-stream-b3', type: 'tool', toolId: 'st2', name: 'Bash', input: { command: 'grep -rn "0052D9" src/', description: '搜索旧品牌蓝硬编码位置' }, status: 'running', startedAt: 1710000001300 } },
   { seq: 11, type: 'block_delta', blockId: 'r-stream-b3', channel: 'output', delta: 'src/components/NavRail.tsx:58: #0052D9' },
   { seq: 12, type: 'block_patch', blockId: 'r-stream-b3', patch: { status: 'completed', isError: false, output: 'src/components/NavRail.tsx:58: #0052D9', endedAt: 1710000002000 } },
   { seq: 13, type: 'block_close', blockId: 'r-stream-b3', state: 'done' },
   // 正文：两段 delta 拼成一段连续文本（模拟 projector 的续写合并）
   { seq: 14, type: 'block_open', block: { id: 'r-stream-b4', type: 'text', text: '已定位问题：**两套品牌蓝同时在用**。', state: 'streaming' } },
-  { seq: 15, type: 'block_delta', blockId: 'r-stream-b4', channel: 'text', delta: '\n\n- `--td-brand-color` 是 `#3b82f6`（Tailwind）\n- `NavRail` 渐变用的是 `#0052D9`（腾讯蓝）\n\n统一到腾讯调色板即可修复。' },
+  { seq: 15, type: 'block_delta', blockId: 'r-stream-b4', channel: 'text', delta: '\n\n- `--td-brand-color` 是 `#3b82f6`（Tailwind）\n- `NavRail` 渐变用的是 `#0052D9`（旧品牌蓝）\n\n统一到品牌色令牌即可修复。' },
   { seq: 16, type: 'block_close', blockId: 'r-stream-b4', state: 'done' },
   { seq: 17, type: 'run_end', runId: 'r-stream', status: 'ok', durationMs: 2000 },
 ];

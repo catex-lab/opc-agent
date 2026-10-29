@@ -9,8 +9,8 @@ export interface ContextMenuItem {
   danger?: boolean;
   /**
    * 在这一项**之前**画一条分隔线。
-   * 用来把「删除」这类破坏性操作与上面的日常操作分开 —— QQ 的右键菜单
-   * 也是这么分段的：靠一条线，而不是靠颜色，让误点率降下来。
+   * 用来把「删除」这类破坏性操作与上面的日常操作分开 —— 靠一条线分段，
+   * 而不是靠颜色，让误点率降下来。
    */
   divider?: boolean;
   onSelect: () => void;
