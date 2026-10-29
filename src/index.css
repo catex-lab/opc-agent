@@ -4812,3 +4812,17 @@ html[data-opc-glass='1'] t-chat-sender {
   outline: 2px solid var(--td-brand-color);
   outline-offset: 1px;
 }
+
+/* ── 应用 Logo（彩色徽章）在深色主题下的微调 ───────────────────────
+ *
+ * 2026-10-29：Logo 由「黑白同人卦」换成彩色徽章位图，`--tc-logo-tile` /
+ * `--tc-logo-mark` 那两个「随主题反转」的令牌就不再被 Logo 使用了
+ * （位图没有 currentColor，翻不过来）—— 定义保留，只作历史记录，别再加引用。
+ *
+ * 位图自带深蓝描边，实测深色底上本来就比浅色底更清晰（白毛 vs 深底对比强）。
+ * 这里只把整体亮度提一点点，免得白毛在 #1c1c1c 上显灰；**不加对比度**，
+ * 加了会让深蓝环压成黑边。
+ */
+:root.dark [data-app-logo] img {
+  filter: brightness(1.06);
+}

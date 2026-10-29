@@ -19,7 +19,7 @@ import { existsSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import process from 'node:process';
 import { chromium } from 'playwright-core';
-import { GEOM, COLORS, LINES, pngSize, icoSizes } from './make-icons.mjs';
+import { pngSize, icoSizes, SRC, SMALL_MAX } from './make-icons.mjs';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
@@ -45,34 +45,32 @@ async function read(p) {
   return readFile(join(ROOT, p));
 }
 
-// 1a. 徽章母版：黑底 + 7 根白爻（6 爻，其中阴爻一断为二）+ 一圈白描边
+// 1a. 设计源：彩色徽章位图
+//
+// 2026-10-29：这里原来验的是「几何 SVG 母版」—— 黑底、7 根白爻、白描边、
+// 只有黑白两个色值、圆角 28。Logo 换成设计稿位图后这些断言全部失效
+// （位图没有 rect 可数、没有色值可枚举），改成验「源在、尺寸够、是真 PNG」。
 {
-  const svg = await read('build/icon.svg').then(b => b.toString('utf8'));
-  ok(svg.includes(`fill="${COLORS.tileBg}"`), '徽章母版用纯黑底', COLORS.tileBg);
-  ok(svg.includes(`fill="${COLORS.tileMark}"`), '爻线用纯白', COLORS.tileMark);
-  // 白描边是纯黑白方案的关键：任务栏深色时纯黑方块会糊进背景，只剩爻线在飘
-  ok(svg.includes(`stroke="${COLORS.tileRing}"`) && svg.includes(`stroke-width="${COLORS.tileRingWidth}"`),
-    '徽章带一圈白描边（深色桌面上黑底不消失）', `${COLORS.tileRing} / ${COLORS.tileRingWidth}`);
-  const rects = svg.match(/<rect /g) || [];
-  ok(rects.length === 8, '徽章 = 1 底色 + 7 根爻线（阴爻断成两根）', `rect=${rects.length}`);
-  ok(/rx="28"/.test(svg), '圆角与 GEOM.tile.rx 一致');
-  // 全文件只允许出现黑与白：任何第三个色值都说明配色漂了
-  const inks = [...new Set([...svg.matchAll(/#([0-9a-fA-F]{3,8})\b/g)].map(m => m[1].toLowerCase()))];
-  ok(inks.every(c => c === '000000' || c === 'ffffff'), '徽章只有黑与白两个色值', inks.join(' / '));
+  ok(existsSync(SRC), '设计源 build/logo-source.png 存在');
+  const src = await read('build/logo-source.png');
+  const s = pngSize(src);
+  ok(!!s && s.width === s.height && s.width >= 512, '设计源是 ≥512 的正方形 PNG', `${s?.width}x${s?.height}`);
+  // PNG 魔数：扩展名对但内容不是 PNG（比如被存成 WebP）会让后面整条链静默出错
+  ok(src.toString('latin1', 1, 4) === 'PNG', '设计源是真正的 PNG（魔数校验）');
 }
 
-// 1b. 裸标记母版：明暗自适应，且 favicon 与 src/assets 是同一份
+// 1b. 界面标记与 favicon：同一源图生成，各自尺寸对得上
 {
-  const mark = await read('src/assets/app-logo.svg').then(b => b.toString('utf8'));
-  const fav = existsSync(join(ROOT, 'public/favicon.svg'))
-    ? await read('public/favicon.svg').then(b => b.toString('utf8'))
-    : '';
-  ok(fav.length > 0 && fav === mark, 'public/favicon.svg 与 src/assets/app-logo.svg 逐字节一致');
-  ok(mark.includes('prefers-color-scheme: dark'), '裸标记带 dark 媒体查询（明暗自适应）');
-  ok(mark.includes(COLORS.markLight) && mark.includes(COLORS.markDark), '两态颜色都在（黑 / 白）',
-    `${COLORS.markLight} / ${COLORS.markDark}`);
-  const rects = mark.match(/<rect /g) || [];
-  ok(rects.length === 7, '裸标记 = 7 根爻线', `rect=${rects.length}`);
+  const logo = pngSize(await read('src/assets/app-logo.png'));
+  ok(logo?.width === 256 && logo?.height === 256, 'src/assets/app-logo.png 是 256×256', `${logo?.width}x${logo?.height}`);
+  const fav32 = pngSize(await read('public/favicon.png'));
+  const fav16 = pngSize(await read('public/favicon-16.png'));
+  ok(fav32?.width === 32, 'public/favicon.png 是 32×32', `${fav32?.width}`);
+  ok(fav16?.width === 16, 'public/favicon-16.png 是 16×16', `${fav16?.width}`);
+  // 旧的几何 SVG 保留未删（资产不主动删），但不该再被任何地方引用 ——
+  // 「文件还在」是肯定式，防止把「整个删掉」当成通过。
+  ok(existsSync(join(ROOT, 'public/favicon.svg')), '旧 favicon.svg 仍保留（只停止引用，不删资产）');
+  ok(existsSync(join(ROOT, 'src/assets/app-logo.svg')), '旧 app-logo.svg 仍保留');
 }
 
 // 1c. ICO 容器：主图标 7 尺寸、托盘 4 尺寸，条目全是 PNG
@@ -114,83 +112,50 @@ async function read(p) {
   }
 }
 
-// 1e. 几何契约：三处实现必须逐字段一致（这是防漂移的核心断言）
+// 1e. AppLogo 必须引用位图（防回退到旧几何实现）
+//
+// 2026-10-29：旧断言是「三处几何逐字段一致」—— AppLogo.tsx 的 STD/WIDE/LINES
+// 必须与 make-icons.mjs 的 GEOM/LINES 完全对上，这是黑白几何方案防漂移的核心。
+// 换成位图后几何常量整体消失，那条契约失去对象，改成「实现形态」断言：
+// 必须是 <img> + import 那张 png，且不能残留 STD / lineRects 这类旧实现
+// （否则说明有人只换了资产、没换组件，界面会继续画旧标记）。
 {
   const tsx = await read('src/components/AppLogo.tsx').then(b => b.toString('utf8'));
-  const grab = (name) => {
-    const m = tsx.match(new RegExp(`const ${name} = \\{([^}]+)\\}`));
-    if (!m) return null;
-    const out = {};
-    for (const kv of m[1].split(',')) {
-      const [k, v] = kv.split(':').map(s => s.trim());
-      if (k) out[k] = Number(v);
-    }
-    return out;
-  };
-  const std = grab('STD');
-  const wide = grab('WIDE');
-  ok(!!std, 'AppLogo.tsx 里有 STD 几何常量');
-  ok(!!wide, 'AppLogo.tsx 里有 WIDE 小尺寸几何常量');
-  if (std && wide) {
-    const sameStd =
-      std.x0 === GEOM.mark.x0 && std.w === GEOM.mark.w &&
-      std.stroke === GEOM.stroke && std.gap === GEOM.gap && std.brokenGap === GEOM.brokenGap;
-    ok(sameStd, 'STD 与 make-icons.mjs 的 GEOM（mark）逐字段一致',
-      `tsx=${JSON.stringify(std)} mjs=${JSON.stringify({ ...GEOM.mark, stroke: GEOM.stroke, gap: GEOM.gap, brokenGap: GEOM.brokenGap })}`);
-    const sameWide =
-      wide.stroke === GEOM.wide.stroke && wide.gap === GEOM.wide.gap && wide.brokenGap === GEOM.wide.brokenGap;
-    ok(sameWide, 'WIDE 与 GEOM.wide 逐字段一致', `tsx=${JSON.stringify(wide)} mjs=${JSON.stringify(GEOM.wide)}`);
-  }
-  const linesM = tsx.match(/const LINES = \[([^\]]+)\]/);
-  const tsxLines = linesM ? linesM[1].split(',').map(s => s.trim() === 'true') : null;
-  ok(!!tsxLines && JSON.stringify(tsxLines) === JSON.stringify(LINES),
-    'LINES（六爻虚实）与 make-icons.mjs 一致', tsxLines ? tsxLines.map(v => (v ? '—' : '- -')).join(' ') : '未解析到');
-  ok(/CANVAS = 128/.test(tsx) && GEOM.canvas === 128, '画布 128 一致');
+  ok(/import\s+logoUrl\s+from\s+'\.\.\/assets\/app-logo\.png'/.test(tsx),
+    'AppLogo 引用 src/assets/app-logo.png');
+  ok(/<img/.test(tsx), 'AppLogo 渲染 <img>（不再是 <svg>）');
+  ok(!/const STD\s*=/.test(tsx) && !/lineRects/.test(tsx),
+    'AppLogo 里没有残留的几何实现（STD / lineRects）');
 }
 
-// 1f. 接线：标题栏、令牌、favicon、托盘一个都不能少
+// 1f. 接线：标题栏、favicon、托盘、打包配置一个都不能少
 {
   const titlebar = await read('src/components/TitleBar.tsx').then(b => b.toString('utf8'));
   ok(titlebar.includes("import { AppLogo } from './AppLogo'"), 'TitleBar 引用 AppLogo');
-  ok(titlebar.includes('--tc-logo-tile') && titlebar.includes('--tc-logo-mark'), '标题栏徽章用两个 logo 令牌');
-  ok(titlebar.includes('data-app-logo'), '标题栏徽章带 data-app-logo 测试钩子');
+  ok(titlebar.includes('data-app-logo'), '标题栏标记带 data-app-logo 测试钩子');
+
+  /* 2026-10-29：旧方案要求标题栏用 --tc-logo-tile / --tc-logo-mark 铺黑白底色
+     并随主题反转（浅色黑底白爻 ↔ 深色白底黑爻）。换成彩色位图后：
+       · 底色会把图压住，所以 TitleBar 不再引用这两个令牌；
+       · 位图自带深蓝描边，轮廓不依赖背景，也就不需要「反转」。
+     两条断言因此反转成「不再引用」。但令牌**定义本身保留**（不删资产），
+     并用肯定式确认它还在 —— 否则「把令牌一起删掉」也会判绿。
+
+     ⚠️ 必须先剥注释再判：TitleBar 的注释里就写着「不再铺 --tc-logo-tile」，
+     直接对整块源码跑正则会命中这句注释，把「已经改对了」判成红。
+     （这条不是假设 —— 第一次跑就是这么红的。） */
+  const stripComments = s =>
+    s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  ok(!/--tc-logo-tile|--tc-logo-mark/.test(stripComments(titlebar)), '标题栏不再铺黑白 logo 底色（位图自带描边）');
   const css = await read('src/index.css').then(b => b.toString('utf8'));
-  // 大小写不敏感：CSS 里写小写十六进制，COLORS 里写的是大写。
-  // 界面徽章**随主题反转**（浅色黑底白爻 / 深色白底黑爻），所以两个主题
-  // 各有一套值。判定某处定义落在哪个块里，要往前找**最近的** `:root {` /
-  // `:root.dark {` 开括号 —— 不能按「第一个 :root.dark」切片：本文件第 23 行
-  // 就有一个 :root.dark，而令牌定义在第 174 行，按首次出现切片会把浅色区
-  // 整段切掉，得到「浅色令牌没定义」的假失败（实测踩过）。
-  function defs(prop) {
-    const re = new RegExp(`${prop}\\s*:\\s*(#[0-9a-fA-F]+)`, 'g');
-    const out = [];
-    let m;
-    while ((m = re.exec(css))) {
-      const open = /:root(\.dark)?\s*\{/g;
-      let o;
-      let theme = 'light';
-      while ((o = open.exec(css))) {
-        if (o.index >= m.index) break;
-        theme = o[1] ? 'dark' : 'light';
-      }
-      out.push({ value: m[1].toLowerCase(), theme });
-    }
-    return out;
-  }
-  const tileDefs = defs('--tc-logo-tile');
-  const markDefs = defs('--tc-logo-mark');
-  ok(tileDefs.length === 2 && markDefs.length === 2, '两个令牌都定义两次（浅色 + 深色各一份）',
-    `tile=[${tileDefs.map(d => d.theme + ':' + d.value)}] mark=[${markDefs.map(d => d.theme + ':' + d.value)}]`);
-  const lt = tileDefs.find(d => d.theme === 'light');
-  const lm = markDefs.find(d => d.theme === 'light');
-  const dt = tileDefs.find(d => d.theme === 'dark');
-  const dm = markDefs.find(d => d.theme === 'dark');
-  ok(!!lt && !!lm && lt.value === COLORS.tileBg.toLowerCase() && lm.value === COLORS.tileMark.toLowerCase(),
-    '浅色主题：黑底白爻', lt && lm ? `${lt.value} / ${lm.value}` : '缺失');
-  ok(!!dt && !!dm && dt.value === COLORS.tileMark.toLowerCase() && dm.value === COLORS.tileBg.toLowerCase(),
-    '深色主题：白底黑爻（随主题反转）', dt && dm ? `${dt.value} / ${dm.value}` : '缺失');
+  ok(css.includes('--tc-logo-tile') && css.includes('--tc-logo-mark'), '两个旧令牌定义仍保留（只停用，不删）');
+  ok(/:root\.dark \[data-app-logo\] img/.test(css), '暗色主题对 Logo 有单独微调（明暗区分）');
+
   const html = await read('index.html').then(b => b.toString('utf8'));
-  ok(html.includes('href="/favicon.svg"'), 'index.html 引用 /favicon.svg（不再是 data-URI 占位）');
+  ok(html.includes('href="/favicon.png"'), 'index.html 引用 /favicon.png（32px）');
+  ok(html.includes('href="/favicon-16.png"'), 'index.html 另给 16px 一份（标签页不缩大图）');
+  ok(!html.includes('href="/favicon.svg"'), 'index.html 不再引用旧 favicon.svg');
+
   const main = await read('electron/main.ts').then(b => b.toString('utf8'));
   ok(main.includes('new Tray(') && main.includes('tray-icon.ico'), '主进程创建托盘并用 tray-icon.ico');
   ok(/join\(__dirname, 'icon\.png'\)/.test(main), '窗口图标仍指向 dist-electron/icon.png');
@@ -241,14 +206,27 @@ if (!existsSync(join(DIST, 'index.html'))) {
 
   /** 标题栏徽章的完整断言，明暗两态各跑一遍 */
   async function checkLogo(scheme) {
-    const ctx = await browser.newContext({
-      viewport: { width: 1440, height: 900 },
-      deviceScaleFactor: 2,
-      colorScheme: scheme,
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: scheme });
+    /**
+     * 拦掉 /api/**，喂最小夹具。
+     *
+     * 这个静态服务只 serve dist，**不代理 API** —— 不拦的话前端的
+     * `/api/models`、`/api/sessions` 会拿到 index.html，`JSON.parse` 撞上
+     * `<!DOCTYPE` 然后 `console.error`，把「控制台零错误」染红（实测报错原文：
+     * `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`）。
+     *
+     * 这里只需要页面能渲染出标题栏，所以给空集合就够；不需要真实数据。
+     */
+    await ctx.route('**/api/**', route => {
+      const url = route.request().url();
+      const json = body =>
+        route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      if (/\/api\/models/.test(url)) return json({ models: [] });
+      if (/\/api\/sessions/.test(url)) return json({ sessions: [] });
+      if (/\/api\/agents/.test(url)) return json({ agents: [] });
+      if (/\/api\/runs\/active/.test(url)) return json({ runs: [] });
+      return json({});
     });
-    await ctx.route('**/api/**', route =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: '{"sessions":[]}' })
-    );
     const page = await ctx.newPage();
     const errors = [];
     page.on('console', m => {
@@ -256,21 +234,18 @@ if (!existsSync(join(DIST, 'index.html'))) {
     });
     page.on('pageerror', e => errors.push(String(e)));
     await page.goto(base + '/', { waitUntil: 'networkidle' });
-    await page.waitForSelector('[data-titlebar] [data-app-logo] svg', { timeout: 5000 });
+    await page.waitForSelector('[data-titlebar] [data-app-logo] img', { timeout: 5000 });
 
     const tile = page.locator('[data-titlebar] [data-app-logo]');
 
     /**
-     * ⚠️ 截图前必须等徽章**位置稳定**——这是本脚本最大的坑，值得写清楚。
+     * ⚠️ 截图前必须等标记**位置稳定** —— 这个坑与 Logo 内容无关，仍然有效。
      *
-     * 应用有入场动画：徽章挂载后还会位移一小段时间。而 boundingBox() 与
+     * 应用有入场动画：标记挂载后还会位移一小段时间。boundingBox() 与
      * page.screenshot() 是两次独立读取，元素只要在两次之间动了，clip 区域
-     * 与 rect 坐标就来自不同帧。实测症状极具误导性：截图整体偏移约 2px，
-     * 「阳爻行」采样落到爻间缝隙里，三行全扫不到纸色 —— 看起来像 logo
-     * 没画出来，实际是采样坐标系错了。
-     *
-     * waitForSelector 只保证 SVG 挂载，waitForTimeout 是拍脑袋的固定值；
-     * 这里连读位置直到两次相同（兜底 1s），才是「真的落定了」。
+     * 与 rect 坐标就来自不同帧，截图整体偏移约 2px（旧实现里表现为
+     * 「三行全扫不到纸色，看起来像 logo 没画出来」）。
+     * 连读位置直到两次相同（兜底 1s）才是「真的落定了」。
      */
     let box = await tile.boundingBox();
     for (let i = 0; i < 10; i++) {
@@ -280,165 +255,49 @@ if (!existsSync(join(DIST, 'index.html'))) {
       box = b;
     }
 
-    // 位置落定之后才读 rect 与截图，两边才是同一帧
+    /**
+     * 2026-10-29：Logo 换成位图后，原来那套「量 7 根 rect + 逐行扫像素证明
+     * 离卦中爻是断的」整体失去对象 —— 位图没有 rect，也没有「断爻」可验。
+     * 改成验**位图这个形态本身**能不能成立，三条判据都是旧实现验不到的：
+     *   · `<img>` 真的挂载（不是还在画旧的内联 SVG）；
+     *   · **已解码**（naturalWidth > 0）—— 只验元素存在会漏掉「路径错了、
+     *     图裂了但元素还在」这种最常见的失败，界面上是一块空白；
+     *   · 按 16px 渲染（TitleBar 传的就是 16，改大改小都要有人知道）。
+     * 与导航图标同轴那条与 Logo 内容无关，原样保留。
+     */
     const styles = await tile.evaluate(el => {
-      const s = getComputedStyle(el);
       const r = el.getBoundingClientRect();
-      const svg = el.querySelector('svg');
-      const rects = [...svg.querySelectorAll('rect')].map(x => {
-        const b = x.getBoundingClientRect();
-        return {
-          x: Number(x.getAttribute('x')),
-          y: Number(x.getAttribute('y')),
-          w: Number(x.getAttribute('width')),
-          fill: getComputedStyle(x).fill,
-          // 相对徽章的归一化位置（0~1）—— 像素采样要用真实落点，
-          // 不能拿 viewBox 坐标除 128：标记在徽章里有内边距，两者不同源
-          left: (b.left - r.left) / r.width,
-          right: (b.right - r.left) / r.width,
-          top: (b.top - r.top) / r.height,
-          bottom: (b.bottom - r.top) / r.height,
-        };
-      });
+      const img = el.querySelector('img');
       const bar = document.querySelector('[data-titlebar]');
-      /**
-       * 导航条第一个按钮的中心。
-       *
-       * ⚠️ 徽章要验的是「与导航图标**同轴**」，不是「中心在 28px」。
-       * 原来写死 28（= 56px 导航条的半宽），A103 给框架加了 6px 内缩之后
-       * 中轴整体平移到 34，写死的常量就变成了假失败 —— 而徽章其实一直
-       * 是对齐的。真正该对齐的参照物是导航按钮本身。
-       */
       const navBtn = document.querySelector('nav button');
       const navCx = navBtn
-        ? (b => { const r = b.getBoundingClientRect(); return r.left + r.width / 2; })(navBtn)
+        ? (b => { const q = b.getBoundingClientRect(); return q.left + q.width / 2; })(navBtn)
         : null;
       return {
-        bg: s.backgroundColor,
-        fg: s.color,
         barBg: bar ? getComputedStyle(bar).backgroundColor : '',
         w: r.width,
         h: r.height,
         cx: r.left + r.width / 2,
         navCx,
-        rects,
+        hasImg: !!img,
+        natural: img ? img.naturalWidth : 0,
+        imgW: img ? img.getBoundingClientRect().width : 0,
+        src: img ? img.getAttribute('src') : '',
+        // 旧内联 SVG 的残留：还在画几何就说明组件没换干净
+        hasSvg: !!el.querySelector('svg'),
       };
     });
 
-    // 界面徽章随主题反转：浅色黑底白爻、深色白底黑爻。
-    // 纯黑白没有中间色可依，翻转错了会直接变成「深色态下黑底贴黑 rail」。
-    const want = scheme === 'light'
-      ? { bg: 'rgb(0, 0, 0)', fg: 'rgb(255, 255, 255)' }
-      : { bg: 'rgb(255, 255, 255)', fg: 'rgb(0, 0, 0)' };
-    ok(styles.bg === want.bg, `[${scheme}] 徽章底色是${scheme === 'light' ? '黑' : '白'}（随主题反转）`, styles.bg);
-    ok(styles.fg === want.fg, `[${scheme}] 爻线是${scheme === 'light' ? '白' : '黑'}`, styles.fg);
-    ok(Math.round(styles.w) === 18 && Math.round(styles.h) === 18, `[${scheme}] 徽章 18×18`, `${styles.w}x${styles.h}`);
-    // 与导航图标同轴（A92 的对齐约定）：参照物是导航按钮中心，不是写死的像素值
+    ok(styles.hasImg, `[${scheme}] 标题栏标记是 <img>（不再是内联 SVG）`);
+    ok(!styles.hasSvg, `[${scheme}] 标记里没有残留的内联 SVG`);
+    ok(styles.natural > 0, `[${scheme}] 位图已成功解码（naturalWidth>0）`,
+      `natural=${styles.natural} src=${styles.src}`);
+    ok(Math.round(styles.w) === 18 && Math.round(styles.h) === 18,
+      `[${scheme}] 标记格 18×18`, `${styles.w}x${styles.h}`);
+    ok(Math.round(styles.imgW) === 16, `[${scheme}] 图按 16px 渲染`, `${styles.imgW}px`);
     ok(styles.navCx !== null && Math.abs(styles.cx - styles.navCx) <= 1,
-      `[${scheme}] 徽章中心与导航图标同轴`,
+      `[${scheme}] 标记中心与导航图标同轴`,
       `cx=${styles.cx.toFixed(1)} nav=${styles.navCx === null ? '未找到' : styles.navCx.toFixed(1)}`);
-    ok(styles.rects.length === 7, `[${scheme}] 界面内联 SVG 是 7 根爻线`, `n=${styles.rects.length}`);
-    ok(styles.rects.every(r => r.fill === want.fg), `[${scheme}] 爻线 fill 解析正确（currentColor 生效）`, styles.rects[0]?.fill);
-    // 阴爻必须真的是「断」的：第 5、6 根同高且左右分开
-    const [a, b] = [styles.rects[4], styles.rects[5]];
-    ok(a && b && a.y === b.y && b.x > a.x + a.w - 1, `[${scheme}] 离卦中爻是断开的（第 5/6 根同 y 且分离）`,
-      a && b ? `y=${a.y} x=${a.x} / ${b.x}` : '缺失');
-
-    // 像素级结构断言：把徽章区域精确裁出来，在关键行上扫一遍，
-    // 用「纸色连续段」的个数证明爻线真的画出来了、而且真的是断的。
-    //
-    // 为什么用 page.screenshot({clip}) 而不是 locator.screenshot()：实测
-    // 元素截图的高度会是 38px 而不是 36px（徽章 y=10.5 是分数，取整时
-    // 溢出两行），整个采样坐标系随之平移 —— 全是假失败。clip 按 CSS 像素
-    // 裁、由 Playwright 自己乘 DPI，尺寸与落点都精确。
-    //
-    // 为什么扫行而不是取区域极值：断爻的缺口只有约 3 个物理像素宽，
-    // 「两段包围盒之间」的区域一取整就把相邻爻线的抗锯齿边算进来
-    // （实测 maxAvg=212，其实是右段的第一颗像素）。按行分类后再数
-    // 连续段，±1px 的偏移不影响结论。
-    const shot = await page.screenshot({ clip: box });
-    const px = await page.evaluate(
-      async ([b64, rects, sch]) => {
-        const img = new Image();
-        img.src = 'data:image/png;base64,' + b64;
-        await img.decode();
-        const c = document.createElement('canvas');
-        c.width = img.width;
-        c.height = img.height;
-        const ctx2 = c.getContext('2d');
-        ctx2.drawImage(img, 0, 0);
-        /**
-         * 取某一归一化高度的一行，逐像素分类：M=爻线 T=徽章底 ?=抗锯齿过渡。
-         *
-         * ⚠️ 阈值**随配色方案反转**：浅色态是黑底白爻（avg>200 才算爻线），
-         * 深色态是白底黑爻（avg<60 才算爻线）。要是一律按「亮的是爻线」判，
-         * 深色态会把整片徽章底当成爻线 —— 阳爻行会数出 2 段而不是 1 段，
-         * 全是假失败。这是从朱红方案改纯黑白时新引入的陷阱。
-         */
-        const rowAt = fy => {
-          const y = Math.min(img.height - 1, Math.round(fy * img.height));
-          const d = ctx2.getImageData(0, y, img.width, 1).data;
-          const cls = [];
-          for (let x = 0; x < img.width; x++) {
-            const avg = (d[x * 4] + d[x * 4 + 1] + d[x * 4 + 2]) / 3;
-            cls.push(
-              sch === 'light'
-                ? (avg > 200 ? 'M' : avg < 160 ? 'T' : '?')
-                : (avg < 60 ? 'M' : avg > 200 ? 'T' : '?')
-            );
-          }
-          return cls;
-        };
-        /** 某类像素形成了几个互不相邻的连续段 */
-        const runs = (cls, kind) => {
-          let n = 0;
-          let prev = false;
-          for (const ch of cls) {
-            const is = ch === kind;
-            if (is && !prev) n++;
-            prev = is;
-          }
-          return n;
-        };
-        /** 两个爻段之间隔着的东西（用于证明「断」） */
-        const between = (cls, kind) => {
-          const idx = cls.map((ch, i) => (ch === kind ? i : -1)).filter(i => i >= 0);
-          if (idx.length < 2) return '';
-          // 找到前两个爻段的边界，取它们之间的像素
-          let end1 = idx[0];
-          while (end1 + 1 < cls.length && cls[end1 + 1] === kind) end1++;
-          let start2 = idx[idx.length - 1];
-          while (start2 - 1 >= 0 && cls[start2 - 1] === kind) start2--;
-          return cls.slice(end1 + 1, start2).join('');
-        };
-        const r0 = rects[0];
-        const r1 = rects[1];
-        const broken = rects[4];
-        return {
-          solidRow: rowAt((r0.top + r0.bottom) / 2),
-          solidRuns: runs(rowAt((r0.top + r0.bottom) / 2), 'M'),
-          gapRow: rowAt((r0.bottom + r1.top) / 2),
-          gapRuns: runs(rowAt((r0.bottom + r1.top) / 2), 'M'),
-          brokenRow: rowAt((broken.top + broken.bottom) / 2),
-          brokenRuns: runs(rowAt((broken.top + broken.bottom) / 2), 'M'),
-          brokenBetween: between(rowAt((broken.top + broken.bottom) / 2), 'M'),
-        };
-      },
-      [shot.toString('base64'), styles.rects, scheme]
-    );
-    ok(px.solidRuns === 1, `[${scheme}] 阳爻行：爻线连成一段（实线画出来了）`, `runs=${px.solidRuns}`);
-    ok(px.gapRuns === 0, `[${scheme}] 爻间行：没有爻线（线与线真的分开）`, `runs=${px.gapRuns}`);
-    ok(px.brokenRuns === 2, `[${scheme}] 阴爻行：爻线分成两段（离卦中爻真的是断的）`, `runs=${px.brokenRuns}`);
-    ok(/T/.test(px.brokenBetween), `[${scheme}] 两段之间是徽章底（缺口有底色透出）`, `"${px.brokenBetween}"`);
-
-    // 徽章是圆角的（设计规格 4px）。注意：不能靠截图的圆角外 alpha 判 ——
-    // clip 截图截取的是**页面合成后的区域**，圆角外透出的是标题条底色，
-    // alpha 必然是 255；元素截图虽然能给出透明角，但尺寸取整会漂（见上）。
-    // 形状断言走计算样式，像素断言只管爻线与底色。
-    {
-      const radius = await tile.evaluate(el => getComputedStyle(el).borderRadius);
-      ok(radius === '4px', `[${scheme}] 徽章圆角 4px（与 OS 图标的圆角徽章同源）`, radius);
-    }
 
     await page.waitForTimeout(600); // 等主题/首帧涂料落定再截图，否则证据图可能是中间态
     await page.locator('[data-titlebar]').screenshot({ path: join(OUT, `logo-titlebar-${scheme}.png`) });
@@ -454,14 +313,24 @@ if (!existsSync(join(DIST, 'index.html'))) {
   ok(light.barBg !== dark.barBg, '明暗两态的标题条底色确实不同（上下文真的切了主题）',
     `${light.barBg} vs ${dark.barBg}`);
 
-  // favicon 可访问且带明暗查询
-  {
+  /* favicon 可访问。
+   *
+   * 2026-10-29：原来这里验的是「favicon.svg 带 prefers-color-scheme 媒体查询」
+   * —— 那套靠 CSS 在 SVG 内部换色。换成位图后 PNG 没有「媒体查询」这回事
+   * （位图不随主题变色），所以改验：两张 PNG 都在、Content-Type 正确、
+   * 且**体积不是空壳**（0 字节的 200 比 404 更难发现）。
+   * 「明暗区分」现在落在 index.css 的 `:root.dark [data-app-logo] img` 上，
+   * 已在 1f 断言过。 */
+  for (const [file, wantType] of [['/favicon.png', 'png'], ['/favicon-16.png', 'png']]) {
     const ctx = await browser.newContext();
-    const r = await ctx.request.get(base + '/favicon.svg');
-    ok(r.status() === 200, 'favicon.svg 可访问（200）', String(r.status()));
-    ok((r.headers()['content-type'] || '').includes('svg'), 'favicon Content-Type 是 image/svg+xml', r.headers()['content-type']);
-    const body = await r.text();
-    ok(body.includes('prefers-color-scheme: dark'), 'favicon 内容带 dark 媒体查询（浏览器标签页明暗自适应）');
+    const r = await ctx.request.get(base + file);
+    ok(r.status() === 200, `${file} 可访问（200）`, String(r.status()));
+    ok((r.headers()['content-type'] || '').includes(wantType),
+      `${file} Content-Type 是 image/${wantType}`, r.headers()['content-type']);
+    const body = await r.body();
+    ok(body.length > 200, `${file} 不是空壳`, `${body.length} B`);
+    // PNG 魔数：扩展名对但内容不是 PNG（被中间件改写/回落到 index.html）会在这里露出来
+    ok(body.toString('latin1', 1, 4) === 'PNG', `${file} 是真正的 PNG`, body.toString('latin1', 1, 4));
     await ctx.close();
   }
 

@@ -1,60 +1,39 @@
 /**
- * 应用标记：**同人卦**（天火同人，周易第十三卦）六爻。
+ * 应用标记：**彩色徽章**（`build/logo-source.png` → `src/assets/app-logo.png`）。
  *
- * 自上而下：上三爻为乾（☰，三实线）—— 主控、纲领；下三爻为离（☲，
- * 实-断-实）—— 众 Agent 各有所长、炎上汇聚，中虚为火。《彖》曰「唯君子
- * 为能通天下之志」：把本机多个 Agent 的意志连通，即这个应用的编排之事。
+ * ## 2026-10-29：从「同人卦几何」换成「位图」
  *
- * 两种用法：
- *   • 界面内：`fill="currentColor"` 跟随 CSS color，明暗主题自动适配
- *     （TitleBar 把它放在黑白徽章上，色令牌见 index.css 的 --tc-logo-*）；
- *   • 独立文件：src/assets/app-logo.svg 与 public/favicon.svg 由
- *     scripts/make-icons.mjs 生成，内部用 prefers-color-scheme 明暗自适应
- *     （浅下黑、深下白）。
+ * 上一版这里用 `<svg>` 手画天火同人六爻，靠 `currentColor` 跟随主题
+ * （浅色黑爻、深色白爻）。用户要求改用设计稿里的彩色徽章，于是这里只剩
+ * 一个 `<img>` —— 位图没有 `currentColor`，也就没有「随主题反转」这件事了。
  *
- * ⚠️ 这里的几何常量与 scripts/make-icons.mjs 的 GEOM 是**两份手写实现**，
- *    scripts/verify-logo.mjs 有逐字段契约断言 —— 改一处必须改另一处，
- *    否则图标资产与界面标记会慢慢漂移（而这种漂移肉眼极难发现）。
+ * 为什么不再需要明暗两套：
+ *   源图自带**深蓝描边**，轮廓不依赖背景色。实测在 #FFFFFF / #1A1A1A /
+ *   #808080 三种底色上都能读出来，深色底反而对比更强（白毛 vs 深底）。
+ *   所以一张图吃两种主题，只在暗色下做一点点提亮，见 `index.css` 的
+ *   `:root.dark [data-app-logo] img`。
+ *
+ * 为什么用 `<img>` 而不是把图内联成 SVG / base64：
+ *   图由 Vite 处理（`import` 会产出带 hash 的 URL，进 `dist/assets`），
+ *   随前端产物一起打包，不存在「打包态路径失效」的问题 —— 这正是
+ *   TitleBar 那段注释里担心的情形（`build/` 不进 app.asar）。
+ *
+ * ⚠️ 18px 以下这个尺寸，彩色插画**只能看出「蓝环 + 白脸」**，胡须与瞳孔
+ *   会被抗锯齿抹平（实测：16px 一团、24px 能辨五官、32px 起清晰）。
+ *   这是位图的物理限制，不是缩放参数没调好。要更清楚只能换更简单的图形。
  */
-
-/** 标准几何（128 画布） */
-const STD = { x0: 16, w: 96, stroke: 10, gap: 8, brokenGap: 14 };
-/** 小尺寸变体：缺口加宽。16px 以下标准几何的断爻会被抗锯齿抹平 */
-const WIDE = { stroke: 9, gap: 12, brokenGap: 16 };
-const CANVAS = 128;
-/** 六爻虚实：true = 阳爻（实线）。同人 = 上乾下离 */
-const LINES = [true, true, true, true, false, true];
-
-function lineRects(g: { x0: number; w: number; stroke: number; gap: number; brokenGap: number }) {
-  const total = 6 * g.stroke + 5 * g.gap;
-  const top = (CANVAS - total) / 2;
-  const segW = (g.w - g.brokenGap) / 2;
-  return LINES.map((solid, i) => {
-    const y = top + i * (g.stroke + g.gap);
-    return solid
-      ? [[g.x0, y, g.w, g.stroke]]
-      : [
-          [g.x0, y, segW, g.stroke],
-          [g.x0 + segW + g.brokenGap, y, segW, g.stroke],
-        ];
-  });
-}
+import logoUrl from '../assets/app-logo.png';
 
 export function AppLogo({ size = 16 }: { size?: number }) {
-  // ≤16px 切宽缺口几何：任务栏 16px、托盘 16px 场景「断」必须看得见
-  const wide = size <= 16;
-  const rects = lineRects(wide ? { ...STD, ...WIDE } : STD).flat();
   return (
-    <svg
+    <img
+      src={logoUrl}
       width={size}
       height={size}
-      viewBox={`0 0 ${CANVAS} ${CANVAS}`}
+      alt=""
       aria-hidden="true"
-      style={{ display: 'block' }}
-    >
-      {rects.map(([x, y, w, h]) => (
-        <rect key={`${x}-${y}`} x={x} y={y} width={w} height={h} rx={2} fill="currentColor" />
-      ))}
-    </svg>
+      draggable={false}
+      style={{ display: 'block', width: size, height: size }}
+    />
   );
 }

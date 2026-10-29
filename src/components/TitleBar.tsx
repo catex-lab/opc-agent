@@ -173,18 +173,15 @@ export function TitleBar({ compact = false }: { compact?: boolean }) {
             再铺一层等于 rail 盖 rail —— 纯冗余，已删。
             删掉之后这 56px 仍是应用标记的定位格：宽度与 NavRail 同宽，
             标记居中，于是「标记 / 导航图标」落在同一条竖轴上。 */}
-        {/* 应用标记：同人卦徽章。黑白双色，与任务栏/桌面图标
-            （build/icon.svg 生成）同一枚设计 —— 窗口左上角这枚小徽章是
-            用户对「这个应用长什么样」的第一印象，不能和任务栏图标是两张脸。
-            界面里随主题反转（--tc-logo-*：浅色黑底白爻、深色白底黑爻），
-            OS 图标那边翻不了，靠黑底 + 白描边兼容两种桌面。
-            不用 <img>：build/ 不进 app.asar，打包态会静默裂图。 */}
-        <span
-          data-app-logo
-          className="relative flex h-[18px] w-[18px] items-center justify-center rounded-sm"
-          style={{ backgroundColor: 'var(--tc-logo-tile)', color: 'var(--tc-logo-mark)' }}
-        >
-          <AppLogo size={13.5} />
+        {/* 应用标记：彩色徽章（2026-10-29 由「同人卦」换成设计稿位图）。
+            与任务栏 / 桌面 / 安装包图标是同一枚设计（都由 build/icon.ico 出）。
+            不再铺 `--tc-logo-tile` 底色：位图自带深蓝描边，轮廓不依赖底色，
+            铺了等于在图上压一个黑白方块。也正因为不用底色，才不再需要
+            「界面里随主题反转」那套（旧方案黑底白爻 ↔ 白底黑爻）。
+            18px 定位格保持不变 —— 标记与导航图标的中轴对齐依赖它；
+            图取 16px 居中，这是这套位图还能辨出「蓝环 + 白脸」的下限。 */}
+        <span data-app-logo className="relative flex h-[18px] w-[18px] items-center justify-center">
+          <AppLogo size={16} />
         </span>
       </span>
       {/* pl-4 让应用名与左栏标题（PanelHeader 的 px-4）落在同一条竖线上 */}

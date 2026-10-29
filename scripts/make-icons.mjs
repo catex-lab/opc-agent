@@ -1,25 +1,30 @@
 /**
- * 应用 Logo（同人卦）资产生成线 —— 唯一的几何真源。
+ * 应用 Logo 资产生成线 —— **唯一真源是 `build/logo-source.png`**。
  *
- * 设计：**天火同人**（周易第十三卦）。自上而下六爻：
- *   上三爻为乾（☰，三实线）—— 主控、纲领；
- *   下三爻为离（☲，实-断-实）—— 众 Agent 炎上汇聚，中虚为火。
- * 「唯君子为能通天下之志」：把本机多个 Agent 的意志连通，即本应用的编排之事。
+ * ## 2026-10-29：从「几何 SVG」换成「位图源」
  *
- * 两种形态，同一套爻线：
- *   1. **徽章（tile）**：纯黑圆角方块 + 纯白爻线，外圈再描一道纯白细边。
- *      自带底色，任务栏 / 桌面 / 安装包 / Alt+Tab 上明暗桌面都看得清，
- *      不需要随主题换图。白边是纯黑白方案的关键：任务栏是深色时，
- *      纯黑方块会糊进背景里只剩爻线在飘；加一圈白边，形状就还在。
- *   2. **标记（mark）**：裸六爻，`currentColor` 或 `prefers-color-scheme`
- *      明暗自适应（浅色下黑、深色下白）。用于 favicon 与界面内。
+ * 上一版这里画的是**天火同人**（周易第十三卦）六爻：纯黑白、参数化 rect、
+ * 由 `GEOM` / `LINES` 唯一描述，`AppLogo.tsx` 手写同一套几何，`verify-logo.mjs`
+ * 做逐字段契约断言。用户随后要求改用设计稿 `科技猫咪徽章助手.png`
+ * （彩色插画：猫趴在蓝色徽章里、深蓝描边、透明底），于是整条链的输入从
+ * 「参数化几何」变成「一张位图」。
  *
- * 为什么用 Chrome 栅格化而不是 Python/Pillow（替代原 make-icons.py）：
- *   1. Pillow 不在本机 venv 外可用，且旧脚本的源图（AI LOGO/me.png）已不存在；
- *   2. SVG 是唯一母版，位图全部由它渲染 —— 改设计只改这里，不会有
- *      「svg 改了、ico 忘了重新生成」的漂移；
- *   3. .ico 是多尺寸容器，这里按标准尺寸集逐一渲染后手写容器
- *      （PNG 压缩条目，Vista+ 全支持），不依赖任何图像库。
+ * 这次替换的连带影响（改之前先知道，否则会漏）：
+ *   1. **没有几何契约了**。位图没有 rect 可断言，`verify-logo.mjs` 的资产层
+ *      改成验「同一源图 → 各尺寸产物的色彩指纹一致」，不再是坐标比对。
+ *   2. **小尺寸必须单独增强**。实测源图缩到 16px 只剩一团色块、24px 勉强
+ *      能看出是个头 —— 这是彩色插画的物理限制，不是缩放的锅。所以 ≤24px
+ *      走 `SMALL_BOOST`（提对比 + 提饱和），把「蓝环 + 白脸」这两个识别点保住。
+ *   3. **明暗不再靠反转**。旧徽章是黑底白爻，深色主题下必须翻成白底黑爻；
+ *      新图自带深蓝描边，实测在 #FFFFFF / #1A1A1A / #808080 三种底上都成立
+ *      （深色底反而对比更强）。所以**一张图吃两种主题**，只在界面内对暗色
+ *      做一点点提亮（见 index.css 的 `:root.dark [data-app-logo]`）。
+ *
+ * ## 保留的部分
+ *
+ * 栅格化（Chrome）+ 手写 ICO 容器 + 产物自检**原样保留**：ICO 的多尺寸容器
+ * 是本机唯一能让 Windows 在 16/20/24/32 各档都不糊的手段；而 Pillow 不在
+ * 用户机器的 venv 里（脚本必须能在裸 `npm run` 下跑），所以不用 Pillow。
  *
  * 用法：node scripts/make-icons.mjs
  * 依赖：playwright-core（devDependency）+ 本机 Chrome。
@@ -36,144 +41,67 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const CHROME = process.env.OPC_CHROME || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
-/**
- * 爻线几何（128×128 画布，六爻自上而下，初爻在最下方）。
- *
- * stroke:gap ≈ 10:8 —— 实测再细，16px 场景下六爻会糊成一条灰带；
- * 再粗则六爻总高超过画布。断爻的缺口单独给 14：阴爻的「断」是这个卦的
- * 识别点（离卦中虚 = 火），缩到 16px 时 8px 级别的缺口会被抗锯齿吃掉。
- * 小尺寸（≤24px）用 wide 变体：缺口拉到 16，牺牲留白换「断」的可读性。
- */
-export const GEOM = {
-  canvas: 128,
-  stroke: 10,
-  gap: 8,
-  brokenGap: 14,
-  /** 裸标记的水平范围（favicon / 界面内） */
-  mark: { x0: 16, w: 96 },
-  /** 徽章内标记的范围与圆角（OS 级图标） */
-  tile: { x0: 24, w: 80, rx: 28 },
-  /** 宽缺口变体：仅用于 ≤24px 的渲染 */
-  wide: { stroke: 9, gap: 12, brokenGap: 16 },
-};
+/** 唯一设计源。换 logo 就换这个文件，再跑本脚本。 */
+export const SRC = path.join(ROOT, 'build/logo-source.png');
 
 /**
- * 配色 —— 纯黑白，不掺任何其他颜色。
+ * 小尺寸增强参数（≤24px）。
  *
- * 徽章（OS 级图标）用固定的一组：黑底 + 白爻 + 白描边。OS 图标只有一套，
- * 没法随主题翻，所以靠「白描边」这一个技巧同时兼容浅色与深色桌面。
- * 裸标记（favicon / 界面）反而是两态纯色：浅下黑、深下白。
+ * 实测：源图 1254px 直接下采样到 16px，胡须与瞳孔被抗锯齿抹平，只剩
+ * 「蓝环 + 一团白」；24px 能看出轮廓但眼睛是两个模糊的黑点。提对比 +
+ * 提饱和之后，16px 至少还能读出「深蓝环包着白脸」这个形状，24px 能分辨
+ * 五官位置 —— 这是这个尺寸的物理上限，再调也不会更清楚。
  */
-export const COLORS = {
-  tileBg: '#000000',
-  tileMark: '#FFFFFF',
-  /** 徽章描边：让黑底在深色桌面上不消失（见文件头） */
-  tileRing: '#FFFFFF',
-  tileRingWidth: 4,
-  markLight: '#000000',
-  markDark: '#FFFFFF',
-};
-
-/** 六爻的虚实序列：true = 阳爻（实线）。同人 = 上乾下离 */
-export const LINES = [true, true, true, true, false, true];
-
-/**
- * 生成一组爻线 rect。返回 { solids: [...], broken: [...] } 的描述，
- * 由调用方决定 fill 与是否包在徽章里 —— 几何只有这一份。
- */
-function lineRects(x0, w, g = GEOM) {
-  const total = 6 * g.stroke + 5 * g.gap;
-  const top = (g.canvas - total) / 2;
-  const segW = (w - g.brokenGap) / 2;
-  return LINES.map((solid, i) => {
-    const y = top + i * (g.stroke + g.gap);
-    return solid
-      ? [{ x: x0, y, w, h: g.stroke }]
-      : [
-          { x: x0, y, w: segW, h: g.stroke },
-          { x: x0 + segW + g.brokenGap, y, w: segW, h: g.stroke },
-        ];
-  });
-}
-
-function rectsToSvg(rects, fill, rx = 2) {
-  return rects
-    .flat()
-    .map(r =>
-      fill === undefined
-        ? `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${rx}"/>`
-        : `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${rx}" fill="${fill}"/>`
-    )
-    .join('');
-}
-
-/**
- * 徽章 SVG：纯黑圆角方块 + 纯白同人卦 + 一圈纯白描边。
- *
- * 描边跨在 rect 边界上，外半边被 viewBox 裁掉，实际看到的是一道贴边的
- * 白箍。浅色桌面上白箍与背景同色（等于没有），深色桌面上它把方块的
- * 轮廓交代出来 —— 一个技巧吃下两种背景，且全程只有黑与白。
- */
-export function tileSvg() {
-  const t = GEOM.tile;
-  const mark = rectsToSvg(lineRects(t.x0, t.w), COLORS.tileMark);
-  return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${GEOM.canvas} ${GEOM.canvas}">` +
-    `<rect x="0" y="0" width="${GEOM.canvas}" height="${GEOM.canvas}" rx="${t.rx}" ` +
-    `fill="${COLORS.tileBg}" stroke="${COLORS.tileRing}" stroke-width="${COLORS.tileRingWidth}"/>` +
-    mark +
-    `</svg>`
-  );
-}
-
-/**
- * 裸标记 SVG（明暗自适应）。
- *
- * `prefers-color-scheme` 在 SVG favicon 与 <img> 里同样生效 —— 这是
- * 「一个文件承担明暗两态」的关键，不需要两份文件、也不需要运行时切换。
- * 界面内联使用时走 currentColor（见 src/components/AppLogo.tsx）。
- *
- * 爻线不写 fill 属性，由 `.ln` 类统一上色：CSS 的优先级高于表现属性，
- * 类换了色就换了色，不会出现「属性写着黑、媒体查询写着白」的两处真相。
- * 纯黑白两态：浅色下爻线是黑，深色下是白。
- */
-export function adaptiveMarkSvg() {
-  const m = GEOM.mark;
-  const cls = `.ln{fill:${COLORS.markLight}}@media (prefers-color-scheme: dark){.ln{fill:${COLORS.markDark}}}`;
-  return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${GEOM.canvas} ${GEOM.canvas}">` +
-    `<style>${cls}</style>` +
-    `<g class="ln">${rectsToSvg(lineRects(m.x0, m.w), undefined)}</g>` +
-    `</svg>`
-  );
-}
+export const SMALL_MAX = 24;
+const SMALL_BOOST = { contrast: 1.15, saturate: 1.1, brighten: 1.02 };
 
 /* ── 栅格化 ─────────────────────────────────────────────────────── */
 
 let page;
-let cdp;
 
-async function raster(svg, size) {
+/**
+ * 把源 PNG 缩放到目标尺寸，返回 PNG Buffer。
+ *
+ * 为什么走 Chrome 而不是 Node 里的图像库：项目没有 sharp/jimp 依赖，
+ * 而 Chrome 的 `imageSmoothingQuality='high'` 是浏览器里质量最好的一档
+ * 下采样（接近 LANCZOS），且 `ctx.filter` 能直接做对比/饱和增强 ——
+ * 不用为了 16px 的锐化再引一个图像处理依赖。
+ *
+ * 走 canvas → toDataURL 而不是 page.screenshot：画布本身就是透明的，
+ * 源图的 alpha 通道原样保留（不会出现「圆角处一圈白角」）。
+ */
+async function rasterPng(size, boost) {
+  const b64 = (await readFile(SRC)).toString('base64');
   await page.setViewportSize({ width: size, height: size });
   await page.setContent(
     `<!doctype html><html><head><meta charset="utf-8"><style>` +
-      `html,body{margin:0;padding:0;width:${size}px;height:${size}px;overflow:hidden;background:transparent}` +
-      `svg{display:block;width:${size}px;height:${size}px}` +
-      `</style></head><body>${svg}</body></html>`
+      `html,body{margin:0;padding:0;background:transparent}` +
+      `canvas{display:block}` +
+      `</style></head><body><canvas id="c" width="${size}" height="${size}"></canvas></body></html>`
   );
-  // omitBackground 必须为 true：page.screenshot 默认把页面合成到白底上，
-  // 徽章的圆角会露出一圈白边，ICO 放进任务栏就是四个白角。
-  return page.screenshot({ clip: { x: 0, y: 0, width: size, height: size }, omitBackground: true });
+  const dataUrl = await page.evaluate(
+    async ([src, px, b]) => {
+      const img = new Image();
+      img.src = 'data:image/png;base64,' + src;
+      await img.decode();
+      const c = document.getElementById('c');
+      const ctx = c.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      if (b) {
+        ctx.filter = `contrast(${b.contrast}) saturate(${b.saturate}) brightness(${b.brighten})`;
+      }
+      ctx.drawImage(img, 0, 0, px, px);
+      return c.toDataURL('image/png');
+    },
+    [b64, size, boost ?? null]
+  );
+  return Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
 }
 
-/**
- * WebP 走 canvas 而不是 CDP。
- *
- * 先试过 `Page.captureScreenshot {format:'webp'}`，本机 Chrome 直接回
- * `Invalid parameters`（playwright 的 screenshot 又不支持 webp）。canvas 的
- * `toDataURL('image/webp')` 是浏览器原生编码路径，与截图管线无关，更稳。
- */
-async function rasterWebp(svg, size, quality = 0.9) {
+/** 同一张图转 WebP（官网用），同样走 canvas 原生编码 */
+async function rasterWebp(size, quality = 0.92) {
+  const png = await rasterPng(size);
   await page.setViewportSize({ width: size, height: size });
   await page.setContent(
     `<!doctype html><html><head><meta charset="utf-8"><style>` +
@@ -181,15 +109,15 @@ async function rasterWebp(svg, size, quality = 0.9) {
       `</style></head><body><canvas id="c" width="${size}" height="${size}"></canvas></body></html>`
   );
   const dataUrl = await page.evaluate(
-    async ([svgText, q]) => {
+    async ([b64, px, q]) => {
       const img = new Image();
-      img.src = 'data:image/svg+xml;base64,' + btoa(svgText);
+      img.src = 'data:image/png;base64,' + b64;
       await img.decode();
       const ctx = document.getElementById('c').getContext('2d');
-      ctx.drawImage(img, 0, 0);
+      ctx.drawImage(img, 0, 0, px, px);
       return document.getElementById('c').toDataURL('image/webp', q);
     },
-    [svg, quality]
+    [png.toString('base64'), size, quality]
   );
   return Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
 }
@@ -197,8 +125,8 @@ async function rasterWebp(svg, size, quality = 0.9) {
 /**
  * 手写 ICO 容器（PNG 压缩条目）。
  *
- * 为什么不用 Pillow 的 save(format='ICO')：本机没有 Pillow，而 ICO 格式
- * 本身很简单 —— 6 字节头 + 每条目 16 字节 + 原样内嵌 PNG。Vista 起
+ * 为什么不用 Pillow 的 save(format='ICO')：用户机器上不一定有 Pillow，而 ICO
+ * 格式本身很简单 —— 6 字节头 + 每条目 16 字节 + 原样内嵌 PNG。Vista 起
  * Windows 就支持 PNG 条目，256px 必须用 PNG（BMP 条目会爆体积）。
  */
 export function buildIco(pngs) {
@@ -248,10 +176,17 @@ export function icoSizes(buf) {
 const SIZES_ICO = [16, 24, 32, 48, 64, 128, 256];
 /** 托盘单独一套：Windows 托盘按 DPI 取 16/20/24/32，不含大尺寸 */
 const SIZES_TRAY = [16, 20, 24, 32];
-/** ≤24px 用宽缺口变体（见 GEOM.wide） */
-const SMALL_MAX = 24;
+
+/** 小尺寸自动套增强，大尺寸原样 */
+function raster(size) {
+  return rasterPng(size, size <= SMALL_MAX ? SMALL_BOOST : undefined);
+}
 
 async function main() {
+  if (!existsSync(SRC)) {
+    console.error(`✗ 找不到设计源：${SRC}`);
+    process.exit(1);
+  }
   if (!existsSync(CHROME)) {
     console.error(`✗ 找不到 Chrome：${CHROME}（可用 OPC_CHROME 指定）`);
     process.exit(1);
@@ -260,63 +195,49 @@ async function main() {
   try {
     page = await browser.newPage();
 
-    const tile = tileSvg();
-    const mark = adaptiveMarkSvg();
-
-    // SVG 母版落盘（设计源，评审/微调都改这里再跑本脚本）
-    await writeFile(path.join(ROOT, 'build/icon.svg'), tile, 'utf8');
-    await mkdir(path.join(ROOT, 'src/assets'), { recursive: true });
-    await writeFile(path.join(ROOT, 'src/assets/app-logo.svg'), mark, 'utf8');
-    await mkdir(path.join(ROOT, 'public'), { recursive: true });
-    await writeFile(path.join(ROOT, 'public/favicon.svg'), mark, 'utf8');
-
-    /** 小尺寸切宽缺口几何（描边与 tileSvg 保持一致，否则两套尺寸两张脸） */
-    async function tileAt(size) {
-      if (size > SMALL_MAX) return raster(tile, size);
-      const g = { ...GEOM, ...GEOM.wide };
-      const t = g.tile;
-      const svg =
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${g.canvas} ${g.canvas}">` +
-        `<rect x="0" y="0" width="${g.canvas}" height="${g.canvas}" rx="${t.rx}" ` +
-        `fill="${COLORS.tileBg}" stroke="${COLORS.tileRing}" stroke-width="${COLORS.tileRingWidth}"/>` +
-        rectsToSvg(lineRects(t.x0, t.w, g), COLORS.tileMark) +
-        `</svg>`;
-      return raster(svg, size);
-    }
-
     // 主图标（exe / 安装包 / 桌面与开始菜单快捷方式 / 任务栏固定 / Alt+Tab）
     const icoPngs = [];
-    for (const s of SIZES_ICO) icoPngs.push({ size: s, data: await tileAt(s) });
+    for (const s of SIZES_ICO) icoPngs.push({ size: s, data: await raster(s) });
     await writeFile(path.join(ROOT, 'build/icon.ico'), buildIco(icoPngs));
 
     // 托盘图标
     const trayPngs = [];
-    for (const s of SIZES_TRAY) trayPngs.push({ size: s, data: await tileAt(s) });
+    for (const s of SIZES_TRAY) trayPngs.push({ size: s, data: await raster(s) });
     await writeFile(path.join(ROOT, 'build/tray-icon.ico'), buildIco(trayPngs));
 
     // BrowserWindow 的 icon（256 足够，Windows 自行缩放）
-    await writeFile(path.join(ROOT, 'build/icon.png'), await raster(tile, 256));
-    await writeFile(path.join(ROOT, 'build/icon-512.png'), await raster(tile, 512));
-    // 关于页与官网用的是同一枚 512
-    await writeFile(path.join(ROOT, 'src/assets/app-icon.png'), await raster(tile, 512));
+    await writeFile(path.join(ROOT, 'build/icon.png'), await raster(256));
+    await writeFile(path.join(ROOT, 'build/icon-512.png'), await raster(512));
+
+    // 界面内标记 + 关于页大图
+    await mkdir(path.join(ROOT, 'src/assets'), { recursive: true });
+    await writeFile(path.join(ROOT, 'src/assets/app-logo.png'), await raster(256));
+    await writeFile(path.join(ROOT, 'src/assets/app-icon.png'), await raster(512));
+
+    // favicon：浏览器标签实际按 16/32 取，两个都给
+    await mkdir(path.join(ROOT, 'public'), { recursive: true });
+    await writeFile(path.join(ROOT, 'public/favicon.png'), await raster(32));
+    await writeFile(path.join(ROOT, 'public/favicon-16.png'), await raster(16));
+
+    // 官网
     await mkdir(path.join(ROOT, 'site/assets'), { recursive: true });
-    await writeFile(path.join(ROOT, 'site/assets/icon.png'), await raster(tile, 512));
-    await writeFile(path.join(ROOT, 'site/assets/icon-52.webp'), await rasterWebp(tile, 52));
-    await writeFile(path.join(ROOT, 'site/assets/icon-104.webp'), await rasterWebp(tile, 104));
+    await writeFile(path.join(ROOT, 'site/assets/icon.png'), await raster(512));
+    await writeFile(path.join(ROOT, 'site/assets/icon-52.webp'), await rasterWebp(52));
+    await writeFile(path.join(ROOT, 'site/assets/icon-104.webp'), await rasterWebp(104));
 
     // 自检：读回每个产物，确认容器里确实是多尺寸而不是被合并成一张
-    const ico = await readFile(path.join(ROOT, 'build/icon.ico'));
-    const tray = await readFile(path.join(ROOT, 'build/tray-icon.ico'));
-    const gotIco = icoSizes(ico);
-    const gotTray = icoSizes(tray);
+    const gotIco = icoSizes(await readFile(path.join(ROOT, 'build/icon.ico')));
+    const gotTray = icoSizes(await readFile(path.join(ROOT, 'build/tray-icon.ico')));
     const png256 = pngSize(await readFile(path.join(ROOT, 'build/icon.png')));
     const png512 = pngSize(await readFile(path.join(ROOT, 'src/assets/app-icon.png')));
 
-    console.log(`✓ build/icon.svg（徽章母版：黑底白爻白描边）+ src/assets/app-logo.svg + public/favicon.svg（裸标记，黑白明暗自适应）`);
+    console.log(`✓ 设计源 build/logo-source.png（彩色徽章，透明底）`);
     console.log(`✓ build/icon.ico        尺寸 [${gotIco}]`);
     console.log(`✓ build/tray-icon.ico   尺寸 [${gotTray}]`);
     console.log(`✓ build/icon.png        ${png256?.width}x${png256?.height}`);
     console.log(`✓ build/icon-512.png / src/assets/app-icon.png / site/assets/icon.png  512x512`);
+    console.log(`✓ src/assets/app-logo.png 256x256（界面内标记）`);
+    console.log(`✓ public/favicon.png 32 / favicon-16.png 16`);
     console.log(`✓ site/assets/icon-52.webp / icon-104.webp`);
 
     const wantIco = JSON.stringify(SIZES_ICO);
@@ -338,7 +259,7 @@ async function main() {
   }
 }
 
-// 直接执行才跑主流程 —— 被 verify-logo.mjs import 时只拿 GEOM/COLORS/LINES
+// 直接执行才跑主流程 —— 被 verify-logo.mjs import 时只拿工具函数
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch(err => {
     console.error('✗ 生成失败:', err);

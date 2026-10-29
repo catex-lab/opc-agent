@@ -178,4 +178,4 @@ if (fail > 0) {
   console.error(`\n✗ ${fail}/${total} 个尺寸不符 —— exe 里的图标不是当前设计，需要重新打包`);
   process.exit(1);
 }
-console.log(`\n✓ ${total}/${total} 全部一致：打包产物内嵌的就是当前同人卦图标`);
+console.log(`\n✓ ${total}/${total} 全部一致：打包产物内嵌的就是当前图标（2026-10-29 起为彩色徽章位图）`);
