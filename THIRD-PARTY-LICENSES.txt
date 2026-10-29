@@ -1,10 +1,19 @@
 OPC Agent — 随安装包分发的第三方组件许可清单
 
 本文件由 `node scripts/gen-third-party.mjs` 从 node_modules 自动生成，请勿手工编辑。
-覆盖范围：`npm ls --omit=dev` 的完整生产依赖树（即 electron-builder 会打进安装包的那些包）。
-devDependencies（React / Vite / Electron 运行时本体等）由使用者自行 `npm install` 获取，不进安装包。
 
-组件数：126　许可分布：MIT × 113 · ISC × 7 · Apache-2.0 × 3 · BSD-3-Clause × 2 · BSD-2-Clause × 1
+覆盖范围（三块，全部随安装包分发）：
+  1. 后端依赖 —— `npm ls --omit=dev` 的完整生产依赖树，原样打进 app.asar；
+  2. 前端打包 —— `src/` 里 import 到的包及其 dependencies 闭包，Vite 构建时
+     内联进 dist/assets/*.js。它们在 package.json 里写作 devDependencies，
+     但**代码确实在安装包里**（react / react-dom / tdesign-react / lucide-react
+     / xterm 等），因此同样需要署名；
+  3. Electron 运行时本体（内含 Chromium）。
+
+不在此列的：vite / tailwindcss / electron-builder / tsx / playwright-core 等
+纯构建与测试工具 —— 它们只在开发机上运行，产物里没有它们的代码。
+
+组件数：262　许可分布：MIT × 227 · BSD-2-Clause × 12 · ISC × 9 · Apache-2.0 × 6 · BSD-3-Clause × 6 · (MPL-2.0 OR Apache-2.0) × 1 · 0BSD × 1
 
 许可全文：各组件在自己的 npm 包里随附 LICENSE 文件，npm 公开源可下载。
 本项目不修改这些组件的源码（`patches/node-pty+1.1.0.patch` 仅调整本地构建参数，
@@ -15,503 +24,1309 @@ devDependencies（React / Vite / Electron 运行时本体等）由使用者自�
 @agentclientprotocol/sdk 1.7.0
   许可：Apache-2.0
   版权：（该包未随附独立版权行；包元数据 author：Zed Industries）
+  来源：后端依赖（原样进 app.asar）
+
+@babel/runtime 7.26.10
+  许可：MIT
+  版权：Copyright (c) 2014-present Sebastian McKenzie and other contributors
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/autocomplete 6.20.3
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/commands 6.11.1
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/lang-css 6.3.1
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/lang-html 6.4.12
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/lang-javascript 6.2.5
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/lang-markdown 6.5.2
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/language 6.13.1
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/lint 6.9.7
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/search 6.7.2
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/state 6.7.6
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/streamparser 6.0.0
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@codemirror/view 6.43.14
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
 
 @hono/node-server 2.1.5
   许可：MIT
   版权：Copyright (c) 2022 - present, Yusuke Wada and Hono contributors
+  来源：后端依赖（原样进 app.asar）
+
+@json-render/core 0.19.0
+  许可：Apache-2.0
+  版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
+  来源：前端打包（Vite 内联进 dist）
+
+@lezer/common 1.5.3
+  许可：MIT
+  版权：Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@lezer/css 1.3.9
+  许可：MIT
+  版权：Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@lezer/highlight 1.2.5
+  许可：MIT
+  版权：Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@lezer/html 1.3.13
+  许可：MIT
+  版权：Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@lezer/javascript 1.5.6
+  许可：MIT
+  版权：Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@lezer/lr 1.4.11
+  许可：MIT
+  版权：Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@lezer/markdown 1.8.0
+  许可：MIT
+  版权：Copyright (C) 2020 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@marijn/find-cluster-break 1.0.4
+  许可：MIT
+  版权：Copyright (C) 2024 by Marijn Haverbeke <marijn@haverbeke.berlin>
+  来源：前端打包（Vite 内联进 dist）
 
 @modelcontextprotocol/sdk 1.32.1
   许可：MIT
   版权：Copyright (c) 2024 Anthropic, PBC
+  来源：后端依赖（原样进 app.asar）
+
+@popperjs/core 2.11.8
+  许可：MIT
+  版权：Copyright (c) 2019 Federico Zivolo
+  来源：前端打包（Vite 内联进 dist）
+
+@replit/codemirror-vim 6.4.0
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijnh@gmail.com> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@replit/codemirror-vim-core 0.1.0
+  许可：MIT
+  版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijnh@gmail.com> and others
+  来源：前端打包（Vite 内联进 dist）
+
+@tdesign-react/chat 1.1.0
+  许可：MIT
+  版权：Copyright (c) 2025-present TDesign
+  来源：前端打包（Vite 内联进 dist）
+
+@tdesign/ai-chat-engine 0.1.0
+  许可：MIT
+  版权：Copyright (c) 2021-present TDesign
+  来源：前端打包（Vite 内联进 dist）
+
+@tdesign/web-components 1.3.2
+  许可：MIT
+  版权：Copyright (c) 2024 TDesign
+  来源：前端打包（Vite 内联进 dist）
+
+@tdesign/web-components-chat 1.3.3
+  许可：MIT
+  版权：Copyright (c) 2024 TDesign
+  来源：前端打包（Vite 内联进 dist）
 
 @tencent-ai/agent-sdk 0.3.279
   许可：MIT
   版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
+  来源：后端依赖（原样进 app.asar）
+
+@tootallnate/once 2.0.1
+  许可：MIT
+  版权：Copyright (c) 2020 Nathan Rajlich
+  来源：前端打包（Vite 内联进 dist）
+
+@xterm/addon-fit 0.11.0
+  许可：MIT
+  版权：Copyright (c) 2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)
+  来源：前端打包（Vite 内联进 dist）
+
+@xterm/xterm 6.0.0
+  许可：MIT
+  版权：Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)
+  来源：前端打包（Vite 内联进 dist）
+
+abab 2.0.6
+  许可：BSD-3-Clause
+  版权：Copyright © 2019 W3C and Jeff Carpenter \<jeffcarp@chromium.org\>
+  来源：前端打包（Vite 内联进 dist）
 
 accepts 1.3.8
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 accepts 2.0.0
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
+
+acorn 7.4.1
+  许可：MIT
+  版权：Copyright (C) 2012-2018 by various contributors (see AUTHORS)
+  来源：前端打包（Vite 内联进 dist）
+
+acorn 8.19.0
+  许可：MIT
+  版权：Copyright (C) 2012-2022 by various contributors (see AUTHORS)
+  来源：前端打包（Vite 内联进 dist）
+
+acorn-globals 6.0.0
+  许可：MIT
+  版权：Copyright (c) 2014 Forbes Lindesay
+  来源：前端打包（Vite 内联进 dist）
+
+acorn-walk 7.2.0
+  许可：MIT
+  版权：Copyright (C) 2012-2018 by various contributors (see AUTHORS)
+  来源：前端打包（Vite 内联进 dist）
+
+agent-base 6.0.2
+  许可：MIT
+  版权：（该包未随附独立版权行；包元数据 author：Nathan Rajlich <nathan@tootallnate.net> (http://n8.io/)）
+  来源：前端打包（Vite 内联进 dist）
 
 ajv 8.20.0
   许可：MIT
   版权：Copyright (c) 2015-2021 Evgeny Poberezkin
+  来源：后端依赖（原样进 app.asar）
 
 ajv-formats 3.0.1
   许可：MIT
   版权：Copyright (c) 2020 Evgeny Poberezkin
+  来源：后端依赖（原样进 app.asar）
 
 array-flatten 1.1.1
   许可：MIT
   版权：Copyright (c) 2014 Blake Embrey (hello@blakeembrey.com)
+  来源：后端依赖（原样进 app.asar）
+
+asynckit 0.4.0
+  许可：MIT
+  版权：Copyright (c) 2016 Alex Indigo
+  来源：前端打包（Vite 内联进 dist）
 
 body-parser 1.20.8
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 body-parser 2.3.0
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
+
+browser-process-hrtime 1.0.0
+  许可：BSD-2-Clause
+  版权：Copyright 2014 kumavis
+  来源：前端打包（Vite 内联进 dist）
 
 bytes 3.1.2
   许可：MIT
   版权：Copyright (c) 2012-2014 TJ Holowaychuk <tj@vision-media.ca>
+  来源：后端依赖（原样进 app.asar）
 
 call-bind-apply-helpers 1.0.2
   许可：MIT
   版权：Copyright (c) 2024 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
 
 call-bound 1.0.4
   许可：MIT
   版权：Copyright (c) 2024 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
+
+cherry-markdown 0.11.8
+  许可：Apache-2.0
+  版权：（该包未随附独立版权行；包元数据 author：Cherry Oteam）
+  来源：前端打包（Vite 内联进 dist）
+
+classnames 2.5.1
+  许可：MIT
+  版权：Copyright (c) 2018 Jed Watson
+  来源：前端打包（Vite 内联进 dist）
+
+clsx 2.1.1
+  许可：MIT
+  版权：Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
+  来源：前端打包（Vite 内联进 dist）
+
+combined-stream 1.0.8
+  许可：MIT
+  版权：Copyright (c) 2011 Debuggable Limited <felix@debuggable.com>
+  来源：前端打包（Vite 内联进 dist）
+
+construct-style-sheets-polyfill 3.0.1
+  许可：MIT
+  版权：Copyright 2019 Caleb Williamsgit st
+  来源：前端打包（Vite 内联进 dist）
 
 content-disposition 0.5.4
   许可：MIT
   版权：Copyright (c) 2014-2017 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
 
 content-disposition 2.0.1
   许可：MIT
   版权：Copyright (c) 2014-2017 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
 
 content-type 1.0.5
   许可：MIT
   版权：Copyright (c) 2015 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
 
 content-type 2.1.0
   许可：MIT
   版权：Copyright (c) 2015 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
 
 cookie 0.7.2
   许可：MIT
   版权：Copyright (c) 2012-2014 Roman Shtylman <shtylman@gmail.com>
+  来源：后端依赖（原样进 app.asar）
+
+cookie 1.1.1
+  许可：MIT
+  版权：Copyright (c) 2012-2014 Roman Shtylman <shtylman@gmail.com>
+  来源：前端打包（Vite 内联进 dist）
 
 cookie-signature 1.0.7
   许可：MIT
   版权：（该包未随附独立版权行；包元数据 author：TJ Holowaychuk <tj@learnboost.com>）
+  来源：后端依赖（原样进 app.asar）
 
 cookie-signature 1.2.2
   许可：MIT
   版权：Copyright (c) 2012–2024 LearnBoost <tj@learnboost.com> and other contributors;
+  来源：后端依赖（原样进 app.asar）
 
 cors 2.8.6
   许可：MIT
   版权：Copyright (c) 2013 Troy Goode <troygoode@gmail.com>
+  来源：后端依赖（原样进 app.asar）
+
+crelt 1.0.7
+  许可：MIT
+  版权：Copyright (C) 2020 by Marijn Haverbeke <marijn@haverbeke.berlin>
+  来源：前端打包（Vite 内联进 dist）
 
 cross-spawn 7.0.6
   许可：MIT
   版权：Copyright (c) 2018 Made With MOXY Lda <hello@moxy.studio>
+  来源：后端依赖（原样进 app.asar）
+
+cssom 0.3.8
+  许可：MIT
+  版权：Copyright (c) Nikita Vasilyev
+  来源：前端打包（Vite 内联进 dist）
+
+cssom 0.5.0
+  许可：MIT
+  版权：Copyright (c) Nikita Vasilyev
+  来源：前端打包（Vite 内联进 dist）
+
+cssstyle 2.3.0
+  许可：MIT
+  版权：Copyright (c) Chad Walker
+  来源：前端打包（Vite 内联进 dist）
+
+csstype 3.2.3
+  许可：MIT
+  版权：Copyright (c) 2017-2018 Fredrik Nicol
+  来源：前端打包（Vite 内联进 dist）
+
+data-urls 3.0.2
+  许可：MIT
+  版权：Copyright © Domenic Denicola <d@domenic.me>
+  来源：前端打包（Vite 内联进 dist）
+
+dayjs 1.11.10
+  许可：MIT
+  版权：Copyright (c) 2018-present, iamkun
+  来源：前端打包（Vite 内联进 dist）
+
+dayjs 1.11.23
+  许可：MIT
+  版权：Copyright (c) 2018-present, iamkun
+  来源：前端打包（Vite 内联进 dist）
 
 debug 2.6.9
   许可：MIT
   版权：Copyright (c) 2014 TJ Holowaychuk <tj@vision-media.ca>
+  来源：后端依赖（原样进 app.asar）
 
 debug 4.4.3
   许可：MIT
   版权：Copyright (c) 2014-2017 TJ Holowaychuk <tj@vision-media.ca>
+  来源：后端依赖（原样进 app.asar）
+
+decimal.js 10.6.0
+  许可：MIT
+  版权：Copyright (c) 2025 Michael Mclaughlin
+  来源：前端打包（Vite 内联进 dist）
+
+delayed-stream 1.0.0
+  许可：MIT
+  版权：Copyright (c) 2011 Debuggable Limited <felix@debuggable.com>
+  来源：前端打包（Vite 内联进 dist）
 
 depd 2.0.0
   许可：MIT
   版权：Copyright (c) 2014-2018 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
 
 destroy 1.2.0
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong me@jongleberry.com
+  来源：后端依赖（原样进 app.asar）
+
+dom-helpers 5.2.1
+  许可：MIT
+  版权：Copyright (c) 2015 Jason Quense
+  来源：前端打包（Vite 内联进 dist）
+
+dom-serializer 2.0.0
+  许可：MIT
+  版权：Copyright (c) 2014 The cheeriojs contributors
+  来源：前端打包（Vite 内联进 dist）
+
+domelementtype 2.3.0
+  许可：BSD-2-Clause
+  版权：Copyright (c) Felix Böhm
+  来源：前端打包（Vite 内联进 dist）
+
+domexception 4.0.0
+  许可：MIT
+  版权：Copyright © Domenic Denicola
+  来源：前端打包（Vite 内联进 dist）
+
+domhandler 5.0.3
+  许可：BSD-2-Clause
+  版权：Copyright (c) Felix Böhm
+  来源：前端打包（Vite 内联进 dist）
+
+dompurify 3.4.17
+  许可：(MPL-2.0 OR Apache-2.0)
+  版权：（该包未随附独立版权行；包元数据 author：Dr.-Ing. Mario Heiderich, Cure53 <mario@cure53.de> (https://cure53.de/)）
+  来源：前端打包（Vite 内联进 dist）
+
+domutils 3.2.2
+  许可：BSD-2-Clause
+  版权：Copyright (c) Felix Böhm
+  来源：前端打包（Vite 内联进 dist）
 
 dunder-proto 1.0.1
   许可：MIT
   版权：Copyright (c) 2024 ECMAScript Shims
+  来源：后端依赖（原样进 app.asar）
 
 ee-first 1.1.1
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong me@jongleberry.com
+  来源：后端依赖（原样进 app.asar）
 
 electron 44.7.2
   许可：MIT
   版权：Copyright (c) Electron contributors（Electron 运行时内含 Chromium 及其依赖，完整第三方声明见 Electron 发行包内的 LICENSES.chromium.html）
+  来源：Electron 运行时本体
 
 encodeurl 2.0.0
   许可：MIT
   版权：Copyright (c) 2016 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
+
+entities 4.5.0
+  许可：BSD-2-Clause
+  版权：Copyright (c) Felix Böhm
+  来源：前端打包（Vite 内联进 dist）
+
+entities 7.0.1
+  许可：BSD-2-Clause
+  版权：Copyright (c) Felix Böhm
+  来源：前端打包（Vite 内联进 dist）
 
 es-define-property 1.0.1
   许可：MIT
   版权：Copyright (c) 2024 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
 
 es-errors 1.3.0
   许可：MIT
   版权：Copyright (c) 2024 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
 
 es-object-atoms 1.1.2
   许可：MIT
   版权：Copyright (c) 2024 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
+
+es-set-tostringtag 2.1.0
+  许可：MIT
+  版权：Copyright (c) 2022 ECMAScript Shims
+  来源：前端打包（Vite 内联进 dist）
 
 escape-html 1.0.3
   许可：MIT
   版权：Copyright (c) 2012-2013 TJ Holowaychuk
+  来源：后端依赖（原样进 app.asar）
+
+escodegen 2.1.0
+  许可：BSD-2-Clause
+  版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
+  来源：前端打包（Vite 内联进 dist）
+
+esprima 4.0.1
+  许可：BSD-2-Clause
+  版权：（该包未随附独立版权行；包元数据 author：Ariya Hidayat）
+  来源：前端打包（Vite 内联进 dist）
+
+estraverse 5.3.0
+  许可：BSD-2-Clause
+  版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
+  来源：前端打包（Vite 内联进 dist）
+
+esutils 2.0.3
+  许可：BSD-2-Clause
+  版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
+  来源：前端打包（Vite 内联进 dist）
 
 etag 1.8.1
   许可：MIT
   版权：Copyright (c) 2014-2016 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
 
 eventsource 3.0.7
   许可：MIT
   版权：Copyright (c) EventSource GitHub organisation
+  来源：后端依赖（原样进 app.asar）
 
 eventsource-parser 3.1.1
   许可：MIT
   版权：Copyright (c) 2026 Espen Hovlandsdal <espen@hovlandsdal.com>
+  来源：后端依赖（原样进 app.asar）
 
 express 4.22.3
   许可：MIT
   版权：Copyright (c) 2009-2014 TJ Holowaychuk <tj@vision-media.ca>
+  来源：后端依赖（原样进 app.asar）
 
 express 5.3.0
   许可：MIT
   版权：Copyright (c) 2009-2014 TJ Holowaychuk <tj@vision-media.ca>
+  来源：后端依赖（原样进 app.asar）
 
 express-rate-limit 8.7.1
   许可：MIT
   版权：Copyright 2023 Nathan Friedly, Vedant K
+  来源：后端依赖（原样进 app.asar）
 
 fast-deep-equal 3.1.3
   许可：MIT
   版权：Copyright (c) 2017 Evgeny Poberezkin
+  来源：后端依赖（原样进 app.asar）
 
 fast-uri 3.1.8
   许可：BSD-3-Clause
   版权：Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e
+  来源：后端依赖（原样进 app.asar）
 
 finalhandler 1.3.2
   许可：MIT
   版权：Copyright (c) 2014-2022 Douglas Christopher Wilson <doug@somethingdoug.com>
+  来源：后端依赖（原样进 app.asar）
 
 finalhandler 2.1.1
   许可：MIT
   版权：Copyright (c) 2014-2022 Douglas Christopher Wilson <doug@somethingdoug.com>
+  来源：后端依赖（原样进 app.asar）
+
+form-data 4.0.6
+  许可：MIT
+  版权：Copyright (c) 2012 Felix Geisendörfer (felix@debuggable.com) and contributors
+  来源：前端打包（Vite 内联进 dist）
 
 forwarded 0.2.0
   许可：MIT
   版权：Copyright (c) 2014-2017 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
 
 fresh 0.5.2
   许可：MIT
   版权：Copyright (c) 2012 TJ Holowaychuk <tj@vision-media.ca>
+  来源：后端依赖（原样进 app.asar）
 
 fresh 2.0.0
   许可：MIT
   版权：Copyright (c) 2012 TJ Holowaychuk <tj@vision-media.ca>
+  来源：后端依赖（原样进 app.asar）
 
 function-bind 1.1.2
   许可：MIT
   版权：Copyright (c) 2013 Raynos.
+  来源：后端依赖（原样进 app.asar）
 
 get-intrinsic 1.3.0
   许可：MIT
   版权：Copyright (c) 2020 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
 
 get-proto 1.0.1
   许可：MIT
   版权：Copyright (c) 2025 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
 
 gopd 1.2.0
   许可：MIT
   版权：Copyright (c) 2022 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
 
 has-symbols 1.1.0
   许可：MIT
   版权：Copyright (c) 2016 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
+
+has-tostringtag 1.0.2
+  许可：MIT
+  版权：Copyright (c) 2021 Inspect JS
+  来源：前端打包（Vite 内联进 dist）
 
 hasown 2.0.4
   许可：MIT
   版权：Copyright (c) Jordan Harband and contributors
+  来源：后端依赖（原样进 app.asar）
+
+hoist-non-react-statics 3.3.2
+  许可：BSD-3-Clause
+  版权：Copyright (c) 2015, Yahoo! Inc. All rights reserved.
+  来源：前端打包（Vite 内联进 dist）
 
 hono 4.13.13
   许可：MIT
   版权：Copyright (c) 2021 - present, Yusuke Wada and Hono contributors
+  来源：后端依赖（原样进 app.asar）
+
+html-encoding-sniffer 3.0.0
+  许可：MIT
+  版权：Copyright © Domenic Denicola <d@domenic.me>
+  来源：前端打包（Vite 内联进 dist）
+
+htmlparser2 10.1.0
+  许可：MIT
+  版权：Copyright 2010, 2011, Chris Winberry <chris@winberry.net>. All rights reserved.
+  来源：前端打包（Vite 内联进 dist）
 
 http-errors 2.0.1
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong me@jongleberry.com
+  来源：后端依赖（原样进 app.asar）
+
+http-proxy-agent 5.0.0
+  许可：MIT
+  版权：（该包未随附独立版权行；包元数据 author：Nathan Rajlich <nathan@tootallnate.net> (http://n8.io/)）
+  来源：前端打包（Vite 内联进 dist）
+
+https-proxy-agent 5.0.1
+  许可：MIT
+  版权：（该包未随附独立版权行；包元数据 author：Nathan Rajlich <nathan@tootallnate.net> (http://n8.io/)）
+  来源：前端打包（Vite 内联进 dist）
 
 iconv-lite 0.4.24
   许可：MIT
   版权：Copyright (c) 2011 Alexander Shtuchkin
+  来源：后端依赖（原样进 app.asar）
+
+iconv-lite 0.6.3
+  许可：MIT
+  版权：Copyright (c) 2011 Alexander Shtuchkin
+  来源：前端打包（Vite 内联进 dist）
 
 iconv-lite 0.7.3
   许可：MIT
   版权：Copyright (c) 2011 Alexander Shtuchkin
+  来源：后端依赖（原样进 app.asar）
+
+immer 10.2.0
+  许可：MIT
+  版权：Copyright (c) 2017 Michel Weststrate
+  来源：前端打包（Vite 内联进 dist）
 
 inherits 2.0.4
   许可：ISC
   版权：Copyright (c) Isaac Z. Schlueter
+  来源：后端依赖（原样进 app.asar）
 
 ip-address 10.7.4
   许可：MIT
   版权：Copyright (C) 2011 by Beau Gunderson
+  来源：后端依赖（原样进 app.asar）
 
 ipaddr.js 1.9.1
   许可：MIT
   版权：Copyright (C) 2011-2017 whitequark <whitequark@whitequark.org>
+  来源：后端依赖（原样进 app.asar）
+
+is-potential-custom-element-name 1.0.1
+  许可：MIT
+  版权：（该包未随附独立版权行；包元数据 author：Mathias Bynens）
+  来源：前端打包（Vite 内联进 dist）
 
 is-promise 4.0.0
   许可：MIT
   版权：Copyright (c) 2014 Forbes Lindesay
+  来源：后端依赖（原样进 app.asar）
 
 isexe 2.0.0
   许可：ISC
   版权：Copyright (c) Isaac Z. Schlueter and Contributors
+  来源：后端依赖（原样进 app.asar）
 
 jose 6.2.12
   许可：MIT
   版权：Copyright (c) 2018 Filip Skokan
+  来源：后端依赖（原样进 app.asar）
+
+js-tokens 4.0.0
+  许可：MIT
+  版权：Copyright (c) 2014, 2015, 2016, 2017, 2018 Simon Lydell
+  来源：前端打包（Vite 内联进 dist）
+
+jsdom 19.0.0
+  许可：MIT
+  版权：Copyright (c) 2010 Elijah Insua
+  来源：前端打包（Vite 内联进 dist）
 
 json-schema-traverse 1.0.0
   许可：MIT
   版权：Copyright (c) 2017 Evgeny Poberezkin
+  来源：后端依赖（原样进 app.asar）
 
 json-schema-typed 8.0.2
   许可：BSD-2-Clause
   版权：（该包未随附独立版权行；包元数据 author：Remy Rylan）
+  来源：后端依赖（原样进 app.asar）
+
+lodash-es 4.18.1
+  许可：MIT
+  版权：Copyright OpenJS Foundation and other contributors <https://openjsf.org/>
+  来源：前端打包（Vite 内联进 dist）
+
+loose-envify 1.4.0
+  许可：MIT
+  版权：Copyright (c) 2015 Andres Suarez <zertosh@gmail.com>
+  来源：前端打包（Vite 内联进 dist）
+
+lucide-react 0.563.0
+  许可：ISC
+  版权：Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2026 as part of Feather (MIT). All other copy
+  来源：前端打包（Vite 内联进 dist）
 
 math-intrinsics 1.1.0
   许可：MIT
   版权：Copyright (c) 2024 ECMAScript Shims
+  来源：后端依赖（原样进 app.asar）
 
 media-typer 0.3.0
   许可：MIT
   版权：Copyright (c) 2014 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
 
 media-typer 1.1.1
   许可：MIT
   版权：Copyright (c) 2014-2017 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
 
 merge-descriptors 1.0.3
   许可：MIT
   版权：Copyright (c) 2013 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 merge-descriptors 2.0.0
   许可：MIT
   版权：Copyright (c) Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 methods 1.1.2
   许可：MIT
   版权：Copyright (c) 2013-2014 TJ Holowaychuk <tj@vision-media.ca>
+  来源：后端依赖（原样进 app.asar）
 
 mime 1.6.0
   许可：MIT
   版权：Copyright (c) 2010 Benjamin Thomas, Robert Kieffer
+  来源：后端依赖（原样进 app.asar）
 
 mime-db 1.52.0
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 mime-db 1.54.0
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 mime-types 2.1.35
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 mime-types 3.0.2
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
+
+mitt 3.0.1
+  许可：MIT
+  版权：Copyright (c) 2021 Jason Miller
+  来源：前端打包（Vite 内联进 dist）
 
 ms 2.0.0
   许可：MIT
   版权：Copyright (c) 2016 Zeit, Inc.
+  来源：后端依赖（原样进 app.asar）
 
 ms 2.1.3
   许可：MIT
   版权：Copyright (c) 2020 Vercel, Inc.
+  来源：后端依赖（原样进 app.asar）
 
 negotiator 0.6.3
   许可：MIT
   版权：Copyright (c) 2012-2014 Federico Romero
+  来源：后端依赖（原样进 app.asar）
 
 negotiator 1.1.0
   许可：MIT
   版权：Copyright (c) 2012-2014 Federico Romero
+  来源：后端依赖（原样进 app.asar）
 
 node-addon-api 7.1.1
   许可：MIT
   版权：Copyright (c) 2017 [Node.js API collaborators](https://github.com/nodejs/node-addon-api#collaborators)
+  来源：后端依赖（原样进 app.asar）
 
 node-pty 1.1.0
   许可：MIT
   版权：Copyright (c) 2012-2015, Christopher Jeffrey (https://github.com/chjj/)
+  来源：后端依赖（原样进 app.asar）
+
+nwsapi 2.2.28
+  许可：MIT
+  版权：Copyright (c) 2007-2026 Diego Perini (http://www.iport.it/)
+  来源：前端打包（Vite 内联进 dist）
 
 object-assign 4.1.1
   许可：MIT
   版权：Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
+  来源：后端依赖（原样进 app.asar）
 
 object-inspect 1.13.4
   许可：MIT
   版权：Copyright (c) 2013 James Halliday
+  来源：后端依赖（原样进 app.asar）
+
+omi 7.7.14
+  许可：MIT
+  版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
+  来源：前端打包（Vite 内联进 dist）
+
+omi-transition 0.1.11
+  许可：MIT
+  版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
+  来源：前端打包（Vite 内联进 dist）
 
 on-finished 2.4.1
   许可：MIT
   版权：Copyright (c) 2013 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 once 1.4.0
   许可：ISC
   版权：Copyright (c) Isaac Z. Schlueter and Contributors
+  来源：后端依赖（原样进 app.asar）
+
+parse5 6.0.1
+  许可：MIT
+  版权：Copyright (c) 2013-2019 Ivan Nikulin (ifaaan@gmail.com, https://github.com/inikulin)
+  来源：前端打包（Vite 内联进 dist）
 
 parseurl 1.3.3
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 path-key 3.1.1
   许可：MIT
   版权：Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
+  来源：后端依赖（原样进 app.asar）
 
 path-to-regexp 0.1.13
   许可：MIT
   版权：Copyright (c) 2014 Blake Embrey (hello@blakeembrey.com)
+  来源：后端依赖（原样进 app.asar）
 
 path-to-regexp 8.4.2
   许可：MIT
   版权：Copyright (c) 2014 Blake Embrey (hello@blakeembrey.com)
+  来源：后端依赖（原样进 app.asar）
+
+performance-now 2.1.0
+  许可：MIT
+  版权：Copyright (c) 2013 Braveg1rl
+  来源：前端打包（Vite 内联进 dist）
 
 pkce-challenge 5.0.1
   许可：MIT
   版权：Copyright (c) 2019
+  来源：后端依赖（原样进 app.asar）
+
+prop-types 15.8.1
+  许可：MIT
+  版权：Copyright (c) 2013-present, Facebook, Inc.
+  来源：前端打包（Vite 内联进 dist）
 
 proxy-addr 2.0.8
   许可：MIT
   版权：Copyright (c) 2014-2016 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
+
+psl 1.15.0
+  许可：MIT
+  版权：Copyright (c) 2017 Lupo Montero lupomontero@gmail.com
+  来源：前端打包（Vite 内联进 dist）
+
+punycode 2.3.1
+  许可：MIT
+  版权：（该包未随附独立版权行；包元数据 author：Mathias Bynens）
+  来源：前端打包（Vite 内联进 dist）
 
 qs 6.16.1
   许可：BSD-3-Clause
   版权：Copyright (c) 2014, Nathan LaFreniere and other [contributors](https://github.com/ljharb/qs/graphs/contributor
+  来源：后端依赖（原样进 app.asar）
+
+querystringify 2.2.0
+  许可：MIT
+  版权：Copyright (c) 2015 Unshift.io, Arnout Kazemier, the Contributors.
+  来源：前端打包（Vite 内联进 dist）
+
+raf 3.4.1
+  许可：MIT
+  版权：Copyright 2013 Chris Dickinson <chris@neversaw.us>
+  来源：前端打包（Vite 内联进 dist）
 
 range-parser 1.2.1
   许可：MIT
   版权：Copyright (c) 2012-2014 TJ Holowaychuk <tj@vision-media.ca>
+  来源：后端依赖（原样进 app.asar）
 
 raw-body 2.5.3
   许可：MIT
   版权：Copyright (c) 2013-2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 raw-body 3.0.2
   许可：MIT
   版权：Copyright (c) 2013-2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
+
+react 18.3.1
+  许可：MIT
+  版权：Copyright (c) Facebook, Inc. and its affiliates.
+  来源：前端打包（Vite 内联进 dist）
+
+react-dom 18.3.1
+  许可：MIT
+  版权：Copyright (c) Facebook, Inc. and its affiliates.
+  来源：前端打包（Vite 内联进 dist）
+
+react-fast-compare 3.2.2
+  许可：MIT
+  版权：Copyright (c) 2018 Formidable Labs
+  来源：前端打包（Vite 内联进 dist）
+
+react-is 16.13.1
+  许可：MIT
+  版权：Copyright (c) Facebook, Inc. and its affiliates.
+  来源：前端打包（Vite 内联进 dist）
+
+react-is 18.3.1
+  许可：MIT
+  版权：Copyright (c) Facebook, Inc. and its affiliates.
+  来源：前端打包（Vite 内联进 dist）
+
+react-router 7.18.4
+  许可：MIT
+  版权：Copyright (c) React Training LLC 2015-2019
+  来源：前端打包（Vite 内联进 dist）
+
+react-router-dom 7.18.4
+  许可：MIT
+  版权：Copyright (c) React Training LLC 2015-2019
+  来源：前端打包（Vite 内联进 dist）
+
+react-transition-group 4.4.5
+  许可：BSD-3-Clause
+  版权：Copyright (c) 2018, React Community
+  来源：前端打包（Vite 内联进 dist）
+
+reactive-signal 2.0.1
+  许可：MIT
+  版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
+  来源：前端打包（Vite 内联进 dist）
+
+regenerator-runtime 0.14.1
+  许可：MIT
+  版权：Copyright (c) 2014-present, Facebook, Inc.
+  来源：前端打包（Vite 内联进 dist）
 
 require-from-string 2.0.2
   许可：MIT
   版权：Copyright (c) Vsevolod Strukchinsky <floatdrop@gmail.com> (github.com/floatdrop)
+  来源：后端依赖（原样进 app.asar）
+
+requires-port 1.0.0
+  许可：MIT
+  版权：Copyright (c) 2015 Unshift.io, Arnout Kazemier, the Contributors.
+  来源：前端打包（Vite 内联进 dist）
 
 router 2.2.0
   许可：MIT
   版权：Copyright (c) 2013 Roman Shtylman
+  来源：后端依赖（原样进 app.asar）
 
 safe-buffer 5.2.1
   许可：MIT
   版权：Copyright (c) Feross Aboukhadijeh
+  来源：后端依赖（原样进 app.asar）
 
 safer-buffer 2.1.2
   许可：MIT
   版权：Copyright (c) 2018 Nikita Skovoroda <chalkerx@gmail.com>
+  来源：后端依赖（原样进 app.asar）
+
+saxes 5.0.1
+  许可：ISC
+  版权：（该包未随附独立版权行；包元数据 author：Louis-Dominique Dubeau <ldd@lddubeau.com>）
+  来源：前端打包（Vite 内联进 dist）
+
+scheduler 0.23.2
+  许可：MIT
+  版权：Copyright (c) Facebook, Inc. and its affiliates.
+  来源：前端打包（Vite 内联进 dist）
 
 send 0.19.2
   许可：MIT
   版权：Copyright (c) 2012 TJ Holowaychuk
+  来源：后端依赖（原样进 app.asar）
 
 send 1.2.1
   许可：MIT
   版权：Copyright (c) 2012 TJ Holowaychuk
+  来源：后端依赖（原样进 app.asar）
 
 serve-static 1.16.3
   许可：MIT
   版权：Copyright (c) 2010 Sencha Inc.
+  来源：后端依赖（原样进 app.asar）
 
 serve-static 2.2.1
   许可：MIT
   版权：Copyright (c) 2010 Sencha Inc.
+  来源：后端依赖（原样进 app.asar）
+
+set-cookie-parser 2.7.2
+  许可：MIT
+  版权：Copyright (c) 2015 Nathan Friedly <nathan@nfriedly.com> (http://nfriedly.com/)
+  来源：前端打包（Vite 内联进 dist）
 
 setprototypeof 1.2.0
   许可：ISC
   版权：Copyright (c) 2015, Wes Todd
+  来源：后端依赖（原样进 app.asar）
 
 shebang-command 2.0.0
   许可：MIT
   版权：Copyright (c) Kevin Mårtensson <kevinmartensson@gmail.com> (github.com/kevva)
+  来源：后端依赖（原样进 app.asar）
 
 shebang-regex 3.0.0
   许可：MIT
   版权：Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
+  来源：后端依赖（原样进 app.asar）
 
 side-channel 1.1.1
   许可：MIT
   版权：Copyright (c) 2019 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
 
 side-channel-list 1.0.1
   许可：MIT
   版权：Copyright (c) 2024 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
 
 side-channel-map 1.0.1
   许可：MIT
   版权：Copyright (c) 2024 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
 
 side-channel-weakmap 1.0.2
   许可：MIT
   版权：Copyright (c) 2019 Jordan Harband
+  来源：后端依赖（原样进 app.asar）
+
+sortablejs 1.15.7
+  许可：MIT
+  版权：Copyright (c) 2019 All contributors to Sortable
+  来源：前端打包（Vite 内联进 dist）
 
 statuses 2.0.2
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
+
+style-mod 4.1.4
+  许可：MIT
+  版权：Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+symbol-tree 3.2.4
+  许可：MIT
+  版权：Copyright (c) 2015 Joris van der Wel
+  来源：前端打包（Vite 内联进 dist）
+
+tailwind-merge 2.6.1
+  许可：MIT
+  版权：Copyright (c) 2021 Dany Castillo
+  来源：前端打包（Vite 内联进 dist）
+
+tdesign-icons-react 0.6.11
+  许可：MIT
+  版权：Copyright (c) 2021-present TDesign
+  来源：前端打包（Vite 内联进 dist）
+
+tdesign-icons-web-components 0.3.9
+  许可：MIT
+  版权：Copyright (c) 2021-present TDesign
+  来源：前端打包（Vite 内联进 dist）
+
+tdesign-react 1.18.4
+  许可：MIT
+  版权：Copyright (c) 2021-present TDesign
+  来源：前端打包（Vite 内联进 dist）
 
 toidentifier 1.0.1
   许可：MIT
   版权：Copyright (c) 2016 Douglas Christopher Wilson <doug@somethingdoug.com>
+  来源：后端依赖（原样进 app.asar）
+
+tough-cookie 4.1.4
+  许可：BSD-3-Clause
+  版权：Copyright (c) 2015, Salesforce.com, Inc.
+  来源：前端打包（Vite 内联进 dist）
+
+tr46 3.0.0
+  许可：MIT
+  版权：Copyright (c) Sebastian Mayr
+  来源：前端打包（Vite 内联进 dist）
+
+tslib 2.3.1
+  许可：0BSD
+  版权：Copyright (c) Microsoft Corporation.
+  来源：前端打包（Vite 内联进 dist）
 
 type-is 1.6.18
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 type-is 2.1.0
   许可：MIT
   版权：Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+  来源：后端依赖（原样进 app.asar）
 
 typescript 5.9.3
   许可：Apache-2.0
   版权：（该包未随附独立版权行；包元数据 author：Microsoft Corp.）
+  来源：后端依赖（原样进 app.asar）
+
+universalify 0.2.0
+  许可：MIT
+  版权：Copyright (c) 2017, Ryan Zimmerman <opensrc@ryanzim.com>
+  来源：前端打包（Vite 内联进 dist）
 
 unpipe 1.0.0
   许可：MIT
   版权：Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
+  来源：后端依赖（原样进 app.asar）
+
+url-parse 1.5.10
+  许可：MIT
+  版权：Copyright (c) 2015 Unshift.io, Arnout Kazemier, the Contributors.
+  来源：前端打包（Vite 内联进 dist）
 
 utils-merge 1.0.1
   许可：MIT
   版权：Copyright (c) 2013-2017 Jared Hanson
+  来源：后端依赖（原样进 app.asar）
 
 uuid 9.0.1
   许可：MIT
   版权：Copyright (c) 2010-2020 Robert Kieffer and other contributors
+  来源：后端依赖（原样进 app.asar）
 
 uuidv7 1.2.1
   许可：Apache-2.0
   版权：（该包未随附独立版权行；包元数据 author：LiosK <contact@mail.liosk.net>）
+  来源：后端依赖（原样进 app.asar）
+
+validator 13.15.35
+  许可：MIT
+  版权：Copyright (c) 2018 Chris O'Hara <cohara87@gmail.com>
+  来源：前端打包（Vite 内联进 dist）
 
 vary 1.1.2
   许可：MIT
   版权：Copyright (c) 2014-2017 Douglas Christopher Wilson
+  来源：后端依赖（原样进 app.asar）
+
+w3c-hr-time 1.0.2
+  许可：MIT
+  版权：Copyright (c) 2017 Tiancheng "Timothy" Gu and other contributors
+  来源：前端打包（Vite 内联进 dist）
+
+w3c-keyname 2.2.8
+  许可：MIT
+  版权：Copyright (C) 2016 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+  来源：前端打包（Vite 内联进 dist）
+
+w3c-xmlserializer 3.0.0
+  许可：MIT
+  版权：Copyright © Sebastian Mayr
+  来源：前端打包（Vite 内联进 dist）
+
+weakmap-polyfill 2.0.4
+  许可：MIT
+  版权：Copyright (c) 2015-2021 polygonplanet
+  来源：前端打包（Vite 内联进 dist）
+
+webidl-conversions 7.0.0
+  许可：BSD-2-Clause
+  版权：Copyright (c) 2014, Domenic Denicola
+  来源：前端打包（Vite 内联进 dist）
+
+whatwg-encoding 2.0.0
+  许可：MIT
+  版权：Copyright © Domenic Denicola <d@domenic.me>
+  来源：前端打包（Vite 内联进 dist）
+
+whatwg-mimetype 3.0.0
+  许可：MIT
+  版权：Copyright © Domenic Denicola <d@domenic.me>
+  来源：前端打包（Vite 内联进 dist）
+
+whatwg-url 10.0.0
+  许可：MIT
+  版权：Copyright (c) Sebastian Mayr
+  来源：前端打包（Vite 内联进 dist）
+
+whatwg-url 11.0.0
+  许可：MIT
+  版权：Copyright (c) Sebastian Mayr
+  来源：前端打包（Vite 内联进 dist）
 
 which 2.0.2
   许可：ISC
   版权：Copyright (c) Isaac Z. Schlueter and Contributors
+  来源：后端依赖（原样进 app.asar）
 
 wrappy 1.0.2
   许可：ISC
   版权：Copyright (c) Isaac Z. Schlueter and Contributors
+  来源：后端依赖（原样进 app.asar）
+
+ws 8.22.0
+  许可：MIT
+  版权：Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
+  来源：前端打包（Vite 内联进 dist）
+
+xml-name-validator 4.0.0
+  许可：Apache-2.0
+  版权：（该包未随附独立版权行；包元数据 author：Domenic Denicola <d@domenic.me> (https://domenic.me/)）
+  来源：前端打包（Vite 内联进 dist）
+
+xmlchars 2.2.0
+  许可：MIT
+  版权：Copyright Louis-Dominique Dubeau and contributors to xmlchars
+  来源：前端打包（Vite 内联进 dist）
+
+zod 3.25.76
+  许可：MIT
+  版权：Copyright (c) 2025 Colin McDonnell
+  来源：前端打包（Vite 内联进 dist）
 
 zod 4.6.7
   许可：MIT
   版权：Copyright (c) 2025 Colin McDonnell
+  来源：后端依赖（原样进 app.asar）
 
 zod-to-json-schema 3.25.2
   许可：ISC
   版权：Copyright (c) 2020, Stefan Terdell
+  来源：后端依赖（原样进 app.asar）

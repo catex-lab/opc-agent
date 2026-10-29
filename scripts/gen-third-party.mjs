@@ -10,9 +10,14 @@
  *   这个文件把声明补回来：它随仓库公开，并在应用内「关于与隐私」页里被指到。
  *
  * 口径：
- *   - 只统计 `npm ls --omit=dev`，即真正会被 electron-builder 打进包的那棵树；
- *     devDependencies（React / Vite / Electron 本体等）由使用者 npm install 自行获取，
- *     不进安装包，不在此列。
+ *   - 「后端依赖」= `npm ls --omit=dev`，即会被 electron-builder 原样打进
+ *     `app.asar` 的那棵树。
+ *   - 「前端打包依赖」= `src/` 里 import 到的包 + 它们的 dependencies 闭包。
+ *     这些包在 `package.json` 里是 devDependencies（由 Vite 在构建时内联进
+ *     `dist/assets/*.js`），**但它们确实随安装包分发** —— 只统计 `--omit=dev`
+ *     会漏掉 react / react-dom / tdesign-react / lucide-react 这一大块，
+ *     而 MIT/Apache-2.0 的署名义务是按「有没有分发」算的，不是按
+ *     `package.json` 里写在哪个字段算的。
  *   - 版权行取各包 LICENSE 文件里的第一处 `Copyright ...`；取不到就留空并标注。
  *     不编造版权人 —— 编一个比留空更糟。
  *
@@ -21,7 +26,7 @@
  *   node scripts/gen-third-party.mjs --check  # 只比对，不写；有差异则退出码 1
  */
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -121,7 +126,101 @@ function electronEntry() {
   };
 }
 
+/* ── 前端打包依赖 ──────────────────────────────────────────────────────
+ *
+ * 为什么单独算一块：这些包写在 `devDependencies` 里，看起来「不进包」，
+ * 但 Vite 构建时把它们的代码**内联进了 `dist/assets/*.js`**，最终随安装包
+ * 分发。只跑 `npm ls --omit=dev` 会把 react / react-dom / tdesign-react /
+ * lucide-react / xterm 全部漏掉 —— 而 MIT 的署名义务是按「有没有分发」算的。
+ */
+
+/** 从 src/ 里扫出直接 import 的第三方包名（相对路径与 node: 内建模块跳过） */
+function bundledRoots() {
+  const found = new Set();
+  const walk = dir => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(p);
+        continue;
+      }
+      if (!/\.(ts|tsx)$/.test(e.name)) continue;
+      const src = readFileSync(p, 'utf8');
+      for (const m of src.matchAll(/from\s+['"]([^'".][^'"]*)['"]/g)) {
+        const spec = m[1];
+        if (spec.startsWith('node:')) continue;
+        found.add(spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0]);
+      }
+    }
+  };
+  walk(join(ROOT, 'src'));
+  return [...found];
+}
+
+/** 从某个包目录出发按 Node 解析规则找它的依赖（逐级往上找 node_modules） */
+function resolveFrom(fromDir, dep) {
+  let cur = fromDir;
+  for (;;) {
+    const cand = join(cur, 'node_modules', dep);
+    if (existsSync(join(cand, 'package.json'))) return cand;
+    const parent = dirname(cur);
+    if (parent === cur || parent.length < ROOT.length) return null;
+    cur = parent;
+  }
+}
+
+/**
+ * 前端打包依赖的闭包。
+ *
+ * 宁多勿少：Vite 会 tree-shake 掉没用到的模块，但「这个包可能进了产物」
+ * 与「这个包一定没进产物」之间，前者多列一条的代价是清单长一行，
+ * 后者漏列的代价是署名义务落空。所以按 `dependencies` 全量闭包算。
+ */
+function bundledDirs() {
+  const out = new Map();
+  const queue = bundledRoots()
+    .map(n => join(ROOT, 'node_modules', n))
+    .filter(d => existsSync(join(d, 'package.json')));
+  while (queue.length) {
+    const dir = queue.shift();
+    if (out.has(dir)) continue;
+    let pkg;
+    try {
+      pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    } catch {
+      continue;
+    }
+    out.set(dir, pkg);
+    for (const dep of Object.keys(pkg.dependencies || {})) {
+      // @types/* 是类型声明，不进产物
+      if (dep.startsWith('@types/')) continue;
+      const resolved = resolveFrom(dir, dep);
+      if (resolved && !out.has(resolved)) queue.push(resolved);
+    }
+  }
+  return out;
+}
+
 const seen = new Map();
+/** 每一条带上「它凭什么随包分发」：后端原样打包 / 前端构建内联 / 运行时本体 */
+function add(dir, pkg, origin) {
+  const key = `${pkg.name}@${pkg.version}`;
+  if (seen.has(key)) return;
+  seen.set(key, {
+    name: pkg.name,
+    version: pkg.version || '?',
+    license: licenseOf(pkg),
+    copyright: copyrightOf(dir, pkg),
+    origin,
+  });
+}
+
 for (const dir of productionDirs()) {
   const pj = join(dir, 'package.json');
   if (!existsSync(pj)) continue;
@@ -132,18 +231,16 @@ for (const dir of productionDirs()) {
     continue;
   }
   if (!pkg.name) continue;
-  const key = `${pkg.name}@${pkg.version}`;
-  if (seen.has(key)) continue;
-  seen.set(key, {
-    name: pkg.name,
-    version: pkg.version || '?',
-    license: licenseOf(pkg),
-    copyright: copyrightOf(dir, pkg),
-  });
+  add(dir, pkg, '后端依赖（原样进 app.asar）');
+}
+
+for (const [dir, pkg] of bundledDirs()) {
+  if (!pkg.name) continue;
+  add(dir, pkg, '前端打包（Vite 内联进 dist）');
 }
 
 const electron = electronEntry();
-if (electron) seen.set(`electron@${electron.version}`, electron);
+if (electron) seen.set(`electron@${electron.version}`, { ...electron, origin: 'Electron 运行时本体' });
 
 const list = [...seen.values()].sort((a, b) =>
   a.name === b.name ? a.version.localeCompare(b.version) : a.name.localeCompare(b.name)
@@ -160,8 +257,17 @@ const lines = [
   'OPC Agent — 随安装包分发的第三方组件许可清单',
   '',
   '本文件由 `node scripts/gen-third-party.mjs` 从 node_modules 自动生成，请勿手工编辑。',
-  '覆盖范围：`npm ls --omit=dev` 的完整生产依赖树（即 electron-builder 会打进安装包的那些包）。',
-  'devDependencies（React / Vite / Electron 运行时本体等）由使用者自行 `npm install` 获取，不进安装包。',
+  '',
+  '覆盖范围（三块，全部随安装包分发）：',
+  '  1. 后端依赖 —— `npm ls --omit=dev` 的完整生产依赖树，原样打进 app.asar；',
+  '  2. 前端打包 —— `src/` 里 import 到的包及其 dependencies 闭包，Vite 构建时',
+  '     内联进 dist/assets/*.js。它们在 package.json 里写作 devDependencies，',
+  '     但**代码确实在安装包里**（react / react-dom / tdesign-react / lucide-react',
+  '     / xterm 等），因此同样需要署名；',
+  '  3. Electron 运行时本体（内含 Chromium）。',
+  '',
+  '不在此列的：vite / tailwindcss / electron-builder / tsx / playwright-core 等',
+  '纯构建与测试工具 —— 它们只在开发机上运行，产物里没有它们的代码。',
   '',
   `组件数：${list.length}　许可分布：${summary}`,
   '',
@@ -177,6 +283,7 @@ for (const p of list) {
   lines.push(`${p.name} ${p.version}`);
   lines.push(`  许可：${p.license}`);
   lines.push(`  版权：${p.copyright || '（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）'}`);
+  lines.push(`  来源：${p.origin}`);
   lines.push('');
 }
 

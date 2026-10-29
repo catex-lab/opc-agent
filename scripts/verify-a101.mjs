@@ -14,6 +14,7 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { openAllProcess } from './lib/process-flow.mjs';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
@@ -136,6 +137,8 @@ await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
 await page.waitForTimeout(1200);
 
 console.log('\n[1] 展开轨迹');
+// A149：先展开过程流（否则轨迹不在 DOM 里）
+await openAllProcess(page);
 // 完成态默认收起，先展开
 await page.locator('[data-steps-bar]').first().click();
 await page.waitForTimeout(300);

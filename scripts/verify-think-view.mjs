@@ -30,6 +30,7 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { openAllProcess } from './lib/process-flow.mjs';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
@@ -239,6 +240,11 @@ page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
 
 await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
 await page.waitForTimeout(1200);
+/* A149：有答案的消息，过程（思考 / 轨迹）默认收在 ProcessFlow 里且子节点整棵
+   卸载。本脚本按 `.tc-think` 的下标验「三态 + 展开策略」，不先展开就会数到
+   0 条、下标全错。展开过程流不影响各 details 自己的 open 状态（那个由
+   `collapse` prop 驱动），所以下面的断言口径一个字都不用改。 */
+await openAllProcess(page);
 
 // ── [1] 三种能力状态 ─────────────────────────────────────────────────
 console.log('\n[1] 三种能力状态');
@@ -282,7 +288,7 @@ ok(openState[2] === false, '正文已出现的消息，上方思考折叠', Stri
 ok(openState[3] === true, '最新一条「还没有正文」的思考展开（过程此刻就是内容）', String(openState[3]));
 
 // ── [3] 正文视觉契约（方案 A）────────────────────────────────────────
-console.log('\n[3] 正文视觉契约：左细线 + 13px secondary + 正体');
+console.log('\n[3] 正文视觉契约：左细线 + 14px secondary + 正体（A149 与答案正文同档）');
 const body = await page.evaluate(() => {
   const el = document.querySelector('.tc-think[data-think-format="raw"] .tc-think-body');
   if (!el) return null;
@@ -320,7 +326,7 @@ const body = await page.evaluate(() => {
 });
 ok(body != null, '正文容器存在');
 if (body) {
-  ok(body.fontSize === '13px', '正文字号 13px（不是 12px 斜体脚注）', body.fontSize);
+  ok(body.fontSize === '14px', '正文字号 14px = 答案正文字号（A149 抬档，不是 12px 斜体脚注）', body.fontSize);
   ok(body.fontStyle === 'normal', '正体，不斜体', body.fontStyle);
   ok(body.paddingLeft === '13px', '左内缩 13px', body.paddingLeft);
   ok(body.borderLeftWidth === '2px' && body.borderLeftStyle === 'solid', '左细线 2px solid', `${body.borderLeftWidth} ${body.borderLeftStyle}`);
@@ -424,6 +430,9 @@ const afterOpen = await page.evaluate(() =>
 ok(afterOpen === true, '手动展开历史消息的思考（不会被「已折叠」状态抢回去）', String(afterOpen));
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(1200);
+/* A149：刷新后过程流又回到默认收起态，`.tc-think` 会跟着卸载 ——
+   重新展开一次，下面的下标断言才数得到 4 条。 */
+await openAllProcess(page);
 const afterReload = await page.evaluate(() => [...document.querySelectorAll('.tc-think')].map(n => n.open));
 ok(
   JSON.stringify(afterReload) === JSON.stringify([false, false, false, true]),
@@ -432,7 +441,7 @@ ok(
 );
 
 // ── [6] 轨迹内思考（方案 C）───────────────────────────────────────────
-console.log('\n[6] 轨迹内思考：正体 12.5px + 左细线（方案 C）');
+console.log('\n[6] 轨迹内思考：正体 14px + 左细线（方案 C，A149 与答案正文同档）');
 const traceState = await page.evaluate(() => {
   const trace = document.querySelector('[data-trace]');
   const bar = trace?.querySelector('[data-steps-bar]');
@@ -497,7 +506,7 @@ const note = await page.evaluate(() => {
 });
 ok(note != null, '轨迹内思考正文存在');
 if (note) {
-  ok(note.fontSize === '12.5px', '正文字号 12.5px（比消息级 A 小半档）', note.fontSize);
+  ok(note.fontSize === '14px', '正文字号 14px（A149：不再比消息级思考小半档）', note.fontSize);
   ok(note.fontStyle === 'normal', '正体，不再斜体', note.fontStyle);
   ok(note.color === note.secondary, '正文颜色 = secondary（不是最浅一档 placeholder）', note.color);
   ok(note.borderLeftWidth === '2px' && note.borderLeftStyle === 'solid', '左细线 2px solid', `${note.borderLeftWidth} ${note.borderLeftStyle}`);
@@ -661,6 +670,7 @@ ok(settled.revealed === LIVE_FULL.length, '结束后揭示到全文（不会永�
 ok(settled.thinkOpen === false, '结束后思考保持折叠（不会「哗」地展开一片）', String(settled.thinkOpen));
 
 // 截图：一轮真流式跑完后的实际长相（轨迹展开看方案 C）
+await openAllProcess(page);
 await page.locator('[data-steps-bar]').last().click();
 await page.waitForTimeout(500);
 const liveShots = join(OUT, 'think');
@@ -671,6 +681,7 @@ const shots = join(OUT, 'think');
 await mkdir(shots, { recursive: true });
 await page.evaluate(() => document.documentElement.classList.remove('dark'));
 await page.waitForTimeout(400);
+await openAllProcess(page);
 const nodes = page.locator('.tc-think');
 await nodes.nth(0).locator('> summary').click();
 await page.waitForTimeout(300);

@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loading, MessagePlugin } from 'tdesign-react';
 import { Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, Sparkles, TextSelect, Image as ImageIcon } from 'lucide-react';
-import { Message, Model, RegisteredAgent, Block, ThinkingBlock, ToolBlock, RawBlock } from '../types';
+import { Message, Model, RegisteredAgent, Block, ThinkingBlock, ToolBlock } from '../types';
 import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
+import { ProcessFlow } from './ProcessFlow';
 import { BackgroundTasksPill } from './BackgroundTasksPill';
 import { useBackgroundTasks } from '../hooks/useBackgroundTasks';
 import { formatHandledDuration, hasFileEdits, lingeringToolBlocks } from '../../shared/trace';
@@ -19,6 +20,7 @@ import { ImageBubble } from './ImageBubble';
 import { AnswerMarkdown } from './AnswerMarkdown';
 import { TypingText } from './TypingText';
 import { formatUsage } from '../utils/formatUsage';
+import { stripEmoji } from '../utils/plainText';
 
 /* ── 消息呈现（A33）─────────────────────────────────────────────────────
  *
@@ -107,50 +109,19 @@ function ThinkingView({
 }
 
 /**
- * 原生事件旁路（A111）。
+ * 原生事件旁路（A111）—— 数据保留，**界面不再展示**（A149）。
  *
- * 展示「适配器没能归一化」的原生事件原文。默认折叠 —— 它的价值是**可查**而不是
- * 可读：摊开会把正文挤走，而绝大多数时候用户并不关心某条 `stream_event` 长什么样。
- * 但「折叠」不等于「不存在」：只要发生过，这里一定有个入口。
+ * A111 的初衷是「映射不到 ≠ 丢掉」：适配器认不出的原生事件不能静默消失。
+ * 那部分**全部保留**，只是落点不在消息流里了：
+ *   · `RunProjector` 仍然把它们聚合成 `raw` 块，随消息一起落库；
+ *   · 用户侧要查时，`data/chat.db` 的 blocks 里原样在。
  *
- * 用 `<details>` 而不是受控 state：与 ThinkingView 同一套做法，不额外引 Hook，
- * 也天然支持键盘操作与无障碍读屏。
+ * 为什么撤掉展示：用户实测反馈那一行 `原生事件 7 条 sc/system/status · sid=…`
+ * 紧贴在 Agent 头像下面，是整条消息的第一行 —— 它是一句**调试信息**，
+ * 而绝大多数会话里它长得像「这条消息出错了」。展示成本恒定、收益只在
+ * 排查那一次，所以从消息流里拿掉；块本身不动，将来要做一个「开发者面板」
+ * 再把它挂上去，不需要动投影层。`renderBlock` 的 `raw` 分支见下。
  */
-function RawEventsView({ block }: { block: RawBlock }) {
-  const channels = Array.from(new Set(block.entries.map(e => e.channel)));
-  const channelLabel =
-    channels.slice(0, 3).join(' · ') + (channels.length > 3 ? ` 等 ${channels.length} 类` : '');
-  return (
-    <details className="mb-2 text-secondary" data-raw-block={block.id}>
-      <summary className="flex cursor-pointer select-none flex-wrap items-center gap-2">
-        <span>
-          原生事件 {block.count} 条
-          {block.omitted > 0 && `（另有 ${block.omitted} 条未保留）`}
-        </span>
-        <span style={{ color: 'var(--td-text-color-placeholder)' }}>{channelLabel}</span>
-      </summary>
-      <div className="mt-1 space-y-2">
-        {block.entries.map((e, i) => (
-          <div key={`${e.channel}-${i}`}>
-            <div className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              {e.channel}
-              {e.truncated ? ' · 已截断' : ''}
-            </div>
-            <pre
-              className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md px-2 py-1.5 text-caption"
-              style={{
-                backgroundColor: 'var(--td-bg-color-page-container)',
-                color: 'var(--td-text-color-secondary)',
-              }}
-            >
-              {typeof e.payload === 'string' ? e.payload : JSON.stringify(e.payload, null, 2)}
-            </pre>
-          </div>
-        ))}
-      </div>
-    </details>
-  );
-}
 
 /**
  * 流式状态行（A34）。
@@ -1245,8 +1216,11 @@ export function ChatMessages({
 
     // A111：原生事件旁路。放在 fallback 之前 —— fallback 读 `block.text`，
     // 而 RawBlock 没有这个字段（加类型时 TS 会当场报错，正是这条分支存在的证明）。
+    // A149：不再渲染（理由见上面 RawEventsView 位置的注释）。返回 null 而不是
+    // 落到 fallback：fallback 会把「有一条原始事件」画成一个灰色小胶囊，那正是
+    // 用户要求撤掉的东西。
     if (block.type === 'raw') {
-      return <RawEventsView key={block.id} block={block} />;
+      return null;
     }
 
     return (
@@ -1285,9 +1259,14 @@ export function ChatMessages({
    * 但还没有正文」的消息起作用（正在思考的那条另由 block.state 决定）。
    *
    * `hasAnswer`：这条消息里已经有正文回答（最后一个工具之后的那段文本）。它一旦
-   * 成立，上面的思考与轨迹全部收起 —— 既定口径是「输出正文回答前折叠上面的」。
+   * 成立，**答案之前的整段过程**（思考 + 中途旁白 + 轨迹条）会被 A149 的
+   * `ProcessFlow` 收成一行，屏幕上只剩答案。
    * 刻意**不**看 `message.isStreaming`：一轮结束后答案还在，过程也不该重新铺开
    * （否则每轮收尾都会「哗」地展开一片）。
+   *
+   * A149 的分段：`answerStartIdx` 之前的块 → 过程流；从它开始的块 → 答案。
+   * 没有答案（还在流、或纯工具轮）时不包 `ProcessFlow`，照旧平铺 —— 此刻
+   * 过程就是正文，多套一层折叠条反而多一次点击。
    */
   const renderAssistantContent = (message: Message, defaultOpen = false) => {
     // 失败原因。后端会把真实错误（未登录 / 网络不可达 / 退出码）带上来，
@@ -1306,7 +1285,8 @@ export function ChatMessages({
     ) : null;
 
     const blocks = toBlocks(message);
-    const nodes: React.ReactNode[] = [];
+    const processNodes: React.ReactNode[] = [];
+    const answerNodes: React.ReactNode[] = [];
     /**
      * 「正文回答已经开始了」= 最后一个工具之后出现了非空文本。
      *
@@ -1316,9 +1296,26 @@ export function ChatMessages({
      * 只有工具收工之后的那段文本，才是「答案」。
      */
     const lastToolIdx = blocks.reduce((acc, b, idx) => (b.type === 'tool' ? idx : acc), -1);
-    const hasAnswer = blocks.some(
-      (b, idx) => idx > lastToolIdx && b.type === 'text' && b.text.trim().length > 0
-    );
+    /**
+     * 答案起点：最后一个工具之后**第一段**非空文本的下标。
+     *
+     * 注意它必须取「第一段」而不是「最后一段」：答案正文之后可能还有块
+     * （比如收尾时又调了一次工具），那些属于答案区，跟着答案一起留在外面。
+     * -1 = 还没有答案。
+     */
+    const answerStartIdx = (() => {
+      for (let k = lastToolIdx + 1; k < blocks.length; k++) {
+        const b = blocks[k]!;
+        if (b.type === 'text' && b.text.trim().length > 0) return k;
+      }
+      return -1;
+    })();
+    const hasAnswer = answerStartIdx >= 0;
+
+    /** 落在答案起点之后的进答案区，其余进过程区 */
+    const push = (idx: number, node: React.ReactNode) => {
+      (hasAnswer && idx >= answerStartIdx ? answerNodes : processNodes).push(node);
+    };
 
     let i = 0;
     while (i < blocks.length) {
@@ -1333,7 +1330,8 @@ export function ChatMessages({
           group.push(blocks[j]);
           j++;
         }
-        nodes.push(
+        push(
+          i,
           <AgentTrace
             key={`trace-${group[0].id}`}
             blocks={group}
@@ -1343,7 +1341,8 @@ export function ChatMessages({
         );
         i = j;
       } else {
-        nodes.push(
+        push(
+          i,
           renderBlock(
             block,
             i,
@@ -1357,9 +1356,24 @@ export function ChatMessages({
       }
     }
 
+    // 没有答案：全部平铺（此刻过程就是正文，不该再套一层折叠）
+    if (!hasAnswer) {
+      return (
+        <>
+          {processNodes}
+          {errorBlock}
+        </>
+      );
+    }
+
     return (
       <>
-        {nodes}
+        {processNodes.length > 0 && (
+          <ProcessFlow blocks={blocks.slice(0, answerStartIdx)} hasAnswer>
+            {processNodes}
+          </ProcessFlow>
+        )}
+        {answerNodes}
         {errorBlock}
       </>
     );
@@ -1642,7 +1656,11 @@ export function ChatMessages({
                 用户提供对半成品的操作。 */}
             {message.role === 'assistant' && !message.isStreaming && !message.error && (
               <MessageActions
-                text={textOfBlocks(toBlocks(message))}
+                /* A149：复制出去的内容必须与屏幕上看到的一致 —— 正文在渲染层
+                   去了 emoji，这里不跟着去，用户复制回来会发现「屏幕上没有的
+                   表情又冒出来了」。分享文本（完整 Markdown）刻意不过滤：
+                   它是导出给别的工具的原料，改动越少越安全。 */
+                text={stripEmoji(textOfBlocks(toBlocks(message)))}
                 shareText={messageToMarkdown(message)}
                 onRegenerate={onRegenerate ? () => onRegenerate(message) : undefined}
                 onBranch={onBranch ? () => onBranch(message) : undefined}

@@ -545,9 +545,18 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
   ok(/第三方许可/.test(licText), '标题写明「第三方许可」');
   ok(/不在本项目的 MIT 范围内/.test(licText), '说明这些组件不在本项目 MIT 范围内');
 
-  const REQUIRED_PKGS = ['Electron', '@tencent-ai/agent-sdk', 'express', 'node-pty', 'uuid', 'typescript'];
+  /* 两类都要点名（A149）：
+     ① `dependencies` —— 原样进 app.asar；
+     ② 前端 devDependencies 里被 Vite 内联进 dist 的那些。
+     只查第 ① 类曾经是这块的真实缺口：清单和页面都「有」，但漏了
+     react / tdesign / lucide 这一大块 —— 而那才是安装包里跑得最多的代码。 */
+  const REQUIRED_PKGS = [
+    'Electron', '@tencent-ai/agent-sdk', 'express', 'node-pty', 'uuid', 'typescript',
+    'react / react-dom', 'tdesign-react', '@tdesign-react/chat',
+    'lucide-react', 'react-router-dom', '@xterm/xterm',
+  ];
   const missingPkgs = REQUIRED_PKGS.filter(n => !licText.includes(n));
-  ok(missingPkgs.length === 0, '六个随包分发的组件都点名了', missingPkgs.join(', ') || '全部在列');
+  ok(missingPkgs.length === 0, '两类随包分发的组件都点名了（后端依赖 + 前端打包）', missingPkgs.join(', ') || `全部 ${REQUIRED_PKGS.length} 个在列`);
 
   const missingLic = ['MIT', 'Apache-2.0'].filter(l => !licText.includes(l));
   ok(missingLic.length === 0, '标注了实际许可类型（MIT / Apache-2.0）', missingLic.join(', ') || '都有');

@@ -95,12 +95,18 @@ const LINKS = [
 /**
  * 随安装包分发的第三方组件（直接依赖）。
  *
- * 为什么这一页必须有它：本项目自身是 MIT，但安装包里打进去的是 `dependencies`
- * 的完整生产依赖树。MIT 与 Apache-2.0 都要求「分发副本时保留版权与许可声明」，
- * 而 electron-builder.yml 为了减小包体把依赖里的 LICENSE 文件全排除了 ——
- * 这条义务就落到了这里。
+ * 为什么这一页必须有它：本项目自身是 MIT，但安装包里装的不止 `dependencies`。
+ * MIT 与 Apache-2.0 都要求「分发副本时保留版权与许可声明」，而 electron-builder.yml
+ * 为了减小包体把依赖里的 LICENSE 文件全排除了 —— 这条义务就落到了这里。
  *
- * 只列直接依赖，不列 120+ 个传递依赖（那是 THIRD-PARTY-LICENSES.txt 的活）。
+ * ⚠️ 两类都要列，漏一类就等于漏了半张清单：
+ *   1. `dependencies` —— 原样进 app.asar 的生产依赖树；
+ *   2. 前端 devDependencies 里**被 Vite 内联进 dist** 的那些（react / tdesign /
+ *      lucide / xterm / react-router）。它们写在 devDependencies 里，看起来
+ *      「不进包」，但构建产物里就是它们的代码。
+ * 之前只列了第 1 类，2026-10-29 审计时发现并补上（A149）。
+ *
+ * 只列直接依赖，不列 200+ 个传递依赖（那是 THIRD-PARTY-LICENSES.txt 的活）。
  * 不写版本号：版本随 package.json 漂移，写死必然过期；以清单文件为准。
  */
 const THIRD_PARTY = [
@@ -110,6 +116,13 @@ const THIRD_PARTY = [
   { name: 'node-pty', license: 'MIT', holder: 'Christopher Jeffrey / Microsoft' },
   { name: 'uuid', license: 'MIT', holder: 'Robert Kieffer 等贡献者' },
   { name: 'typescript', license: 'Apache-2.0', holder: 'Microsoft Corp.' },
+  // ↓ 前端打包（devDependencies，但代码在 dist 里）
+  { name: 'react / react-dom', license: 'MIT', holder: 'Meta Platforms, Inc.' },
+  { name: 'tdesign-react', license: 'MIT', holder: 'TDesign' },
+  { name: '@tdesign-react/chat', license: 'MIT', holder: 'TDesign' },
+  { name: 'lucide-react', license: 'ISC', holder: 'Lucide contributors' },
+  { name: 'react-router-dom', license: 'MIT', holder: 'Remix Software' },
+  { name: '@xterm/xterm', license: 'MIT', holder: 'xterm.js contributors' },
 ];
 
 export default function AboutPanel() {

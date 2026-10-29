@@ -3363,12 +3363,15 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   background-color: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
 }
 
-/* 正文：左细线 + 13px secondary。特异性写成两个类 + 一个类，
-   压过上面 `.tc-thinking > div`（单类 + 元素）的 italic/placeholder 规格。 */
+/* 正文：左细线 + secondary。特异性写成两个类 + 一个类，
+   压过上面 `.tc-thinking > div`（单类 + 元素）的 italic/placeholder 规格。
+   A149：字号从 13px 抬到 `--text-body-lg`(14px) —— 与答案正文**同档**。
+   改之前过程流比答案小一号，用户读过程时眼睛要重新适应一次；
+   层级已经由「左细线 + secondary 色 + 折叠」三重表达，不需要再靠字号压。 */
 .tc-thinking.tc-think > .tc-think-body {
   padding-left: 13px;
   border-left: 2px solid var(--tc-rule);
-  font-size: 13px;
+  font-size: var(--text-body-lg);
   line-height: 1.75;
   font-style: normal;
   background-color: transparent;
@@ -3770,6 +3773,22 @@ html[data-opc-glass='1'] t-chat-sender {
  * 结果也同样是 0.6em，所以这个写法对两种布局都成立。 */
 .chat-markdown t-chat-md-content::part(md_p) {
   margin: 0 0 0.6em;
+  /* A149：段落两端对齐（末行左对齐）。
+   *
+   * 用户口径是「两端对齐、左对齐」—— 这两句不矛盾，说的是同一件事：
+   * 正文行铺满左右两边，**最后一行**按左对齐收（`text-align-last: left`
+   * 就是 `justify` 的默认末行行为，显式写出来是为了不被别处的
+   * `text-align-last: justify` 继承走）。
+   *
+   * 中文为主的正文里 `justify` 几乎没有副作用（汉字等宽，拉开的量落在
+   * 字间），但英文单词之间会被拉开 —— 所以同时给 `hyphens: auto` 让
+   * 长单词有地方断。中文没有连字符，这条对它无效，不影响。
+   *
+   * 为什么只给 `md_p` 不给 `md_li`：列表项本身带悬挂缩进，`justify`
+   * 会把「•」和正文之间的距离也拉宽，看起来像缩进乱了。列表保持左对齐。 */
+  text-align: justify;
+  text-align-last: left;
+  hyphens: auto;
 }
 
 /* 列表：默认的 ul/ol 上下 margin 与段落叠加会忽大忽小，这里统一收到一档 */
@@ -4566,10 +4585,108 @@ html[data-opc-glass='1'] t-chat-sender {
 
 @media (prefers-reduced-motion: reduce) {
   .tc-trace-fold,
-  .tc-trace-fold[data-fold='0'] {
+  .tc-trace-fold[data-fold='0'],
+  .tc-proc-fold,
+  .tc-proc-fold[data-fold='0'] {
     animation: none;
     transition: none;
   }
+}
+
+/* ── A149：过程流折叠区 ────────────────────────────────────────────────
+ *
+ * 「答案之前那一整段」（思考 + 中途旁白 + 轨迹条）收成一行。结构：
+ *
+ *   .tc-proc
+ *     .tc-proc-bar        ← 收起时屏幕上唯一的痕迹
+ *     .tc-proc-fold       ← 折叠动画外壳（grid-template-rows 0fr ↔ 1fr）
+ *       .tc-proc-fold-inner
+ *         .tc-proc-body   ← 子节点纵向排布
+ *
+ * 折叠手法与 `.tc-trace-fold` 完全一致（先挂住再卸，见 AgentTrace 的注释），
+ * 只是另起一套类名：两条链路将来节奏可能分开调，共用一个类名会互相牵连。
+ */
+.tc-proc {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* 汇总行：与 `.tc-steps-bar` 同一套几何（2px 内边距 + 6px 圆角 + hover 底色），
+   但类名独立 —— 多条闸门按 `[data-steps-bar]` 数「轨迹条」的条数，共用会让
+   那个计数凭空多出一条。 */
+.tc-proc-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  align-self: flex-start;
+  padding: 2px 8px 2px 2px;
+  border-radius: 6px;
+  font-size: var(--text-secondary);
+  line-height: var(--leading-normal);
+  color: var(--td-text-color-placeholder);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-proc-bar:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.tc-proc-label {
+  flex-shrink: 0;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+}
+
+/* 摘要里的「思考 3 段 · 工具 7 步 · 3m50s」：一行放不下就省略，
+   绝不换行 —— 收起状态下它是整块过程唯一的信息，撑成两行会比答案还重。 */
+.tc-proc-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tc-proc-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: tc-fold-in 200ms var(--ease-tencent) both;
+}
+
+.tc-proc-fold[data-fold='0'] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  animation: none;
+  transition:
+    grid-template-rows 200ms var(--ease-tencent),
+    opacity 140ms linear;
+}
+
+.tc-proc-fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 子节点统一 8px 间距，并把它们自带的纵向外边距清零 ——
+   思考块带 `mb-2`(8px)、轨迹带 `margin: 8px 0`，不清零的话间距会变成
+   8+8=16px 的「双层」，越往下越散。 */
+.tc-proc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 0 4px;
+}
+
+.tc-proc-body > .tc-trace {
+  margin: 0;
+}
+
+.tc-proc-body > .tc-thinking {
+  margin-bottom: 0;
 }
 
 /* 轨迹滚动区。
@@ -4712,16 +4829,17 @@ html[data-opc-glass='1'] t-chat-sender {
   font-variant-numeric: tabular-nums;
 }
 
-/* 正文：正体 12.5px secondary + 2px 左细线。
+/* 正文：正体 secondary + 2px 左细线。
    选择器写成「两个类 + 一个类」，压过 `.tc-thinking > div`（单类 + 元素）
-   那套 12px 斜体 placeholder + 3% 底的老规格 —— 不靠 !important。 */
+   那套 12px 斜体 placeholder + 3% 底的老规格 —— 不靠 !important。
+   A149：12.5px → `--text-body-lg`(14px)，与答案正文同档（理由同方案 A 那条）。 */
 .tc-thinking.tc-think-note > .tc-think-note-body {
   margin: 0 0 2px;
   padding: 1px 0 1px 11px;
   border-left: 2px solid var(--tc-rule);
   background-color: transparent;
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--text-body-lg);
   font-style: normal;
   line-height: 1.7;
   color: var(--td-text-color-secondary);
