@@ -105,12 +105,10 @@ async function read(p) {
   const appIcon = await read('src/assets/app-icon.png');
   ok(Buffer.compare(appIcon, await read('build/icon-512.png')) === 0, '关于页图标与 icon-512 逐字节一致（同源，不会两张脸）');
   ok(pngSize(appIcon)?.width === 512, '关于页图标 512×512');
-  const siteIcon = pngSize(await read('site/assets/icon.png'));
-  ok(siteIcon?.width === 512, '官网 icon.png 512×512');
-  for (const f of ['site/assets/icon-52.webp', 'site/assets/icon-104.webp']) {
-    const b = await read(f);
-    ok(b.length > 500 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP', `${f} 是有效 WebP`, `${b.length} B`);
-  }
+  // A150：`site/assets/icon*`（512 PNG + 52/104 WebP）的三条断言随官网目录一起移除。
+  // 那三个文件只服务于落地页的 favicon / 主屏图标，应用内一个都不引用；
+  // 官网整体下架后留在这里会变成「断言一个不存在的文件」，而修法只有两种：
+  // 要么让 make-icons 继续把 site/ 重建出来（等于没删），要么删断言。选了后者。
 }
 
 // 1e. AppLogo 必须引用位图（防回退到旧几何实现）

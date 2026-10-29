@@ -48,11 +48,6 @@ Thumbs.db
 # 保留这条的正确写法是只讲「为什么不能进」，不要再编造提交号。
 data/
 
-# Wrangler 本地缓存（site/worker 部署统计后端时产生）
-site/worker/.wrangler/
-# wrangler 的本地密钥覆盖文件（STATS_KEY 等），只在本机生效
-site/worker/.dev.vars
-
 # ── 内部开发文档：不进版本库 ─────────────────────────────────────────
 # 这些文件是给自己和后续会话看的施工记录，不是产品的一部分。它们含
 # 需求原话（TASKS 46 处、HANDOFF 39 处直接引用用户提问）、写死的本机
@@ -71,10 +66,3 @@ site/worker/.dev.vars
 /UIUX-AUDIT.md
 /PLAN-*.md
 /preview-thinking.html
-
-# ── 站点截图：等用新 Logo 重拍后再入库 ───────────────────────────────
-# 现存的 13 张是「同人卦」旧 Logo 时期的产物，且画面里是内部调试对话
-# （「结论：确实存在两套品牌蓝」+ legacy.css 等内部文件名 + 用户提问原话），
-# 直接当宣传图既过时又泄上下文。文件已移到 .trash-a144/ 隔离，不进库。
-# site/index.html 与 site/v2/index.html 的 <img> 结构保留，重拍后同名放回即可。
-/site/assets/screenshot-*

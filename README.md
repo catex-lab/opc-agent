@@ -59,7 +59,6 @@ opc-agent/
 │   ├── hooks/         数据与状态钩子
 │   └── assets/        图标等静态资源
 ├── scripts/           构建、打包与验证脚本（见下）
-├── site/              官网落地页与统计 Worker
 ├── build/             打包资源（图标源图与 ICO）
 └── patches/           依赖补丁
 ```

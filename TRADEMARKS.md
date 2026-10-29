@@ -29,7 +29,7 @@
 
 ## 项目自身标识
 
-`build/logo-source.png` 及其派生产物（`build/icon*.ico`、`public/favicon*.png`、`src/assets/app-logo.png`、`src/assets/app-icon.png`、`site/assets/icon*`）是本项目的自有标识，由项目维护者提供。
+`build/logo-source.png` 及其派生产物（`build/icon*.ico`、`public/favicon*.png`、`src/assets/app-logo.png`、`src/assets/app-icon.png`）是本项目的自有标识，由项目维护者提供。
 
 这些图形**不在 MIT 许可范围内**。你可以复制代码、修改代码、商用代码，但不应把本项目的图标用作你自己产品的标识 —— 那会造成来源混淆。
 

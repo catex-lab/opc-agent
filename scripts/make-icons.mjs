@@ -99,28 +99,6 @@ async function rasterPng(size, boost) {
   return Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
 }
 
-/** 同一张图转 WebP（官网用），同样走 canvas 原生编码 */
-async function rasterWebp(size, quality = 0.92) {
-  const png = await rasterPng(size);
-  await page.setViewportSize({ width: size, height: size });
-  await page.setContent(
-    `<!doctype html><html><head><meta charset="utf-8"><style>` +
-      `html,body{margin:0;padding:0;background:transparent}canvas{display:block}` +
-      `</style></head><body><canvas id="c" width="${size}" height="${size}"></canvas></body></html>`
-  );
-  const dataUrl = await page.evaluate(
-    async ([b64, px, q]) => {
-      const img = new Image();
-      img.src = 'data:image/png;base64,' + b64;
-      await img.decode();
-      const ctx = document.getElementById('c').getContext('2d');
-      ctx.drawImage(img, 0, 0, px, px);
-      return document.getElementById('c').toDataURL('image/webp', q);
-    },
-    [png.toString('base64'), size, quality]
-  );
-  return Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
-}
 
 /**
  * 手写 ICO 容器（PNG 压缩条目）。
@@ -219,12 +197,6 @@ async function main() {
     await writeFile(path.join(ROOT, 'public/favicon.png'), await raster(32));
     await writeFile(path.join(ROOT, 'public/favicon-16.png'), await raster(16));
 
-    // 官网
-    await mkdir(path.join(ROOT, 'site/assets'), { recursive: true });
-    await writeFile(path.join(ROOT, 'site/assets/icon.png'), await raster(512));
-    await writeFile(path.join(ROOT, 'site/assets/icon-52.webp'), await rasterWebp(52));
-    await writeFile(path.join(ROOT, 'site/assets/icon-104.webp'), await rasterWebp(104));
-
     // 自检：读回每个产物，确认容器里确实是多尺寸而不是被合并成一张
     const gotIco = icoSizes(await readFile(path.join(ROOT, 'build/icon.ico')));
     const gotTray = icoSizes(await readFile(path.join(ROOT, 'build/tray-icon.ico')));
@@ -235,10 +207,9 @@ async function main() {
     console.log(`✓ build/icon.ico        尺寸 [${gotIco}]`);
     console.log(`✓ build/tray-icon.ico   尺寸 [${gotTray}]`);
     console.log(`✓ build/icon.png        ${png256?.width}x${png256?.height}`);
-    console.log(`✓ build/icon-512.png / src/assets/app-icon.png / site/assets/icon.png  512x512`);
+    console.log(`✓ build/icon-512.png / src/assets/app-icon.png  512x512`);
     console.log(`✓ src/assets/app-logo.png 256x256（界面内标记）`);
     console.log(`✓ public/favicon.png 32 / favicon-16.png 16`);
-    console.log(`✓ site/assets/icon-52.webp / icon-104.webp`);
 
     const wantIco = JSON.stringify(SIZES_ICO);
     if (JSON.stringify(gotIco) !== wantIco) {

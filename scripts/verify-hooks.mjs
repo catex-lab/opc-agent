@@ -103,8 +103,10 @@ console.log('\n[1] 该拦的必须拦住');
   ok(c.blocked, '连接串里带密码被拦下');
 }
 {
-  // 真踩过的形态：没有厂商前缀、48 位十六进制、写死在 toml 里
-  const c = tryCommit({ 'site/worker/wrangler.toml': `${FAKE_TOML}\n` });
+  // 真踩过的形态：没有厂商前缀、48 位十六进制、写死在 toml 里。
+  // 路径原为 `site/worker/wrangler.toml`（官网目录，A150 已移除）—— 这里只需要一个
+  // 「部署配置」形态的路径，与真实文件无关：tryCommit 是在临时仓库里造文件，不读仓库。
+  const c = tryCommit({ 'deploy/wrangler.toml': `${FAKE_TOML}\n` });
   ok(c.blocked, '48 位十六进制赋值给 *KEY 被拦下（真实事故形态）');
 }
 
@@ -119,7 +121,7 @@ console.log('\n[2] 不该拦的必须放行');
   ok(!c.blocked, 'mask-image 不误报（已知子串陷阱）');
 }
 {
-  const c = tryCommit({ 'site/worker/wrangler.toml': 'STATS_KEY = "REPLACE_WITH_YOUR_STATS_KEY"\n' });
+  const c = tryCommit({ 'deploy/wrangler.toml': 'STATS_KEY = "REPLACE_WITH_YOUR_STATS_KEY"\n' });
   ok(!c.blocked, '占位符不误报（这才是正确写法）');
 }
 {
