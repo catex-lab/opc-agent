@@ -110,6 +110,11 @@ npm run verify:package # 打包产物逐字节核对
 
 漏洞请走私密报告通道，不要开公开 issue。详见 [SECURITY.md](./SECURITY.md)。
 
+## 参与
+
+本仓库暂不接收外部 PR。问题与建议请开 issue，安全漏洞走上面的私密通道，
+具体说明见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
 ## 状态
 
 版本 `1.0.0`。

@@ -1,0 +1,22 @@
+# 换行符：仓库内一律 LF，检出也保持 LF。
+#
+# 为什么显式声明而不是靠本机 core.autocrlf：Windows 上 autocrlf=true 会让
+# 每次编辑都刷一串「LF will be replaced by CRLF」告警，而且同一个文件在不同
+# 机器上会得到不同哈希 —— 闸门脚本里按内容比对时会莫名其妙地失败。
+# 索引目前已经全是 LF，所以这条只是把既成事实钉死，不产生内容变更。
+* text=auto eol=lf
+
+# 二进制：不做换行转换，也不尝试文本 diff / 逐行合并。
+# 漏标一个 png 就会让 git 把整张图当文本行来合并，冲突时产物直接损坏。
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.icns  binary
+*.exe   binary
+*.zip   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
