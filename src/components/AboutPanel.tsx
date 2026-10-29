@@ -36,6 +36,7 @@ import {
   ShieldCheck,
   Check,
   Bug,
+  Package,
 } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
 
@@ -89,6 +90,26 @@ const LINKS = [
     hint: 'catex-lab/opc-agent · 源码与更新日志',
     Icon: Github,
   },
+];
+
+/**
+ * 随安装包分发的第三方组件（直接依赖）。
+ *
+ * 为什么这一页必须有它：本项目自身是 MIT，但安装包里打进去的是 `dependencies`
+ * 的完整生产依赖树。MIT 与 Apache-2.0 都要求「分发副本时保留版权与许可声明」，
+ * 而 electron-builder.yml 为了减小包体把依赖里的 LICENSE 文件全排除了 ——
+ * 这条义务就落到了这里。
+ *
+ * 只列直接依赖，不列 120+ 个传递依赖（那是 THIRD-PARTY-LICENSES.txt 的活）。
+ * 不写版本号：版本随 package.json 漂移，写死必然过期；以清单文件为准。
+ */
+const THIRD_PARTY = [
+  { name: 'Electron', license: 'MIT', holder: 'Electron contributors（运行时含 Chromium）' },
+  { name: '@tencent-ai/agent-sdk', license: 'MIT', holder: 'Tencent' },
+  { name: 'express', license: 'MIT', holder: 'TJ Holowaychuk 等贡献者' },
+  { name: 'node-pty', license: 'MIT', holder: 'Christopher Jeffrey / Microsoft' },
+  { name: 'uuid', license: 'MIT', holder: 'Robert Kieffer 等贡献者' },
+  { name: 'typescript', license: 'Apache-2.0', holder: 'Microsoft Corp.' },
 ];
 
 export default function AboutPanel() {
@@ -341,6 +362,72 @@ export default function AboutPanel() {
           相关名称与商标归各自所有者。使用第三方 Agent 时，你的调用仍受对应服务商条款约束。
         </p>
       </div>
+
+      {/* ── 第三方许可 ───────────────────────────────────────── */}
+      {/* 用原生 <details>：这里不需要状态，也不需要 TDesign 的折叠面板 ——
+          多引一个组件只为了一次展开，成本比收益高。 */}
+      <details
+        className="rounded-xl p-4 sm:p-5"
+        style={{ backgroundColor: 'var(--tc-layer-2)', border: '1px solid var(--tc-edge)' }}
+        data-about-licenses
+      >
+        <summary
+          className="cursor-pointer text-sm font-medium"
+          style={{ color: 'var(--td-text-color-primary)' }}
+        >
+          <Package
+            size={14}
+            style={{
+              color: 'var(--td-text-color-secondary)',
+              verticalAlign: '-2px',
+              marginRight: 6,
+            }}
+          />
+          第三方许可
+          <span
+            className="ml-2 text-xs font-normal"
+            style={{ color: 'var(--td-text-color-placeholder)' }}
+          >
+            随安装包分发的主要组件
+          </span>
+        </summary>
+
+        <p className="mt-3 text-xs leading-5" style={{ color: 'var(--td-text-color-secondary)' }}>
+          本项目自身以 MIT 协议开源。安装包里打进了下面这些第三方组件，它们各自适用自己的许可，
+          <span style={{ color: 'var(--td-text-color-primary)' }}>不在本项目的 MIT 范围内</span>。
+        </p>
+
+        <ul className="mt-2 space-y-1.5">
+          {THIRD_PARTY.map(item => (
+            <li
+              key={item.name}
+              className="flex items-start gap-2 text-xs leading-5"
+              style={{ color: 'var(--td-text-color-secondary)' }}
+            >
+              <span
+                className="shrink-0 rounded px-1.5"
+                style={{
+                  backgroundColor: 'var(--td-bg-color-component)',
+                  color: 'var(--td-text-color-placeholder)',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {item.license}
+              </span>
+              <span className="min-w-0">
+                <span style={{ color: 'var(--td-text-color-primary)' }}>{item.name}</span>
+                <span style={{ color: 'var(--td-text-color-placeholder)' }}> · {item.holder}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        {/* 不写死组件数量：依赖一变数字就过期。以清单文件为准。 */}
+        <p className="mt-3 text-xs leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
+          含传递依赖的完整清单随源码发布，见仓库根目录的 THIRD-PARTY-LICENSES.txt；
+          各组件的许可全文随其包内 LICENSE 文件分发。
+        </p>
+      </details>
     </div>
   );
 }

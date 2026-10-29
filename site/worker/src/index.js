@@ -1,5 +1,10 @@
 /**
- * OPC Agent — 下载中转 + 匿名使用统计 Worker
+ * OPC Agent — 下载中转 + 看板查询 Worker
+ *
+ * ⚠️ 客户端埋点接口（/api/v1/install、/api/v1/session/start、/api/v1/session/end）
+ *    仍然保留，但 **A141 已把客户端遥测模块整体删除**，目前没有调用方。
+ *    因此 installs / sessions 两张表会一直是空的，看板里对应的指标恒为 0。
+ *    要恢复上报，先重建客户端模块（含设置开关与隐私页文案），不要只加环境变量。
  *
  * 设计原则：
  *   1. 埋点接口永不阻塞客户端 —— 任何异常都返回 200，客户端 fire-and-forget。

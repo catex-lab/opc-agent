@@ -140,8 +140,9 @@ body { background: var(--bg-soft); min-height: 100vh; }
     </div>
 
     <p style="font-size:var(--fs-7);color:var(--text-3);margin:20px 0 0;line-height:1.7">
-      数据来自客户端匿名上报：安装 ID、启动时间、使用时长、版本号，不含聊天内容与文件路径。
-      若某项为 0，通常是还没有客户端版本接入埋点。
+      只有「下载次数」有数据：它由下载中转（<code>/d/*</code>）记录，不含个人身份信息。
+      安装数、活跃用户、使用时长依赖客户端上报，而客户端上报已在 A141 移除 ——
+      这几项恒为 0 是预期行为，不是接口坏了。
     </p>
   </div>
 </div>

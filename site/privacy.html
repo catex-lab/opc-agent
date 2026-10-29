@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>隐私说明 — OPC Agent</title>
-<meta name="description" content="OPC Agent 收集哪些数据、不收集哪些数据，以及如何关闭匿名统计。">
+<meta name="description" content="OPC Agent 收集哪些数据、不收集哪些数据。应用不发送任何使用统计。">
 <link rel="icon" href="assets/icon.png">
 <link rel="stylesheet" href="assets/style.css">
 <style>
@@ -69,11 +69,11 @@ html[lang="zh-CN"] .legal-lang-zh, html[lang="en"] .legal-lang-en { display: blo
   <div class="wrap legal-inner">
     <article class="legal-lang legal-lang-zh" lang="zh-CN">
     <h1>隐私说明</h1>
-    <p class="updated">最后更新：2026 年 10 月 23 日</p>
+    <p class="updated">最后更新：2026 年 10 月 29 日</p>
 
     <div class="lead">
-      <strong>一句话：</strong>聊天记录、文件和 Agent 凭据保存在本机。当前公开构建没有配置统计端点，因此不会发送使用统计。
-      若未来某个构建启用了统计，还需用户开关允许才会上报列明的有限字段。
+      <strong>一句话：</strong>聊天记录、文件和 Agent 凭据全部保存在本机。应用<strong>不收集任何信息</strong> ——
+      没有使用统计、没有埋点、没有崩溃上报，也没有安装 ID；代码里不存在遥测模块。
     </div>
 
     <h2>1. 应用能做什么</h2>
@@ -127,75 +127,74 @@ html[lang="zh-CN"] .legal-lang-zh, html[lang="en"] .legal-lang-en { display: blo
     <p>应用不会在后台偷偷截屏、录屏、读取剪贴板，也没有开机自启与常驻守护进程。</p>
 
     <h2>2. 我们收集什么</h2>
-    <p>当前公开构建的统计端点为空，客户端不会发送遥测请求。只有某个构建配置了统计端点，且用户没有关闭设置中的开关时，才可能发送以下字段：</p>
-    <table>
-      <thead>
-        <tr><th>字段</th><th>示例</th><th>用途</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>安装 ID</td><td>随机 UUID</td><td>区分独立用户，首次启动生成，与账号无关</td></tr>
-        <tr><td>启动时间</td><td>时间戳</td><td>计算日活、周活、月活</td></tr>
-        <tr><td>使用时长</td><td>秒数</td><td>了解单次使用时长分布</td></tr>
-        <tr><td>应用版本</td><td>1.0.0</td><td>判断哪些版本还在被使用</td></tr>
-        <tr><td>操作系统与架构</td><td>win32 / x64</td><td>决定后续优先支持哪些平台</td></tr>
-      </tbody>
-    </table>
-    <p>如果未来部署下载统计 Worker，它可能记录下载次数、下载渠道与 Cloudflare 提供的国家/地区。目前该 Worker 尚未部署，因此站点不会记录这类下载统计。</p>
+    <p><strong>什么都不收集。</strong>应用不向任何服务器发送使用统计、崩溃报告或设备信息，
+      也没有安装 ID —— 这一条不是「默认关闭」，而是这个模块根本不存在。</p>
+    <p>会话内容只会发给你<strong>自己配置的模型服务商</strong> —— 那是功能本身（不发给服务商，模型就无法回答），
+      不是统计。应用不经过任何中转服务器，也没有自建后端。</p>
+    <p>另外两类网络请求都由你主动触发、且不携带任何会话内容：点「检查更新」时向 GitHub 查询版本号；
+      点开外链时交给系统浏览器打开。</p>
 
     <h2>3. 我们绝不收集</h2>
     <ul>
       <li>聊天内容、提示词、模型的任何输出</li>
       <li>你打开的文件、文件路径、工作区目录结构</li>
       <li>Agent 凭据、API Key、登录令牌</li>
-      <li>统计记录不会存储原始 IP、设备指纹或精确地理位置；网站托管和 API 服务商可能按其政策处理网络层信息</li>
+      <li>原始 IP、设备指纹、精确地理位置</li>
       <li>任何第三方账号信息</li>
     </ul>
     <p>会话数据库（<code>chat.db</code>）与生成图片缓存都存放在本机数据目录，不会上传到任何服务器。</p>
 
-    <h2>4. 为什么要收集</h2>
-    <p>这是由个人维护的项目。若未来某个版本启用可选统计，有限的汇总数据可帮助了解使用情况和版本分布；统计可以关闭。</p>
+    <h2>4. 为什么不做统计</h2>
+    <p>这是由个人维护的开源项目。做统计确实能知道有多少人在用、哪个版本还在被使用，
+      但这些信息不值得用「给每个用户装一个上报模块」来换。所以这个项目没有统计，
+      你也不需要去找一个开关把它关掉。</p>
 
     <h2>5. 怎么关闭</h2>
-    <p>若当前版本配置了统计端点，打开应用 → 设置 → <strong>关于与隐私</strong> → 关闭「允许发送匿名统计」。关闭后立即停止，不会补发。端点未配置的版本不会发送统计。</p>
-    <p>也可以在启动应用前设置环境变量 <code>OPC_TELEMETRY=0</code>，或在数据目录的 <code>analytics.json</code> 里把 <code>enabled</code> 改成 <code>false</code>。</p>
+    <p><strong>没有可关的东西。</strong>应用里没有统计开关，因为不存在统计。
+      「设置 → 关于与隐私」里只有版本信息、隐私承诺和官方入口。</p>
 
     <h2>6. 你的权利</h2>
-    <p>你随时可以行使以下权利，不需要经过任何审批流程：</p>
+    <p>没有任何数据被收集，所以没有需要撤回的授权，也没有需要申请删除的上报记录。
+      你仍然完全掌控本机的数据：</p>
     <ul>
-      <li><strong>撤回授权</strong>：设置 → 关于与隐私 → 关闭「允许发送匿名统计」，立即生效，当前会话的收尾上报也会被拦住。</li>
-      <li><strong>删除本机数据</strong>：直接删除应用的数据目录即可。会话、图片、配置都在那里，应用不依赖任何云端账号，删掉就是彻底删掉。</li>
-      <li><strong>要求删除已上报的统计</strong>：统计使用随机安装 ID，不与 OPC 账号关联。若要申请删除，提供数据目录 <code>analytics.json</code> 中的 <code>installId</code> 联系项目维护者；正式支持渠道待仓库确认后公布。</li>
-      <li><strong>了解用途</strong>：本页列出了目前计划的全部统计用途；启用前会更新本说明。</li>
+      <li><strong>删除本机数据</strong>：直接删除应用的数据目录即可。会话、图片、配置都在那里，
+        应用不依赖任何云端账号，删掉就是彻底删掉。</li>
+      <li><strong>审查代码</strong>：源码以 MIT 协议发布，不含任何遥测、埋点或崩溃上报的实现 ——
+        不是被关掉了，是没有写。</li>
+      <li><strong>断网使用</strong>：除了调用你自己配置的模型服务商，应用不需要任何外网连接。</li>
     </ul>
-    <p><strong>拒绝统计不影响任何功能。</strong>关闭后应用与开启时完全一致 —— 我们不会用功能阉割来换取数据。</p>
 
     <h2>7. 数据存在哪、留多久</h2>
-    <p>若未来启用统计，数据将存放在所部署的 Cloudflare D1 数据库中，由项目维护者管理。目前没有已部署的统计端点，也没有可供核验的线上留存与自动删除周期；启用收集前应配置并披露相应的删除安排。我们不会出售统计数据。</p>
+    <p>只有本机数据目录一处。留存多久完全由你决定 —— 应用不做自动清理，也不上传备份。</p>
 
     <h2>8. 涉及的服务商</h2>
     <ul>
-      <li><strong>Cloudflare</strong>：当前站点托管服务商。若未来部署下载分发和统计接口，它也可能提供相应服务，并按自身隐私政策处理网络层信息。</li>
-      <li><strong>GitHub</strong>：正式仓库和下载尚未开放。配置后，源码托管与下载将由 GitHub 按其政策处理。</li>
+      <li><strong>Cloudflare</strong>：托管本官网页面，按其自身隐私政策处理访问本站的网络层信息。</li>
+      <li><strong>GitHub</strong>：托管源码与安装包下载，按其自身政策处理相应请求。</li>
+      <li><strong>你自己配置的模型服务商</strong>：只在你发消息时接收对话内容，受其自身条款约束。</li>
     </ul>
 
     <h2>9. 关于第三方 Agent</h2>
-    <p>OPC Agent 本身不提供模型服务。你通过它调用的 WorkBuddy、Codex、Gemini、Claude Code 等 Agent，
-      其数据处理方式由对应服务商的条款决定，不在本说明的覆盖范围内。</p>
+    <p>OPC Agent 本身不提供模型服务。你通过它调用的 WorkBuddy、Codex、Gemini、Claude Code 等 Agent
+      是各自厂商的产品，其数据处理方式（含各自的遥测与条款）由对应厂商决定，不在本说明的覆盖范围内 ——
+      本应用自身不发统计，不等于这些 Agent 自身也不发。</p>
 
     <h2>10. 未成年人</h2>
-    <p>本项目不面向 14 周岁以下儿童，也不会主动收集其信息。</p>
+    <p>本项目不面向 14 周岁以下儿童，也不会收集其信息。</p>
 
     <h2>11. 变更通知</h2>
-    <p>本说明如有修改，会更新页面顶部的日期。GitHub 仓库地址尚待确认，因此目前无法提供公开提交记录链接。应用内变更提示尚未实现，请以本页内容为准。</p>
+    <p>本说明如有修改，会更新页面顶部的日期。若将来某个构建引入了统计能力，
+      会在启用前更新本页并在应用内提供开关 —— 而不是先收集、再补说明。</p>
 
     <h2>12. 联系方式</h2>
-    <p>对隐私有任何疑问，可通过官网联系项目维护者。GitHub 仓库和 issue 地址待正式仓库确认后补充。</p>
+    <p>对隐私有任何疑问，可在 GitHub 仓库（<code>catex-lab/opc-agent</code>）开 issue，
+      或通过官网联系项目维护者。</p>
     </article>
 
     <article class="legal-lang legal-lang-en" lang="en">
       <h1>Privacy notice</h1>
-      <p class="updated">Last updated: October 23, 2026</p>
-      <div class="lead"><strong>In short:</strong> Conversations, files and agent credentials stay on your machine. The current public build has no telemetry endpoint configured, so it sends no usage analytics. If a future build enables analytics, data is sent only when the in-app setting also allows it, and only for the fields listed below.</div>
+      <p class="updated">Last updated: October 29, 2026</p>
+      <div class="lead"><strong>In short:</strong> Conversations, files and agent credentials stay on your machine. The app <strong>collects nothing</strong> — no usage analytics, no tracking, no crash reporting, no install ID. There is no telemetry module in the code.</div>
 
       <h2>1. What the app can do</h2>
       <p>OPC Agent is more than a chat window. To help you carry out tasks, it can use system capabilities. The table lists what each capability does and how you can limit it.</p>
@@ -211,49 +210,41 @@ html[lang="zh-CN"] .legal-lang-zh, html[lang="en"] .legal-lang-en { display: blo
       <p>The app does not secretly take screenshots, record your screen, read the clipboard, start with Windows or run a background daemon.</p>
 
       <h2>2. What we collect</h2>
-      <p>The current public build has no telemetry endpoint configured and sends no analytics requests. Only a build configured with an endpoint, while the user has left analytics enabled, may send these fields:</p>
-      <table><thead><tr><th>Field</th><th>Example</th><th>Purpose</th></tr></thead><tbody>
-        <tr><td>Install ID</td><td>Random UUID</td><td>Distinguish installations; not linked to an OPC account</td></tr>
-        <tr><td>Start time</td><td>Timestamp</td><td>Calculate daily, weekly and monthly active use</td></tr>
-        <tr><td>Session duration</td><td>Seconds</td><td>Understand session length distribution</td></tr>
-        <tr><td>App version</td><td>1.0.0</td><td>See which versions remain in use</td></tr>
-        <tr><td>Operating system and architecture</td><td>win32 / x64</td><td>Prioritize platform support</td></tr>
-      </tbody></table>
-      <p>If a download-tracking Worker is deployed, it may record download counts, channel and country or region supplied by Cloudflare. That Worker is not currently deployed for this project.</p>
+      <p><strong>Nothing.</strong> The app sends no usage analytics, crash reports or device information to any server, and it has no install ID — this is not a setting that is switched off, the module does not exist.</p>
+      <p>Conversation content is sent only to the <strong>model provider you configured yourself</strong> — that is the feature itself, not analytics. There is no relay server and no backend operated by this project.</p>
+      <p>Two other network requests happen only when you trigger them, and neither carries conversation content: checking for updates queries GitHub for the version number; opening an external link hands it to your system browser.</p>
 
       <h2>3. What we do not collect</h2>
-      <ul><li>Conversation content, prompts or model output</li><li>Files you open, file paths or workspace structure</li><li>Agent credentials, API keys or sign-in tokens</li><li>Raw IP addresses, device fingerprints or precise location in analytics records; hosting and API providers may process network-layer information under their own policies</li><li>Third-party account details</li></ul>
+      <ul><li>Conversation content, prompts or model output</li><li>Files you open, file paths or workspace structure</li><li>Agent credentials, API keys or sign-in tokens</li><li>Raw IP addresses, device fingerprints or precise location</li><li>Third-party account details</li></ul>
       <p>The conversation database (<code>chat.db</code>) and generated image cache stay in the local application data directory and are not uploaded by OPC Agent.</p>
 
-      <h2>4. Why collect analytics</h2>
-      <p>This project is maintained by an individual. If analytics is enabled in a future build, limited aggregate usage information can help understand adoption and identify which versions are still in use. Analytics is optional and can be disabled.</p>
+      <h2>4. Why there is no analytics</h2>
+      <p>This project is maintained by an individual. Analytics would tell us how many people use the app and which versions are still installed, but that is not worth shipping a reporting module to every user. So there is no analytics, and no switch to go looking for.</p>
 
       <h2>5. How to turn it off</h2>
-      <p>If your build has a telemetry endpoint configured, open Settings → <strong>About &amp; Privacy</strong> and turn off “Allow anonymous analytics”. Collection stops immediately and is not backfilled. A build without an endpoint sends no analytics.</p>
-      <p>You can also set <code>OPC_TELEMETRY=0</code> before launch, or set <code>enabled</code> to <code>false</code> in <code>analytics.json</code> in the app data directory.</p>
+      <p><strong>There is nothing to turn off.</strong> There is no analytics switch in the app because there is no analytics. Settings → <strong>About &amp; Privacy</strong> contains only version information, the privacy commitments and official links.</p>
 
       <h2>6. Your choices</h2>
-      <p>You can exercise these choices without approval:</p>
-      <ul><li><strong>Withdraw consent:</strong> Settings → About &amp; Privacy → turn off analytics. It takes effect immediately and blocks the session end event too.</li><li><strong>Delete local data:</strong> Delete the application data directory. Conversations, images and configuration are stored there; OPC Agent does not require a cloud account.</li><li><strong>Request deletion of reported analytics:</strong> Analytics uses a random install ID that is not linked to your identity. If you need a record removed, provide the <code>installId</code> from <code>analytics.json</code> to the project maintainer after a support contact becomes available.</li><li><strong>Understand use:</strong> This page describes the purposes. There are no undisclosed analytics purposes.</li></ul>
-      <p><strong>Turning analytics off does not limit app features.</strong></p>
+      <p>No data is collected, so there is no consent to withdraw and no reported record to request deletion of. You still fully control the data on your machine:</p>
+      <ul><li><strong>Delete local data:</strong> Delete the application data directory. Conversations, images and configuration are stored there; OPC Agent does not require a cloud account.</li><li><strong>Read the code:</strong> The source is released under the MIT licence and contains no telemetry, tracking or crash reporting — not disabled, simply never written.</li><li><strong>Use it offline:</strong> Apart from calling the model provider you configured, the app needs no internet access.</li></ul>
 
       <h2>7. Where data is stored and how long</h2>
-      <p>If analytics is enabled in the future, data will be stored in the Cloudflare D1 database configured by the project maintainer. No public telemetry endpoint is currently deployed, and there is no live retention or automatic deletion schedule to verify. A deletion schedule should be configured and disclosed before collection is enabled. We do not sell analytics data.</p>
+      <p>Only in the local application data directory. How long it stays is entirely up to you — the app does not auto-delete and does not upload backups.</p>
 
       <h2>8. Service providers</h2>
-      <ul><li><strong>Cloudflare:</strong> Hosts this website. If download delivery or analytics infrastructure is deployed later, Cloudflare may provide those services and process network-layer information under its privacy policy.</li><li><strong>GitHub:</strong> The official repository and downloads are not yet available. Once configured, GitHub will handle source hosting and downloads under its own policies.</li></ul>
+      <ul><li><strong>Cloudflare:</strong> Hosts this website and processes network-layer information for visits under its own privacy policy.</li><li><strong>GitHub:</strong> Hosts the source code and installer downloads under its own policies.</li><li><strong>Your own model provider:</strong> Receives conversation content only when you send a message, under its own terms.</li></ul>
 
       <h2>9. Third-party agents</h2>
-      <p>OPC Agent does not provide model services. When you use WorkBuddy, Codex, Gemini, Claude Code or another agent, the selected provider processes your requests under its own terms and privacy policies. Those practices are outside this notice.</p>
+      <p>OPC Agent does not provide model services. WorkBuddy, Codex, Gemini, Claude Code and other agents you use through it are products of their respective vendors, and their data practices — including their own telemetry and terms — are outside this notice. This app sending no analytics does not mean those agents send none.</p>
 
       <h2>10. Children</h2>
       <p>This project is not intended for children under 14, and it does not knowingly collect their information.</p>
 
       <h2>11. Changes</h2>
-      <p>We update the date at the top of this page when the notice changes. The official GitHub repository is still being confirmed, so a public commit history is not yet linked. In-app change notices are not implemented; please refer to this page.</p>
+      <p>We update the date at the top of this page when the notice changes. If a future build ever introduces analytics, this page will be updated and an in-app switch provided <em>before</em> collection starts — not afterwards.</p>
 
       <h2>12. Contact</h2>
-      <p>For privacy questions, contact the project maintainer through the official website. The GitHub repository and issue tracker will be linked once the official repository is confirmed.</p>
+      <p>For privacy questions, open an issue on the GitHub repository (<code>catex-lab/opc-agent</code>) or contact the maintainer through the official website.</p>
     </article>
   </div>
 </main>

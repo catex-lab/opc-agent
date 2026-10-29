@@ -15,7 +15,7 @@ site/
 └── worker/
     ├── wrangler.toml     ← 改这里：D1 id、密钥、域名
     ├── schema.sql        D1 表结构
-    └── src/index.js      下载中转 + 埋点接口 + 看板查询
+    └── src/index.js      下载中转 + 看板查询（埋点接口保留，当前无客户端上报）
 ```
 
 ---
@@ -26,7 +26,6 @@ site/
 |------|--------|
 | `site/assets/config.js` | 确认正式 GitHub 仓库后填写 `repo`（`owner/repo`）；部署 Worker 后把 `apiBase` 填成 `https://github.com/catex-lab/opc-agent` |
 | `site/worker/wrangler.toml` | `database_id`（D1 创建后返回）、`STATS_KEY`、`GITHUB_REPO`、`ALLOWED_ORIGIN`、`R2_PUBLIC_BASE` |
-| `electron/analytics.ts` | `TELEMETRY_ENDPOINT` 改成你的 Worker 地址（留空则完全不上报） |
 | `src/components/AboutPanel.tsx` | 顶部四个地址常量（`SITE_URL` / `REPO_URL` / `ISSUES_URL` / `RELEASES_URL`），必须与 `config.js` 一致 |
 
 > 正式 GitHub 仓库地址尚待提供。`repo` 为空时，下载 / GitHub 链接会禁用，不会跳到伪造仓库；更新日志会说明等待配置。取得真实仓库地址后再部署，页面即可启用相关链接。
@@ -152,21 +151,21 @@ Worker 会自动按「最新 Release 的 tag + 资产名」拼出 R2 地址。�
 
 ---
 
-## 7. 打通客户端上报
+## 7. 客户端上报（当前未启用）
 
-改 `electron/analytics.ts` 顶部的常量：
+**A141 已把客户端遥测模块（原 `electron/analytics.ts`）整体删除**，应用不发送任何统计。
+Worker 侧的 `/api/v1/install`、`/api/v1/session/start`、`/api/v1/session/end` 接口仍在
+（见 `worker/src/index.js`），只是**当前没有调用方** —— 看板里「独立安装用户 / DAU / 平均时长」
+这几项会一直是空表，这是预期行为，不是配置错了。
 
-```ts
-const TELEMETRY_ENDPOINT = process.env.OPC_TELEMETRY_URL || 'https://github.com/catex-lab/opc-agent';
-```
+如果要恢复上报，需要先重建客户端模块（含设置页开关与隐私页文案），再接上 Worker 地址。
+**不要以为填个环境变量就生效** —— 旧文档里的 `OPC_TELEMETRY_URL` 现在没有任何消费者。
 
-重新打包安装。用户下次启动时，D1 里就会出现记录。
-
-验证：
+验证下载计数（这条与上报无关，仍然可用）：
 
 ```bash
 cd site/worker
-npx wrangler d1 execute opc-stats --remote --command "SELECT * FROM sessions ORDER BY started_at DESC LIMIT 5"
+npx wrangler d1 execute opc-stats --remote --command "SELECT * FROM downloads ORDER BY at DESC LIMIT 5"
 ```
 
 ---
@@ -208,6 +207,9 @@ publish:
 
 ## 统计口径速查
 
+> ⚠️ 下表除「总下载」外都依赖客户端上报，而客户端上报已在 A141 移除 —— 这些指标当前恒为空，
+> 口径保留供将来恢复时参考。
+
 | 指标 | 含义 | 来源 |
 |------|------|------|
 | 总下载 | 点过 `/d/*` 的次数 | `downloads` 表 |
@@ -230,5 +232,5 @@ publish:
 | 站点更新日志一直转圈 | `config.js` 的 `repo` 不对，或 GitHub API 被限流（Worker 的 `/api/v1/release` 有缓存，配了 `apiBase` 就不受影响） |
 | 下载 404 | `R2_PUBLIC_BASE` 配了但文件没传，或文件名与 GitHub 资产不一致 |
 | 看板一直提示密钥错误 | `STATS_KEY` 含特殊字符被 URL 编码搞坏，换成纯 hex |
-| D1 里没有数据 | `analytics.ts` 的 `TELEMETRY_ENDPOINT` 没改，或 `ALLOWED_ORIGIN` 配错导致 CORS 拦截（Electron 主进程不受 CORS 限制，此项一般不影响上报） |
+| D1 里没有会话数据 | **预期行为** —— 客户端上报已在 A141 移除，应用不发送统计。看板只剩「总下载」（`downloads` 表）有数据 |
 | Worker 报 `no such table` | 建表时漏了 `--remote`，建到了本地库 |

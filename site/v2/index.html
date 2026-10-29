@@ -406,7 +406,7 @@ setTimeout(function(){if(!window.__opcV2Ready)d.classList.remove('js')},2500)})(
       </details>
       <details class="faq reveal">
         <summary><span data-i18n="q4.q">我的聊天内容会被上传吗？</span><span class="faq-plus" aria-hidden="true"></span></summary>
-        <div class="faq-body" data-i18n-html="q4.a"><p>不会。会话、图片、配置全部存在本机数据目录。应用只上报匿名使用统计：随机安装 ID、启动时长、版本号，不含任何聊天内容。设置里可以关闭；为 fork 者预留了 <code>OPC_TELEMETRY_URL</code>，留空即彻底不上报。详见<a href="../privacy.html">隐私说明</a>。</p></div>
+        <div class="faq-body" data-i18n-html="q4.a"><p>不会。会话记录、生成图片、Agent 配置都保存在本机数据目录，不上传任何服务器。</p><p>当前公开构建没有配置统计端点，也不会发送使用统计 —— 代码里不存在遥测模块。详见<a href="../privacy.html">隐私说明</a>。</p></div>
       </details>
       <details class="faq reveal">
         <summary><span data-i18n="q5.q">支持 macOS 或 Linux 吗？</span><span class="faq-plus" aria-hidden="true"></span></summary>

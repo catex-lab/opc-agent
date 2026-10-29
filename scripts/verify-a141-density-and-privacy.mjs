@@ -165,6 +165,10 @@ async function applyProbe(page) {
 
     const patch = () => {
       document.querySelectorAll('[data-about-star]').forEach(el => el.remove());
+      /* 2026-10-29：第三方许可区也一起摘。
+         不摘的话，新加的 6 条断言在探针下依然全绿 —— 就证明不了它们有区分力，
+         而「区块被顺手删掉」正是这 6 条要防的那种退化。 */
+      document.querySelectorAll('[data-about-licenses]').forEach(el => el.remove());
       const host = document.querySelector('[data-about-privacy]');
       if (host && !host.querySelector('.t-switch')) {
         const s = document.createElement('div');
@@ -176,7 +180,7 @@ async function applyProbe(page) {
     patch();
     new MutationObserver(patch).observe(document.body, { childList: true, subtree: true });
   });
-  console.log('  ⚠️ --probe-old：五处改动已退回旧版，下面的断言应当变红\n');
+  console.log('  ⚠️ --probe-old：六处改动已退回旧版，下面的断言应当变红\n');
 }
 
 /** 进入会话（输入区只有选中会话后才渲染） */
@@ -525,6 +529,43 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
   });
   await page.waitForTimeout(250);
   await page.screenshot({ path: join(OUT, PROBE ? 'probe-about.png' : 'about.png') }).catch(() => {});
+
+  /* ── 第三方许可：MIT 署名义务的落点 ──
+     这一块删掉不会有任何功能症状，只有法务意义上少了一条声明。
+     正因为「删了也不报错」，才必须有断言钉住它 —— 否则下一次重构顺手
+     把「关于」页精简掉，没人会发现安装包里的署名义务已经落空。
+     判据按**包名**逐个点名，不按条目数量：数量对而内容错是最常见的假绿。 */
+  const lic = page.locator('[data-about-licenses]');
+  const licCount = await lic.count();
+  ok(licCount === 1, '第三方许可区存在');
+
+  // 用 textContent 而非 innerText：<details> 未展开时 innerText 是空串，
+  // 拿它判会得到「断言通过」而实际什么都没读到（假绿）。
+  const licText = licCount ? await lic.evaluate(el => el.textContent || '') : '';
+  ok(/第三方许可/.test(licText), '标题写明「第三方许可」');
+  ok(/不在本项目的 MIT 范围内/.test(licText), '说明这些组件不在本项目 MIT 范围内');
+
+  const REQUIRED_PKGS = ['Electron', '@tencent-ai/agent-sdk', 'express', 'node-pty', 'uuid', 'typescript'];
+  const missingPkgs = REQUIRED_PKGS.filter(n => !licText.includes(n));
+  ok(missingPkgs.length === 0, '六个随包分发的组件都点名了', missingPkgs.join(', ') || '全部在列');
+
+  const missingLic = ['MIT', 'Apache-2.0'].filter(l => !licText.includes(l));
+  ok(missingLic.length === 0, '标注了实际许可类型（MIT / Apache-2.0）', missingLic.join(', ') || '都有');
+  ok(/THIRD-PARTY-LICENSES\.txt/.test(licText), '指向含传递依赖的完整清单文件');
+
+  /* 单独留一张评审图：这一区在页面最底部，about.png（滚回顶部那张）拍不到它。
+     展开后再拍 —— 折叠状态下只能看到一个 summary，看不出条目排版是否正常。 */
+  if (licCount === 1) {
+    await lic.evaluate(el => {
+      el.open = true;
+      el.scrollIntoView({ block: 'center' });
+    });
+    await page.waitForTimeout(300);
+    await page
+      .screenshot({ path: join(OUT, PROBE ? 'probe-about-licenses.png' : 'about-licenses.png') })
+      .catch(() => {});
+  }
+
   ok(errors.length === 0, '控制台无错误', errors.length ? JSON.stringify(errors.slice(0, 2)) : '');
   await ctx.close();
 }

@@ -108,6 +108,10 @@ npm run verify:package # 打包产物逐字节核对
 `src/assets/agent-logos/` 下的图标是各 Agent 厂商的商标，**不在 MIT 范围内**，
 详见 [TRADEMARKS.md](./TRADEMARKS.md)。
 
+安装包里打进去的第三方组件（Electron、express、node-pty 等）各自适用自己的许可，
+完整清单见 [THIRD-PARTY-LICENSES.txt](./THIRD-PARTY-LICENSES.txt)，
+应用内「设置 → 关于与隐私 → 第三方许可」也能看到主要组件。说明见 [THIRD-PARTY.md](./THIRD-PARTY.md)。
+
 ## 安全
 
 漏洞请走私密报告通道，不要开公开 issue。详见 [SECURITY.md](./SECURITY.md)。
