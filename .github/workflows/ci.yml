@@ -1,0 +1,55 @@
+name: CI
+
+# 只做「不依赖本机环境」的检查：类型 + 纯函数/静态断言。
+#
+# 仓库里那套 verify:ui 主链是**故意不进 CI 的** —— 它用 Playwright 驱动本机
+# Chrome 打开真实页面、用真实鼠标坐标点击自证命中，需要一台装好 Chrome 且
+# 装着各 Agent CLI 的机器。CI runner 上跑它，红的大概率是环境不是代码。
+#
+# 所以这里守的是「别人 clone 下来能不能编译、核心逻辑对不对」，
+# 完整验收仍在开发机上跑 `npm run verify:ui`。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: 检查（${{ matrix.os }}）
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # --ignore-scripts 跳过 electron 二进制下载与 node-pty 的 node-gyp 编译。
+      # 类型检查只需要 .d.ts，不需要真的能跑起来 —— 这样 CI 不必装 build tools，
+      # 也不会因为下载 100MB 的 Electron 而拖到十几分钟。
+      - name: 安装依赖
+        run: npm ci --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+          npm_config_registry: https://registry.npmjs.org/
+
+      - name: 类型检查
+        run: npx tsc -b
+
+      - name: 设计令牌与控件尺寸棘轮
+        run: npm run verify:uiux-tokens
+
+      - name: 模型目录与 Agent 定义一致性
+        run: npm run verify:model-catalog
