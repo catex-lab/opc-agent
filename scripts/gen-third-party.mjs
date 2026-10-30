@@ -101,6 +101,87 @@ function copyrightOf(dir, pkg) {
 }
 
 /**
+ * 内嵌子包的判据（两条，缺一不可）：
+ *   ① 目录里有自己的 `package.json`，且 `name` 与父包不同；
+ *   ② 这个 name 必须是**合法的独立包名** —— 能装进 npm 的那种。
+ *
+ * 为什么要有 ②：早期 npm 包会用路径当子模块名，`dom-helpers/activeElement`、
+ * `react-transition-group/CSSTransition` 都有 `package.json` 且 name 与父包不同，
+ * 但它们只是父包的一个文件，不是独立组件。把它们列进来等于**编造组件**，
+ * 比漏记更糟（清单的可信度是一次性的）。
+ *
+ * 另外排除 benchmark / test / dist 这类附属目录：`fast-uri` 里就有个
+ * `benchmark/package.json`（name 叫 `benchmark`、ISC），那是包自带的压测脚本，
+ * 不随运行时使用。
+ *
+ * 本项目遇上的第一个实例：`@tencent-ai/agent-sdk` 里塞了整套 CodeBuddy CLI
+ * （`cli/`，SDK 运行时会 spawn 它），其 `package.json` 是
+ * `@tencent-ai/codebuddy-code`，许可字段 `SEE LICENSE IN README.md`。
+ * 跳过 `node_modules`：那里是嵌套依赖，已由 `npm ls --all` 覆盖，重复列出会双计。
+ */
+const VALID_PKG_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
+const NON_PACKAGE_DIRS = new Set([
+  'benchmark', 'benchmarks', 'bench', 'example', 'examples', 'sample', 'samples',
+  'test', 'tests', '__tests__', 'spec', 'specs', 'docs', 'doc', 'scripts', 'build',
+  'dist', 'coverage', 'demo', 'demos', 'fixture', 'fixtures', 'tools', 'site', 'website',
+]);
+
+function nestedPackages(dir, parentName) {
+  const out = [];
+  const walk = (d, depth) => {
+    if (depth > 2) return;
+    let entries;
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (!e.isDirectory() || e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      if (NON_PACKAGE_DIRS.has(e.name.toLowerCase())) continue;
+      const sub = join(d, e.name);
+      const pj = join(sub, 'package.json');
+      if (existsSync(pj)) {
+        let pkg = null;
+        try {
+          pkg = JSON.parse(readFileSync(pj, 'utf8'));
+        } catch {
+          pkg = null; // 坏 json 当作不是组件，继续往下找
+        }
+        if (pkg && pkg.name && pkg.name !== parentName && VALID_PKG_NAME.test(pkg.name)) {
+          out.push({
+            dir: sub,
+            name: pkg.name,
+            version: pkg.version || '?',
+            license: licenseOf(pkg),
+            note: danglingLicenseNote(sub, pkg),
+          });
+          continue; // 子包内部不再拆
+        }
+      }
+      walk(sub, depth + 1);
+    }
+  };
+  walk(dir, 1);
+  return out;
+}
+
+/**
+ * `SEE LICENSE IN README.md` 这类声明要验证目标文件真在包里。
+ *
+ * 不验证就会把「许可见某文件」原样抄进清单，而那个文件根本不存在 —— 清单看起来
+ * 齐全，实际拿不到条款。这条不是为某个包写死的：任何包只要许可字段是这种形式
+ * 就适用。
+ */
+function danglingLicenseNote(dir, pkg) {
+  const m = /^SEE LICEN[CS]E IN (\S+)$/i.exec(licenseOf(pkg));
+  if (!m) return '';
+  const target = join(dir, m[1]);
+  if (existsSync(target)) return '';
+  return `⚠️ 该子包声明「许可见 ${m[1]}」，但 ${m[1]} 未随包提供 —— 许可条款无法从包内查证`;
+}
+
+/**
  * Electron 运行时不在 `npm ls --omit=dev` 里（它是 devDependency），
  * 但它**确实**随安装包分发 —— electron-builder.yml 的 `electronDist` 直接指向
  * node_modules/electron/dist，最终变成 exe 里的 Chromium。
@@ -218,6 +299,7 @@ function add(dir, pkg, origin) {
     license: licenseOf(pkg),
     copyright: copyrightOf(dir, pkg),
     origin,
+    nested: nestedPackages(dir, pkg.name),
   });
 }
 
@@ -269,6 +351,10 @@ const lines = [
   '不在此列的：vite / tailwindcss / electron-builder / tsx / playwright-core 等',
   '纯构建与测试工具 —— 它们只在开发机上运行，产物里没有它们的代码。',
   '',
+  '另有一类容易漏的：某个包里自带一整套独立组件（有自己的 package.json 与',
+  '许可字段），打包时跟着父包一起进安装包。它们列在各自父包的「内嵌子包」下，',
+  '许可与署名按**它自己的**声明算，不能只记父包。',
+  '',
   `组件数：${list.length}　许可分布：${summary}`,
   '',
   '许可全文：各组件在自己的 npm 包里随附 LICENSE 文件，npm 公开源可下载。',
@@ -284,6 +370,14 @@ for (const p of list) {
   lines.push(`  许可：${p.license}`);
   lines.push(`  版权：${p.copyright || '（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）'}`);
   lines.push(`  来源：${p.origin}`);
+  // 内嵌子包是随包分发的一部分，署名义务按它自己的声明算 —— 必须跟着父包一起列。
+  if (p.nested && p.nested.length) {
+    lines.push('  内嵌子包（随父包一起进安装包，许可按各自的声明）：');
+    for (const n of p.nested) {
+      lines.push(`    ${n.name} ${n.version} —— 许可：${n.license}`);
+      if (n.note) lines.push(`      ${n.note}`);
+    }
+  }
   lines.push('');
 }
 

@@ -112,6 +112,14 @@ const LINKS = [
 const THIRD_PARTY = [
   { name: 'Electron', license: 'MIT', holder: 'Electron contributors（运行时含 Chromium）' },
   { name: '@tencent-ai/agent-sdk', license: 'MIT', holder: 'Tencent' },
+  // 内嵌在上一行那个包里：SDK 运行时会把整套 CLI 当子进程拉起来，它有自己的
+  // package.json，许可字段写的是「SEE LICENSE IN README.md」—— 而那个 README
+  // 并没有随包发布。如实列出来，别让「父包是 MIT」替它签字。
+  {
+    name: '@tencent-ai/codebuddy-code',
+    license: '见 README',
+    holder: 'Tencent —— 内嵌于上一行，其 README 未随包提供',
+  },
   { name: 'express', license: 'MIT', holder: 'TJ Holowaychuk 等贡献者' },
   { name: 'node-pty', license: 'MIT', holder: 'Christopher Jeffrey / Microsoft' },
   { name: 'uuid', license: 'MIT', holder: 'Robert Kieffer 等贡献者' },

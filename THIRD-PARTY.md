@@ -24,7 +24,7 @@
 | 包 | 许可 | 说明 |
 |---|---|---|
 | `electron` | MIT | 桌面壳。运行时内含 Chromium 及其依赖，完整声明见 Electron 发行包内的 `LICENSES.chromium.html` |
-| `@tencent-ai/agent-sdk` | MIT | 腾讯 CodeBuddy Agent SDK。**注意**：npm 元数据声明 MIT，但包内未随附 LICENSE 文件 |
+| `@tencent-ai/agent-sdk` | MIT | 腾讯 CodeBuddy Agent SDK。**注意**：npm 元数据声明 MIT，但包内未随附 LICENSE 文件；它还内嵌了一整套 CodeBuddy CLI（许可声明缺失），见下文「安装包里内嵌的第三方 CLI」 |
 | `express` | MIT | 内联后端的 HTTP 框架 |
 | `node-pty` | MIT | 终端 PTY |
 | `uuid` | MIT | UUID 生成 |
@@ -49,6 +49,39 @@
 
 自己从源码构建时 `npm install` 会装上它们，SDK 通道与 plan 模式都可用 ——
 **这仍然受 Qoder 服务条款约束，请自行确认你的使用方式符合其条款。**
+
+条款侧的事实（2026-04-29 版全文读过，不是猜的）：通篇**没有出现 "SDK" 或 "CLI"**，
+所以不存在针对再分发的专门条款；但 **4.2** 的授权是
+`non-transferable, non-sublicensable`（不可转让、不可再许可），**3.2.12** 禁止
+「用其服务或输出去开发功能相似的产品」。本项目**不分发**这两个包，因此不涉及再许可；
+剩下的只是「我们调用它」这一层 —— 条款既未明示允许也未明示禁止。要一个确定答案的话，
+写 <contact@qoder.com>。
+
+## 安装包里内嵌的第三方 CLI
+
+`@tencent-ai/agent-sdk` 不只是一个 SDK —— 它内部塞了整套 **CodeBuddy CLI**
+（`cli/`，SDK 运行时会把它当子进程拉起来，路径解析写死在 `lib/utils/cli-resolver.js`）。
+这个子包有自己的 `package.json`：
+
+| 字段 | 值 |
+|---|---|
+| name / version | `@tencent-ai/codebuddy-code` 2.167.0 |
+| license | `SEE LICENSE IN README.md` |
+| 包里真的有 `README.md` 吗 | **没有** |
+
+也就是说：外层包在 npm 元数据里声明 MIT，内嵌的 CLI 子包自述「许可见 README.md」，
+而那个 README 并没有随包发布 —— **许可条款无法从包内查证**。
+
+本项目没有改动它的任何文件，只是原样打包（`electron-builder.yml` 的 `asarUnpack`
+把它解出来，因为它要作为子进程执行）。这条如实记在
+[THIRD-PARTY-LICENSES.txt](./THIRD-PARTY-LICENSES.txt) 的「内嵌子包」段。
+
+在意这一点的话，有两个办法：
+
+1. 向腾讯（CodeBuddy）索取该子包的许可说明；
+2. 不打包内置 CLI —— SDK 支持 `CODEBUDDY_CODE_PATH` 环境变量，且**优先级高于**
+   内置 CLI（解析顺序：环境变量 → 内置 `cli/` → monorepo 开发路径）。指向本机
+   已装的 `codebuddy` 即可，代价是安装包不再开箱即用。
 
 ## 字体与图标
 
