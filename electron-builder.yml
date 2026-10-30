@@ -32,6 +32,11 @@ files:
   - '!**/*.tsbuildinfo'
   - '!**/{CHANGELOG.md,README.md,readme.md,LICENSE,LICENSE.md}'
   - '!**/{.github,.vscode,__tests__,test,tests,example,examples,docs}/**'
+  # 2026-10-30：@tencent-ai/agent-sdk 内嵌的 CLI（cli/）许可声明缺失
+  #（package.json 写 "SEE LICENSE IN README.md" 但 README 未随包发布），
+  # 因此从安装包里排除，改由用户自行安装 codebuddy CLI。
+  # SDK 本体 lib/（MIT）保留；运行时通过 CODEBUDDY_CODE_PATH 指向本机 CLI。
+  - '!node_modules/@tencent-ai/agent-sdk/cli/**'
 
 # ── Electron 运行时来源 ────────────────────────────────────────────────────
 # 默认流程是：下载 electron zip → 解压到 <out>/win-unpacked.tmp
@@ -51,12 +56,9 @@ electronDist: node_modules/electron/dist
 asar: true
 
 asarUnpack:
-  # SDK 用 `path.resolve(__dirname, '../../cli/bin/codebuddy')` 定位自带的 CLI。
-  # asar 归档内的文件无法作为子进程执行，必须解包到 app.asar.unpacked/ 下。
-  - node_modules/@tencent-ai/agent-sdk/**
-  # node-pty（PTY 终端）同理，而且更严格：`.node` 是原生模块，**留在 asar 里
-  # 根本加载不了**；它还要 spawn `winpty-agent.exe`、加载 `conpty.dll` /
-  # `OpenConsole.exe` —— 全都要能当真实文件访问。
+  # node-pty（PTY 终端）是原生模块，`.node` 留在 asar 里根本加载不了；
+  # 它还要 spawn `winpty-agent.exe`、加载 `conpty.dll` / `OpenConsole.exe`
+  # —— 全都要能当真实文件访问。
   #
   # 用的是包里自带的 `prebuilds/win32-x64/*.node`（N-API，ABI 稳定，Electron
   # 直接能加载，已实测），所以**不需要**原生重建，nodeGypRebuild 保持 false。

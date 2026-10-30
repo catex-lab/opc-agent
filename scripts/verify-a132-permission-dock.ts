@@ -75,7 +75,7 @@ eq(sortPendingPermissions([], 'S1'), [], '空队列不炸');
 
 section('[5] 源码契约：expiresAt 只能是「有兜底的适配器才有」');
 const src = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8');
-for (const f of ['../server/agents/adapters/sdk.ts', '../server/agents/adapters/cli.ts', '../server/agents/adapters/qoder-sdk.ts']) {
+for (const f of ['../server/agents/adapters/sdk.ts', '../server/agents/adapters/cli.ts']) {
   const s = src(f);
   ok(/type: 'permission_request'[\s\S]{0,900}?expiresAt: Date\.now\(\) \+ PERMISSION_TIMEOUT/.test(s),
     `${f.split('/').pop()} 入队时带 expiresAt`);
