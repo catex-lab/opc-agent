@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loading, MessagePlugin } from 'tdesign-react';
-import { Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, Sparkles, TextSelect, Image as ImageIcon } from 'lucide-react';
+import { Brain, Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, TextSelect, Image as ImageIcon } from 'lucide-react';
 import { Message, Model, RegisteredAgent, Block, ThinkingBlock, ToolBlock } from '../types';
 import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
-import { ProcessFlow } from './ProcessFlow';
 import { BackgroundTasksPill } from './BackgroundTasksPill';
 import { useBackgroundTasks } from '../hooks/useBackgroundTasks';
 import { formatHandledDuration, hasFileEdits, lingeringToolBlocks } from '../../shared/trace';
@@ -43,10 +42,11 @@ function useElapsed(startedAt: number | undefined, active: boolean): number | nu
 }
 
 /**
- * 思考块（方案 A：左细线铺开）。
+ * 思考块。
  *
  * 「原 Agent 给什么，前端就展示什么」—— 三种能力状态必须长得不一样：
- *   raw      完整推理链，正文沿左细线铺开；
+ *   raw      完整推理链，正文收在浅灰圆角卡片里（2026-10-30 起，改版：
+ *            不再是左细线铺开，灰卡把「这是过程」与答案正文分开）；
  *   summary  只有厂商摘要，挂「摘要」角标（不标就会让人以为看到了完整思维链）；
  *   未提供   根本不渲染 —— 本组件只在存在 thinking 块时被调用。
  *
@@ -88,7 +88,7 @@ function ThinkingView({
         {streaming ? (
           <Loading size="small" />
         ) : (
-          <Sparkles size={13} style={{ flexShrink: 0 }} />
+          <Brain size={13} style={{ flexShrink: 0 }} />
         )}
         <span className="tc-think-title">{streaming ? '思考中' : '思考'}</span>
         {streaming ? (
@@ -1259,14 +1259,14 @@ export function ChatMessages({
    * 但还没有正文」的消息起作用（正在思考的那条另由 block.state 决定）。
    *
    * `hasAnswer`：这条消息里已经有正文回答（最后一个工具之后的那段文本）。它一旦
-   * 成立，**答案之前的整段过程**（思考 + 中途旁白 + 轨迹条）会被 A149 的
-   * `ProcessFlow` 收成一行，屏幕上只剩答案。
+   * 成立，答案之前的思考块与轨迹条各自收起（ThinkingView / AgentTrace 的
+   * auto-collapse），把版面让给答案。
    * 刻意**不**看 `message.isStreaming`：一轮结束后答案还在，过程也不该重新铺开
    * （否则每轮收尾都会「哗」地展开一片）。
    *
-   * A149 的分段：`answerStartIdx` 之前的块 → 过程流；从它开始的块 → 答案。
-   * 没有答案（还在流、或纯工具轮）时不包 `ProcessFlow`，照旧平铺 —— 此刻
-   * 过程就是正文，多套一层折叠条反而多一次点击。
+   * 过程与答案同一平面（2026-10-30，改版）：`answerStartIdx` 之前的块
+   * （思考 / 中途旁白 / 轨迹条）与答案**直接平铺**，不再有总收起条、导轨或
+   * 分隔线；旁白与答案同字号同档，过程块各自管自己的折叠。
    */
   const renderAssistantContent = (message: Message, defaultOpen = false) => {
     // 失败原因。后端会把真实错误（未登录 / 网络不可达 / 退出码）带上来，
@@ -1312,9 +1312,13 @@ export function ChatMessages({
     })();
     const hasAnswer = answerStartIdx >= 0;
 
-    /** 落在答案起点之后的进答案区，其余进过程区 */
+    /** 落在答案起点之后的进答案区，其余进过程区（直接平铺，不再套壳） */
     const push = (idx: number, node: React.ReactNode) => {
-      (hasAnswer && idx >= answerStartIdx ? answerNodes : processNodes).push(node);
+      if (hasAnswer && idx >= answerStartIdx) {
+        answerNodes.push(node);
+        return;
+      }
+      processNodes.push(node);
     };
 
     let i = 0;
@@ -1356,23 +1360,9 @@ export function ChatMessages({
       }
     }
 
-    // 没有答案：全部平铺（此刻过程就是正文，不该再套一层折叠）
-    if (!hasAnswer) {
-      return (
-        <>
-          {processNodes}
-          {errorBlock}
-        </>
-      );
-    }
-
     return (
       <>
-        {processNodes.length > 0 && (
-          <ProcessFlow blocks={blocks.slice(0, answerStartIdx)} hasAnswer>
-            {processNodes}
-          </ProcessFlow>
-        )}
+        {processNodes}
         {answerNodes}
         {errorBlock}
       </>

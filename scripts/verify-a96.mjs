@@ -16,7 +16,6 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
-import { openAllProcess } from './lib/process-flow.mjs';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
@@ -138,9 +137,6 @@ await ctx.route('**/api/**', async route => {
 await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
 await page.waitForTimeout(1000);
 
-/* A149：有答案的消息，整段过程（含轨迹）默认收在 ProcessFlow 里、子节点卸载。
-   先展开过程流，再按原口径展开轨迹。 */
-await openAllProcess(page);
 // 完成态默认收起，先展开轨迹
 const bar = page.locator('[data-steps-bar]').first();
 await bar.click();

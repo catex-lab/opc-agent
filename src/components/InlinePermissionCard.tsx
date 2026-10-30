@@ -43,20 +43,18 @@ export const FALLBACK_OPTIONS: PermissionOption[] = [
 ];
 
 // 工具名称到图标和颜色的映射
-// 颜色走 index.css 的 --tool-color-* 语义变量（腾讯调色板），
-// 与 ToolCallsCollapse 里的分类色保持一一对应，避免同一工具
-// 在「气泡里」和「权限卡里」显示成两种颜色。
+// 单色化（2026-10-30）：与过程流同口径，图标一律 secondary 灰，不再按工具分类上色。
 export const TOOL_CONFIG: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
-  'Bash': { icon: <Terminal />, color: 'var(--tool-color-danger)', label: '执行命令' },
-  'Write': { icon: <PencilLine />, color: 'var(--tool-color-file)', label: '写入文件' },
-  'Edit': { icon: <PencilLine />, color: 'var(--tool-color-file)', label: '编辑文件' },
-  'Read': { icon: <File />, color: 'var(--tool-color-shell)', label: '读取文件' },
-  'ReadFile': { icon: <File />, color: 'var(--tool-color-shell)', label: '读取文件' },
-  'ListDir': { icon: <FolderOpen />, color: 'var(--tool-color-file)', label: '列出目录' },
-  'Search': { icon: <Search />, color: 'var(--tool-color-search)', label: '搜索' },
-  'Grep': { icon: <Search />, color: 'var(--tool-color-search)', label: '文本搜索' },
-  'Delete': { icon: <Trash2 />, color: 'var(--tool-color-danger)', label: '删除文件' },
-  'DeleteFile': { icon: <Trash2 />, color: 'var(--tool-color-danger)', label: '删除文件' },
+  'Bash': { icon: <Terminal />, color: 'var(--td-text-color-secondary)', label: '执行命令' },
+  'Write': { icon: <PencilLine />, color: 'var(--td-text-color-secondary)', label: '写入文件' },
+  'Edit': { icon: <PencilLine />, color: 'var(--td-text-color-secondary)', label: '编辑文件' },
+  'Read': { icon: <File />, color: 'var(--td-text-color-secondary)', label: '读取文件' },
+  'ReadFile': { icon: <File />, color: 'var(--td-text-color-secondary)', label: '读取文件' },
+  'ListDir': { icon: <FolderOpen />, color: 'var(--td-text-color-secondary)', label: '列出目录' },
+  'Search': { icon: <Search />, color: 'var(--td-text-color-secondary)', label: '搜索' },
+  'Grep': { icon: <Search />, color: 'var(--td-text-color-secondary)', label: '文本搜索' },
+  'Delete': { icon: <Trash2 />, color: 'var(--td-text-color-secondary)', label: '删除文件' },
+  'DeleteFile': { icon: <Trash2 />, color: 'var(--td-text-color-secondary)', label: '删除文件' },
 };
 
 // 获取工具配置

@@ -466,11 +466,6 @@ select:focus-visible {
   /* 需要「明确可点」的控件（次要按钮、可交互卡片）用这一档 7%。
      再淡下去按钮就没有轮廓了，键盘用户会失去「这是一个控件」的线索。 */
   --tc-edge-strong: rgb(0 0 0 / 0.07);
-  /* 竖向引用线（quote bar / left rule）。
-     比 --tc-edge-strong（7%）重、又明显轻于正文 —— 它只负责「把思考正文
-     和答案隔开一条缝」，不是一根描边。18% 是实测值：再淡整条线在 800px 宽的
-     消息列里会被看成不存在，正文就失去「缩进归属于思考」的线索。 */
-  --tc-rule: rgb(0 0 0 / 0.18);
   /* 内高光：贴在浮起面的顶边，1px 白。它是「厚度」而不是「描边」——
      上亮下暗，读起来是一块被光打到的面；四边等亮就成了线框。 */
   --tc-bevel: inset 0 1px 0 rgb(255 255 255 / 0.7);
@@ -658,13 +653,6 @@ select:focus-visible {
    * 4.5% 白在 #121212 上几乎不可见，5.5% 才勉强顶得住。 */
   --tc-edge: rgb(255 255 255 / 0.055);
   --tc-edge-strong: rgb(255 255 255 / 0.085);
-  /* 竖向引用线（深色）。深色下低 alpha 的白容易「被吃掉」，所以比浅色
-     的 18% 提到 20%。
-     上限是 20% 不是随便挑的：verify:surface 的边线审计规定「非品牌色的
-     可见边线 alpha 必须 ≤ 0.21」—— 超过就会读成第二套版面分割线，和
-     --tc-edge-strong（8.5%）拉开的层级反而变成噪音。24% 实测能过肉眼，
-     但审计会把它判成强度失控，所以收在这一档。 */
-  --tc-rule: rgb(255 255 255 / 0.2);
   /* 内高光在深色下要很克制：4.5% 白。再亮就是一圈发光的顶边，
    * 深色界面里会显得「塑料感」。 */
   --tc-bevel: inset 0 1px 0 rgb(255 255 255 / 0.045);
@@ -3363,18 +3351,17 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   background-color: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
 }
 
-/* 正文：左细线 + secondary。特异性写成两个类 + 一个类，
-   压过上面 `.tc-thinking > div`（单类 + 元素）的 italic/placeholder 规格。
-   A149：字号从 13px 抬到 `--text-body-lg`(14px) —— 与答案正文**同档**。
-   改之前过程流比答案小一号，用户读过程时眼睛要重新适应一次；
-   层级已经由「左细线 + secondary 色 + 折叠」三重表达，不需要再靠字号压。 */
+/* 正文：浅灰圆角卡片 + secondary（2026-10-30 改版：取代左细线）。
+   特异性写成两个类 + 一个类，压过上面 `.tc-thinking > div`（单类 + 元素）
+   的 italic/placeholder 规格。字号 `--text-body-lg`(14px) —— 与答案正文**同档**：
+   层级由「灰卡 + secondary 色 + 折叠」三重表达，不再靠字号压。 */
 .tc-thinking.tc-think > .tc-think-body {
-  padding-left: 13px;
-  border-left: 2px solid var(--tc-rule);
+  padding: 8px 12px;
+  border-radius: 8px;
   font-size: var(--text-body-lg);
   line-height: 1.75;
   font-style: normal;
-  background-color: transparent;
+  background-color: var(--td-bg-color-secondarycontainer);
   color: var(--td-text-color-secondary);
 }
 
@@ -4585,108 +4572,10 @@ html[data-opc-glass='1'] t-chat-sender {
 
 @media (prefers-reduced-motion: reduce) {
   .tc-trace-fold,
-  .tc-trace-fold[data-fold='0'],
-  .tc-proc-fold,
-  .tc-proc-fold[data-fold='0'] {
+  .tc-trace-fold[data-fold='0'] {
     animation: none;
     transition: none;
   }
-}
-
-/* ── A149：过程流折叠区 ────────────────────────────────────────────────
- *
- * 「答案之前那一整段」（思考 + 中途旁白 + 轨迹条）收成一行。结构：
- *
- *   .tc-proc
- *     .tc-proc-bar        ← 收起时屏幕上唯一的痕迹
- *     .tc-proc-fold       ← 折叠动画外壳（grid-template-rows 0fr ↔ 1fr）
- *       .tc-proc-fold-inner
- *         .tc-proc-body   ← 子节点纵向排布
- *
- * 折叠手法与 `.tc-trace-fold` 完全一致（先挂住再卸，见 AgentTrace 的注释），
- * 只是另起一套类名：两条链路将来节奏可能分开调，共用一个类名会互相牵连。
- */
-.tc-proc {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-/* 汇总行：与 `.tc-steps-bar` 同一套几何（2px 内边距 + 6px 圆角 + hover 底色），
-   但类名独立 —— 多条闸门按 `[data-steps-bar]` 数「轨迹条」的条数，共用会让
-   那个计数凭空多出一条。 */
-.tc-proc-bar {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  align-self: flex-start;
-  padding: 2px 8px 2px 2px;
-  border-radius: 6px;
-  font-size: var(--text-secondary);
-  line-height: var(--leading-normal);
-  color: var(--td-text-color-placeholder);
-  cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-tencent);
-}
-
-.tc-proc-bar:hover {
-  background-color: var(--tc-hover-chrome);
-}
-
-.tc-proc-label {
-  flex-shrink: 0;
-  font-weight: 500;
-  color: var(--td-text-color-secondary);
-}
-
-/* 摘要里的「思考 3 段 · 工具 7 步 · 3m50s」：一行放不下就省略，
-   绝不换行 —— 收起状态下它是整块过程唯一的信息，撑成两行会比答案还重。 */
-.tc-proc-summary {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.tc-proc-fold {
-  display: grid;
-  grid-template-rows: 1fr;
-  animation: tc-fold-in 200ms var(--ease-tencent) both;
-}
-
-.tc-proc-fold[data-fold='0'] {
-  grid-template-rows: 0fr;
-  opacity: 0;
-  animation: none;
-  transition:
-    grid-template-rows 200ms var(--ease-tencent),
-    opacity 140ms linear;
-}
-
-.tc-proc-fold-inner {
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* 子节点统一 8px 间距，并把它们自带的纵向外边距清零 ——
-   思考块带 `mb-2`(8px)、轨迹带 `margin: 8px 0`，不清零的话间距会变成
-   8+8=16px 的「双层」，越往下越散。 */
-.tc-proc-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 2px 0 4px;
-}
-
-.tc-proc-body > .tc-trace {
-  margin: 0;
-}
-
-.tc-proc-body > .tc-thinking {
-  margin-bottom: 0;
 }
 
 /* 轨迹滚动区。
@@ -4829,15 +4718,16 @@ html[data-opc-glass='1'] t-chat-sender {
   font-variant-numeric: tabular-nums;
 }
 
-/* 正文：正体 secondary + 2px 左细线。
+/* 正文：浅灰圆角卡片 + 正体 secondary（2026-10-30 改版，与消息级
+   思考同一形态）。
    选择器写成「两个类 + 一个类」，压过 `.tc-thinking > div`（单类 + 元素）
    那套 12px 斜体 placeholder + 3% 底的老规格 —— 不靠 !important。
-   A149：12.5px → `--text-body-lg`(14px)，与答案正文同档（理由同方案 A 那条）。 */
+   字号 `--text-body-lg`(14px)，与答案正文同档。 */
 .tc-thinking.tc-think-note > .tc-think-note-body {
   margin: 0 0 2px;
-  padding: 1px 0 1px 11px;
-  border-left: 2px solid var(--tc-rule);
-  background-color: transparent;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background-color: var(--td-bg-color-secondarycontainer);
   font-family: inherit;
   font-size: var(--text-body-lg);
   font-style: normal;
