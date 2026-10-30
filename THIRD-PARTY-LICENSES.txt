@@ -13,6 +13,10 @@ OPC Agent — 随安装包分发的第三方组件许可清单
 不在此列的：vite / tailwindcss / electron-builder / tsx / playwright-core 等
 纯构建与测试工具 —— 它们只在开发机上运行，产物里没有它们的代码。
 
+另有一类容易漏的：某个包里自带一整套独立组件（有自己的 package.json 与
+许可字段），打包时跟着父包一起进安装包。它们列在各自父包的「内嵌子包」下，
+许可与署名按**它自己的**声明算，不能只记父包。
+
 组件数：262　许可分布：MIT × 227 · BSD-2-Clause × 12 · ISC × 9 · Apache-2.0 × 6 · BSD-3-Clause × 6 · (MPL-2.0 OR Apache-2.0) × 1 · 0BSD × 1
 
 许可全文：各组件在自己的 npm 包里随附 LICENSE 文件，npm 公开源可下载。
@@ -185,6 +189,9 @@ OPC Agent — 随安装包分发的第三方组件许可清单
   许可：MIT
   版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
   来源：后端依赖（原样进 app.asar）
+  内嵌子包（随父包一起进安装包，许可按各自的声明）：
+    @tencent-ai/codebuddy-code 2.167.0 —— 许可：SEE LICENSE IN README.md
+      ⚠️ 该子包声明「许可见 README.md」，但 README.md 未随包提供 —— 许可条款无法从包内查证
 
 @tootallnate/once 2.0.1
   许可：MIT

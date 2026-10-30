@@ -558,6 +558,9 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
     'Electron', '@tencent-ai/agent-sdk', 'express', 'node-pty', 'uuid', 'typescript',
     'react / react-dom', 'tdesign-react', '@tdesign-react/chat',
     'lucide-react', 'react-router-dom', '@xterm/xterm',
+    // 内嵌在 agent-sdk 里的 CodeBuddy CLI：它有自己的许可声明（且声明指向一个
+    // 没随包发布的 README），不能因为父包是 MIT 就不列。
+    '@tencent-ai/codebuddy-code',
   ];
   const missingPkgs = REQUIRED_PKGS.filter(n => !licText.includes(n));
   ok(missingPkgs.length === 0, '两类随包分发的组件都点名了（后端依赖 + 前端打包）', missingPkgs.join(', ') || `全部 ${REQUIRED_PKGS.length} 个在列`);
