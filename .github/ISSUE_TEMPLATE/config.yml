@@ -1,0 +1,10 @@
+# 不提供空白 issue —— 上面的两个表单已经把「版本号、系统、复现步骤」这些
+# 必须的信息问到了。空白 issue 最后总是要来回追问三轮才能开始看。
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞（私密报告）
+    url: https://github.com/catex-lab/opc-agent/security/advisories/new
+    about: 请不要开公开 issue。详见 SECURITY.md
+  - name: 使用与构建文档
+    url: https://github.com/catex-lab/opc-agent/blob/main/DEVELOPMENT.md
+    about: 构建、跑测试、打包的步骤

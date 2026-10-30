@@ -1,0 +1,44 @@
+name: 功能建议
+description: 提出新功能，或说明现有功能哪里不好用
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        讲清楚「你想解决什么问题」比直接给方案更有用 —— 场景描述清楚了，实现方式往往有好几种，
+        而方案先定下来容易把讨论带偏。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题
+      description: 描述你遇到的实际场景，不要一上来就写「请加一个 XX 按钮」
+      placeholder: |
+        我在三个项目之间来回切，每次切都要手动把工作目录改一遍。
+        希望能记住每个项目上次用的目录。
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: 现在是怎么做的
+      description: 你目前的绕行方案，或者为什么现有功能不够用
+    validations:
+      required: false
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你设想的做法（可选）
+      description: 有想法就写，没有也没关系
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 参考截图、相关 issue 编号
+    validations:
+      required: false

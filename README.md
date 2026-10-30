@@ -4,6 +4,10 @@
 
 本机多 Agent 团队协作桌面应用 —— 把本机安装的各类 Agent 当作通讯录里的联系人，可以单聊，也可以拉群分派任务。
 
+![单聊界面](docs/screenshots/02-chat.png)
+
+*Agent 的读取、执行、搜索过程折叠成一行「过程」，点开是全部细节；上面是答案正文。*
+
 ## 它解决什么问题
 
 本机往往同时装着好几个 Agent CLI（Claude Code、Codex、Gemini、Cursor……），每个都有自己的会话与上下文。想让它们在同一个人物里接力或分工，过去只能手动复制粘贴结果。
@@ -22,6 +26,10 @@ OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个�
 - **项目视图** —— 任务面板与项目维度归档
 - **四层记忆** —— 会话 / 用户 / 项目 / 全局，各自独立作用域
 
+![群聊界面](docs/screenshots/03-group.png)
+
+*把几个 Agent 拉进同一个群，任务按人分派，各自带着自己的模型与耗时回复。*
+
 ## 内置 Agent
 
 共 16 条接入定义：
@@ -31,9 +39,35 @@ OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个�
 | WorkBuddy | Codex | Gemini | OpenCode |
 | Claude Code | Hermes | Cursor | Qoder |
 | Qoder CN | 豆包 | ZCode | Kimi |
-| Pi | Antigravity CLI | Kimi Code CLI | Trae |
+| Pi | Antigravity CLI | Kimi Code CLI | Trae（暂时下架） |
 
 探测方式是**白名单**：只认这 16 条定义里写死的命令名，在 `PATH` 与各自约定目录里查找可执行文件。名单外的 CLI 即使装了也不会被自动发现 —— 这是刻意的，避免把 IDE 的图形启动器误判成 CLI。
+
+> Trae 目前下架：只认 `traecli`（企业版），IDE 自带的 `trae-cn` 是 VS Code 垫片，接进去会被当成可执行路径、拉起图形窗口。定义保留，恢复只需从 `RETIRED_AGENT_IDS` 里删掉 id。
+
+![通讯录](docs/screenshots/01-contacts.png)
+
+*通讯录按「在线 / 待处理」分组，状态点是探测出来的真实结果，不是配置项。*
+
+## 快速开始
+
+两个前提：
+
+1. **Node.js 22+** —— 数据库用的是 `node:sqlite`，低版本没有这个内置模块。
+2. **本机至少装一个 Agent CLI**。这个应用本身不含任何模型，它只是把你自己装好的 Agent 收进一个界面。一个 CLI 都没装的话，打开会是空通讯录。
+
+```bash
+git clone https://github.com/catex-lab/opc-agent.git
+cd opc-agent
+npm install
+npm run dev            # 开发态：前端 5173 + 后端 3000
+```
+
+打包成安装程序：
+
+```bash
+npm run electron:build # 产物在 release/
+```
 
 ## 技术栈
 
@@ -66,14 +100,12 @@ opc-agent/
 ## 开发
 
 ```bash
-npm install
-
-npm run dev            # 同时起前端（5173）与后端（3000）
-npm run build          # 构建前端与主进程
-npm run electron:build # 打包安装程序
+npm run build          # 构建前端与主进程，产物在 dist/ 与 dist-electron/
+npm run dev            # 热重载开发态（同时起前端 5173 与后端 3000）
+npm run screenshots    # 重新生成 README 里的截图（离线夹具，不碰真实数据）
 ```
 
-Node.js **22+** 是硬性要求 —— 数据库用的是 `node:sqlite`，低版本没有这个内置模块。
+更细的构建、打包与验证说明见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
 
 ## 验证
 
@@ -99,6 +131,12 @@ npm run verify:package # 打包产物逐字节核对
 | `images/` | 生成的图片 |
 
 应用内不收集统计、不埋点、不做崩溃上报，也没有安装 ID —— 代码里不存在遥测模块。密钥一律从环境变量或本地凭据文件读取，不写进源码。
+
+越权的操作会被拦下来问你：
+
+![权限门禁](docs/screenshots/04-settings.png)
+
+*服务端内置 23 类危险命令 + 14 条需确认，`rm -rf`、强推主分支这类直接拒绝，任何模式都放不过去。*
 
 ## 许可
 
