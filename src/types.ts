@@ -98,8 +98,22 @@ export interface Model {
  * 但点了不会生效的事一律不做。
  */
 export interface AgentModelSource {
-  kind: 'catalog' | 'agent-config' | 'unknown';
+  /**
+   * - `catalog`      CLI 枚举出来的（能跑什么，判据是 CLI 自己）
+   * - `agent-config` Agent 自己配置文件里的（只读，本应用说了不算）
+   * - `manual`       没有清单，但它接受 `--model` ⇒ 让用户手动填名字
+   * - `unknown`      既没清单也不接受 model（模型由 Agent 自己决定）
+   */
+  kind: 'catalog' | 'agent-config' | 'manual' | 'unknown';
   selectable: boolean;
+  /**
+   * 手动填模型名模式（P3）。
+   *
+   * 与 `selectable: false` 互斥：只读清单是「看得到、改不了」，
+   * 手动模式是「看不到、但能改」。两者的界面形态完全不同 ——
+   * 只读是列表 + 灰掉的行，手动是一个输入框。
+   */
+  manual?: boolean;
   /** 只读时界面底部那句解释（为什么不能在这里切） */
   note?: string;
   /** 只读时用来高亮「当前用的是哪一条」 */

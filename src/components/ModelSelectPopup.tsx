@@ -72,7 +72,26 @@ export interface ModelSelectPopupProps {
    *
    * 不传时按「未验证也可直接选」处理（老调用点）。
    */
-  onSelectUnverified?: (modelId: string) => Promise<{ ok: boolean; message?: string }>;
+  onSelectUnverified?: (modelId: string) => Promise<{
+    ok: boolean;
+    message?: string;
+    /**
+     * 标定结论。手动模式（P3）要靠它区分两种失败：
+     * `invalid` = CLI 明确说没这个名字 → 不许选中；
+     * `unknown` = CLI 没给出可判读的回应（超时 / 没装 / 没登录）→
+     * 允许用户点「仍然使用」，否则像 claude 这种本机缺二进制的
+     * Agent 永远填不进任何模型。
+     */
+    verdict?: 'ok' | 'routed' | 'invalid' | 'unknown';
+  }>;
+  /**
+   * 手动填模型名模式（P3）。
+   *
+   * 这一类 Agent（gemini / claude / pi / antigravity / kimicli）接受 `--model`
+   * 但没有枚举命令，所以没有列表可点 —— 浮层整块换成「输入框 + 确认」。
+   * 与 `readonly` 互斥：只读是「看得到、改不了」，手动是「看不到、能改」。
+   */
+  manual?: boolean;
 }
 
 /** 面板宽度。
@@ -118,6 +137,7 @@ export function ModelSelectPopup({
   note,
   currentId,
   onSelectUnverified,
+  manual = false,
 }: ModelSelectPopupProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -134,6 +154,39 @@ export function ModelSelectPopup({
   const [verifying, setVerifying] = useState<string | null>(null);
   /** 标定失败的提示：CLI 的原话，不是我们改写过的解释 */
   const [verifyError, setVerifyError] = useState('');
+
+  /* ── 手动模式（P3）的状态 ──
+     这一类 Agent 没有列表，浮层里只有一个输入框。填完先标定一次：
+     通过就写进会话；CLI 明确说没这个名字就不许选；CLI 没回应（超时/没装）
+     则允许用户点「仍然使用」自己拍板 —— 三种结论的处置必须分开，
+     否则像 claude 本机缺 native binary 的情况会被永久锁死。 */
+  const [manualValue, setManualValue] = useState(value || '');
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualMsg, setManualMsg] = useState('');
+  const [manualCanForce, setManualCanForce] = useState(false);
+
+  const confirmManual = async () => {
+    const v = manualValue.trim();
+    if (!v || manualBusy) return;
+    if (!onSelectUnverified) {
+      onChange(v);
+      return;
+    }
+    setManualBusy(true);
+    setManualMsg('');
+    setManualCanForce(false);
+    try {
+      const r = await onSelectUnverified(v);
+      if (r.ok) {
+        onChange(v);
+        return;
+      }
+      setManualMsg(r.message || 'CLI 没有确认这个模型名');
+      setManualCanForce(r.verdict === 'unknown');
+    } finally {
+      setManualBusy(false);
+    }
+  };
 
   const pick = async (m: Model) => {
     if (readonly || verifying) return;
@@ -216,8 +269,9 @@ export function ModelSelectPopup({
     <div
       ref={panelRef}
       role="dialog"
-      aria-label="内置模型"
+      aria-label={manual ? '指定模型' : '内置模型'}
       data-model-popup
+      data-model-popup-manual={manual ? '1' : '0'}
       className="opc-choice-panel fixed z-[60] flex flex-col overflow-hidden rounded-xl shadow-popup"
       style={{
         left,
@@ -225,7 +279,10 @@ export function ModelSelectPopup({
         width: PANEL_WIDTH,
         border: '1px solid var(--tc-edge-strong)',
       }}
-      onPointerDown={e => e.preventDefault()}
+      /* 手动模式下不能拦 pointerdown —— 拦了输入框就永远拿不到焦点，
+         整个浮层变成一块点不动的图。只读/列表模式才拦（那是为了不抢
+         输入框的焦点）。 */
+      onPointerDown={manual ? undefined : e => e.preventDefault()}
     >
       {/* ── 标题栏 ── */}
       <div
@@ -233,14 +290,24 @@ export function ModelSelectPopup({
         style={{ borderBottom: '1px solid var(--tc-divider)' }}
       >
         <span className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-          内置模型
+          {manual ? '指定模型' : '内置模型'}
         </span>
         <Tooltip
           content={
             <span style={{ fontSize: 'var(--text-secondary)', lineHeight: 1.6 }}>
-              这里只列当前 Agent 已经报上来的模型。
-              <br />
-              清单由各厂商官方接口提供，装好 CLI 后点下方「添加模型」去设置里刷新。
+              {manual ? (
+                <>
+                  这个 Agent 没有列出模型的命令，但它接受 --model。
+                  <br />
+                  填一个模型名，会先跑一次确认 CLI 认不认这个名字。
+                </>
+              ) : (
+                <>
+                  这里只列当前 Agent 已经报上来的模型。
+                  <br />
+                  清单由各厂商官方接口提供，装好 CLI 后点下方「添加模型」去设置里刷新。
+                </>
+              )}
             </span>
           }
           theme="light"
@@ -248,10 +315,78 @@ export function ModelSelectPopup({
           <Info size={13} style={{ color: 'var(--td-text-color-placeholder)' }} data-model-popup-info />
         </Tooltip>
         <span className="ml-auto text-caption tabular-nums" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          {models.length}
+          {manual ? '手动' : models.length}
         </span>
       </div>
 
+      {manual ? (
+        /* ── 手动模式（P3）：输入框 + 确认 ──
+           没有列表可点，所以整块换掉。填完先标定一次：通过才写进会话，
+           CLI 明确说没这个名字就不许选，CLI 没回应则由用户自己拍板。 */
+        <div className="px-3 py-2.5" data-model-manual-form>
+          <label
+            className="mb-1 block text-caption"
+            style={{ color: 'var(--td-text-color-secondary)' }}
+            htmlFor="opc-manual-model"
+          >
+            模型名（原样传给 CLI 的 --model）
+          </label>
+          <div className="flex items-center gap-1.5">
+            <input
+              id="opc-manual-model"
+              data-model-manual-input
+              value={manualValue}
+              onChange={e => setManualValue(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void confirmManual();
+                }
+              }}
+              placeholder="例如 gemini-2.5-pro"
+              spellCheck={false}
+              autoComplete="off"
+              className="min-w-0 flex-1 rounded-lg px-2 text-body outline-none"
+              style={{
+                height: 'var(--tc-btn-height)',
+                border: '1px solid var(--tc-edge-strong)',
+                backgroundColor: 'var(--tc-surface-content)',
+                color: 'var(--td-text-color-primary)',
+              }}
+            />
+            <button
+              type="button"
+              data-model-manual-confirm
+              disabled={manualBusy || !manualValue.trim()}
+              onClick={() => void confirmManual()}
+              className="tc-btn-brand shrink-0"
+            >
+              {manualBusy ? '确认中…' : '确认'}
+            </button>
+          </div>
+          {manualMsg && (
+            <p
+              className="mt-1.5 text-caption leading-4"
+              style={{ color: manualCanForce ? 'var(--td-warning-color)' : 'var(--td-error-color)' }}
+              data-model-manual-msg
+            >
+              {manualMsg}
+            </p>
+          )}
+          {manualCanForce && (
+            <button
+              type="button"
+              data-model-manual-force
+              onClick={() => onChange(manualValue.trim())}
+              className="mt-1.5 w-full rounded-lg py-1.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
+              style={{ color: 'var(--td-text-color-primary)' }}
+            >
+              仍然使用这个名称
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
       {/* ── 列表 ── */}
       <div
         ref={listRef}
@@ -369,6 +504,8 @@ export function ModelSelectPopup({
           );
         })}
       </div>
+        </>
+      )}
 
       {/* ── 底部通栏 ── */}
       <div className="shrink-0 p-2" style={{ borderTop: '1px solid var(--tc-divider)' }}>
@@ -394,15 +531,19 @@ export function ModelSelectPopup({
             带「未验证」的模型选中前会先跑一次 CLI 确认（花少量 token）。
           </p>
         )}
-        {readonly ? (
+        {readonly || manual ? (
           /* 只读时「添加模型」必须消失：那个按钮指向设置页的刷新枚举，
-             而这份清单根本不来自枚举 —— 摆着就是一个点了没用的控件。 */
+             而这份清单根本不来自枚举 —— 摆着就是一个点了没用的控件。
+             手动模式同理：这类 Agent 永远枚举不出东西，刷新也是空。 */
           <p
             className="px-2 py-1 text-caption leading-4"
             style={{ color: 'var(--td-text-color-secondary)' }}
             data-model-popup-note
           >
-            {note || '这份清单来自该 Agent 自己的配置，本应用只能读取，不能切换。'}
+            {note ||
+              (manual
+                ? '这个 Agent 没有列出模型的命令。名字填错时 CLI 可能会静默换成默认模型。'
+                : '这份清单来自该 Agent 自己的配置，本应用只能读取，不能切换。')}
           </p>
         ) : (
           <button

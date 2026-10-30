@@ -540,6 +540,16 @@ export function ChatInput({
   const canPickModel = models.length > 0 && (modelSource?.selectable ?? true);
 
   /**
+   * 手动填模型名模式（P3）。
+   *
+   * 这一类 Agent（gemini / claude / pi / antigravity / kimicli）接受 `--model`
+   * 但没有枚举命令，`models` 恒为空。原来的界面会显示「模型由 Agent 决定」——
+   * 那是一句假话：应用明明能把模型名传下去，只是不知道有哪些可选。
+   * 所以这里多一档：有输入框、能填、填完先标定一次。
+   */
+  const manualModel = !!modelSource?.manual && !isGroup && !imageMode;
+
+  /**
    * 是否必须选中模型才能发送。
    * 只有当该 Agent 确实提供**可选**模型列表时才成立；自管模型的 Agent
    * （models 为空）与只读清单（zcode）都不应因为没有 selectedModel 就被禁言。
@@ -617,10 +627,13 @@ export function ChatInput({
   const currentModeConfig = PERMISSION_MODE_CONFIG[permissionMode];
 
   /* A151：只读清单时按钮上不写模型名 —— 写了就等于说「现在用的是这个」，
-     而那个值我们既没设也改不了。改成与下方徽标同一句话，语义一致。 */
-  const selectedModelName = !canPickModel
-    ? '模型由 Agent 决定'
-    : models.find(m => m.modelId === selectedModel)?.name || '选择模型';
+     而那个值我们既没设也改不了。改成与下方徽标同一句话，语义一致。
+     P3：手动模式下这个值**是**我们自己填的，所以照实写；没填才给提示语。 */
+  const selectedModelName = manualModel
+    ? selectedModel || '手动指定模型'
+    : !canPickModel
+      ? '模型由 Agent 决定'
+      : models.find(m => m.modelId === selectedModel)?.name || '选择模型';
 
   return (
     <div
@@ -960,7 +973,7 @@ export function ChatInput({
               这时不能把发送键也禁掉（否则 agent 明明在线却发不出消息），
               改成显示一个不可点的说明徽标，诚实地告诉用户模型由 Agent 决定。
             */}
-            {models.length > 0 ? (
+            {models.length > 0 || manualModel ? (
               /* A73：换成自绘触发器 + ModelSelectPopup。
                  原来是 TDesign <Select>，做不出截图里的标题栏、底部通栏和行内 ✓，
                  详见 ModelSelectPopup 文件头。 */
@@ -1022,7 +1035,7 @@ export function ChatInput({
                   style={{
                     // A151：只读清单时文字用占位色 —— 它表达的是「本应用说了不算」，
                     // 与真正选中了某个模型（主色）必须是两种视觉。
-                    color: selectedModel && canPickModel
+                    color: selectedModel && (canPickModel || manualModel)
                       ? 'var(--td-text-color-primary)'
                       : 'var(--td-text-color-placeholder)',
                   }}
@@ -1036,7 +1049,8 @@ export function ChatInput({
                   <ModelSelectPopup
                     models={models}
                     value={selectedModel}
-                    readonly={!canPickModel}
+                    readonly={!canPickModel && !manualModel}
+                    manual={manualModel}
                     note={modelSource?.note}
                     currentId={modelSource?.currentModel}
                     onSelectUnverified={onSelectUnverified}

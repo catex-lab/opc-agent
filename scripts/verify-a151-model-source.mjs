@@ -144,10 +144,16 @@ try {
   ok((zcode.models ?? []).some(m => /自定义 provider/.test(m.description ?? '')),
     '[2] 自定义 provider 的真实模型名在');
 
-  // 对照：既没目录也没配置文件时，必须维持 unknown（不许假装有清单）
-  const gemini = await json(await fetch(`${base}/api/agents/gemini/models`));
-  ok(gemini.source === 'unknown' && (gemini.models ?? []).length === 0,
-    '[2] 既无目录也无配置的 Agent 维持 unknown（不编清单）', `${gemini.source}/${gemini.models?.length ?? 0}`);
+  // 对照：既没目录也没配置文件时，必须维持 unknown（不许假装有清单）。
+  //
+  // ⚠️ 这里原来用的是 gemini。P3 之后 gemini 归到 `manual`（它接受 --model，
+  // 只是没有枚举命令），这条就红了 —— 红的是**断言的前提**，不是代码：
+  // 该断言要守的是「不许编一份清单出来」，所以换一个真的既不接受 model
+  // 也没有 cli 通道的 Agent（doubao）来对照，判据仍是「列表为空 + 不假装有来源」。
+  const doubao = await json(await fetch(`${base}/api/agents/doubao/models`));
+  ok(doubao.source === 'unknown' && (doubao.models ?? []).length === 0,
+    '[2] 既无目录也无配置的 Agent 维持 unknown（不编清单）',
+    `${doubao.source}/${doubao.models?.length ?? 0}`);
 
   // ============= [4] 接口层：标定结果真的改变菜单 =============
   //
@@ -415,6 +421,128 @@ try {
     (await qTrigger.innerText()).trim());
 
   ok(page2Errors.length === 0, '[5] 没有未捕获异常', page2Errors.slice(0, 2).join(' | '));
+
+  // ============= [6] 手动填模型名（P3） =============
+  //
+  // 「有 --model、但没有枚举命令」的 Agent，界面原来写的是「模型由 Agent 决定」——
+  // 那是假话：应用明明能把模型名传下去，只是不知道有哪些可选。
+  // 这一段钉三件事：① 谁该进这一档（判据是 buildArgs 自己，不是手写表）；
+  // ② 谁**不**该进（没有 cli 通道的，填了也传不下去）；
+  // ③ 三种标定结论的处置必须分开：ok/routed 选中、invalid 拦住、unknown 交用户。
+  console.log('\n[6] 手动填模型名：没有清单但接受 --model 的那些');
+  const MANUAL_EXPECT = ['gemini', 'claude', 'pi', 'antigravity', 'kimicli'];
+  for (const id of MANUAL_EXPECT) {
+    const r = await json(await fetch(`${base}/api/agents/${id}/models`));
+    ok(r.source === 'manual' && r.manual === true && r.selectable === true,
+      `[6] ${id} 走手动模式（接受 --model 但没有枚举命令）`, `${r.source}/${r.manual}`);
+    ok(Array.isArray(r.models) && r.models.length === 0,
+      `[6] ${id} 的清单是空的（不许编一份出来）`);
+  }
+  // 反面对照①：没有 cli 通道的 Agent 绝不能给输入框 —— 填了也传不下去
+  for (const id of ['doubao', 'hermes', 'kimicode']) {
+    const r = await json(await fetch(`${base}/api/agents/${id}/models`));
+    ok(r.source === 'unknown' && !r.manual,
+      `[6] ${id} 没有 cli 通道 ⇒ 不给手动输入框`, `${r.source}/${r.models?.length ?? 0} 条`);
+  }
+  // 反面对照②：能枚举 / 能读配置的不许退化成手动
+  const cursor2 = await json(await fetch(`${base}/api/agents/cursor/models`));
+  ok(cursor2.source === 'catalog' && !cursor2.manual, '[6] 能枚举的 Agent 不走手动模式', cursor2.source);
+  const zcode2 = await json(await fetch(`${base}/api/agents/zcode/models`));
+  ok(zcode2.source === 'agent-config' && !zcode2.manual, '[6] 能读配置的 Agent 不走手动模式', zcode2.source);
+
+  const gCreated = await json(
+    await fetch(`${base}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentId: 'gemini', title: 'A151 手动模型' }),
+    })
+  );
+  const gSid = gCreated.session?.id;
+  ok(!!gSid, '[6] 建 gemini 会话成功', String(gSid));
+
+  const page3 = await ctx.newPage();
+  const page3Errors = [];
+  page3.on('pageerror', e => page3Errors.push(e.message));
+
+  const manualCalls = [];
+  let manualProbe = 'invalid';
+  await page3.route('**/models/probe', async route => {
+    let body = {};
+    try {
+      body = JSON.parse(route.request().postData() || '{}');
+    } catch {
+      /* 非 JSON 就当空 */
+    }
+    manualCalls.push(body);
+    const id = body?.models?.[0];
+    await new Promise(r => setTimeout(r, 300));
+    const rec =
+      manualProbe === 'unknown'
+        ? { verdict: 'unknown', at: Date.now(), evidence: '超时（CLI 无响应）' }
+        : {
+            verdict: 'invalid',
+            at: Date.now(),
+            evidence: `Model "${id}" is not available right now; using "default" instead.`,
+          };
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ results: { [id]: rec }, probed: 1 }),
+    });
+  });
+
+  await page3.goto(`${base}/chat/${gSid}`, { waitUntil: 'domcontentloaded' });
+  await page3.waitForTimeout(2500);
+
+  const gTrigger = page3.locator('[data-model-trigger]');
+  ok((await gTrigger.count()) === 1, '[6] 手动模式下也有模型芯片（原来这里没有芯片）');
+  ok((await gTrigger.innerText()).trim() === '手动指定模型', '[6] 芯片上写「手动指定模型」',
+    (await gTrigger.innerText()).trim());
+
+  await gTrigger.click();
+  await page3.waitForTimeout(400);
+  ok((await page3.locator('[data-model-popup][data-model-popup-manual="1"]').count()) === 1,
+    '[6] 浮层是手动模式');
+  ok((await page3.locator('[data-model-manual-input]').count()) === 1, '[6] 有输入框');
+  ok((await page3.locator('[data-model-row]').count()) === 0, '[6] 没有假列表');
+  ok((await page3.locator('[data-model-popup-add]').count()) === 0,
+    '[6] 没有「添加模型」（这类 Agent 永远枚举不出东西，刷新也是空）');
+  const manualNote = (await page3.locator('[data-model-popup-note]').innerText().catch(() => '')).trim();
+  ok(manualNote.length > 0, '[6] 底部有解释文案', manualNote.slice(0, 30));
+
+  const mInput = page3.locator('[data-model-manual-input]');
+  await mInput.fill('gemini-2.5-pro');
+  await page3.locator('[data-model-manual-confirm]').click();
+  await page3.waitForTimeout(700);
+  ok(manualCalls.length === 1 &&
+     JSON.stringify(manualCalls[0]?.models) === JSON.stringify(['gemini-2.5-pro']),
+    '[6] 确认时把填的名字原样送去标定', JSON.stringify(manualCalls[0]?.models));
+  const msg1 = (await page3.locator('[data-model-manual-msg]').innerText().catch(() => '')).trim();
+  ok(msg1.includes('not available right now'), '[6] CLI 说没这个名字时贴原话', msg1.slice(0, 50));
+  ok((await page3.locator('[data-model-manual-force]').count()) === 0,
+    '[6] invalid 时不给「仍然使用」（那等于放行一个假控件）');
+  ok((await gTrigger.innerText()).trim() === '手动指定模型', '[6] invalid 不写进会话');
+
+  // 第二次：CLI 没给出可判读的回应 → 允许用户自己拍板
+  manualProbe = 'unknown';
+  await page3.locator('[data-model-manual-confirm]').click();
+  await page3.waitForTimeout(700);
+  ok((await page3.locator('[data-model-manual-force]').count()) === 1,
+    '[6] unknown 时给「仍然使用」（否则 claude 这类本机缺二进制的永远填不进去）');
+  const msg2 = (await page3.locator('[data-model-manual-msg]').innerText().catch(() => '')).trim();
+  ok(msg2.includes('超时'), '[6] unknown 的提示与 invalid 分开报', msg2.slice(0, 40));
+  await page3.locator('[data-model-manual-force]').click();
+  await page3.waitForTimeout(500);
+  ok((await page3.locator('[data-model-popup]').count()) === 0, '[6] 「仍然使用」后浮层关掉');
+  ok((await gTrigger.innerText()).trim() === 'gemini-2.5-pro', '[6] 芯片上写的就是填的名字',
+    (await gTrigger.innerText()).trim());
+
+  // 再打开：输入框要带出当前值（否则用户看不到现在用的是哪个）
+  await gTrigger.click();
+  await page3.waitForTimeout(400);
+  ok((await page3.locator('[data-model-manual-input]').inputValue()) === 'gemini-2.5-pro',
+    '[6] 再打开时输入框带出当前值');
+  ok(page3Errors.length === 0, '[6] 没有未捕获异常', page3Errors.slice(0, 2).join(' | '));
 } finally {
   if (browser) await browser.close().catch(() => {});
   killTree(child);

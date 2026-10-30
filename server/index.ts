@@ -28,7 +28,7 @@ import {
 } from "./db.js";
 import { registry } from "./agents/registry.js";
 import { scoreAgentSkills } from "./agents/types.js";
-import { findDef, registerCustomDefs } from "./agents/definitions.js";
+import { agentAcceptsModel, findDef, registerCustomDefs } from "./agents/definitions.js";
 import {
   createCustomSpec,
   customSpecToDefinition,
@@ -741,6 +741,21 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
           source: "agent-config",
           selectable: false,
           note: fromConfig.note,
+        });
+      }
+
+      /* P3：没有清单、也没有配置文件，但它**真的接受** `--model`。
+         这时「模型由 Agent 决定」是一句假话 —— 应用明明能传下去，
+         只是不知道有哪些名字可选。改成让用户手动填，填完先标定一次。
+         判据不是手写表，是 buildArgs 自己（见 agentAcceptsModel 的注释）。 */
+      if (agentAcceptsModel(agentId)) {
+        return res.json({
+          models: [],
+          defaultModel: defaultModel ?? "",
+          source: "manual",
+          selectable: true,
+          manual: true,
+          note: "这个 Agent 没有列出模型的命令，但它接受 --model：手动填一个模型名即可，填完会先跑一次确认。",
         });
       }
     }

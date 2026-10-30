@@ -2350,6 +2350,46 @@ export function findDef(id: string): AgentDefinition | undefined {
 }
 
 /**
+ * 这个 Agent 到底认不认「模型」这个参数（A151 / P3）。
+ *
+ * ## 为什么不查一张手写的表
+ *
+ * 因为手写的表一定会和代码分叉 —— 本轮 cursor 的漏接就是这么发生的：
+ * `CATALOG_SOURCES` 是人维护的，`definitions.ts` 里的 `buildArgs` 也是，
+ * 两边没有任何自动校验，于是「CLI 有枚举命令」和「我们接了」长期不是一回事。
+ *
+ * 这里改成**直接问代码本身**：拿两个不同的模型名各构造一次 argv，
+ * 变了就是认、没变就是不认。判据来自真正要执行的那条路径，
+ * 不是另一份描述。
+ *
+ * 实测（2026-10-30）：
+ *   认 —— codex / gemini / opencode / claude / cursor / qoder / qoder-cn /
+ *         pi / antigravity / kimicli
+ *   不认 —— zcode（argv 里根本没有 model 位；它只读自己的配置）
+ *   没有 cli 通道 —— workbuddy（SDK）/ hermes / doubao / kimicode
+ */
+export function agentAcceptsModel(id: string): boolean {
+  const def = findDef(id);
+  const cli = def?.cli;
+  if (!cli) return false;
+  const base = {
+    sessionId: 'probe',
+    prompt: 'probe',
+    cwd: process.cwd(),
+    permissionMode: 'bypassPermissions' as const,
+  };
+  try {
+    const a = JSON.stringify(cli.buildArgs('probe', { ...base, model: '__opc_probe_a__' }));
+    const b = JSON.stringify(cli.buildArgs('probe', { ...base, model: '__opc_probe_b__' }));
+    return a !== b;
+  } catch {
+    // 构造不出 argv 就是「不确定」—— 不确定时不许给手动输入框，
+    // 否则用户填了名字却传不下去，又是一个假控件。
+    return false;
+  }
+}
+
+/**
  * 由 Agent 定义推导它的工具事件来源（A100）。**纯函数**，可单测。
  *
  * ## 为什么需要这个函数

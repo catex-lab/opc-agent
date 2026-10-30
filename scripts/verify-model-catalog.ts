@@ -35,7 +35,7 @@ import {
 import { parseCredits, mapSdkModels } from '../server/agents/sdk-models.js';
 import { OPENCODE_CATALOG_SNAPSHOT } from '../server/agents/opencodeCatalogSnapshot.js';
 import { resolveModelForAgent, setCatalogModelLookup } from '../server/model-routing.js';
-import { findDef, RETIRED_AGENT_IDS } from '../server/agents/definitions.js';
+import { findDef, RETIRED_AGENT_IDS, agentAcceptsModel } from '../server/agents/definitions.js';
 import {
   classifyProbe,
   mergeOfficialExtras,
@@ -895,15 +895,18 @@ function read(rel: string): string {
   ok(inCatalog.has('opencode') && inCatalog.has('qoder') && inCatalog.has('codex'), '既有三个来源仍在');
 
   /* 有意不接目录的，必须写明原因。**这张表本身就是文档** ——
-     下次有人问「gemini 为什么没有模型列表」，答案在这里，不在某次对话里。 */
+     下次有人问「gemini 为什么没有模型列表」，答案在这里，不在某次对话里。
+     P3 之后，凡是「接受 --model 但没有枚举命令」的都在界面上走**手动填名字**
+     （见 agentAcceptsModel），所以这里写的是「为什么枚举不出来」，
+     不是「为什么界面上什么都没有」。 */
   const NO_ENUMERATION: Record<string, string> = {
-    gemini: 'gemini --help 没有 models 子命令（2026-10-30 复核），只有 -m 旗标',
-    claude: 'claude 无枚举命令；且本机 native binary 缺失，CLI 直接报错',
-    pi: 'pi 只有 --models（Ctrl+P 循环用），无枚举命令',
-    hermes: 'hermes model 是交互式选择器，不可脚本化',
-    antigravity: '本机未安装，无法实测',
-    kimicli: '本机未安装，无法实测',
-    kimicode: '本机未安装，无法实测',
+    gemini: 'gemini --help 没有 models 子命令（2026-10-30 复核），只有 -m 旗标 ⇒ 走手动填',
+    claude: 'claude 无枚举命令；且本机 native binary 缺失，CLI 直接报错 ⇒ 走手动填',
+    pi: 'pi 只有 --models（Ctrl+P 循环用），无枚举命令 ⇒ 走手动填',
+    antigravity: '本机未安装，无法实测 ⇒ 走手动填',
+    kimicli: '本机未安装，无法实测 ⇒ 走手动填',
+    hermes: 'hermes 没有 cli 通道（走 ACP），无法传 --model',
+    kimicode: 'kimicode 没有 cli 通道，无法传 --model',
     zcode: 'zcode 0.17.0 无 --model、无枚举命令；模型只能读配置文件（P1 处理）',
     workbuddy: 'SDK 清单（sdk-models + 官方产品配置），不走 CLI 枚举',
     doubao: 'http 通道，模型由用户在设置里填',
@@ -941,7 +944,9 @@ function read(rel: string): string {
   ok(/source:\s*"agent-config"/.test(routeSrc), 'A151：只读清单的来源标记为 agent-config');
 
   ok(/modelSource\?\.selectable\s*\?\?\s*true/.test(inputSrc), 'A151：ChatInput 认 selectable（不传按可选处理）');
-  ok(/readonly=\{!canPickModel\}/.test(inputSrc), 'A151：只读清单要传给浮层的 readonly');
+  /* P3 之后这条多了一个条件：手动模式没有列表但**能改**，不能被判成只读。 */
+  ok(/readonly=\{!canPickModel && !manualModel\}/.test(inputSrc),
+    'A151：只读清单要传给浮层的 readonly（手动模式除外）');
   ok(/data-model-popup-note/.test(popupSrc), 'A151：只读浮层底部要有一句解释（替换「添加模型」）');
   ok(/onClick=\{readonly \? undefined/.test(popupSrc), 'A151：只读行不许绑定点击');
   ok(/data-model-current/.test(popupSrc), 'A151：只读清单要标出「当前用的是哪条」');
@@ -1039,6 +1044,43 @@ function read(rel: string): string {
     'A151：标定回调要从 ChatPage 透到浮层（少一跳就永远不触发）');
   ok(/models\/probe/.test(appSrc) && /setModelsEpoch/.test(appSrc),
     'A151：标定成功后要重取清单（只改本地 state，刷新一次角标又回来）');
+}
+
+// ── 10. 手动填模型名（A151 / P3）：判据来自 buildArgs 本身 ────────────
+//
+// 这一档存在的前提是「应用真的能把模型名传下去」。所以判据不能是
+// 另一张手写表 —— 那正是 cursor 漏接的成因。这里直接拿两个不同的
+// 模型名各构造一次 argv，看它变不变。
+{
+  ok(agentAcceptsModel('gemini'), 'A151：gemini 接受 --model（走手动填）');
+  ok(agentAcceptsModel('claude'), 'A151：claude 接受 --model（走手动填）');
+  ok(agentAcceptsModel('pi'), 'A151：pi 接受 --model（走手动填）');
+  ok(agentAcceptsModel('antigravity'), 'A151：antigravity 接受 --model（走手动填）');
+  ok(agentAcceptsModel('kimicli'), 'A151：kimicli 接受 --model（走手动填）');
+  /* 反面对照 —— 少一条，手动输入框就会出现在「填了也传不下去」的 Agent 上，
+     那是比不显示更糟的假控件。 */
+  ok(!agentAcceptsModel('zcode'), 'A151：zcode 不接受 --model（不许给它输入框）');
+  ok(!agentAcceptsModel('doubao'), 'A151：doubao 没有 cli 通道（不许给它输入框）');
+  ok(!agentAcceptsModel('hermes'), 'A151：hermes 没有 cli 通道（不许给它输入框）');
+  ok(!agentAcceptsModel('kimicode'), 'A151：kimicode 没有 cli 通道（不许给它输入框）');
+  ok(!agentAcceptsModel('这个-id-不存在'), 'A151：未知 id 返回 false（不抛错）');
+
+  const routeSrc3 = read('server/index.ts');
+  const popupSrc3 = read('src/components/ModelSelectPopup.tsx');
+  const inputSrc3 = read('src/components/ChatInput.tsx');
+  const appSrc3 = read('src/App.tsx');
+  ok(/agentAcceptsModel\(agentId\)/.test(routeSrc3), 'A151：模型接口用 agentAcceptsModel 判「能不能手动填」');
+  ok(/source:\s*"manual"/.test(routeSrc3), 'A151：手动模式的来源标记为 manual');
+  ok(/data-model-manual-input/.test(popupSrc3) && /data-model-manual-confirm/.test(popupSrc3),
+    'A151：手动模式要有输入框和确认键');
+  ok(/data-model-manual-force/.test(popupSrc3),
+    'A151：unknown 时要有「仍然使用」（否则缺二进制的 Agent 永远填不进去）');
+  ok(/onPointerDown=\{manual \? undefined/.test(popupSrc3),
+    'A151：手动模式不许拦 pointerdown（拦了输入框拿不到焦点）');
+  ok(/manualModel/.test(inputSrc3) && /manual=\{manualModel\}/.test(inputSrc3),
+    'A151：ChatInput 要把 manual 透给浮层');
+  ok(/if \(manualModel\) return;/.test(appSrc3),
+    'A151：手动模式不许被「列表为空就清空选中」抹掉');
 }
 
 // ── 汇总 ─────────────────────────────────────────────────────────

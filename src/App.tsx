@@ -301,7 +301,7 @@ function AppContent() {
    * 请求还没回来就把下拉禁掉。只有后端明确说 `selectable: false`
    * （目前只有 zcode 的只读清单）才切成只读。
    */
-  const [agentModelSource, setAgentModelSource] = useState<AgentModelSource>({
+  const [agentModelSource, setAgentModelSource] = useState<AgentModelSource & { forAgent?: string }>({
     kind: 'unknown',
     selectable: true,
   });
@@ -337,15 +337,26 @@ function AppContent() {
              老服务端不返回这两个字段时按「有列表就可选」处理 —— 向后兼容，
              别把升级前的响应解读成「只读」。 */
           const kind: AgentModelSource['kind'] =
-            data.source === 'agent-config' ? 'agent-config' : data.source === 'catalog' ? 'catalog' : 'unknown';
+            data.source === 'agent-config'
+              ? 'agent-config'
+              : data.source === 'manual'
+                ? 'manual'
+                : data.source === 'catalog'
+                  ? 'catalog'
+                  : 'unknown';
           setAgentModelSource({
             kind,
             selectable: data.selectable !== false,
+            // P3：手动填模型名模式。后端只在这种 Agent **真的接受 --model**
+            // 时才会给，前端不自己判断。
+            manual: kind === 'manual' && data.manual !== false,
             note: typeof data.note === 'string' ? data.note : undefined,
             currentModel:
               kind === 'agent-config' && typeof data.defaultModel === 'string'
                 ? data.defaultModel
                 : undefined,
+            // 这份结论属于哪个 Agent —— 切 Agent 时旧结论不能沿用
+            forAgent: currentAgentId,
           });
         }
       } catch {
@@ -370,12 +381,16 @@ function AppContent() {
 
   /** 与 activeModels 配套的来源信息；SDK 类退回平台清单时同样是可选的 catalog */
   const activeModelSource = useMemo<AgentModelSource>(() => {
+    /* 判据不能是「列表非空」：手动模式（P3）与只读清单都可能是空数组，
+       按长度判会把刚拿到的结论丢掉，界面又退回「模型由 Agent 决定」。
+       所以认的是「这份结论是不是当前这个 Agent 的」。 */
+    if (agentModelSource.forAgent === currentAgentId) return agentModelSource;
     if (agentModels.length > 0) return agentModelSource;
     if (currentAgent?.kind === 'sdk' && models.length > 0) {
       return { kind: 'catalog', selectable: true };
     }
     return { kind: 'unknown', selectable: true };
-  }, [agentModels, agentModelSource, currentAgent?.kind, models]);
+  }, [agentModels, agentModelSource, currentAgent?.kind, currentAgentId, models]);
 
   /**
    * **能真正传下去**的模型（A151）。
@@ -388,6 +403,15 @@ function AppContent() {
     () => (activeModelSource.selectable ? activeModels : []),
     [activeModelSource.selectable, activeModels]
   );
+
+  /**
+   * 手动填模型名模式（P3）。
+   *
+   * 这一类 Agent 的 `models` 恒为空（没有枚举命令），但用户填的名字
+   * **真的能传下去**。所以不能走下面那条「列表为空就清空选中」的规则 ——
+   * 那会在每次渲染时把用户刚填的模型名抹掉。
+   */
+  const manualModel = !!activeModelSource.manual;
 
   /**
    * 标定一个「未验证」模型（A151 / P2）。
@@ -403,7 +427,9 @@ function AppContent() {
    * 「未验证」角标随之消失。只改本地 state 不够 —— 刷新一次又回来了。
    */
   const handleProbeModel = useCallback(
-    async (modelId: string): Promise<{ ok: boolean; message?: string }> => {
+    async (
+      modelId: string
+    ): Promise<{ ok: boolean; message?: string; verdict?: 'ok' | 'routed' | 'invalid' | 'unknown' }> => {
       if (!currentAgentId) return { ok: false, message: '当前没有绑定 Agent，无法标定' };
       try {
         const res = await fetch(
@@ -422,17 +448,24 @@ function AppContent() {
         if (!rec) return { ok: false, message: '标定没有返回结果' };
         if (rec.verdict === 'ok' || rec.verdict === 'routed') {
           setModelsEpoch(e => e + 1);
-          return { ok: true };
+          return { ok: true, verdict: rec.verdict };
         }
         if (rec.verdict === 'invalid') {
           return {
             ok: false,
+            verdict: 'invalid',
             message: `该模型在本机不可用：${rec.evidence || 'CLI 说这个名字不存在'}`,
           };
         }
+        /* unknown 与 invalid 必须分开报：invalid 是「CLI 明确说没这个名字」，
+           unknown 是「CLI 没给出可判读的回应」（超时 / 没装 / 没登录）。
+           手动模式（P3）下前者不许选中，后者允许用户自己决定 —— 比如
+           claude 本机缺 native binary，永远判 unknown，一刀切会把这个功能
+           直接锁死。 */
         return {
           ok: false,
-          message: `无法判定（不写进会话）：${rec.evidence || 'CLI 没有明确回应'}`,
+          verdict: 'unknown',
+          message: `CLI 没有给出可判读的回应：${rec.evidence || '无输出'}`,
         };
       } catch (e: any) {
         return { ok: false, message: e?.message || '标定请求失败' };
@@ -447,6 +480,9 @@ function AppContent() {
   // 该 Agent 没有模型列表时（自管模型）清空选中：既避免显示一个陌生模型名，
   // 也不该为了这个空值去 PATCH 一次会话。
   useEffect(() => {
+    // 手动模式（P3）：模型名是用户自己填的，这里没有「列表」可比对，
+    // 一旦按列表清空就等于把用户填的值抹掉。
+    if (manualModel) return;
     if (pickableModels.length === 0) {
       if (selectedModel) setSelectedModel('');
       return;
@@ -456,7 +492,7 @@ function AppContent() {
       ? agentDefaultModel
       : pickableModels[0].modelId;
     setSelectedModel(preferred);
-  }, [pickableModels, selectedModel, setSelectedModel, agentDefaultModel]);
+  }, [pickableModels, selectedModel, setSelectedModel, agentDefaultModel, manualModel]);
 
   // 从 URL 同步 sessionId
   useEffect(() => {
