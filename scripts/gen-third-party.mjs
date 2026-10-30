@@ -125,6 +125,10 @@ const NON_PACKAGE_DIRS = new Set([
   'test', 'tests', '__tests__', 'spec', 'specs', 'docs', 'doc', 'scripts', 'build',
   'dist', 'coverage', 'demo', 'demos', 'fixture', 'fixtures', 'tools', 'site', 'website',
 ]);
+/** 内嵌子包中不从安装包分发的条目（electron-builder.yml 排除或法律原因） */
+const NESTED_EXCLUDE_NAMES = new Set([
+  '@tencent-ai/codebuddy-code', // cli/ 已排除打包（许可声明缺失）
+]);
 
 function nestedPackages(dir, parentName) {
   const out = [];
@@ -148,7 +152,7 @@ function nestedPackages(dir, parentName) {
         } catch {
           pkg = null; // 坏 json 当作不是组件，继续往下找
         }
-        if (pkg && pkg.name && pkg.name !== parentName && VALID_PKG_NAME.test(pkg.name)) {
+        if (pkg && pkg.name && pkg.name !== parentName && VALID_PKG_NAME.test(pkg.name) && !NESTED_EXCLUDE_NAMES.has(pkg.name)) {
           out.push({
             dir: sub,
             name: pkg.name,

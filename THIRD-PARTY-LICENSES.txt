@@ -17,7 +17,7 @@ OPC Agent — 随安装包分发的第三方组件许可清单
 许可字段），打包时跟着父包一起进安装包。它们列在各自父包的「内嵌子包」下，
 许可与署名按**它自己的**声明算，不能只记父包。
 
-组件数：262　许可分布：MIT × 227 · BSD-2-Clause × 12 · ISC × 9 · Apache-2.0 × 6 · BSD-3-Clause × 6 · (MPL-2.0 OR Apache-2.0) × 1 · 0BSD × 1
+组件数：264　许可分布：MIT × 227 · BSD-2-Clause × 12 · ISC × 9 · Apache-2.0 × 6 · BSD-3-Clause × 6 · SEE LICENSE IN LICENSE × 2 · (MPL-2.0 OR Apache-2.0) × 1 · 0BSD × 1
 
 许可全文：各组件在自己的 npm 包里随附 LICENSE 文件，npm 公开源可下载。
 本项目不修改这些组件的源码（`patches/node-pty+1.1.0.patch` 仅调整本地构建参数，
@@ -155,6 +155,16 @@ OPC Agent — 随安装包分发的第三方组件许可清单
   版权：Copyright (c) 2019 Federico Zivolo
   来源：前端打包（Vite 内联进 dist）
 
+@qoder-ai/qoder-agent-sdk 1.0.55
+  许可：SEE LICENSE IN LICENSE
+  版权：Copyright (c) 2026 Qoder
+  来源：后端依赖（原样进 app.asar）
+
+@qodercn-ai/qodercn-agent-sdk 1.0.55
+  许可：SEE LICENSE IN LICENSE
+  版权：Copyright (c) 2026 Qoder
+  来源：后端依赖（原样进 app.asar）
+
 @replit/codemirror-vim 6.4.0
   许可：MIT
   版权：Copyright (C) 2018-2021 by Marijn Haverbeke <marijnh@gmail.com> and others
@@ -189,9 +199,6 @@ OPC Agent — 随安装包分发的第三方组件许可清单
   许可：MIT
   版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
   来源：后端依赖（原样进 app.asar）
-  内嵌子包（随父包一起进安装包，许可按各自的声明）：
-    @tencent-ai/codebuddy-code 2.167.0 —— 许可：SEE LICENSE IN README.md
-      ⚠️ 该子包声明「许可见 README.md」，但 README.md 未随包提供 —— 许可条款无法从包内查证
 
 @tootallnate/once 2.0.1
   许可：MIT

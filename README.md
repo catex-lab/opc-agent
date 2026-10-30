@@ -77,7 +77,7 @@ npm run electron:build # 产物在 release/
 | 前端 | React 18 + TypeScript + Vite + TDesign |
 | 后端 | Express，构建时内联进主进程 |
 | 数据库 | `node:sqlite`（Node 22 内置模块，**不是** better-sqlite3） |
-| Agent 接入 | `@tencent-ai/agent-sdk`、`@qoder-ai/qoder-agent-sdk` 等 |
+| Agent 接入 | `@tencent-ai/agent-sdk` 等厂商 SDK，以及各 Agent 自有 CLI |
 | 终端 | `node-pty` |
 
 ## 目录结构

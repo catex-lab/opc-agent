@@ -23,7 +23,6 @@ import type { AddressInfo } from 'node:net';
 import fs from 'node:fs';
 import { AGENT_DEFS, findDef, type AgentDefinition } from '../server/agents/definitions.js';
 import { createProvider } from '../server/agents/adapters/index.js';
-import { QoderSdkAdapter } from '../server/agents/adapters/qoder-sdk.js';
 import { HttpAdapter } from '../server/agents/adapters/http.js';
 import { CliAdapter } from '../server/agents/adapters/cli.js';
 import { canEnforce } from '../server/agents/permissions.js';
@@ -117,36 +116,30 @@ async function collect(
   ok(args[args.length - 1] === 'PROMPT', '提示词作为位置参数放在最后（-p 是开关，不是「-p 提示词」）');
 }
 
-// ── 1b. A76：Qoder SDK 通道 + 国内版条目 ─────────────────────────
+// ── 1b. Qoder CLI 通道（曾走 SDK，2026-10-30 移除）────────────────
 {
   const qoder = findDef('qoder');
   ok(!!qoder, 'qoder 定义应存在');
 
-  // ① 通道声明：sdk 规格存在，且 flavor 指向国际版
-  eq(qoder?.sdk?.flavor, 'qoder-intl', 'qoder 声明了 SDK 通道（flavor=qoder-intl）');
+  // 只走 CLI：没有 sdk 规格，工厂产出 CliAdapter
+  ok(!qoder?.sdk, 'qoder 不再声明 SDK 规格');
+  ok(!!qoder?.cli, 'qoder 保留 cli 规格');
+  eq(qoder?.cli?.bin, 'qodercli', 'CLI 通道指向 qodercli');
 
-  // ② **兜底通道不许被删**。SDK 包缺失 / 握手失败时要靠它；
-  //    有人「既然有 SDK 了就把 cli 删掉」——那会让一次缺包变成整个 Agent 不可用。
-  ok(!!qoder?.cli, 'qoder 保留 cli 规格作为 SDK 失败时的兜底');
-  eq(qoder?.cli?.bin, 'qodercli', '兜底通道仍指向 qodercli');
-
-  // ③ 工厂真的产出了 SDK 适配器（而不是悄悄走了 CliAdapter）
   const p = qoder ? createProvider(qoder) : null;
-  ok(p instanceof QoderSdkAdapter, 'createProvider(qoder) 产出 QoderSdkAdapter', p?.constructor.name);
+  ok(p instanceof CliAdapter, 'createProvider(qoder) 产出 CliAdapter', p?.constructor.name);
   ok(p?.descriptor.id === 'qoder', '适配器的 descriptor 没被换掉');
 
-  // ④ 只读档位：A76 之前 plan **不**记为已强制（CLI 没有只读沙箱）。
-  //    现在 SDK 通道用「permissionMode=plan + disallowedTools + 回调白名单」
-  //    三层强制，所以必须记上 —— 否则界面会继续提示一个已经不存在的缺口。
-  ok(canEnforce('qoder', 'plan'), 'qoder 的 plan 档记为可强制（SDK 三层）');
-  ok(canEnforce('qoder', 'bypassPermissions'), 'qoder 的 bypassPermissions 档记为可强制');
+  // plan 不再强制：CLI 没有只读沙箱，不能记为可强制
+  ok(!canEnforce('qoder', 'plan'), 'qoder 的 plan 档不再记为可强制（CLI 无沙箱）');
+  ok(canEnforce('qoder', 'bypassPermissions'), 'qoder 的 bypassPermissions 档仍记为可强制');
 
-  // ⑤ 国内版：独立条目、独立账号体系、独立 CLI 名
+  // 国内版：独立条目、独立账号体系、独立 CLI 名
   const cn = findDef('qoder-cn');
   ok(!!cn, 'qoder-cn 条目存在');
-  eq(cn?.descriptor.kind, 'cli', 'qoder-cn 也是 cli（SDK 只是通道升级，不是新 kind）');
+  eq(cn?.descriptor.kind, 'cli', 'qoder-cn 也是 cli');
   eq(cn?.cli?.bin, 'qoderclicn', 'qoder-cn 的二进制名是 qoderclicn');
-  eq(cn?.sdk?.flavor, 'qoder-cn', 'qoder-cn 声明了 CN 版 SDK');
+  ok(!cn?.sdk, 'qoder-cn 不再声明 SDK 规格');
   eq(cn?.descriptor.region, 'cn', 'qoder-cn 的 region 是 cn');
   eq(cn?.descriptor.authScope, 'qoder.cn', 'qoder-cn 用独立账号体系');
   ok(
@@ -154,8 +147,8 @@ async function collect(
     'qoder 与 qoder-cn 的 authScope 不同（否则界面会以为额度互通）'
   );
 
-  // ⑥ 两个条目的 CLI 参数**必须同构**：CN 没有账号可测，一旦复制成两份，
-  //    「改了国际版忘了国内版」这种偏差永远发现不了。
+  // 两个条目的 CLI 参数**必须同构**：CN 没有账号可测，一旦复制成两份，
+  // 「改了国际版忘了国内版」这种偏差永远发现不了。
   const probeCtx = {
     sessionId: 's', prompt: 'P', cwd: 'C:/tmp', permissionMode: 'plan',
   } as any;

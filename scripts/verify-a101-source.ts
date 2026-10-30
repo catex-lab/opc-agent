@@ -34,12 +34,10 @@ function ok(cond: boolean, label: string, detail?: string) {
 /** 造一个最小 AgentDefinition，只填本函数用得到的字段 */
 function def(over: {
   kind?: AgentDefinition['descriptor']['kind'];
-  sdk?: AgentDefinition['sdk'];
   parse?: CliSpec['parse'];
 }): AgentDefinition {
   return {
     descriptor: { id: 'x', name: 'X', kind: over.kind ?? 'cli', capabilities: ['chat'] },
-    sdk: over.sdk,
     cli:
       over.parse != null
         ? ({ bin: 'x', buildArgs: () => [], parse: over.parse } as CliSpec)
@@ -58,16 +56,7 @@ console.log('\nA100 事件来源判定');
   ok(eventSourceOf(def({ kind: 'cli' })) === undefined, 'cli 但没有 parse → undefined（不猜）');
   ok(eventSourceOf(def({ kind: 'acp' })) === 'native', 'acp → native');
   ok(eventSourceOf(def({ kind: 'http' })) === 'native', 'http → native');
-  // ★ kind='sdk' 必须算 native：它说的是「我们怎么接」，而 def.sdk 说的是
-  //   「有没有配 SDK 握手参数」，两者覆盖不重合。漏掉它会让主力 Agent
-  //   （workbuddy）在界面上没有来源标注 —— 第一版就是这么漏的。
-  ok(eventSourceOf(def({ kind: 'sdk' })) === 'native', "kind='sdk' → native（不依赖 def.sdk 字段）");
-
-  // sdk 优先于 cli：两者同时存在时（SDK 握手失败才回退 CLI），
-  // 能走 SDK 事件就是原生的 —— 这一条是「标错方向」的高发区
-  const both = def({ kind: 'cli', parse: 'text' });
-  both.sdk = { client: {} as AgentDefinition['sdk'] };
-  ok(eventSourceOf(both) === 'native', 'sdk 与 cli 同时存在时 sdk 优先（标成 native 而非 parsed_text）');
+  ok(eventSourceOf(def({ kind: 'sdk' })) === 'native', "kind='sdk' → native");
 }
 
 // ── 2. 真表覆盖 ────────────────────────────────────────────────────
@@ -77,12 +66,11 @@ console.log('\nA100 事件来源判定');
     id: d.descriptor.id,
     kind: d.descriptor.kind,
     parse: d.cli?.parse,
-    hasSdk: !!d.sdk,
     source: eventSourceOf(d),
   }));
 
   for (const r of rows) {
-    console.log(`    ${r.id.padEnd(12)} kind=${String(r.kind).padEnd(5)} parse=${String(r.parse ?? '-').padEnd(12)} sdk=${r.hasSdk ? '有' : '无'} → ${r.source}`);
+    console.log(`    ${r.id.padEnd(12)} kind=${String(r.kind).padEnd(5)} parse=${String(r.parse ?? '-').padEnd(12)} → ${r.source}`);
   }
 
   const group = (s: string) => rows.filter(r => r.source === s).map(r => r.id);
@@ -92,18 +80,18 @@ console.log('\nA100 事件来源判定');
   const unknown = rows.filter(r => r.source === undefined);
   ok(unknown.length === 0, '没有「判定不出来」的 Agent（否则 UI 上它会静默缺标）', unknown.map(r => r.id).join(','));
 
-  const wantNative = rows.filter(r => r.hasSdk || r.kind === 'sdk' || r.kind === 'acp' || r.kind === 'http');
+  const wantNative = rows.filter(r => r.kind === 'sdk' || r.kind === 'acp' || r.kind === 'http');
   const gotNative = rows.filter(r => r.source === 'native');
-  ok(wantNative.length === gotNative.length, 'native 的数量 = 走 SDK/ACP/HTTP/SDK kind 的数量', `${gotNative.length}/${wantNative.length}`);
+  ok(wantNative.length === gotNative.length, 'native 的数量 = 走 SDK/ACP/HTTP 的数量', `${gotNative.length}/${wantNative.length}`);
   ok(
     wantNative.every(r => r.source === 'native'),
     '凡是走 SDK/ACP/HTTP 的都标成 native（没有一个漏标）',
     wantNative.filter(r => r.source !== 'native').map(r => r.id).join(',')
   );
 
-  const textCli = rows.filter(r => r.parse === 'text' && r.kind === 'cli' && !r.hasSdk);
+  const textCli = rows.filter(r => r.parse === 'text' && r.kind === 'cli');
   const parsedText = rows.filter(r => r.source === 'parsed_text');
-  ok(textCli.length === parsedText.length, 'parsed_text 的数量 = 纯文本 CLI 且没有 SDK 的数量', `${parsedText.length}/${textCli.length}`);
+  ok(textCli.length === parsedText.length, 'parsed_text 的数量 = 纯文本 CLI 的数量', `${parsedText.length}/${textCli.length}`);
   ok(
     textCli.every(r => r.source === 'parsed_text'),
     '纯文本解析的一个都没被标成结构化（方向正确）',

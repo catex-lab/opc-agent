@@ -122,30 +122,25 @@ const MATRIX: Record<string, PermissionSupport> = {
   // ⚠️ 这里不玩「反正大多数时候是 SDK」的模糊话术：用户在「问答」场景下
   //    拿到的只读承诺，取决于运行期走的是哪条路，而这件事界面上能看见。
   qoder: {
-    enforced: FULL,
+    enforced: ['default', 'acceptEdits', 'bypassPermissions'],
     limitation:
-      'SDK 通道：permissionMode=plan + disallowedTools 硬拒写盘/命令工具 + 审批回调只读白名单三层强制；若 SDK 不可用退化为 CLI 通道，plan 降级为 dont_ask（近似只读，非沙箱级保证），状态文案会标注当前通道',
+      '只走 CLI 通道（2026-10-30 移除 SDK）。--permission-mode 可传 default/accept_edits/bypass_permissions/dont_ask，但 dont_ask 是「近似只读」而非沙箱级保证；没有 disallowedTools + 回调白名单那样的三层强制',
     toolWhitelist: {
-      enforced: true,
-      // 只读工具（Read/Grep/Glob）实测**不经过** canUseTool，由 SDK 自动放行。
-      // 所以类别白名单只能拦住「会触发授权」的那批；要拦只读场景的写盘，
-      // 靠的是 disallowedTools（硬拒绝，不需要回调）。
+      enforced: false,
       limitation:
-        '仅对会触发授权的工具生效（只读工具由 SDK 自动放行）；只读场景另用 disallowedTools 硬拒 Bash/Write/Edit 等',
+        'CLI 通道没有 canUseTool 回调，工具调用由 qodercli 内部处理；适配器层无法按场景类别做白名单拦截',
     },
   },
 
-  // 国内版：同一套适配器、同一套判定，**但本机没有 CN 账号，运行期未实测**。
-  // 矩阵描述的是「代码能强制什么」，所以与上面一致；不确定性写进 limitation，
-  // 而不是含糊地少写一条 —— 少写一条会让 UI 在能强制的情况下也提示缺口。
+  // 国内版：与国际版同一套 CLI 参数，**但本机没有 CN 账号，运行期未实测**。
   'qoder-cn': {
-    enforced: FULL,
+    enforced: ['default', 'acceptEdits', 'bypassPermissions'],
     limitation:
-      '与国际版同一套适配器（SDK 三层强制 + CLI 回退）；本机无 Qoder CN 账号，运行期未实测',
+      '与国际版同一套 CLI 通道（SDK 已移除）；本机无 Qoder CN 账号，运行期未实测',
     toolWhitelist: {
-      enforced: true,
+      enforced: false,
       limitation:
-        '仅对会触发授权的工具生效（只读工具由 SDK 自动放行）；只读场景另用 disallowedTools 硬拒 Bash/Write/Edit 等。CN 通道未实测',
+        'CLI 通道没有 canUseTool 回调；CN 通道未实测',
     },
   },
 

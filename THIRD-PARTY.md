@@ -24,7 +24,7 @@
 | 包 | 许可 | 说明 |
 |---|---|---|
 | `electron` | MIT | 桌面壳。运行时内含 Chromium 及其依赖，完整声明见 Electron 发行包内的 `LICENSES.chromium.html` |
-| `@tencent-ai/agent-sdk` | MIT | 腾讯 CodeBuddy Agent SDK。**注意**：npm 元数据声明 MIT，但包内未随附 LICENSE 文件；它还内嵌了一整套 CodeBuddy CLI（许可声明缺失），见下文「安装包里内嵌的第三方 CLI」 |
+| `@tencent-ai/agent-sdk` | MIT | 腾讯 CodeBuddy Agent SDK。npm 元数据声明 MIT；包内未随附 LICENSE 文件。**注意**：其内嵌的 CodeBuddy CLI（`cli/`）因许可声明缺失，已从安装包排除，改由用户自行安装 |
 | `express` | MIT | 内联后端的 HTTP 框架 |
 | `node-pty` | MIT | 终端 PTY |
 | `uuid` | MIT | UUID 生成 |
@@ -42,26 +42,20 @@
 这两个包是 Qoder 官方 SDK，**不是开源许可**，使用受
 <https://qoder.com/product-service> 约束。
 
-因此它们被放在 `devDependencies`，**不会被打进安装包** —— 源码仓库可以自由分发，
-但发布的安装包里不含这两个包。代价是打包版里 Qoder 走 **CLI 通道**（`qodercli`），
-功能正常；只有「只读（plan）模式」需要 SDK 通道，打包版会明确报错而**不会**静默
-降级到没有沙箱的 CLI（见 `server/agents/adapters/qoder-sdk.ts` 的降级分支）。
-
-自己从源码构建时 `npm install` 会装上它们，SDK 通道与 plan 模式都可用 ——
-**这仍然受 Qoder 服务条款约束，请自行确认你的使用方式符合其条款。**
+**2026-10-30 更新**：因条款未明示允许第三方客户端集成其 SDK，本项目已**完全移除**
+Qoder SDK 通道（`adapters/qoder-sdk.ts` 已删除，`definitions.ts` 中的 `sdk` 规格已移除，
+`package.json` 中的两个 devDependencies 已删除）。现在 Qoder 只走 **CLI 通道**
+（`qodercli` / `qoderclicn`），由用户自行安装，我们不分发其 SDK。
 
 条款侧的事实（2026-04-29 版全文读过，不是猜的）：通篇**没有出现 "SDK" 或 "CLI"**，
 所以不存在针对再分发的专门条款；但 **4.2** 的授权是
 `non-transferable, non-sublicensable`（不可转让、不可再许可），**3.2.12** 禁止
-「用其服务或输出去开发功能相似的产品」。本项目**不分发**这两个包，因此不涉及再许可；
-剩下的只是「我们调用它」这一层 —— 条款既未明示允许也未明示禁止。要一个确定答案的话，
-写 <contact@qoder.com>。
+「用其服务或输出去开发功能相似的产品」。本项目**不分发**这两个包，因此不涉及再许可。
 
 ## 安装包里内嵌的第三方 CLI
 
-`@tencent-ai/agent-sdk` 不只是一个 SDK —— 它内部塞了整套 **CodeBuddy CLI**
-（`cli/`，SDK 运行时会把它当子进程拉起来，路径解析写死在 `lib/utils/cli-resolver.js`）。
-这个子包有自己的 `package.json`：
+`@tencent-ai/agent-sdk` 内部曾经塞了整套 **CodeBuddy CLI**（`cli/`，SDK 运行时会
+把它当子进程拉起来）。这个子包有自己的 `package.json`：
 
 | 字段 | 值 |
 |---|---|
@@ -72,16 +66,10 @@
 也就是说：外层包在 npm 元数据里声明 MIT，内嵌的 CLI 子包自述「许可见 README.md」，
 而那个 README 并没有随包发布 —— **许可条款无法从包内查证**。
 
-本项目没有改动它的任何文件，只是原样打包（`electron-builder.yml` 的 `asarUnpack`
-把它解出来，因为它要作为子进程执行）。这条如实记在
-[THIRD-PARTY-LICENSES.txt](./THIRD-PARTY-LICENSES.txt) 的「内嵌子包」段。
-
-在意这一点的话，有两个办法：
-
-1. 向腾讯（CodeBuddy）索取该子包的许可说明；
-2. 不打包内置 CLI —— SDK 支持 `CODEBUDDY_CODE_PATH` 环境变量，且**优先级高于**
-   内置 CLI（解析顺序：环境变量 → 内置 `cli/` → monorepo 开发路径）。指向本机
-   已装的 `codebuddy` 即可，代价是安装包不再开箱即用。
+**2026-10-30 已解决**：`electron-builder.yml` 已把 `node_modules/@tencent-ai/agent-sdk/cli/**`
+从安装包排除；`bootstrap.cjs` 会在启动时探测本机 `codebuddy` 并注入
+`CODEBUDDY_CODE_PATH`（SDK 优先读取该环境变量）。未检测到 CLI 时，WorkBuddy 的
+探测状态会显示「未安装」并给出安装提示，而不是崩溃。
 
 ## 字体与图标
 

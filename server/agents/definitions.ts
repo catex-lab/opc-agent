@@ -188,41 +188,25 @@ export interface HttpSpec {
 }
 
 /**
- * 厂商 Agent SDK 的接入规格（A76）。
+ * 这里曾经有个 `SdkSpec`（A76）：让 Qoder 走官方 Agent SDK 通道
+ * （`adapters/qoder-sdk.ts`），换来更细的事件粒度（thinking / tool_use / usage）
+ * 和 plan 只读档的三层强制。
  *
- * ## 为什么它不是一个新的 `kind`
+ * **2026-10-30 移除，原因不是技术。** Qoder 的 Product Service Terms（2026-04-29 版）
+ * 通篇没有 "SDK"/"CLI" 字样；4.2 的授权是 `non-transferable, non-sublicensable`，
+ * 3.2.12 禁止用其服务或输出去开发功能相似的产品。第三方客户端「集成调用其 SDK」
+ * 这一层**没有授权依据**，也不属于开源许可能覆盖的范围。
  *
- * `kind` 回答的是「用哪个适配器」。但 Qoder SDK 的 `ProcessTransport` 做的
- * 事恰恰是**在本机拉起 `qodercli` 子进程**再走 JSONL 双向协议 —— 底层和
- * `CliAdapter` 是同一个可执行文件，只是协议从「读 stdout」变成「双向说话」。
- *
- * 所以它是同一 kind 上的**通道升级**（SDK 优先、失败回退 CLI），不是第二套
- * 接入方式。`createProvider` 里对它的分叉写在 kind 判断**之前**，见
- * `adapters/index.ts` 的说明。
- *
- * 另有一条硬理由：前端 `App.tsx` 用 `kind === 'sdk'` 判「回退到平台模型列表」。
- * 把 qoder 改成 `sdk` 会让它在清单拿不到时显示 CodeBuddy 的模型名 ——
- * 那些名字 qodercli 一个都不认，选中就是一次必失败的调用。
+ * 现在 Qoder 只走 CLI 通道：用户自己装 `qodercli`、自己登录，我们只按子进程调用
+ * 本机已安装的可执行文件 —— 不分发其 SDK，也不在进程内加载它。
+ * 代价写清楚：plan（只读）档对 Qoder 不再可用，事件粒度退到纯文本。
  */
-export interface SdkSpec {
-  /**
-   * 哪个产品系列。
-   *
-   * 决定包名 / CLI 名 / PAT 环境变量名三处差异（两份 README 逐节同构，
-   * 各 685 行，2026-10-22 核对），由 `adapters/qoder-sdk.ts` 的
-   * `QODER_FLAVORS` 展开。**必须是独立条目**：Qoder 与 Qoder CN 的账号 /
-   * Credits / 模型 / 部署全独立，一个子进程只能持一份凭据。
-   */
-  flavor: 'qoder-intl' | 'qoder-cn';
-}
 
 /** 一个 Agent 的完整定义 */
 export interface AgentDefinition {
   descriptor: AgentDescriptor;
   /** kind === 'cli' 时必填 */
   cli?: CliSpec;
-  /** 有它就走 SDK 通道（优先），握手失败回退上面的 cli */
-  sdk?: SdkSpec;
   /** kind === 'http' 时必填 */
   http?: HttpSpec;
   /** 已知的不可用原因（用于 GUI-only 之类） */
@@ -1457,8 +1441,10 @@ const RAW_DEFS: AgentDefinition[] = [
       // A76 之后事件粒度变了：SDK 通道能给出 thinking / tool / usage，
       // 文本通道给不出。这里按**能力上限**标（名册用它判断要不要画折叠条），
       // 实际走 CLI 回退时前端收到的事件自然更少，不会画出空卡片。
-      eventCapabilities: ['thinking', 'tool', 'usage'],
-      description: '阿里 Qoder Agent，经官方 Agent SDK 接入（底层仍是 qodercli），支持思考过程与工具卡片',
+      // CLI 通道只给文本（`parse: 'text'`），thinking / tool / usage 事件拿不到。
+      // 标了就会画出永远空着的折叠条 —— 按**实际能给的**标，不按愿望标。
+      eventCapabilities: [],
+      description: '阿里 Qoder Agent，经本机 qodercli 接入（需自行安装并登录）',
       icon: 'qoder',
       color: '#444441',
       command: 'qodercli',
@@ -1478,11 +1464,8 @@ const RAW_DEFS: AgentDefinition[] = [
       buildArgs: qoderCliArgs,
       parse: 'text',
     },
-    // A76：SDK 通道优先，握手失败自动回退上面的 cli。
-    // 实测依据（2026-10-22）：本机 qodercli 1.1.73 + SDK 1.0.55 走
-    // ProcessTransport 跑到 `result/success`，且能拿到 thinking / tool_use /
-    // tool_result / result 四类事件。SDK 官方 pin 的是 1.1.75，1.1.73 实测无碍。
-    sdk: { flavor: 'qoder-intl' },
+    // 只走 CLI 通道。曾经这里有 `sdk: { flavor: 'qoder-intl' }`（A76），
+    // 2026-10-30 因授权依据不足移除，理由见上面 `SdkSpec` 那段注释。
     // qodercli 装在 PATH 之外，必须显式加搜索目录（目录名与可执行名同名）
     extraPaths: ['%USERPROFILE%\\.qoder\\bin\\qodercli'],
     // 登录态在 ~/.qoder/.auth/（实测 user 文件存在即为已登录，qodercli login 写入）
@@ -1523,9 +1506,9 @@ const RAW_DEFS: AgentDefinition[] = [
       authScope: 'qoder.cn',
       authScopeName: 'Qoder CN 账号',
       capabilities: ['chat', 'code', 'write', 'tools'],
-      eventCapabilities: ['thinking', 'tool', 'usage'],
+      eventCapabilities: [],
       description:
-        '阿里 Qoder 国内版（qoder.cn），账号与积分独立；按官方 SDK 接入，本机无 CN 账号未实测',
+        '阿里 Qoder 国内版（qoder.cn），账号与积分独立；经本机 qoderclicn 接入，本机无 CN 账号未实测',
       // 与国际版同一个品牌，复用同一套 logo 资源（不另画一个不存在的图形）
       icon: 'qoder',
       color: '#444441',
@@ -1553,7 +1536,7 @@ const RAW_DEFS: AgentDefinition[] = [
       buildArgs: qoderCliArgs,
       parse: 'text',
     },
-    sdk: { flavor: 'qoder-cn' },
+    // 只走 CLI 通道（理由同国际版，见 `SdkSpec` 那段注释）。
     // 两个候选目录都搜：`~/.qoder-cn/bin/qoderclicn`（与 `~/.qoder/bin/qodercli`
     // 同构）以及 `~/.qoder-cn/bin`。哪个都不在就是没装，不做更多猜测。
     extraPaths: ['%USERPROFILE%\\.qoder-cn\\bin', '%USERPROFILE%\\.qoder-cn\\bin\\qoderclicn'],
@@ -2401,20 +2384,14 @@ export function agentAcceptsModel(id: string): boolean {
  *
  * ## 判定顺序（从最可信往下）
  *
- * 1. `sdk` 优先于 `cli`：定义表里两者可以同时存在（SDK 握手失败才回退 CLI），
- *    而能走 SDK 时事件就是原生的。
- * 2. `kind === 'sdk'` / `acp` / `http` 都是官方接口：SDK 走的是厂商 SDK，
+ * 1. `kind === 'sdk'` / `acp` / `http` 都是官方接口：SDK 走的是厂商 SDK，
  *    ACP 是正式协议，HTTP 是结构化接口 —— 都算 native。
- *    ⚠️ 曾经漏了 `kind === 'sdk'`，只判了 `def.sdk` 字段。两者的覆盖并不重合：
- *    `kind` 说的是**我们怎么接**，`def.sdk` 说的是**有没有配 SDK 握手参数**。
- *    漏掉它的后果是主力 Agent（workbuddy，kind='sdk'）在界面上没有来源标注。
- * 3. `cli` 看 `parse`：`jsonl` / `json-object` 是 CLI 自己吐的结构化输出；
+ * 2. `cli` 看 `parse`：`jsonl` / `json-object` 是 CLI 自己吐的结构化输出；
  *    `text` 是适配器解析出来的，低一档。
- * 4. 其余（mock 等）返回 undefined —— **不猜**。UI 对 undefined 不标注。
+ * 3. 其余（mock 等）返回 undefined —— **不猜**。UI 对 undefined 不标注。
  */
 export function eventSourceOf(def: AgentDefinition | undefined): EventSource | undefined {
   if (!def) return undefined;
-  if (def.sdk) return 'native';
   if (
     def.descriptor.kind === 'sdk' ||
     def.descriptor.kind === 'acp' ||

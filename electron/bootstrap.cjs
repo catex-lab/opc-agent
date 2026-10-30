@@ -70,6 +70,82 @@ process.env.OPC_WEB_DIR = path.join(app.getAppPath(), 'dist');
 // 真实端口由 main.ts 从 server.address() 读回。
 if (process.env.PORT === undefined) process.env.PORT = '0';
 
+// ── CodeBuddy CLI 探测（2026-10-30）────────────────────────────────
+// @tencent-ai/agent-sdk 内嵌的 CLI（cli/）因许可声明缺失，已从安装包排除。
+// SDK 本体 lib/（MIT）保留，但运行时 spawn CLI 需要本机已有 codebuddy。
+// 这里在业务模块加载前探测并注入 CODEBUDDY_CODE_PATH，让 SDK 直接走本机
+// 已安装的副本，而不是去找那个已经不存在的内置路径。
+(function () {
+  const fs = require('node:fs');
+  const { execSync } = require('node:child_process');
+
+  // 用户已显式指定，不再探测
+  if (process.env.CODEBUDDY_CODE_PATH && fs.existsSync(process.env.CODEBUDDY_CODE_PATH)) {
+    process.env.OPC_CODEBUDDY_CLI = process.env.CODEBUDDY_CODE_PATH;
+    console.log(`[Bootstrap] codebuddy=${process.env.CODEBUDDY_CODE_PATH}（用户指定）`);
+    return;
+  }
+
+  /** 找 PATH 中的 codebuddy */
+  function fromPath() {
+    try {
+      const isWin = process.platform === 'win32';
+      const found = execSync(isWin ? 'where codebuddy' : 'which codebuddy', {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'ignore'],
+        timeout: 3000,
+      })
+        .trim()
+        .split(/\r?\n/)[0];
+      if (!found) return null;
+
+      // Windows 上 npm 全局安装会产生 .cmd 垫片；SDK 的 ProcessTransport
+      // 只认 .exe（directExecute）或 node 脚本（走 runtime.command）。
+      // 如果找到 .cmd，尝试在同目录或 npm 包结构里找真实入口。
+      if (isWin && found.toLowerCase().endsWith('.cmd')) {
+        const dir = path.dirname(found);
+        const exe = path.join(dir, 'codebuddy.exe');
+        if (fs.existsSync(exe)) return exe;
+        // npm 全局包结构：codebuddy.cmd 旁就是 node_modules/@tencent-ai/codebuddy-code
+        const js = path.join(dir, 'node_modules', '@tencent-ai', 'codebuddy-code', 'dist', 'codebuddy-headless.js');
+        if (fs.existsSync(js)) return js;
+        return null;
+      }
+
+      return fs.existsSync(found) ? found : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 常见独立安装位置兜底 */
+  function fromCommon() {
+    if (process.platform === 'win32') {
+      const base = process.env.LOCALAPPDATA;
+      if (!base) return null;
+      const candidates = [
+        path.join(base, 'Programs', 'codebuddy', 'bin', 'codebuddy.exe'),
+        path.join(base, 'codebuddy', 'bin', 'codebuddy.exe'),
+      ];
+      for (const p of candidates) if (fs.existsSync(p)) return p;
+    }
+    if (process.platform === 'darwin') {
+      const p = '/usr/local/bin/codebuddy';
+      if (fs.existsSync(p)) return p;
+    }
+    return null;
+  }
+
+  const codebuddyPath = fromPath() || fromCommon();
+  if (codebuddyPath) {
+    process.env.CODEBUDDY_CODE_PATH = codebuddyPath;
+    process.env.OPC_CODEBUDDY_CLI = codebuddyPath;
+    console.log(`[Bootstrap] codebuddy=${codebuddyPath}`);
+  } else {
+    console.log('[Bootstrap] codebuddy 未检测到 —— WorkBuddy 需要自行安装 CodeBuddy CLI');
+  }
+})();
+
 console.log(`[Bootstrap] dataDir=${process.env.OPC_DATA_DIR}`);
 console.log(`[Bootstrap] userData=${app.getPath('userData')}${process.env.OPC_USER_DATA_DIR ? ' (已重定向)' : ''}`);
 console.log(`[Bootstrap] webDir =${process.env.OPC_WEB_DIR}`);

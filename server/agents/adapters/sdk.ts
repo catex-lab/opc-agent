@@ -194,6 +194,12 @@ export class SdkAdapter implements AgentProvider {
   async probe(): Promise<AgentStatus> {
     const now = new Date().toISOString();
 
+    // 2026-10-30：内置 CLI 已从安装包排除，需本机自行安装。
+    // bootstrap.cjs 会探测并注入 CODEBUDDY_CODE_PATH；没注入就是没找到。
+    const hasCli = Boolean(
+      process.env.CODEBUDDY_CODE_PATH || process.env.OPC_CODEBUDDY_CLI
+    );
+
     // 环境变量配置的凭据最优先，无需网络往返
     const envOk = Boolean(
       process.env.CODEBUDDY_API_KEY || process.env.CODEBUDDY_AUTH_TOKEN
@@ -235,6 +241,24 @@ export class SdkAdapter implements AgentProvider {
       }
     } catch (err) {
       const message = (err as Error)?.message || String(err);
+
+      // CLI 缺失是独立状态，比「鉴权失败」更前置：用户需要先装 CLI 才能谈登录。
+      const cliMissing =
+        !hasCli &&
+        (message.includes('CodeBuddy CLI not found') ||
+          message.includes('CLI not found'));
+      if (cliMissing) {
+        this.status = {
+          availability: 'not-installed',
+          installed: false,
+          message:
+            '未检测到 CodeBuddy CLI。请先安装 CodeBuddy 并确保 codebuddy 在 PATH 中，' +
+            '或设置环境变量 CODEBUDDY_CODE_PATH 指向可执行文件。',
+          probedAt: now,
+        };
+        return this.status;
+      }
+
       if (envOk) {
         this.status = {
           availability: 'ready',
