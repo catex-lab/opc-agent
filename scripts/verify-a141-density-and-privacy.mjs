@@ -462,9 +462,13 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
     target: el.getAttribute('target'),
     rel: el.getAttribute('rel'),
   })));
-  const site = links.find(l => l.key === 'site');
   const gh = links.find(l => l.key === 'github');
-  ok(!!site && site.href === 'https://github.com/catex-lab/opc-agent', '官网入口指向 catex-lab', site?.href || '缺失');
+  /* 2026-10-30：官网入口整条移除（用户要求把官网域名从代码与远端仓库里暂时清空）。
+     原断言是「官网入口指向某域名」，随链接一起删。
+     这里换成正面的**精确清单**断言，而不是「不含某字符串」的否定式 ——
+     否定式在「整块 LINKS 被删空」时照样为真，精确清单不会。 */
+  ok(links.length === 1 && links[0].key === 'github', '外链只剩 GitHub 一条（官网入口已移除）',
+    links.map(l => l.key).join(',') || '空');
   ok(!!gh && gh.href === 'https://github.com/catex-lab/opc-agent', 'GitHub 入口指向真实仓库', gh?.href || '缺失');
   ok(links.every(l => l.target === '_blank'), '入口都在新窗口打开（交给系统浏览器）');
   ok(links.every(l => (l.rel || '').includes('noreferrer')), '外链带 rel=noreferrer');

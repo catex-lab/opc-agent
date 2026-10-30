@@ -2,7 +2,7 @@
   "name": "opc-agent",
   "version": "1.0.0",
   "description": "本机多 Agent 团队协作桌面应用 —— 把本机安装的各类 Agent 当作通讯录里的联系人，可单聊也可拉群分派任务",
-  "author": "catex-lab",
+  "author": "OPC Agent contributors",
   "license": "MIT",
   "private": true,
   "type": "module",

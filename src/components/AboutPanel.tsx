@@ -4,8 +4,9 @@
  * 这一页承担四件事，缺一不可：
  *   1. 告诉用户「这是什么东西、什么版本」—— 开源项目的支持成本，一半来自
  *      用户报 issue 时说不清自己装的哪一版。
- *   2. 给出官方入口 —— 官网、源码、反馈。没有这些，用户只能去搜索引擎找，
+ *   2. 给出官方入口 —— 源码、反馈。没有这些，用户只能去搜索引擎找，
  *      很容易装到改包。
+ *      （2026-10-30：官网入口整条移除，详见文件末尾 LINKS 处的说明。）
  *   3. 把隐私讲清楚。A141 之后**应用本身不收集任何信息**：遥测模块
  *      （原 electron/analytics.ts）已整体删除，主进程没有任何出站上报，
  *      也没有安装 ID。所以这里不再需要「会发送 / 绝不会发送」两栏和一个
@@ -23,13 +24,12 @@
  *   4. 引导点星。点星对开源项目是零成本的支持，但**不能做成弹窗骚扰** ——
  *      放在关于页里，用户主动看到，愿意点就点。
  *
- * 为什么不再给「完整说明」外链：旧文案指向 `${SITE_URL}/privacy.html`，
- * 但该页在官网上是否存在从未核实过，而正文已经把该说的说完（数据在哪、
+ * 为什么不再给「完整说明」外链：旧文案指向官网的 privacy.html，
+ * 但该页是否存在从未核实过，而正文已经把该说的说完（数据在哪、
  * 什么会离开本机、源码在哪）。宁可少一个可能 404 的链接。
  */
 import { useEffect, useState } from 'react';
 import {
-  Globe,
   Github,
   Star,
   ExternalLink,
@@ -40,7 +40,6 @@ import {
 } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
 
-const SITE_URL = 'https://github.com/catex-lab/opc-agent';
 const REPO_URL = 'https://github.com/catex-lab/opc-agent';
 const ISSUE_URL = `${REPO_URL}/issues`;
 
@@ -75,14 +74,15 @@ const LOCAL_ONLY = [
   '工作区路径、偏好设置与界面状态',
 ];
 
+/**
+ * 外部入口。
+ *
+ * 2026-10-30：官网那条**整条移除**（用户口径是「暂时移除代码与远端仓库里关于
+ * 官网域名的任何内容，只保留在本地」）。恢复办法与原始片段记在
+ * `.tmp-audit/domain-removed-2026-10-30.md`（本地文件，`.tmp-*` 已 gitignore）。
+ * 注意 `verify:a141` 的「入口」断言从两条变一条 —— 条数变少不是挂了。
+ */
 const LINKS = [
-  {
-    key: 'site',
-    href: SITE_URL,
-    label: 'OPC Agent 官网',
-    hint: 'catex-lab · 项目介绍与下载',
-    Icon: Globe,
-  },
   {
     key: 'github',
     href: REPO_URL,
