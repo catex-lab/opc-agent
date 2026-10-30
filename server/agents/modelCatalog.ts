@@ -66,6 +66,15 @@ export interface ModelOption {
   /** provider 的展示名 */
   providerName?: string;
   /**
+   * 这一条是否**实测可路由**（A151）。
+   *
+   * - `true`：来自 CLI 自己的枚举，或标定过（`modelAvailability.ts` 里打通过）；
+   * - `false`：来自官方文案表、但本机还没打过的。界面标「未验证」，
+   *   选之前要先标定 —— 官方清单里确实存在 `-m` 会被静默替换的名字。
+   * - 缺省：老路径（不参与标定的 Agent），按可用处理。
+   */
+  verified?: boolean;
+  /**
    * 这个模型支持的推理/思考强度档位（A62）。
    *
    * 与官方模型面板上的「思考强度：低 / 中 / 高 / 最大 / 超高」对应。
@@ -141,8 +150,9 @@ interface CatalogSource {
    * - `provider-model`（默认）：一行一个 `provider/model`，可再用 models.dev 补元数据
    * - `qoder`：一行一个裸模型名，自定义模型是 `显示名 (modelID)`；没有价格信息
    * - `codex-json`：`codex debug models` 的 JSON（含 display_name / 描述 / 上下文 / 优先级）
+   * - `cursor`：一行一个 `id - 显示名`，当前/默认模型在行尾带 `(current, default)`
    */
-  format?: 'provider-model' | 'qoder' | 'codex-json';
+  format?: 'provider-model' | 'qoder' | 'codex-json' | 'cursor';
   /**
    * 二进制不在 PATH 里时的额外搜索目录（与 `definitions.ts` 的 `extraPaths` 同义）。
    * 目录枚举也走子进程，找不到二进制就等于没有清单 —— 不能只靠 PATH。
@@ -162,11 +172,21 @@ interface CatalogSource {
  * | opencode | `opencode models` | `provider/model` + models.dev 元数据 |
  * | qoder | `qodercli --list-models` | 裸名字（含自定义模型的 modelID） |
  * | codex | `codex debug models` | JSON（官方模型目录，含 hide/list 可见性） |
+ * | cursor | `cursor-agent models` | `id - 显示名`（含 `(current, default)` 标记） |
  *
- * gemini / claude / cursor / zcode / kimi 的 CLI **没有任何枚举命令**
- * （已逐个翻过 `--help` 与子命令表，2026-10-21 实测），硬塞一份 models.dev
- * 清单等于给用户一堆本机跑不通的选项 —— 那是把一个假控件换成另一个假控件。
- * 它们继续显示「模型由 Agent 决定」，比铺一份没人验证过的清单诚实。
+ * gemini / claude / pi / zcode / kimi 的 CLI **没有任何枚举命令**
+ * （已逐个翻过 `--help` 与子命令表，2026-10-21 与 2026-10-30 两次实测），
+ * 硬塞一份 models.dev 清单等于给用户一堆本机跑不通的选项 —— 那是把一个假控件
+ * 换成另一个假控件。它们继续显示「模型由 Agent 决定」，比铺一份没人验证过的
+ * 清单诚实。
+ *
+ * ⚠️ **2026-10-30 补 cursor 时踩到的教训**：这张表是**手写**的，
+ * 「CLI 有枚举命令」与「我们接了这一条」之间没有任何自动校验 ——
+ * cursor 官方一直有 `cursor-agent models`（本机实测 270 条），
+ * 但没人加进这张表，于是它整整一段时间都显示「模型由 Agent 决定」，
+ * 与当初 opencode 那个 bug 是同一个形态。`verify:model-catalog` 现在有一条
+ * **源码契约**钉着：`definitions.ts` 里凡是会传 `ctx.model` 的 CLI Agent，
+ * 必须在 `CATALOG_SOURCES` 里，或在显式的 `NO_ENUMERATION` 名单里说明原因。
  */
 const CATALOG_SOURCES: Record<string, CatalogSource> = {
   opencode: {
@@ -204,6 +224,22 @@ const CATALOG_SOURCES: Record<string, CatalogSource> = {
   codex: {
     cli: { bin: 'codex', args: ['debug', 'models'] },
     format: 'codex-json',
+    fallbackProviders: [],
+  },
+  // `cursor-agent models`（2026-10-30 本机实测 270 条）。
+  //
+  // 为什么拖到 A151 才接：`definitions.ts` 里 cursor 的 `installHint` 写着
+  // 「装的是 cursor-agent CLI」，但**没人回头看它有没有枚举命令** ——
+  // 而 `cursor-agent --help` 里明明白白列着 `--list-models` 与 `models`
+  // 两个子命令（`models` 的说明就是 "List available models for this account"）。
+  // 这就是本文件顶部那条教训的现场。
+  //
+  // `extraDirs` 与 definitions 的 `extraPaths` 同值：cursor-agent 装在
+  // `%LOCALAPPDATA%\cursor-agent`，不在 PATH 里，不显式加目录就永远找不到。
+  cursor: {
+    cli: { bin: 'cursor-agent', args: ['models'] },
+    format: 'cursor',
+    extraDirs: ['%LOCALAPPDATA%\\cursor-agent'],
     fallbackProviders: [],
   },
 };
@@ -400,11 +436,14 @@ interface CatalogState {
  *
  * - 1 → 2：加了 `details`（qoder / codex 的显示名与描述）
  * - 2 → 3：`details` 的值加了 `reasoning`（A62 思考强度档位）
+ * - 3 → 4：新增 `cursor` 来源（A151）。不升版本的话，旧缓存里没有
+ *          `agents.cursor`，cursor 会在接下来 24 小时里继续显示
+ *          「模型由 Agent 决定」—— 改完看不到效果，最容易被误判成「没接上」
  *
  * 不升版本的后果是旧缓存读回来所有模型都没有 `reasoning`，
  * 前端控件会「莫名消失」——而原因在磁盘里，排查时根本看不出异常。
  */
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 
 let state: CatalogState | null = null;
 let memFetchedAt = 0;
@@ -600,7 +639,87 @@ export function parseCodexModels(
 }
 
 /**
- * 「只有名字、没有 models.dev 元数据」的源（qoder / codex）怎么拼列表。
+ * 解析 `cursor-agent models`。
+ *
+ * 实测输出（cursor-agent 2026-10-30，本机 270 条）：
+ * ```
+ * Available models
+ *
+ * auto - Auto (current, default)
+ * gpt-5.3-codex-low - Codex 5.3 Low
+ * claude-fable-5-thinking-high - Claude Fable 5 1M Thinking (NO ZDR)
+ * …
+ * Tip: use --model <id> (or /model <id> in interactive mode) to switch. …
+ * ```
+ *
+ * ## 三条边界（每条都对应上面一种真实存在的行）
+ *
+ * 1. **表头 / 空行 / 结尾的 Tip 都要丢**：判据是「不含 ` - ` 分隔符」。
+ *    只按行数切、或者把第一行当表头跳过，遇到 Tip 那一行就会造出一个
+ *    叫 `Tip: use --model <id> (or /model <id> in interactive mode) to switch. …`
+ *    的假模型。
+ * 2. **行尾括号不一定是状态**：`(current, default)` 是状态要剥掉，
+ *    但 `(NO ZDR)` 是**显示名的一部分**（官方就这么写的），剥掉就把
+ *    「这个模型不做零数据保留」这条警告弄丢了。所以只剥「括号里只有
+ *    current / default 这两个词」的那种。
+ * 3. **id 里不许有空格**：与 qoder 解析器同一条纪律 —— 宁可少列，
+ *    不可把一句报错当成模型名。
+ */
+export function parseCursorModels(stdout: string): CatalogEntry[] {
+  const out: CatalogEntry[] = [];
+  const seen = new Set<string>();
+
+  for (const rawLine of stdout.replace(ANSI_RE, '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const sep = line.indexOf(' - ');
+    if (sep <= 0) continue;
+
+    const id = line.slice(0, sep).trim();
+    if (!/^[A-Za-z0-9._@-]+$/.test(id)) continue;
+    if (seen.has(id)) continue;
+
+    const rawName = line.slice(sep + 3).trim();
+    seen.add(id);
+    out.push({ id, name: stripCursorStateMarker(rawName) || id });
+  }
+  return out;
+}
+
+/** 行尾 `(current)` / `(default)` / `(current, default)` 是状态标记，不是名字 */
+const CURSOR_STATE_RE = /\s*\(([^()]*)\)\s*$/;
+
+function stripCursorStateMarker(name: string): string {
+  const m = name.match(CURSOR_STATE_RE);
+  if (!m) return name;
+  const inner = (m[1] ?? '').trim();
+  // 只有「全是 current/default」才剥；(NO ZDR) 这类说明必须留着
+  if (!/^(?:current|default)(?:\s*,\s*(?:current|default))*$/i.test(inner)) return name;
+  return name.slice(0, m.index).trim();
+}
+
+/**
+ * `cursor-agent models` 里标着 `default` 的那一条 —— 它是 CLI 自己声明的默认值。
+ *
+ * 与 `readCodexDefaultModel()` 同一角色（那边读 config.toml，这边读枚举输出）。
+ * 找不到就返回 undefined，让前端退化成「列表第一条」，**不猜**。
+ */
+export function parseCursorDefaultModel(stdout: string): string | undefined {
+  for (const rawLine of stdout.replace(ANSI_RE, '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const sep = line.indexOf(' - ');
+    if (sep <= 0) continue;
+    const id = line.slice(0, sep).trim();
+    if (!/^[A-Za-z0-9._@-]+$/.test(id)) continue;
+    const tail = line.slice(sep + 3);
+    const m = tail.match(CURSOR_STATE_RE);
+    if (!m) continue;
+    if (/\bdefault\b/i.test(m[1] ?? '')) return id;
+  }
+  return undefined;
+}
+
+/**
+ * 「只有名字、没有 models.dev 元数据」的源（qoder / codex / cursor）怎么拼列表。
  *
  * 保持来源给的顺序（那是它自己的推荐顺序），不排序、不标角标 ——
  * 我们没有它们的价格数据，标错比不标更糟。
@@ -883,7 +1002,9 @@ async function refreshCatalog(): Promise<CatalogState> {
     const entries: CatalogEntry[] =
       format === 'qoder'
         ? parseQoderModels(stdout)
-        : parseCodexModels(stdout);
+        : format === 'cursor'
+          ? parseCursorModels(stdout)
+          : parseCodexModels(stdout);
 
     // qoder 的 CLI 只吐 Default + Custom（见 QODER_VERIFIED_EXTRA 的说明），
     // 把实测路由通过的 New Models 补上。只在 qoder 分支做，别的影响不到 codex。
@@ -918,6 +1039,12 @@ async function refreshCatalog(): Promise<CatalogState> {
     if (format === 'codex-json') {
       // codex 不传 `-m` 时用的是 config.toml 里的 model —— 那是它自己声明的默认值。
       const declared = readCodexDefaultModel();
+      if (declared) defaults[agentId] = declared;
+    }
+
+    if (format === 'cursor') {
+      // cursor 把「当前 / 默认」写在枚举输出的行尾，不用另外读配置文件。
+      const declared = parseCursorDefaultModel(stdout);
       if (declared) defaults[agentId] = declared;
     }
   }

@@ -21,7 +21,7 @@ import { useChat } from './hooks/useChat';
 import { useAgentRegistry } from './hooks/useAgentRegistry';
 import { getScenario } from './scenarios';
 import { exportSessionToMarkdown } from './utils/exportSession';
-import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project } from './types';
+import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project, type AgentModelSource } from './types';
 
 import { NavRail, type NavKey } from './components/NavRail';
 import { TitleBar } from './components/TitleBar';
@@ -295,6 +295,18 @@ function AppContent() {
   const [agentDefaultModel, setAgentDefaultModel] = useState<string>('');
 
   /**
+   * 模型清单的来源与可切换性（A151）。
+   *
+   * 默认 `selectable: true`：绝大多数 Agent 走 catalog 那条路，不能因为
+   * 请求还没回来就把下拉禁掉。只有后端明确说 `selectable: false`
+   * （目前只有 zcode 的只读清单）才切成只读。
+   */
+  const [agentModelSource, setAgentModelSource] = useState<AgentModelSource>({
+    kind: 'unknown',
+    selectable: true,
+  });
+
+  /**
    * 模型清单的「代号」。
    *
    * 设置页里点了「刷新模型清单」之后，后端会重新枚举，但下面那个 effect 只
@@ -307,6 +319,7 @@ function AppContent() {
     if (!currentAgentId) {
       setAgentModels([]);
       setAgentDefaultModel('');
+      setAgentModelSource({ kind: 'unknown', selectable: true });
       return;
     }
     let cancelled = false;
@@ -320,12 +333,27 @@ function AppContent() {
         if (!cancelled) {
           setAgentModels(Array.isArray(data.models) ? data.models : []);
           setAgentDefaultModel(typeof data.defaultModel === 'string' ? data.defaultModel : '');
+          /* A151：后端会明确说这份清单是哪来的、能不能切。
+             老服务端不返回这两个字段时按「有列表就可选」处理 —— 向后兼容，
+             别把升级前的响应解读成「只读」。 */
+          const kind: AgentModelSource['kind'] =
+            data.source === 'agent-config' ? 'agent-config' : data.source === 'catalog' ? 'catalog' : 'unknown';
+          setAgentModelSource({
+            kind,
+            selectable: data.selectable !== false,
+            note: typeof data.note === 'string' ? data.note : undefined,
+            currentModel:
+              kind === 'agent-config' && typeof data.defaultModel === 'string'
+                ? data.defaultModel
+                : undefined,
+          });
         }
       } catch {
         // 拿不到就当没有：宁可不显示下拉，也不塞一份不属于它的模型列表
         if (!cancelled) {
           setAgentModels([]);
           setAgentDefaultModel('');
+          setAgentModelSource({ kind: 'unknown', selectable: true });
         }
       }
     })();
@@ -340,22 +368,95 @@ function AppContent() {
     return currentAgent?.kind === 'sdk' ? models : [];
   }, [agentModels, currentAgent?.kind, models]);
 
+  /** 与 activeModels 配套的来源信息；SDK 类退回平台清单时同样是可选的 catalog */
+  const activeModelSource = useMemo<AgentModelSource>(() => {
+    if (agentModels.length > 0) return agentModelSource;
+    if (currentAgent?.kind === 'sdk' && models.length > 0) {
+      return { kind: 'catalog', selectable: true };
+    }
+    return { kind: 'unknown', selectable: true };
+  }, [agentModels, agentModelSource, currentAgent?.kind, models]);
+
+  /**
+   * **能真正传下去**的模型（A151）。
+   *
+   * 只读清单（zcode 从配置文件读出来的 13 条）不能参与「自动选一个」——
+   * 否则会挑中第一条「BigModel - Coding Plan」写进会话，发出去时被 CLI
+   * 忽略，界面上却显示已选中。那正是这个项目一直在守的假控件。
+   */
+  const pickableModels = useMemo(
+    () => (activeModelSource.selectable ? activeModels : []),
+    [activeModelSource.selectable, activeModels]
+  );
+
+  /**
+   * 标定一个「未验证」模型（A151 / P2）。
+   *
+   * 触发点只有一个：用户**在菜单里点了那一条**。不挂在打开菜单、启动应用
+   * 这类自动路径上 —— 一次标定要真起一次 CLI（qoder 冷态实测 8-20s）、
+   * 真花 token，十几条一起跑就是十几分钟的黑屏。
+   *
+   * 返回值决定浮层的下一步：`ok` 才写进会话，否则把 CLI 的**原话**贴出来。
+   * 改写过的「不可用」用户没法判断是自己账号的问题还是模型名的问题。
+   *
+   * 成功时 `modelsEpoch++` 让清单重取一次：那条的 `verified` 会变成 true，
+   * 「未验证」角标随之消失。只改本地 state 不够 —— 刷新一次又回来了。
+   */
+  const handleProbeModel = useCallback(
+    async (modelId: string): Promise<{ ok: boolean; message?: string }> => {
+      if (!currentAgentId) return { ok: false, message: '当前没有绑定 Agent，无法标定' };
+      try {
+        const res = await fetch(
+          `/api/agents/${encodeURIComponent(currentAgentId)}/models/probe`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ models: [modelId] }),
+          }
+        );
+        const data: any = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { ok: false, message: data?.error || `标定失败（HTTP ${res.status}）` };
+        }
+        const rec = data?.results?.[modelId];
+        if (!rec) return { ok: false, message: '标定没有返回结果' };
+        if (rec.verdict === 'ok' || rec.verdict === 'routed') {
+          setModelsEpoch(e => e + 1);
+          return { ok: true };
+        }
+        if (rec.verdict === 'invalid') {
+          return {
+            ok: false,
+            message: `该模型在本机不可用：${rec.evidence || 'CLI 说这个名字不存在'}`,
+          };
+        }
+        return {
+          ok: false,
+          message: `无法判定（不写进会话）：${rec.evidence || 'CLI 没有明确回应'}`,
+        };
+      } catch (e: any) {
+        return { ok: false, message: e?.message || '标定请求失败' };
+      }
+    },
+    [currentAgentId]
+  );
+
   // 切到某个 Agent 后，若当前选中的模型不属于它，改用**它自己的默认模型**
   // （后端随列表给出），拿不到默认值时才退到第一条。
   // 否则界面上会显示一个该 Agent 根本不认识的模型名。
   // 该 Agent 没有模型列表时（自管模型）清空选中：既避免显示一个陌生模型名，
   // 也不该为了这个空值去 PATCH 一次会话。
   useEffect(() => {
-    if (activeModels.length === 0) {
+    if (pickableModels.length === 0) {
       if (selectedModel) setSelectedModel('');
       return;
     }
-    if (activeModels.some(m => m.modelId === selectedModel)) return;
-    const preferred = activeModels.some(m => m.modelId === agentDefaultModel)
+    if (pickableModels.some(m => m.modelId === selectedModel)) return;
+    const preferred = pickableModels.some(m => m.modelId === agentDefaultModel)
       ? agentDefaultModel
-      : activeModels[0].modelId;
+      : pickableModels[0].modelId;
     setSelectedModel(preferred);
-  }, [activeModels, selectedModel, setSelectedModel, agentDefaultModel]);
+  }, [pickableModels, selectedModel, setSelectedModel, agentDefaultModel]);
 
   // 从 URL 同步 sessionId
   useEffect(() => {
@@ -1311,6 +1412,9 @@ function AppContent() {
                         currentSessionId={currentSessionId}
                         messagesLoaded={isMessagesLoaded(currentSession.id)}
                         models={activeModels}
+                        modelSource={activeModelSource}
+                        // A151 / P2：「未验证」模型被点中时先标定一次
+                        onProbeModel={handleProbeModel}
                         selectedModel={selectedModel}
                         agents={legacyAgents}
                         currentAgent={currentAgent}

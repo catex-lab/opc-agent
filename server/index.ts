@@ -109,6 +109,8 @@ import {
   PLATFORM_DEFAULT_MODEL,
 } from "./model-routing.js";
 import { ensureCatalogLoaded, getCatalogSummary, getDefaultModelForAgent, invalidateCatalog, isCatalogModel, loadCatalog } from "./agents/modelCatalog.js";
+import { readAgentConfigModels } from "./agents/agentConfigModels.js";
+import { getVerdicts, mergeOfficialExtras, probeModels, readOfficialModels } from "./agents/modelAvailability.js";
 // A115：用户资料（昵称 + 头像）。昵称由 registry.stream 注入 systemPrompt，
 // 这里只负责 HTTP 读写。
 import { loadUserProfile, saveUserProfile } from "./user-profile.js";
@@ -722,9 +724,93 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
     // （codex 的 `~/.codex/config.toml`）。都没有就不给，前端退化成列表第一条。
     const defaultModel =
       findDef(agentId)?.defaultModel ?? (await getDefaultModelForAgent(agentId));
-    res.json({ models, defaultModel });
+
+    // 目录为空时，再问一次「这个 Agent 自己的配置里写了什么」。
+    //
+    // 为什么要有这一档（A151）：ZCode 没有枚举命令、也没有 --model，
+    // 但它把模型清单写在 `~/.zcode/v2/*.json` 里。不读这一层，
+    // 界面就只剩一句「模型由 Agent 决定」——用户以为连清单都没有。
+    // 读出来的是**只读**清单：`selectable: false` 必须原样透给前端，
+    // 否则就成了「点了不生效」的假控件。
+    if (models.length === 0) {
+      const fromConfig = readAgentConfigModels(agentId);
+      if (fromConfig) {
+        return res.json({
+          models: fromConfig.models,
+          defaultModel: fromConfig.currentModel ?? defaultModel ?? "",
+          source: "agent-config",
+          selectable: false,
+          note: fromConfig.note,
+        });
+      }
+    }
+
+    /* qoder 家族：`--list-models` 只吐账号自己的 3 条，而官方文案表里
+       还有十几个真模型。两边合并，并按**实测标定结果**过滤：
+       标过且被判 invalid 的直接丢掉（放上去就是点了被静默替换的假控件），
+       没标过的标 `verified: false`，界面标「未验证」、选之前先标定。 */
+    let list = models;
+    let unverified: string[] = [];
+    if (agentId === "qoder" || agentId === "qoder-cn") {
+      const official = readOfficialModels(agentId);
+      if (official.length > 0) {
+        const merged = mergeOfficialExtras(list, official, getVerdicts(agentId));
+        list = merged.models;
+        unverified = merged.unverified;
+      }
+    }
+
+    res.json({
+      models: list,
+      defaultModel,
+      source: list.length > 0 ? "catalog" : "unknown",
+      selectable: list.length > 0,
+      unverified,
+    });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "获取模型列表失败" });
+  }
+});
+
+/**
+ * 模型可用性标定（A151 / P2）——**显式动作**。
+ *
+ * 每一条都要真起一次 CLI、真花 token，所以不挂在任何自动路径上。
+ * 不传 `models` 时只标定「官方清单里还没验过」的那些（上限 8 条，
+ * 一条最长 60s，再多人就等不住了 —— 剩下的由用户自己点）。
+ */
+app.post("/api/agents/:agentId/models/probe", async (req, res) => {
+  try {
+    const agentId = req.params.agentId;
+    const def = findDef(agentId);
+    if (!def) return res.status(404).json({ error: "未知 Agent" });
+
+    const requested = Array.isArray(req.body?.models)
+      ? (req.body.models as unknown[]).filter((x): x is string => typeof x === "string" && !!x)
+      : [];
+    let ids = requested;
+    if (ids.length === 0) {
+      const official = readOfficialModels(agentId);
+      const verdicts = getVerdicts(agentId);
+      ids = official
+        .map(m => m.modelId)
+        .filter(id => {
+          const rec = verdicts[id];
+          return !rec || rec.verdict === "unknown";
+        })
+        .slice(0, 8);
+    }
+    if (ids.length === 0) {
+      return res.json({ results: {}, probed: 0 });
+    }
+    if (ids.length > 8) {
+      return res.status(400).json({ error: "一次最多标定 8 个模型（每条最长 60s）" });
+    }
+
+    const results = await probeModels(agentId, ids);
+    res.json({ results, probed: ids.length });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "模型标定失败" });
   }
 });
 

@@ -13,6 +13,7 @@ import {
   CustomAgent,
   RegisteredAgent,
   OrchestrationMode,
+  AgentModelSource,
 } from '../types';
 import { NewChatView } from '../components/NewChatView';
 import { SCENARIOS, getScenario, enforcementGap, isModeGap, supportLimitation, PERMISSION_MODE_LABEL } from '../scenarios';
@@ -58,6 +59,18 @@ function findComposerTextarea(root: Element | ShadowRoot | null): HTMLTextAreaEl
 interface ChatPageProps {
   currentSession: Session | undefined;
   models: Model[];
+  /**
+   * 模型清单的来源与可切换性（A151）。不传按「可选」处理 ——
+   * 只有 zcode 那条只读清单会传 `selectable: false`。
+   */
+  modelSource?: AgentModelSource;
+  /**
+   * 标定一个「未验证」模型（A151 / P2）。
+   *
+   * 只有 qoder 家族会用到：官方清单里那些 CLI 没列出来的模型，点之前
+   * 得先真跑一次看 CLI 认不认。不传 = 未验证也可直接选（老调用点）。
+   */
+  onProbeModel?: (modelId: string) => Promise<{ ok: boolean; message?: string }>;
   selectedModel: string;
   agents: CustomAgent[];
   /** 当前会话绑定的 Agent（用于消息流里的官方头像） */
@@ -148,6 +161,8 @@ interface NewChatOptions {
 export function ChatPage({
   currentSession,
   models,
+  modelSource,
+  onProbeModel,
   selectedModel,
   agents,
   currentAgent,
@@ -702,6 +717,8 @@ export function ChatPage({
             inputValue={inputValue}
             selectedModel={selectedModel}
             models={models}
+            modelSource={modelSource}
+            onSelectUnverified={onProbeModel}
             isLoading={loading}
             permissionMode={permissionMode}
             onSend={handleSend}

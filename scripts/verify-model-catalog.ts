@@ -21,6 +21,8 @@ import {
   parseCliModelRefs,
   parseQoderModels,
   parseCodexModels,
+  parseCursorModels,
+  parseCursorDefaultModel,
   buildListOptions,
   isFreeModel,
   describeModel,
@@ -33,7 +35,13 @@ import {
 import { parseCredits, mapSdkModels } from '../server/agents/sdk-models.js';
 import { OPENCODE_CATALOG_SNAPSHOT } from '../server/agents/opencodeCatalogSnapshot.js';
 import { resolveModelForAgent, setCatalogModelLookup } from '../server/model-routing.js';
-import { findDef } from '../server/agents/definitions.js';
+import { findDef, RETIRED_AGENT_IDS } from '../server/agents/definitions.js';
+import {
+  classifyProbe,
+  mergeOfficialExtras,
+  parseOfficialModelTexts,
+  type AvailabilityRecord,
+} from '../server/agents/modelAvailability.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -826,6 +834,211 @@ function read(rel: string): string {
     /updates\.reasoning_effort !== undefined/.test(dbSrc),
     'A62：updateSession 必须能改档位（null = 清空，与 undefined 不同语义）'
   );
+}
+
+// ── 6. cursor 枚举（A151）：行尾括号不一定是状态 ──────────────────
+{
+  const stdout = [
+    'Available models',
+    '',
+    'auto - Auto (current, default)',
+    'gpt-5.3-codex-low - Codex 5.3 Low',
+    'claude-fable-5-thinking-high - Claude Fable 5 1M Thinking (NO ZDR)',
+    'gpt-5.2 - GPT-5.2 (current)',
+    'gpt-5.2 - GPT-5.2', // 重复 id
+    'Error: not logged in',
+    'Tip: use --model <id> (or /model <id> in interactive mode) to switch.',
+  ].join('\n');
+
+  const entries = parseCursorModels(stdout);
+  eq(entries.map(e => e.id), ['auto', 'gpt-5.3-codex-low', 'claude-fable-5-thinking-high', 'gpt-5.2'], 'A151：cursor 解析只留真模型（表头/Tip/报错行全丢）');
+  eq(entries[0]?.name, 'Auto', 'A151：行尾 (current, default) 是状态标记，从显示名里剥掉');
+  eq(
+    entries[2]?.name,
+    'Claude Fable 5 1M Thinking (NO ZDR)',
+    'A151：(NO ZDR) 是显示名的一部分，不能被当成状态剥掉'
+  );
+  eq(entries[3]?.name, 'GPT-5.2', 'A151：只带 (current) 的行同样剥状态');
+  eq(parseCursorDefaultModel(stdout), 'auto', 'A151：标 default 的那条就是 CLI 自己的默认模型');
+  eq(parseCursorDefaultModel('Available models\n\nauto - Auto (current)\n'), undefined, 'A151：没有 default 标记时不猜默认模型');
+  eq(parseCursorModels('').length, 0, 'A151：空输出不产生条目');
+
+  /* 路由采纳：cursor 没有静态白名单，走「非平台默认模型就透传」那条分支。
+     钉住它，是因为「菜单能选、发出去被换成默认」正是这类目录最典型的假控件。 */
+  setCatalogModelLookup((agentId, modelId) => agentId === 'cursor' && modelId === 'gpt-5.3-codex-low');
+  eq(resolveModelForAgent('cursor', 'gpt-5.3-codex-low'), 'gpt-5.3-codex-low', 'A151：cursor 目录里的模型必须被路由采纳');
+  setCatalogModelLookup(null);
+}
+
+// ── 7. 目录覆盖契约：有 ctx.model 的 CLI Agent 必须被显式处置 ──────
+//
+// 这条是 A151 的根因闸门。cursor 官方一直有 `cursor-agent models`
+// （本机实测 270 条），但 `CATALOG_SOURCES` 是手写的，没人加就永远显示
+// 「模型由 Agent 决定」—— 与当初 opencode 那个 bug 同一个形态。
+//
+// 判据不是「记住加 cursor」，而是「**每个**会传模型的 Agent 都得有一个去处」：
+// 要么接进目录，要么在下面这张表里写明为什么不接。新增 Agent 时漏了这一步，
+// 这条就会红。
+{
+  const catalogSrc = read('server/agents/modelCatalog.ts');
+  const defsSrc = read('server/agents/definitions.ts');
+
+  // CATALOG_SOURCES 的键：形如 `  opencode: {`（缩进两格、单引号或裸标识符）
+  const sourcesBlock = catalogSrc.slice(
+    catalogSrc.indexOf('const CATALOG_SOURCES'),
+    catalogSrc.indexOf('const QODER_VERIFIED_EXTRA')
+  );
+  const inCatalog = new Set(
+    [...sourcesBlock.matchAll(/^ {2}'?([a-z][a-z0-9-]*)'?: \{/gm)].map(m => m[1] as string)
+  );
+  ok(inCatalog.has('cursor'), 'A151：cursor 已接进 CATALOG_SOURCES', [...inCatalog].join(','));
+  ok(inCatalog.has('opencode') && inCatalog.has('qoder') && inCatalog.has('codex'), '既有三个来源仍在');
+
+  /* 有意不接目录的，必须写明原因。**这张表本身就是文档** ——
+     下次有人问「gemini 为什么没有模型列表」，答案在这里，不在某次对话里。 */
+  const NO_ENUMERATION: Record<string, string> = {
+    gemini: 'gemini --help 没有 models 子命令（2026-10-30 复核），只有 -m 旗标',
+    claude: 'claude 无枚举命令；且本机 native binary 缺失，CLI 直接报错',
+    pi: 'pi 只有 --models（Ctrl+P 循环用），无枚举命令',
+    hermes: 'hermes model 是交互式选择器，不可脚本化',
+    antigravity: '本机未安装，无法实测',
+    kimicli: '本机未安装，无法实测',
+    kimicode: '本机未安装，无法实测',
+    zcode: 'zcode 0.17.0 无 --model、无枚举命令；模型只能读配置文件（P1 处理）',
+    workbuddy: 'SDK 清单（sdk-models + 官方产品配置），不走 CLI 枚举',
+    doubao: 'http 通道，模型由用户在设置里填',
+  };
+
+  const declared = [...defsSrc.matchAll(/^ {6}id: '([a-z][a-z0-9-]*)',$/gm)].map(m => m[1] as string);
+  ok(declared.length >= 15, '定义表里数得出 Agent 清单', `${declared.length} 条`);
+
+  for (const id of declared) {
+    if (RETIRED_AGENT_IDS.includes(id)) continue;
+    const handled = inCatalog.has(id) || id in NO_ENUMERATION;
+    ok(handled, `A151：${id} 既没接目录、也没在 NO_ENUMERATION 里说明原因`);
+  }
+  /* 反向：NO_ENUMERATION 里不许留已经接进目录的（否则两份事实会分叉） */
+  for (const id of Object.keys(NO_ENUMERATION)) {
+    ok(!inCatalog.has(id), `A151：${id} 已接目录，不该再留在 NO_ENUMERATION`);
+  }
+}
+
+// ── 8. 只读清单（A151）：读配置 → 接口透出 → 界面真的禁用 ──────────
+//
+// zcode 那条路有三段，任何一段断了都表现为「界面还是那句话」：
+//   ① `agentConfigModels.ts` 读它自己的配置；
+//   ② `/api/agents/:id/models` 把 `selectable: false` 透出去；
+//   ③ `ChatInput` / `ModelSelectPopup` 据此禁用点击。
+// 单测只钉得住 ①，所以 ②③ 用源码契约钉。
+{
+  const routeSrc = read('server/index.ts');
+  const inputSrc = read('src/components/ChatInput.tsx');
+  const popupSrc = read('src/components/ModelSelectPopup.tsx');
+  const cfgSrc = read('server/agents/agentConfigModels.ts');
+
+  ok(/readAgentConfigModels/.test(routeSrc), 'A151：模型接口要问一次 Agent 自己的配置');
+  ok(/selectable:\s*false/.test(routeSrc), 'A151：只读清单必须显式透出 selectable:false');
+  ok(/source:\s*"agent-config"/.test(routeSrc), 'A151：只读清单的来源标记为 agent-config');
+
+  ok(/modelSource\?\.selectable\s*\?\?\s*true/.test(inputSrc), 'A151：ChatInput 认 selectable（不传按可选处理）');
+  ok(/readonly=\{!canPickModel\}/.test(inputSrc), 'A151：只读清单要传给浮层的 readonly');
+  ok(/data-model-popup-note/.test(popupSrc), 'A151：只读浮层底部要有一句解释（替换「添加模型」）');
+  ok(/onClick=\{readonly \? undefined/.test(popupSrc), 'A151：只读行不许绑定点击');
+  ok(/data-model-current/.test(popupSrc), 'A151：只读清单要标出「当前用的是哪条」');
+
+  ok(/\.zcode/.test(cfgSrc) && /provider_config\.json/.test(cfgSrc), 'A151：zcode 读的是它自己的配置目录');
+  ok(!/apiKey/.test(cfgSrc.replace(/\/\*[\s\S]*?\*\//g, '')), 'A151：读配置时不许碰 apiKey 字段');
+}
+
+// ── 9. 可用性标定（A151 / P2）：判据只认 CLI 原文 ──────────────────
+//
+// 这一段守的是「别把不能用的模型摆进菜单」。三档判定的**顺序**本身就是
+// 一条约束：被静默替换的那次调用退出码也是 0、也有回复（回复来自被换上的
+// 模型），先判 `ok` 就会把假控件判成可用。
+{
+  // ① 静默替换：名字无效。这条必须压过「退出码 0 + 有回复」
+  eq(
+    classifyProbe('已经帮你回答了', 'Warning: Model "Qwen3.7-Plus" is not available right now; using "qfmodel" instead.', 0, false).verdict,
+    'invalid',
+    'A151：被静默替换的模型判 invalid（哪怕退出码是 0、也有回复）'
+  );
+  // ② 没额度 ≠ 名字无效：路由通了，只是账号额度用完 —— 该显示
+  eq(
+    classifyProbe('', "You've reached your credit usage limit", 1, false).verdict,
+    'routed',
+    'A151：额度用尽判 routed（名字有效、路由已通过，菜单里该有它）'
+  );
+  // ③ 真跑通
+  eq(classifyProbe('OK', '', 0, false).verdict, 'ok', 'A151：退出码 0 且有回复判 ok');
+  // ④ 超时 / 认不出的输出：不猜
+  eq(classifyProbe('', '', null, true).verdict, 'unknown', 'A151：超时判 unknown（不猜成可用）');
+  eq(classifyProbe('some noise', '', 1, false).verdict, 'unknown', 'A151：认不出的输出判 unknown');
+  // ⑤ 证据要留原文（用户要能自己判断是账号问题还是名字问题）
+  const inv = classifyProbe('', 'Model "X" is not available right now; using "Y" instead.', 0, false);
+  ok(!!inv.evidence && inv.evidence.includes('not available right now'),
+    'A151：invalid 的 evidence 是 CLI 原文', String(inv.evidence));
+
+  // ⑥ 合并：三档处置各一条，且 CLI 自己列的那几条永远 verified:true
+  const now = 1_700_000_000_000;
+  const base = [{ modelId: 'Default', name: 'Default' }, { modelId: 'Custom', name: 'Custom' }];
+  const extras = [
+    { modelId: 'GLM-5.3-Flash', name: 'GLM-5.3-Flash' },
+    { modelId: 'Qwen3.7-Plus', name: 'Qwen3.7-Plus' },
+    { modelId: 'Never-Probed', name: 'Never-Probed' },
+  ];
+  const verdicts: Record<string, AvailabilityRecord> = {
+    'GLM-5.3-Flash': { verdict: 'routed', at: now - 1000 },
+    'Qwen3.7-Plus': { verdict: 'invalid', at: now - 1000 },
+  };
+  const merged = mergeOfficialExtras(base, extras, verdicts, now);
+  eq(merged.models.map(m => m.modelId), ['Default', 'Custom', 'GLM-5.3-Flash', 'Never-Probed'],
+    'A151：invalid 的模型不进菜单，routed / 未标定的进');
+  eq(merged.dropped, ['Qwen3.7-Plus'], 'A151：被丢掉的要能说清是哪一条');
+  eq(merged.unverified, ['Never-Probed'], 'A151：没标过的单独列出来（界面据此标「未验证」）');
+  ok(merged.models.find(m => m.modelId === 'GLM-5.3-Flash')?.verified === true,
+    'A151：标定通过的 verified:true（「未验证」角标要消失）');
+  ok(merged.models.find(m => m.modelId === 'Never-Probed')?.verified === false,
+    'A151：没标过的 verified:false');
+  // ⑦ 过期的判定不算数：账号套餐会变，结论不能永久有效
+  const stale = mergeOfficialExtras(base, extras, {
+    'Qwen3.7-Plus': { verdict: 'invalid', at: now - 8 * 24 * 3600 * 1000 },
+  }, now);
+  ok(stale.models.some(m => m.modelId === 'Qwen3.7-Plus'),
+    'A151：超过 7 天的判定作废，模型回到「未验证」而不是继续被藏起来');
+  ok(stale.unverified.includes('Qwen3.7-Plus'), 'A151：作废后要重新标成未验证');
+
+  // ⑧ 官方文案表：档位词不是模型
+  //
+  // 真实数据里**元数据键一律带点**（`.description` / `.markdownDescription` /
+  // `.teams.markdownDescription` / `.functionSwitch.highspeed.description`），
+  // 裸的 `modelSelector.item.<slug>` 才是显示名 —— 所以夹具按真实形状写，
+  // 别用现实里不存在的 `item.note` 去测（那测的是我自己编的契约）。
+  const texts = parseOfficialModelTexts({
+    'modelSelector.item.efficient': '经济',
+    'modelSelector.item.fast': '快速',
+    'modelSelector.item.auto': 'Auto',
+    'modelSelector.item.glm': 'GLM-5.3-Flash',
+    'modelSelector.item.glm.description': '智谱旗舰',
+    'modelSelector.item.glm.markdownDescription': '智谱旗舰（md）',
+    'modelSelector.item.glm.functionSwitch.highspeed.description': '速度提升 6x',
+  });
+  eq(texts.map(m => m.modelId), ['GLM-5.3-Flash'], 'A151：官方文案表里档位词被过滤，只留真模型');
+  eq(texts[0]?.description, '智谱旗舰', 'A151：官方文案表的 description 一并取到');
+
+  // ⑨ 源码契约：三段接线少一段，界面就还是「模型由 Agent 决定」
+  const routeSrc2 = read('server/index.ts');
+  const popupSrc2 = read('src/components/ModelSelectPopup.tsx');
+  const inputSrc2 = read('src/components/ChatInput.tsx');
+  const chatSrc = read('src/pages/ChatPage.tsx');
+  const appSrc = read('src/App.tsx');
+  ok(/\/api\/agents\/:agentId\/models\/probe/.test(routeSrc2), 'A151：标定接口存在');
+  ok(/mergeOfficialExtras/.test(routeSrc2), 'A151：模型接口按标定结果过滤官方清单');
+  ok(/onSelectUnverified/.test(popupSrc2) && /verified === false/.test(popupSrc2),
+    'A151：浮层对「未验证」行先标定再选中');
+  ok(/onSelectUnverified/.test(inputSrc2) && /onSelectUnverified/.test(chatSrc),
+    'A151：标定回调要从 ChatPage 透到浮层（少一跳就永远不触发）');
+  ok(/models\/probe/.test(appSrc) && /setModelsEpoch/.test(appSrc),
+    'A151：标定成功后要重取清单（只改本地 state，刷新一次角标又回来）');
 }
 
 // ── 汇总 ─────────────────────────────────────────────────────────

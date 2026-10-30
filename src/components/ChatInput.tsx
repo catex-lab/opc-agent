@@ -28,7 +28,7 @@ import {
   PencilLine,
   ListChecks,
 } from 'lucide-react';
-import { Model, PermissionMode, RegisteredAgent } from '../types';
+import { Model, PermissionMode, RegisteredAgent, AgentModelSource } from '../types';
 import { IMAGE_SIZES, IMAGE_SIZE_LABELS, IMAGE_MODELS } from '../imageOptions';
 import { PermissionGapNotice } from './PermissionGapNotice';
 import { ModelSelectPopup } from './ModelSelectPopup';
@@ -43,6 +43,22 @@ interface ChatInputProps {
   inputValue: string;
   selectedModel: string;
   models: Model[];
+  /**
+   * 模型清单的来源与可切换性（A151）。
+   *
+   * 不传按「有列表就可选」处理。`selectable: false` 时下拉变成**只读清单**：
+   * 能看有哪些模型、能看当前用的是哪个，但点了不会改（ZCode 就是这样 ——
+   * 它只认自己设置里的模型）。
+   */
+  modelSource?: AgentModelSource;
+  /**
+   * 标定一个「未验证」模型（A151 / P2）。
+   *
+   * 只有 qoder 家族会传：官方清单里 CLI 没列出来的那些模型，点之前先真跑
+   * 一次看 CLI 认不认。不传 = 未验证也可直接选（其余 Agent 的清单本来就
+   * 全部来自枚举，没有「未验证」这一态）。
+   */
+  onSelectUnverified?: (modelId: string) => Promise<{ ok: boolean; message?: string }>;
   isLoading: boolean;
   permissionMode: PermissionMode;
   onSend: (message: string) => void;
@@ -232,6 +248,8 @@ export function ChatInput({
   inputValue,
   selectedModel,
   models,
+  modelSource,
+  onSelectUnverified,
   isLoading,
   permissionMode,
   reasoningEffort = '',
@@ -513,12 +531,21 @@ export function ChatInput({
   );
 
   /**
-   * 是否必须选中模型才能发送。
-   * 只有当该 Agent 确实提供模型列表时才成立；自管模型的 Agent（models 为空）
-   * 不应因为没有 selectedModel 就被禁言。群聊同理：没有单一模型可选。
-   * 生图模式也不适用 —— 它压根不用文本模型。
+   * 这份清单能不能在这里切（A151）。
+   *
+   * `selectable: false` 的那份（zcode 从它自己配置里读出来的 13 条）
+   * 只用来**展示**：不算「必须选模型」，也不允许把某一条写进会话 ——
+   * 写进去也不会生效，那是假控件。
    */
-  const modelRequired = !isGroup && !imageMode && models.length > 0;
+  const canPickModel = models.length > 0 && (modelSource?.selectable ?? true);
+
+  /**
+   * 是否必须选中模型才能发送。
+   * 只有当该 Agent 确实提供**可选**模型列表时才成立；自管模型的 Agent
+   * （models 为空）与只读清单（zcode）都不应因为没有 selectedModel 就被禁言。
+   * 群聊同理：没有单一模型可选。生图模式也不适用 —— 它压根不用文本模型。
+   */
+  const modelRequired = !isGroup && !imageMode && canPickModel;
 
   /**
    * 匹配「@某个成员」的正则工厂。
@@ -589,7 +616,11 @@ export function ChatInput({
 
   const currentModeConfig = PERMISSION_MODE_CONFIG[permissionMode];
 
-  const selectedModelName = models.find(m => m.modelId === selectedModel)?.name || '选择模型';
+  /* A151：只读清单时按钮上不写模型名 —— 写了就等于说「现在用的是这个」，
+     而那个值我们既没设也改不了。改成与下方徽标同一句话，语义一致。 */
+  const selectedModelName = !canPickModel
+    ? '模型由 Agent 决定'
+    : models.find(m => m.modelId === selectedModel)?.name || '选择模型';
 
   return (
     <div
@@ -989,7 +1020,9 @@ export function ChatInput({
                      权限下拉挤到换行，为不存在的名字牺牲整行平衡不划算。 */
                   className="opc-chip flex h-8 max-w-[208px] min-w-[56px] shrink-0 items-center justify-between gap-1 rounded-lg px-2 text-body"
                   style={{
-                    color: selectedModel
+                    // A151：只读清单时文字用占位色 —— 它表达的是「本应用说了不算」，
+                    // 与真正选中了某个模型（主色）必须是两种视觉。
+                    color: selectedModel && canPickModel
                       ? 'var(--td-text-color-primary)'
                       : 'var(--td-text-color-placeholder)',
                   }}
@@ -1003,6 +1036,10 @@ export function ChatInput({
                   <ModelSelectPopup
                     models={models}
                     value={selectedModel}
+                    readonly={!canPickModel}
+                    note={modelSource?.note}
+                    currentId={modelSource?.currentModel}
+                    onSelectUnverified={onSelectUnverified}
                     onChange={v => {
                       onModelChange(v);
                       setOpenSelect(null);

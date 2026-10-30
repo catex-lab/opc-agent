@@ -51,6 +51,28 @@ export interface ModelSelectPopupProps {
   onAddModel: () => void;
   /** 触发器的几何：浮层贴在它上方，左边缘对齐 */
   anchor: { left: number; top: number; width: number };
+  /**
+   * 只读清单（A151）。
+   *
+   * 这份清单是从 Agent **自己的配置**里读出来的（目前只有 ZCode），
+   * 本应用改不了它 —— 所以能看、能知道现在用的是哪个，但点了不会改。
+   * 只读时：行不可点、没有 ✓、底部不出现「添加模型」，改成一句解释。
+   */
+  readonly?: boolean;
+  /** 只读时底部那句解释（后端随清单一起给） */
+  note?: string;
+  /** 只读时高亮「当前用的是哪一条」 */
+  currentId?: string;
+  /**
+   * 「未验证」模型被点击时先标定一次（A151 / P2）。
+   *
+   * 为什么不在打开菜单时就批量标定：一条要真起一次 CLI、最长 60s，
+   * 十几条就是十几分钟，用户只会看到菜单卡死。改成**点了才验**：
+   * 通过就选中，不通过就当场告诉他 CLI 的原话，并且不写进会话。
+   *
+   * 不传时按「未验证也可直接选」处理（老调用点）。
+   */
+  onSelectUnverified?: (modelId: string) => Promise<{ ok: boolean; message?: string }>;
 }
 
 /** 面板宽度。
@@ -92,6 +114,10 @@ export function ModelSelectPopup({
   onClose,
   onAddModel,
   anchor,
+  readonly = false,
+  note,
+  currentId,
+  onSelectUnverified,
 }: ModelSelectPopupProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -103,6 +129,28 @@ export function ModelSelectPopup({
     const i = models.findIndex(m => m.modelId === value);
     return i >= 0 ? i : 0;
   });
+
+  /** 正在标定的那一条（A151）。同一条在标定期间不接受第二次点击 */
+  const [verifying, setVerifying] = useState<string | null>(null);
+  /** 标定失败的提示：CLI 的原话，不是我们改写过的解释 */
+  const [verifyError, setVerifyError] = useState('');
+
+  const pick = async (m: Model) => {
+    if (readonly || verifying) return;
+    if (m.verified === false && onSelectUnverified) {
+      setVerifying(m.modelId);
+      setVerifyError('');
+      try {
+        const r = await onSelectUnverified(m.modelId);
+        if (r.ok) onChange(m.modelId);
+        else setVerifyError(r.message || '该模型在本机不可用');
+      } finally {
+        setVerifying(null);
+      }
+      return;
+    }
+    onChange(m.modelId);
+  };
 
   // 打开时把选中项滚进可见区（列表可能很长，opencode 一家就 90+ 条）
   useEffect(() => {
@@ -143,13 +191,18 @@ export function ModelSelectPopup({
       }
       if (e.key === 'Enter') {
         e.preventDefault();
+        // 只读清单没有「确认」这个动作 —— 回车什么也不做，
+        // 否则用户会以为选中了（实际什么都没发生）。
+        if (readonly) return;
         const m = models[cursor];
-        if (m) onChange(m.modelId);
+        if (m) void pick(m);
       }
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [cursor, models, onChange, onClose]);
+    // pick 依赖 verifying / onSelectUnverified，一并列进来
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cursor, models, onChange, onClose, readonly, verifying, onSelectUnverified]);
 
   // 左边缘对齐触发器，但不越过右边界
   const left = useMemo(() => {
@@ -207,16 +260,23 @@ export function ModelSelectPopup({
         data-model-popup-list
       >
         {models.map((m, i) => {
-          const selected = m.modelId === value;
+          /* 只读时「选中」的语义换成「当前用的是这条」：`value` 是会话里
+             真正要传给 CLI 的模型，只读清单根本没有那个值（传下去也不生效），
+             所以这里高亮的是 Agent 自己配置里最近用过的那一条。 */
+          const isCurrent = readonly && !!currentId && m.modelId === currentId;
+          const selected = readonly ? isCurrent : m.modelId === value;
           return (
             <button
               key={m.modelId}
               type="button"
               role="option"
               aria-selected={selected}
+              aria-disabled={readonly || undefined}
               data-model-row={selected ? '1' : '0'}
               data-model-id={m.modelId}
-              onClick={() => onChange(m.modelId)}
+              data-model-readonly={readonly ? '1' : '0'}
+              data-model-current={isCurrent ? '1' : '0'}
+              onClick={readonly ? undefined : () => void pick(m)}
               onMouseEnter={() => setCursor(i)}
               /* A75：三件事一次对齐。
                *
@@ -236,6 +296,8 @@ export function ModelSelectPopup({
                     ? 'var(--tc-fill-hover)'
                     : 'transparent',
                 color: selected ? 'var(--td-brand-color)' : 'var(--td-text-color-primary)',
+                // 只读行的鼠标形态要跟着变 —— 手型光标本身就是「点了会生效」的承诺
+                cursor: readonly ? 'default' : 'pointer',
               }}
             >
               {/* A93：这一格原来是「provider 首字母方块」。去掉的理由不是审美 ——
@@ -252,6 +314,21 @@ export function ModelSelectPopup({
                       style={tagStyle(m.tag)}
                     >
                       {m.tag}
+                    </span>
+                  )}
+                  {/* A151：官方清单里有、本机还没打过的那些。
+                      不标出来，用户会以为「列出来就是能用」——而实测
+                      `Qwen3.7-Plus` 会被 CLI 静默换成别的模型。 */}
+                  {m.verified === false && (
+                    <span
+                      className="shrink-0 rounded px-1 text-caption"
+                      style={{
+                        color: 'var(--td-text-color-placeholder)',
+                        backgroundColor: 'var(--td-bg-color-component)',
+                      }}
+                      data-model-unverified
+                    >
+                      {verifying === m.modelId ? '验证中…' : '未验证'}
                     </span>
                   )}
                 </span>
@@ -275,9 +352,19 @@ export function ModelSelectPopup({
                 </span>
               )}
 
-              {selected && (
+              {isCurrent ? (
+                /* 只读时不用 ✓（✓ 表示「已选中并会生效」），改用「当前」两个字：
+                   它陈述的是事实，不承诺任何动作。 */
+                <span
+                  className="shrink-0 rounded px-1 text-caption"
+                  style={{ color: 'var(--td-text-color-secondary)', backgroundColor: 'var(--td-bg-color-component)' }}
+                  data-model-current-tag
+                >
+                  当前
+                </span>
+              ) : !readonly && selected ? (
                 <Check size={14} className="shrink-0" style={{ color: 'var(--td-brand-color)' }} />
-              )}
+              ) : null}
             </button>
           );
         })}
@@ -285,16 +372,50 @@ export function ModelSelectPopup({
 
       {/* ── 底部通栏 ── */}
       <div className="shrink-0 p-2" style={{ borderTop: '1px solid var(--tc-divider)' }}>
-        <button
-          type="button"
-          data-model-popup-add
-          onClick={onAddModel}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-body transition-colors hover:bg-[var(--tc-hover-chrome)]"
-          style={{ color: 'var(--td-text-color-primary)' }}
-        >
-          <Plus size={14} />
-          添加模型
-        </button>
+        {verifyError && (
+          /* 标定失败：把 CLI 的原话贴出来。改写过的「不可用」用户没法判断
+             是自己账号的问题还是模型名的问题。 */
+          <p
+            className="mb-1 px-2 text-caption leading-4"
+            style={{ color: 'var(--td-error-color)' }}
+            data-model-verify-error
+          >
+            {verifyError}
+          </p>
+        )}
+        {/* A151：先说明「点了会怎样」再让用户点。不写这句，一次 8-20s 的
+            无响应会被当成卡死；写了这句，「验证中…」才有出处。 */}
+        {!readonly && !verifyError && models.some(m => m.verified === false) && (
+          <p
+            className="mb-1 px-2 text-caption leading-4"
+            style={{ color: 'var(--td-text-color-secondary)' }}
+            data-model-probe-hint
+          >
+            带「未验证」的模型选中前会先跑一次 CLI 确认（花少量 token）。
+          </p>
+        )}
+        {readonly ? (
+          /* 只读时「添加模型」必须消失：那个按钮指向设置页的刷新枚举，
+             而这份清单根本不来自枚举 —— 摆着就是一个点了没用的控件。 */
+          <p
+            className="px-2 py-1 text-caption leading-4"
+            style={{ color: 'var(--td-text-color-secondary)' }}
+            data-model-popup-note
+          >
+            {note || '这份清单来自该 Agent 自己的配置，本应用只能读取，不能切换。'}
+          </p>
+        ) : (
+          <button
+            type="button"
+            data-model-popup-add
+            onClick={onAddModel}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-body transition-colors hover:bg-[var(--tc-hover-chrome)]"
+            style={{ color: 'var(--td-text-color-primary)' }}
+          >
+            <Plus size={14} />
+            添加模型
+          </button>
+        )}
       </div>
     </div>,
     document.body

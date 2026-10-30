@@ -57,6 +57,13 @@ export interface Model {
   /** provider 展示名（OpenCode / Z.AI / GitHub Copilot …），用于第二行分组说明 */
   providerName?: string;
   /**
+   * 这一条是否实测可路由（A151）。
+   *
+   * `false` = 来自官方清单但本机还没打过。界面上必须与已验证的区分开：
+   * 官方清单里确实存在 `-m` 会被静默替换的名字（实测 `Qwen3.7-Plus`）。
+   */
+  verified?: boolean;
+  /**
    * 这个模型支持的推理/思考强度档位（A62）。
    *
    * 与官方模型面板的「思考强度」对应，两种来源：
@@ -71,6 +78,32 @@ export interface Model {
     /** 官方默认档（CLI 自己声明的）。没有就不预设选中值 */
     defaultLevel?: string;
   };
+}
+
+/**
+ * 模型清单的来源与「能不能在这里切」（A151）。
+ *
+ * 原来只有两态：有列表 → 画下拉；没列表 → 画「模型由 Agent 决定」。
+ * 那把两件不同的事混成了一句：
+ *   ① **本应用切不了**（ZCode 只认它自己设置里的模型）；
+ *   ② **我们不知道它有哪些**（gemini / pi 有 `-m` 但没有枚举命令）。
+ * 于是 ZCode 明明把 13 条套餐与模型写在配置里，用户看到的却是「什么都没有」。
+ *
+ * 现在由后端明确给出 source：
+ *   · `catalog`      —— CLI 枚举出来的，可选可切（opencode / qoder / codex / cursor）
+ *   · `agent-config` —— 从 Agent 自己的配置文件读出来的，**只读**（zcode）
+ *   · `unknown`      —— 真拿不到，维持原文案
+ *
+ * `selectable: false` 必须一路透到界面：能看、能知道现在用的是哪个，
+ * 但点了不会生效的事一律不做。
+ */
+export interface AgentModelSource {
+  kind: 'catalog' | 'agent-config' | 'unknown';
+  selectable: boolean;
+  /** 只读时界面底部那句解释（为什么不能在这里切） */
+  note?: string;
+  /** 只读时用来高亮「当前用的是哪一条」 */
+  currentModel?: string;
 }
 
 export interface ToolCall {
