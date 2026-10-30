@@ -18,7 +18,6 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
-import { openAllProcess } from './lib/process-flow.mjs';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
@@ -240,12 +239,12 @@ console.log('\n[2] 完成态默认收起，点开才出现步骤');
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1000);
 
-  /* A149：这条消息有答案，所以整段过程（含轨迹）默认收在 `ProcessFlow` 里、
-     子节点整棵卸载。先展开过程流，下面几条才是**在验轨迹自己**的收起态 ——
-     不展开的话 `[data-steps-bar]` 根本不存在，而「步骤不渲染」会变成
-     「过程流没展开」造成的假绿。 */
-  const openedCount = await openAllProcess(page);
-  ok(openedCount > 0, '过程流默认收起，展开后才看得到轨迹', `展开 ${openedCount} 条`);
+  /* 2026-10-30 改版：过程流总条已拆，过程块与答案同一平面平铺，
+     轨迹条直接在 DOM 里 —— 下面几条验的是**轨迹自己**的收起态。 */
+  ok(
+    (await page.locator('[data-process-flow]').count()) === 0,
+    '不再有过程流总条（过程与答案同一平面）'
+  );
 
   const bar = page.locator('[data-steps-bar]').first();
   ok(await bar.count() > 0, '存在轨迹汇总行');
@@ -336,7 +335,6 @@ console.log('\n[6] 长轨迹：限高 320px + 底部渐隐');
   const { ctx, page } = await newPage();
   await page.goto(base + '/chat/s3', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1000);
-  await openAllProcess(page);
   await page.locator('[data-steps-bar]').first().click();
   await page.waitForTimeout(400);
 
@@ -453,7 +451,6 @@ console.log('\n[8] 群聊：每个 Agent 各自一段轨迹');
   const { ctx, page } = await newPage();
   await page.goto(base + '/chat/s2', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
-  await openAllProcess(page);
 
   const traces = await page.evaluate(() =>
     [...document.querySelectorAll('[data-trace]')].map(t => {
@@ -474,8 +471,6 @@ console.log('\n[8b] 结果未回传与已隐去的思考');
   await page.goto(base + '/chat/s2', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
 
-  // A149：先展开过程流（否则轨迹不在 DOM 里），再展开两条轨迹
-  await openAllProcess(page);
   // 完成态默认收起：先展开两条轨迹，否则步骤行根本不渲染
   const bars = page.locator('[data-steps-bar]');
   const barCount = await bars.count();
@@ -507,19 +502,25 @@ console.log('\n[8b] 结果未回传与已隐去的思考');
   ok(/rgba\(0, 0, 0, 0\)|transparent/.test(dotStyle.bg), '未回传的圆点不填状态色', dotStyle.bg);
   ok(dotStyle.shadow.includes('inset'), '空心圈用 inset 描边表达', dotStyle.shadow);
 
-  // 汇总行也不许画绿勾：这一轮结束 ≠ 全部成功
-  //
-  // A149：作用域收到**轨迹条里面**。过程流（ProcessFlow）的汇总行同样会用
-  // 空心圈表达「有工具没回结果」，全局数 `.tc-unknown-dot` 会数到 2 条 ——
-  // 那不是回归，是同一状态在两层各表达了一次。这里要验的是「轨迹条自己
-  // 别画绿勾」，所以按条内取。
-  const traceUnknownDots = await page.evaluate(
-    () => [...document.querySelectorAll('[data-steps-bar] .tc-unknown-dot')].length
+  // 2026-10-30 改版：汇总行不再摆状态图标三件套（绿勾/红叉/空心圈/
+  // 脉冲点全部移除），行首就是摘要文案，chevron 紧跟其后；「有工具没回结果」
+  // 由步骤行自己的空心圈与「结果未回传」胶囊表达（上面两条守着）。
+  const barChrome = await page.evaluate(() => {
+    const bars = [...document.querySelectorAll('[data-steps-bar]')];
+    return bars.map(b => ({
+      dots: b.querySelectorAll('.tc-unknown-dot, .tc-live-dot').length,
+      // 行内顺序：第一个子节点必须是摘要，chevron（svg）在摘要之后、行尾之前
+      firstIsSummary: b.firstElementChild?.hasAttribute('data-trace-summary') ?? false,
+    }));
+  });
+  ok(
+    barChrome.every(b => b.dots === 0),
+    '汇总行不再画状态圆点（Trae 语法：行首只有文案）',
+    barChrome.map(b => b.dots).join(',')
   );
   ok(
-    traceUnknownDots === 1,
-    '汇总行用空心圈而不是绿勾（只有 hermes 这条有未回传）',
-    String(traceUnknownDots)
+    barChrome.every(b => b.firstIsSummary),
+    '汇总行行首是摘要文案（chevron 跟在其后，状态图标已移除）'
   );
 
   const red = page.locator('[data-trace-thinking] [data-redacted="1"]').first();

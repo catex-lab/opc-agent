@@ -25,6 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  Brain,
   Terminal,
   Sparkles,
   Search,
@@ -39,8 +40,6 @@ import {
   Zap,
   ChevronDown,
   ChevronUp,
-  CircleCheck,
-  CircleX,
   type LucideIcon,
 } from 'lucide-react';
 import type { Block } from '../../shared/blocks';
@@ -59,50 +58,50 @@ import { useOverflowY } from '../hooks/useOverflowY';
 /**
  * 工具 → 图标 + 颜色。
  *
- * 颜色全部走 index.css 的 `--tool-color-*` 语义变量：字面量无法跟随深浅主题，
- * 深色下 Ant Design 那套蓝绿会发闷。入参一律 `String()` 兜底 —— 历史上
- * `tool.name` 缺失时这里抛过一次 `toLowerCase of undefined`，
- * 而它发生在消息列表渲染中，直接把整屏打成白屏。
+ * 单色化（2026-10-30，改版）：图标一律 secondary 灰，状态区分靠形状
+ * （✓/✗/空心圈/脉冲点），不靠颜色。`--tool-color-*` 令牌保留在 index.css 备用。
+ * 入参一律 `String()` 兜底 —— 历史上 `tool.name` 缺失时这里抛过一次
+ * `toLowerCase of undefined`，而它发生在消息列表渲染中，直接把整屏打成白屏。
  */
-function iconOf(toolName: string): { icon: LucideIcon; color: string } {
+function iconOf(toolName: string): LucideIcon {
   switch (toolName) {
     case 'skill':
-      return { icon: Sparkles, color: 'var(--tool-color-skill)' };
+      return Sparkles;
     case 'bash':
     case 'shell':
     case 'execute':
-      return { icon: Terminal, color: 'var(--tool-color-shell)' };
+      return Terminal;
     case 'websearch':
     case 'search':
     case 'grep':
     case 'glob':
-      return { icon: Search, color: 'var(--tool-color-search)' };
+      return Search;
     case 'webfetch':
-      return { icon: Globe, color: 'var(--tool-color-network)' };
+      return Globe;
     case 'write':
     case 'writefile':
     case 'create_file':
-      return { icon: FileText, color: 'var(--tool-color-file)' };
+      return FileText;
     case 'read':
     case 'readfile':
-      return { icon: Eye, color: 'var(--tool-color-file)' };
+      return Eye;
     case 'edit':
     case 'editfile':
     case 'multiedit':
     case 'str_replace_editor':
-      return { icon: Edit, color: 'var(--tool-color-file)' };
+      return Edit;
     case 'delete':
     case 'deletefile':
-      return { icon: Trash2, color: 'var(--tool-color-danger)' };
+      return Trash2;
     case 'listdir':
     case 'ls':
-      return { icon: FolderSearch, color: 'var(--tool-color-file)' };
+      return FolderSearch;
     case 'imagegen':
-      return { icon: ImageIcon, color: 'var(--tool-color-file)' };
+      return ImageIcon;
     case 'task':
-      return { icon: Zap, color: 'var(--tool-color-task)' };
+      return Zap;
     default:
-      return { icon: Wrench, color: 'var(--td-text-color-secondary)' };
+      return Wrench;
   }
 }
 
@@ -204,7 +203,7 @@ function ThinkingNode({ item, collapse = false }: { item: TraceItem; collapse?: 
 
   const row = (
     <>
-      <Sparkles size={12} style={{ flexShrink: 0 }} />
+      <Brain size={12} style={{ flexShrink: 0 }} />
       <span className="tc-think-note-title">
         {redacted ? '已隐去' : running ? '深度思考中' : '深度思考'}
       </span>
@@ -288,7 +287,7 @@ function detailOf(item: TraceItem): ReactNode {
 /** 单步 */
 function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boolean }) {
   const [open, setOpen] = useState(false);
-  const { icon: Icon, color } = iconOf(item.toolName);
+  const Icon = iconOf(item.toolName);
   const detail = item.kind === 'tool' ? detailOf(item) : null;
   // A96：文件类工具优先给行级 diff。没有 diff 数据（read / delete / 未知工具）
   // 时返回 null，这里自动退回原来的明细渲染 —— 两条路互斥，不会重复显示。
@@ -344,7 +343,7 @@ function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boole
         }
         title={item.path}
       >
-        <Icon size={14} style={{ color, flexShrink: 0 }} />
+        <Icon size={14} style={{ color: 'var(--td-text-color-secondary)', flexShrink: 0 }} />
         <span className="tc-trace-verb">{item.verb}</span>
         {item.target && <span className="tc-trace-target">{item.target}</span>}
         {item.diff && <DiffTag diff={item.diff} />}
@@ -446,8 +445,6 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
   };
 
   const running = items.some(i => i.status === 'running');
-  const failed = items.some(i => i.status === 'error');
-  const interrupted = items.some(i => i.status === 'interrupted');
   const stepCount = items.filter(i => i.kind === 'tool').length;
   const totalMs = items.reduce((s, i) => s + (i.durationMs ?? 0), 0);
   const durationText = formatHandledDuration(totalMs);
@@ -467,8 +464,8 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
    * 汇总行文案。
    *
    * 刻意**不**在运行中替换成「执行中…」：那句话把最有信息量的东西（干了什么）
-   * 盖掉了，而且和下面的呼吸灯重复。运行中的状态由圆点表达，文字始终是摘要 ——
-   * 流式过程中它还会随新步骤不断变化，本身就是「在动」的证据。
+   * 盖掉了。文字始终是摘要 —— 流式过程中它随新步骤不断变化，本身就是「在动」
+   * 的证据；运行态另有 StreamStatus 的呼吸灯表达。
    */
   const barLabel = summary.text || (expanded ? '收起步骤' : '查看步骤');
   const showTotalDiff = summary.diff.added > 0 || summary.diff.removed > 0;
@@ -489,31 +486,20 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
           }
         }}
       >
-        {expanded ? (
-          <ChevronUp size={13} style={{ color: 'var(--td-text-color-placeholder)', flexShrink: 0 }} />
-        ) : (
-          <ChevronDown size={13} style={{ color: 'var(--td-text-color-placeholder)', flexShrink: 0 }} />
-        )}
-        {running ? (
-          <span className="tc-live-dot" aria-hidden="true">
-            <span className="tc-live-core" style={{ backgroundColor: 'var(--td-brand-color)' }} />
-            <span className="tc-live-ring" style={{ borderColor: 'var(--td-brand-color)' }} />
-          </span>
-        ) : failed ? (
-          <CircleX size={13} style={{ color: 'var(--td-error-color)', flexShrink: 0 }} />
-        ) : interrupted ? (
-          // 不画绿勾：这一轮结束了，但至少有一个工具没回结果。
-          // 空心圈 = 「不确定」，比打勾诚实，也比打叉克制。
-          <span className="tc-unknown-dot" aria-hidden="true" data-unknown-dot />
-        ) : (
-          <CircleCheck size={13} style={{ color: 'var(--td-success-color)', flexShrink: 0 }} />
-        )}
+        {/* 改版（2026-10-30）：行首不再摆状态图标三件套
+            （绿勾/红叉/脉冲点），chevron 紧跟摘要文案之后而不是钉在行尾 ——
+            这一行读起来是「干了什么 ⌄」，状态由步骤行各自表达。 */}
         <span className="tc-trace-summary" data-trace-summary title={summary.text}>
           {barLabel}
         </span>
         <span className="tc-trace-count" data-trace-count>
           {stepCount} 步
         </span>
+        {expanded ? (
+          <ChevronUp size={13} style={{ color: 'var(--td-text-color-placeholder)', flexShrink: 0 }} />
+        ) : (
+          <ChevronDown size={13} style={{ color: 'var(--td-text-color-placeholder)', flexShrink: 0 }} />
+        )}
         {showTotalDiff && (
           <span className="tc-diff" data-diff-total={`+${summary.diff.added} -${summary.diff.removed}`}>
             <span className="tc-diff-add">+{summary.diff.added}</span>

@@ -1,9 +1,10 @@
 /**
- * A149 验证：消息正文的四处排版收口（用户截图反馈）。
+ * A149 验证：消息正文的排版收口；2026-10-30 起改为「改版」口径。
  *
  *   红框1 —— 「原生事件 7 条 sc/system/status · sid=…」不再出现在消息流里
- *   红框2 —— 过程流（思考 / 中途旁白 / 轨迹条）执行完自动收起，只留答案；
- *            展开后正文字号与答案正文**同档**（14px）
+ *   红框2 —— 过程（思考 / 中途旁白 / 轨迹条）与答案同一平面平铺：
+ *            没有总收起条、没有导轨、没有答案前分隔线；思考块与轨迹条
+ *            各自 auto-collapse（有答案即收），旁白与答案同档 14px
  *   红框3 —— 答案正文不出现 emoji 表情，段落两端对齐（末行左对齐）
  *
  * 全离线：静态服务器托管 dist/ + Playwright 拦 /api/** 喂夹具。
@@ -187,10 +188,13 @@ const DEEP_TEXT = `
   })()
 `;
 
-/** 穿透 shadow DOM 收集所有 <p>：答案正文在 TDesign 的 shadow root 里 */
+/** 穿透 shadow DOM 收集答案块的所有 <p>：答案正文在 TDesign 的 shadow root 里。
+    同一平面后页面上有多个 [data-answer-markdown]（旁白也是），取最后一个 ——
+    答案在最后一个工具之后，是消息里的末位文本块。 */
 const PICK_PARAGRAPHS = `
   (() => {
-    const host = document.querySelector('[data-answer-markdown]');
+    const hosts = [...document.querySelectorAll('[data-answer-markdown]')];
+    const host = hosts[hosts.length - 1];
     if (!host) return { missing: true, ps: [] };
     const ps = [];
     const walk = node => {
@@ -228,64 +232,95 @@ console.log('\n[1] 红框1：原生事件行不再出现在消息流里');
   await ctx.close();
 }
 
-// ============= [2] 红框2：过程流自动收起，只留答案 =============
-console.log('\n[2] 红框2：执行完自动收起，屏幕上只剩答案');
+// ============= [2] 红框2：过程与答案同一平面，各自折叠 =============
+console.log('\n[2] 红框2：无总条/导轨/分隔线，过程块各自收起，旁白留在原地');
 {
   const { ctx, page } = await newPage();
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1400);
 
-  const flow = page.locator('[data-process-flow]').first();
-  ok((await flow.count()) > 0, '有过程流容器');
-  ok((await flow.getAttribute('data-process-open')) === '0', '完成态默认收起', await flow.getAttribute('data-process-open'));
-  ok((await page.locator('[data-trace]').count()) === 0, '收起时轨迹不渲染');
-  ok((await page.locator('.tc-thinking').count()) === 0, '收起时思考块不渲染');
+  // 结构上不再有过程流壳
+  ok((await page.locator('[data-process-flow]').count()) === 0, '没有过程流总条（data-process-flow）');
+  ok((await page.locator('.tc-rail-item').count()) === 0, '没有导轨行（.tc-rail-item）');
+  ok((await page.locator('.tc-answer-divider').count()) === 0, '答案前没有分隔线');
+  ok((await page.locator('.tc-proc-note').count()) === 0, '旁白不再降档（无 .tc-proc-note）');
 
+  // 过程块各自管自己的折叠：思考收起、轨迹收起，但节点都在 DOM 里
+  const think = page.locator('.tc-thinking').first();
+  ok((await think.count()) > 0, '思考块在 DOM 里（没有被卸载）');
+  ok((await think.evaluate(el => el.open).catch(() => null)) === false, '有答案 → 思考块默认收起');
+  const traceBar = page.locator('[data-steps-bar]').first();
+  ok((await traceBar.count()) > 0, '轨迹汇总行在 DOM 里');
+  ok((await traceBar.getAttribute('aria-expanded')) === 'false', '有答案 → 轨迹默认收起');
+  ok((await page.locator('[data-trace-scroll]').count()) === 0, '收起时步骤不渲染');
+
+  // 旁白不再被收走：它是正文的一部分，直接可见（Trae 同一平面）
   const body = await page.evaluate(DEEP_TEXT);
+  ok(body.includes(NARRATION_2), '中途旁白直接可见（不再被总条收走）');
   ok(body.includes('GPT-6.1 Terra'), '答案正文可见', `${body.length} 字`);
-  ok(!body.includes(NARRATION_2), '中途旁白不可见（过程被整体收起，不是逐条收）');
-
-  const bar = (await page.locator('[data-process-bar]').first().innerText().catch(() => '')) ?? '';
-  ok(/思考\s*1\s*段/.test(bar), '摘要报出思考段数', bar.replace(/\n/g, ' '));
-  ok(/工具\s*3\s*步/.test(bar), '摘要报出工具步数', bar.replace(/\n/g, ' '));
 
   await page.screenshot({ path: join(OUT, 'a149-collapsed.png'), fullPage: false });
   await ctx.close();
 }
 
-// ============= [3] 红框2：展开后字号与答案同档 =============
-console.log('\n[3] 红框2：展开后过程流正文字号 = 答案正文字号');
+// ============= [3] 红框2：旁白与答案同档；思考正文灰卡 =============
+console.log('\n[3] 红框2：旁白 14px 与答案同档；思考正文是浅灰圆角卡片');
 {
   const { ctx, page } = await newPage();
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
 
   const answerSize = await page.evaluate(() => {
-    const el = document.querySelector('[data-answer-markdown]');
+    const hosts = [...document.querySelectorAll('[data-answer-markdown]')];
+    const el = hosts[hosts.length - 1];
     return el ? getComputedStyle(el).fontSize : null;
   });
   ok(answerSize === '14px', '答案正文 14px（--text-body-lg）', String(answerSize));
 
-  await page.locator('[data-process-bar]').first().click();
-  await page.waitForTimeout(400);
-  const flowOpen = await page.locator('[data-process-flow]').first().getAttribute('data-process-open');
-  ok(flowOpen === '1', '点击后展开', String(flowOpen));
-  ok((await page.locator('[data-trace]').count()) > 0, '展开后轨迹出现');
+  // 旁白与答案都经 AnswerMarkdown 渲染：逐块读 [data-answer-markdown] 的字号，
+  // 全部必须同档（14px）—— A152 那套「旁白降 13px」的分支已删。
+  const noteSize = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-answer-markdown]')].map(el => getComputedStyle(el).fontSize)
+  );
+  ok(noteSize.length >= 4, `过程旁白 + 答案共 ${noteSize.length} 个文本块`, String(noteSize.length));
+  ok(
+    noteSize.every(s => s === '14px'),
+    '旁白与答案全部 14px 同档（不再有 13px 降档）',
+    noteSize.join(',')
+  );
 
-  // 思考正文（方案 A 的 .tc-think-body）是过程流里唯一的自然语言长文本
+  // 思考正文：展开后是浅灰圆角卡片，不是左细线
   await page.locator('.tc-thinking > summary').first().click();
   await page.waitForTimeout(300);
-  const thinkSize = await page.evaluate(() => {
+  const thinkCard = await page.evaluate(() => {
     const el = document.querySelector('.tc-think-body');
-    return el ? getComputedStyle(el).fontSize : null;
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    const probe = document.createElement('span');
+    probe.style.backgroundColor = 'var(--td-bg-color-secondarycontainer)';
+    document.body.appendChild(probe);
+    const cardToken = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return {
+      fontSize: cs.fontSize,
+      background: cs.backgroundColor,
+      cardToken,
+      borderLeftWidth: cs.borderLeftWidth,
+      borderLeftStyle: cs.borderLeftStyle,
+      borderRadius: cs.borderTopLeftRadius,
+    };
   });
-  ok(thinkSize === answerSize, '思考正文字号 = 答案正文字号', `思考 ${thinkSize} / 答案 ${answerSize}`);
-
-  /* 肯定式：展开后旁白**确实**出现了。
-     没有这一条，[2] 那句「旁白不可见」在「旁白从来没渲染过」时也会绿 ——
-     而那是另一种 bug，不是这里要的「收起了」。 */
-  const expandedBody = await page.evaluate(DEEP_TEXT);
-  ok(expandedBody.includes(NARRATION_2), '展开后中途旁白出现（与 [2] 的「不可见」配对）');
+  ok(thinkCard != null, '思考正文展开后可见');
+  if (thinkCard) {
+    ok(thinkCard.fontSize === answerSize, '思考正文字号 = 答案正文字号', `思考 ${thinkCard.fontSize} / 答案 ${answerSize}`);
+    ok(thinkCard.background === thinkCard.cardToken, '思考正文是灰卡（secondarycontainer 令牌）', thinkCard.background);
+    ok(
+      thinkCard.borderLeftWidth === '0px' || thinkCard.borderLeftStyle === 'none',
+      '思考正文不再有左细线',
+      `${thinkCard.borderLeftWidth} ${thinkCard.borderLeftStyle}`
+    );
+    ok(parseFloat(thinkCard.borderRadius) >= 6, '思考灰卡有圆角（≥6px）', thinkCard.borderRadius);
+  }
 
   await page.screenshot({ path: join(OUT, 'a149-expanded.png'), fullPage: false });
   await ctx.close();
@@ -298,7 +333,7 @@ console.log('\n[4] 红框3：正文去 emoji、段落两端对齐');
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1400);
 
-  const stripped = await page.locator('[data-answer-markdown]').first().getAttribute('data-emoji-stripped');
+  const stripped = await page.locator('[data-answer-markdown]').last().getAttribute('data-emoji-stripped');
   ok(stripped === '1', '标记出「这条正文确实做过净化」', String(stripped));
 
   const dump = await page.evaluate(PICK_PARAGRAPHS);

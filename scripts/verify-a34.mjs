@@ -15,7 +15,6 @@ import { createServer } from 'node:http';
 import { readFile, readdir, mkdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
-import { openAllProcess } from './lib/process-flow.mjs';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
@@ -167,10 +166,6 @@ console.log('\n[2] 代码块：A55 后按钮精简');
   const { ctx, page } = await newPage();
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
-  /* A149：工具耗时（1.2s）在轨迹汇总行里，而有答案的消息默认把整段过程
-     收进 ProcessFlow（子节点卸载）。先展开过程流，下面那条 `text=1.2s`
-     才数得到 —— 否则它恒为 0，看起来像「耗时没显示」的回归。 */
-  await openAllProcess(page);
 
   ok(await page.locator('[aria-label="好评"]').count() === 0, '「好评」按钮已移除');
   ok(await page.locator('[aria-label="差评"]').count() === 0, '「差评」按钮已移除');

@@ -30,7 +30,6 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
-import { openAllProcess } from './lib/process-flow.mjs';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
@@ -240,11 +239,6 @@ page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
 
 await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
 await page.waitForTimeout(1200);
-/* A149：有答案的消息，过程（思考 / 轨迹）默认收在 ProcessFlow 里且子节点整棵
-   卸载。本脚本按 `.tc-think` 的下标验「三态 + 展开策略」，不先展开就会数到
-   0 条、下标全错。展开过程流不影响各 details 自己的 open 状态（那个由
-   `collapse` prop 驱动），所以下面的断言口径一个字都不用改。 */
-await openAllProcess(page);
 
 // ── [1] 三种能力状态 ─────────────────────────────────────────────────
 console.log('\n[1] 三种能力状态');
@@ -287,17 +281,17 @@ ok(openState[1] === false, '最新一条「已完成且有正文」也折叠（�
 ok(openState[2] === false, '正文已出现的消息，上方思考折叠', String(openState[2]));
 ok(openState[3] === true, '最新一条「还没有正文」的思考展开（过程此刻就是内容）', String(openState[3]));
 
-// ── [3] 正文视觉契约（方案 A）────────────────────────────────────────
-console.log('\n[3] 正文视觉契约：左细线 + 14px secondary + 正体（A149 与答案正文同档）');
+// ── [3] 正文视觉契约（灰卡，2026-10-30 改版）──────────────────
+console.log('\n[3] 正文视觉契约：浅灰圆角卡片 + 14px secondary + 正体');
 const body = await page.evaluate(() => {
   const el = document.querySelector('.tc-think[data-think-format="raw"] .tc-think-body');
   if (!el) return null;
   const cs = getComputedStyle(el);
-  // 探针：把令牌解析成真实 rgb() 再比，避免写死 18%（深色是 20% 白）
+  // 探针：把令牌解析成真实 rgb() 再比，不写死具体色值（深色主题会变）
   const probeEl = document.createElement('span');
-  probeEl.style.borderLeftColor = 'var(--tc-rule)';
+  probeEl.style.backgroundColor = 'var(--td-bg-color-secondarycontainer)';
   document.body.appendChild(probeEl);
-  const ruleToken = getComputedStyle(probeEl).borderLeftColor;
+  const cardToken = getComputedStyle(probeEl).backgroundColor;
   probeEl.remove();
   const tok = {};
   for (const [k, v] of Object.entries({
@@ -317,22 +311,26 @@ const body = await page.evaluate(() => {
     paddingLeft: cs.paddingLeft,
     borderLeftWidth: cs.borderLeftWidth,
     borderLeftStyle: cs.borderLeftStyle,
-    borderLeftColor: cs.borderLeftColor,
+    borderRadius: cs.borderTopLeftRadius,
     color: cs.color,
     background: cs.backgroundColor,
-    ruleToken,
+    cardToken,
     tok,
   };
 });
 ok(body != null, '正文容器存在');
 if (body) {
-  ok(body.fontSize === '14px', '正文字号 14px = 答案正文字号（A149 抬档，不是 12px 斜体脚注）', body.fontSize);
+  ok(body.fontSize === '14px', '正文字号 14px = 答案正文字号（不是 12px 斜体脚注）', body.fontSize);
   ok(body.fontStyle === 'normal', '正体，不斜体', body.fontStyle);
-  ok(body.paddingLeft === '13px', '左内缩 13px', body.paddingLeft);
-  ok(body.borderLeftWidth === '2px' && body.borderLeftStyle === 'solid', '左细线 2px solid', `${body.borderLeftWidth} ${body.borderLeftStyle}`);
-  ok(body.borderLeftColor === body.ruleToken, '左细线颜色 = --tc-rule（读令牌，不写死百分比）', body.borderLeftColor);
+  ok(body.paddingLeft === '12px', '卡片内边距 12px', body.paddingLeft);
+  ok(
+    body.borderLeftWidth === '0px' || body.borderLeftStyle === 'none',
+    '不再有左细线',
+    `${body.borderLeftWidth} ${body.borderLeftStyle}`
+  );
+  ok(parseFloat(body.borderRadius) >= 6, '圆角卡片（≥6px）', body.borderRadius);
+  ok(body.background === body.cardToken, '底色 = --td-bg-color-secondarycontainer（读令牌，不写死）', body.background);
   ok(body.color === body.tok.secondary, '正文颜色 = secondary（比答案轻一档，不是最浅那档）', body.color);
-  ok(body.background === 'rgba(0, 0, 0, 0)' || body.background === 'transparent', '无背景卡（不是盒子）', body.background);
   ok(
     Math.abs(body.lineHeight - 1.75) < 0.02,
     '行高 1.75（长推理链要透气）',
@@ -386,38 +384,31 @@ ok(headStyle.metaColor === body?.tok?.placeholder, '元信息 = placeholder（�
 ok(headStyle.badgeColor === headStyle.token.brand, '摘要角标文字 = 品牌色（读令牌，不写死 hex）', headStyle.badgeColor);
 ok(headStyle.badgeBg === headStyle.token.brandBg, '摘要角标底色 = 10% 品牌色', `${headStyle.badgeBg} vs ${headStyle.token.brandBg}`);
 
-// ── [4b] 几何：左细线与头部图标同一条竖线 ─────────────────────────────
+// ── [4b] 几何：灰卡撑满思考块整宽 ────────────────────────────────────
 // 折叠态下 details 的子元素 bounding rect 是 0（浏览器不给折叠内容布局），
 // 所以只能量展开的那一条 —— 夹具里唯一展开的是 m6（还在思考）。
 console.log('\n[4b] 几何对齐');
 const geo = await page.evaluate(() => {
   const node = document.querySelector('.tc-think[open]');
-  const head = node.querySelector('summary');
   const icon = node.querySelector('summary > svg');
   const body = node.querySelector('.tc-think-body');
   const box = body.getBoundingClientRect();
   return {
     iconLeft: icon ? Math.round(icon.getBoundingClientRect().left * 10) / 10 : null,
-    ruleLeft: Math.round(box.left * 10) / 10,
-    headLeft: Math.round(head.getBoundingClientRect().left * 10) / 10,
+    bodyLeft: Math.round(box.left * 10) / 10,
     bodyWidth: Math.round(box.width),
     containerWidth: Math.round(node.getBoundingClientRect().width),
   };
 });
 ok(
-  geo.iconLeft != null && Math.abs(geo.iconLeft - geo.ruleLeft) <= 1,
-  '头部图标左缘与左细线对齐（读起来是同一条竖线的开头）',
-  `${geo.iconLeft} vs ${geo.ruleLeft}`
-);
-ok(
-  geo.headLeft < geo.ruleLeft,
-  '头部 hover 底色比正文更靠左（负边距撑出去，悬停范围覆盖细线）',
-  `${geo.headLeft} vs ${geo.ruleLeft}`
-);
-ok(
   geo.bodyWidth === geo.containerWidth,
-  '正文宽度撑满思考块（不是缩进去的小盒子）',
+  '灰卡宽度撑满思考块（不是缩进去的小盒子）',
   `${geo.bodyWidth} vs ${geo.containerWidth}`
+);
+ok(
+  geo.iconLeft != null && Math.abs(geo.iconLeft - geo.bodyLeft) <= 1,
+  '头部图标左缘与灰卡左缘对齐（summary 负边距把图标顶回卡缘）',
+  `${geo.iconLeft} vs ${geo.bodyLeft}`
 );
 
 // ── [5] 用户的手动选择不被抢回去 ──────────────────────────────────────
@@ -430,9 +421,6 @@ const afterOpen = await page.evaluate(() =>
 ok(afterOpen === true, '手动展开历史消息的思考（不会被「已折叠」状态抢回去）', String(afterOpen));
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(1200);
-/* A149：刷新后过程流又回到默认收起态，`.tc-think` 会跟着卸载 ——
-   重新展开一次，下面的下标断言才数得到 4 条。 */
-await openAllProcess(page);
 const afterReload = await page.evaluate(() => [...document.querySelectorAll('.tc-think')].map(n => n.open));
 ok(
   JSON.stringify(afterReload) === JSON.stringify([false, false, false, true]),
@@ -440,8 +428,8 @@ ok(
   JSON.stringify(afterReload)
 );
 
-// ── [6] 轨迹内思考（方案 C）───────────────────────────────────────────
-console.log('\n[6] 轨迹内思考：正体 14px + 左细线（方案 C，A149 与答案正文同档）');
+// ── [6] 轨迹内思考（灰卡，与消息级同一形态）──────────────────────────
+console.log('\n[6] 轨迹内思考：正体 14px + 浅灰圆角卡片');
 const traceState = await page.evaluate(() => {
   const trace = document.querySelector('[data-trace]');
   const bar = trace?.querySelector('[data-steps-bar]');
@@ -496,8 +484,8 @@ const note = await page.evaluate(() => {
     paddingLeft: cs.paddingLeft,
     borderLeftWidth: cs.borderLeftWidth,
     borderLeftStyle: cs.borderLeftStyle,
-    borderLeftColor: cs.borderLeftColor,
-    rule: probe('borderLeftColor', 'var(--tc-rule)'),
+    borderRadius: cs.borderTopLeftRadius,
+    card: probe('backgroundColor', 'var(--td-bg-color-secondarycontainer)'),
     secondary: probe('color', 'var(--td-text-color-secondary)'),
     headFontSize: hcs?.fontSize ?? null,
     headColor: hcs?.color ?? null,
@@ -506,16 +494,20 @@ const note = await page.evaluate(() => {
 });
 ok(note != null, '轨迹内思考正文存在');
 if (note) {
-  ok(note.fontSize === '14px', '正文字号 14px（A149：不再比消息级思考小半档）', note.fontSize);
+  ok(note.fontSize === '14px', '正文字号 14px（与消息级思考同档）', note.fontSize);
   ok(note.fontStyle === 'normal', '正体，不再斜体', note.fontStyle);
   ok(note.color === note.secondary, '正文颜色 = secondary（不是最浅一档 placeholder）', note.color);
-  ok(note.borderLeftWidth === '2px' && note.borderLeftStyle === 'solid', '左细线 2px solid', `${note.borderLeftWidth} ${note.borderLeftStyle}`);
-  ok(note.borderLeftColor === note.rule, '左细线颜色 = --tc-rule（与方案 A 同一条令牌）', note.borderLeftColor);
-  ok(note.paddingLeft === '11px', '左内缩 11px（轨迹里空间更紧，比 A 浅）', note.paddingLeft);
-  ok(note.background === 'rgba(0, 0, 0, 0)' || note.background === 'transparent', '无 3% 底色（不再是工具输出的盒子）', note.background);
+  ok(
+    note.borderLeftWidth === '0px' || note.borderLeftStyle === 'none',
+    '不再有左细线',
+    `${note.borderLeftWidth} ${note.borderLeftStyle}`
+  );
+  ok(parseFloat(note.borderRadius) >= 6, '圆角卡片（≥6px）', note.borderRadius);
+  ok(note.background === note.card, '底色 = --td-bg-color-secondarycontainer（与消息级同一令牌）', note.background);
+  ok(note.paddingLeft === '10px', '卡片内边距 10px（轨迹里空间更紧，比消息级浅）', note.paddingLeft);
   ok(!/mono|consolas|courier/.test(note.fontFamily), '不再用等宽字体（那是工具输出的语言）', note.fontFamily.split(',')[0]);
   ok(Math.abs(note.lineHeight - 1.7) < 0.02, '行高 1.7', note.lineHeight.toFixed(2));
-  ok(note.headFontSize === '12px', '头部 12px（与方案 A 同一档）', note.headFontSize);
+  ok(note.headFontSize === '12px', '头部 12px（与消息级同一档）', note.headFontSize);
   ok(note.headColor === note.secondary, '头部颜色 = secondary', note.headColor);
   ok(note.headText.includes('深度思考') && note.headText.includes('字'), '头部保留「深度思考 + 字数」', note.headText);
 }
@@ -544,17 +536,8 @@ ok(
   reveal.map(r => r.streaming).join(',')
 );
 
-// ── [8] --tc-rule 明暗双主题都有 ─────────────────────────────────────
-console.log('\n[8] --tc-rule 双主题令牌');
-const css = await readFile(join(ROOT, 'src', 'index.css'), 'utf8');
-ok(css.includes('--tc-rule: rgb(0 0 0 / 0.18)'), '浅色 --tc-rule = 18% 墨');
-ok(css.includes('--tc-rule: rgb(255 255 255 / 0.2)'), '深色 --tc-rule = 20% 白');
-ok(!/\bvar\(--tc-rule\)[^}]*!important/.test(css), '左细线不靠 !important');
-// 两个主题的 alpha 都必须压在 0.21 以内 —— verify:surface 的边线审计
-// 会把「非品牌色且 alpha > 0.21」判成强度失控的版面分割线。
-for (const m of css.matchAll(/--tc-rule: rgb\([^)]*\/\s*([0-9.]+)\)/g)) {
-  ok(Number(m[1]) <= 0.21, `--tc-rule alpha ${m[1]} ≤ 0.21（过审）`, m[1]);
-}
+// ── [8] 深色主题：灰卡与正文颜色都跟着主题走 ─────────────────────────
+console.log('\n[8] 深色主题：思考灰卡真解析（不只看源码）');
 
 // 深色下真跑一次解析，不只看源码里写了什么
 await page.evaluate(() => document.documentElement.classList.add('dark'));
@@ -562,19 +545,26 @@ await page.waitForTimeout(400);
 const dark = await page.evaluate(() => {
   const body = document.querySelector('.tc-think[open] .tc-think-body');
   const note = document.querySelector('.tc-think-note-body');
+  const probe = document.createElement('span');
+  probe.style.backgroundColor = 'var(--td-bg-color-secondarycontainer)';
+  document.body.appendChild(probe);
+  const cardToken = getComputedStyle(probe).backgroundColor;
+  probe.remove();
   // 角标在 summary 里，折叠态的 details 也看得见 —— 别再加 `[open]` 前缀，
   // 唯一带角标的那条恰好是折叠的（m4），加了就永远读不到。
   const badge = document.querySelector('.tc-think-badge');
   return {
-    rule: body ? getComputedStyle(body).borderLeftColor : null,
+    bg: body ? getComputedStyle(body).backgroundColor : null,
     color: body ? getComputedStyle(body).color : null,
-    noteRule: note ? getComputedStyle(note).borderLeftColor : null,
+    noteBg: note ? getComputedStyle(note).backgroundColor : null,
+    cardToken,
     badge: badge ? getComputedStyle(badge).backgroundColor : null,
   };
 });
-ok(dark.rule === 'rgba(255, 255, 255, 0.2)', '深色下左细线真解析为 20% 白', dark.rule);
+ok(dark.bg === dark.cardToken, '深色下灰卡底色跟随 secondarycontainer 令牌', `${dark.bg} vs ${dark.cardToken}`);
+ok(dark.bg !== 'rgba(0, 0, 0, 0)' && dark.bg !== 'transparent', '深色下灰卡不是透明（卡片在）', dark.bg);
 ok(dark.color === 'rgb(163, 163, 163)', '深色下正文跟随 secondary 提亮', dark.color);
-ok(dark.noteRule === 'rgba(255, 255, 255, 0.2)', '深色下轨迹内思考的左细线同步', dark.noteRule);
+ok(dark.noteBg === dark.cardToken, '深色下轨迹内思考的灰卡同步', dark.noteBg);
 ok(dark.badge.includes('0.1'), '深色下角标底色仍是有色透明底（不是纯黑块）', dark.badge);
 
 // ── [9] 真流式：正文一开始就折叠上面 + 正文匀速揭示 ─────────────────────
@@ -670,7 +660,6 @@ ok(settled.revealed === LIVE_FULL.length, '结束后揭示到全文（不会永�
 ok(settled.thinkOpen === false, '结束后思考保持折叠（不会「哗」地展开一片）', String(settled.thinkOpen));
 
 // 截图：一轮真流式跑完后的实际长相（轨迹展开看方案 C）
-await openAllProcess(page);
 await page.locator('[data-steps-bar]').last().click();
 await page.waitForTimeout(500);
 const liveShots = join(OUT, 'think');
@@ -681,7 +670,6 @@ const shots = join(OUT, 'think');
 await mkdir(shots, { recursive: true });
 await page.evaluate(() => document.documentElement.classList.remove('dark'));
 await page.waitForTimeout(400);
-await openAllProcess(page);
 const nodes = page.locator('.tc-think');
 await nodes.nth(0).locator('> summary').click();
 await page.waitForTimeout(300);

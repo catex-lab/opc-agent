@@ -235,7 +235,7 @@ const iconOpHover = await page.evaluate(() => {
 });
 ok(iconOpHover === 1, '工具图标 hover 后 opacity 恢复为 1', iconOpHover);
 
-// ── [5] 思考链展开正文：正体 12.5px secondary + 左细线（方案 C）─────────
+// ── [5] 思考链展开正文：正体 secondary + 浅灰圆角卡片 ─────────────────
 // 先展开思考块
 await page.click('.tc-thinking > summary');
 await page.waitForTimeout(200);
@@ -256,22 +256,21 @@ const thinkingDiv = await page.evaluate(() => {
     bg: cs.backgroundColor,
     italic: cs.fontStyle,
     border: `${cs.borderLeftWidth} ${cs.borderLeftStyle}`,
-    borderColor: cs.borderLeftColor,
-    rule: probe('borderLeftColor', 'var(--tc-rule)'),
+    borderRadius: cs.borderTopLeftRadius,
+    card: probe('backgroundColor', 'var(--td-bg-color-secondarycontainer)'),
     secondary: probe('color', 'var(--td-text-color-secondary)'),
   };
 });
 ok(thinkingDiv != null, '思考链展开正文存在');
 if (thinkingDiv) {
-  // 2026-10-26（方案 C）：轨迹内思考从「等宽 12px 最淡灰 + 3% 底」改成
-  // 「正体 12.5px secondary + 2px 左细线」。旧的 placeholder / italic / 底色
-  // 三条期望随之作废 —— 这是本脚本第 N 次「界面改了、期望表没跟上」，
-  // 改样式时先 grep 这里。
+  // 2026-10-30（改版）：思考正文从「正体 + 左细线」改成
+  // 「正体 secondary + 浅灰圆角卡片」。旧的左细线 / 无底色期望随之作废 ——
+  // 这是本脚本第 N 次「界面改了、期望表没跟上」，改样式时先 grep 这里。
   ok(thinkingDiv.color === thinkingDiv.secondary, '思考正文颜色 = secondary（不再是最浅一档）', thinkingDiv.color);
   ok(thinkingDiv.italic === 'normal', '思考正文 font-style = normal（自然语言不用等宽斜体）', thinkingDiv.italic);
-  ok(thinkingDiv.bg === 'rgba(0, 0, 0, 0)' || thinkingDiv.bg === 'transparent', '思考正文无底色（不再是工具输出那种盒子）', thinkingDiv.bg);
-  ok(thinkingDiv.border === '2px solid', '思考正文带 2px 左细线', thinkingDiv.border);
-  ok(thinkingDiv.borderColor === thinkingDiv.rule, '左细线颜色 = --tc-rule（与消息级思考同一令牌）', thinkingDiv.borderColor);
+  ok(thinkingDiv.bg === thinkingDiv.card, '思考正文是灰卡（secondarycontainer 令牌）', thinkingDiv.bg);
+  ok(thinkingDiv.border === '0px none', '思考正文不再有左细线', thinkingDiv.border);
+  ok(parseFloat(thinkingDiv.borderRadius) >= 6, '思考灰卡有圆角（≥6px）', thinkingDiv.borderRadius);
 }
 
 // ── [6] 步骤明细：placeholder + 3% 背景 ───────────────────────────────

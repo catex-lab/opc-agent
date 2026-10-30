@@ -18,7 +18,6 @@ import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
-import { openAllProcess } from './lib/process-flow.mjs';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
@@ -192,9 +191,6 @@ console.log('\n[3] 执行过程：步骤时间线，不再是卡片');
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(900);
 
-  // A149：这条消息有答案，过程默认收在 ProcessFlow 里（子节点整棵卸载），
-  // 先展开它，否则下面拿不到任何步骤节点
-  await openAllProcess(page);
   // 默认折叠，点汇总行展开
   const bar = page.locator('[data-steps-bar]');
   if (await bar.count()) await bar.first().click();
