@@ -829,7 +829,7 @@ function useAgentAccount(agentId: string): AgentAccount | null {
 }
 
 /**
- * 邮箱掩码：`svipcatai@gmail.com` → `z***@gmail.com`。
+ * 邮箱掩码：`svipcatai@gmail.com` → `s***@gmail.com`。
  *
  * 详情页会被截图、会被贴进群里，完整邮箱没必要出现在界面上；
  * 但保留首字母与域名，用户仍然认得出是哪个账号。
