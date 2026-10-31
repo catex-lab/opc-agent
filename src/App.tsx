@@ -232,6 +232,9 @@ function AppContent() {
         description: a.description,
         systemPrompt: '',
         icon: a.icon,
+        // A160：上传的 Logo 也要带过去，否则「新建对话页」里选 Agent 时
+        // 显示的还是内置图标，和通讯录/会话列表对不上。
+        logoUrl: a.logoUrl,
         color: a.color,
         permissionMode: 'default' as PermissionMode,
         // P4-5：把注册表的能力矩阵一起带过去，场景页据此如实提示
@@ -373,24 +376,49 @@ function AppContent() {
     };
   }, [currentAgentId, modelsEpoch]);
 
+  /**
+   * A156：只有 Tencent SDK（CodeBuddy / WorkBuddy）用平台模型清单。
+   * claude / codex 也是 kind='sdk'，但模型名属于各自厂商的命名空间；
+   * 把平台清单兜底给它们，下拉里就会出现点了必然失败的假选项。
+   */
+  const usesPlatformModels = useMemo(
+    () => currentAgent?.kind === 'sdk' && (currentAgent.sdkProvider ?? 'tencent') === 'tencent',
+    [currentAgent?.kind, currentAgent?.sdkProvider]
+  );
+
   /** SDK 类 Agent 用平台模型列表；其余用各自上报或声明的列表 */
   const activeModels = useMemo(() => {
     if (agentModels.length > 0) return agentModels;
-    return currentAgent?.kind === 'sdk' ? models : [];
-  }, [agentModels, currentAgent?.kind, models]);
+    return usesPlatformModels ? models : [];
+  }, [agentModels, usesPlatformModels, models]);
 
   /** 与 activeModels 配套的来源信息；SDK 类退回平台清单时同样是可选的 catalog */
   const activeModelSource = useMemo<AgentModelSource>(() => {
     /* 判据不能是「列表非空」：手动模式（P3）与只读清单都可能是空数组，
        按长度判会把刚拿到的结论丢掉，界面又退回「模型由 Agent 决定」。
        所以认的是「这份结论是不是当前这个 Agent 的」。 */
-    if (agentModelSource.forAgent === currentAgentId) return agentModelSource;
+    if (agentModelSource.forAgent === currentAgentId) {
+      /* 但 `unknown` + 空列表这条结论**不能**直接采信（A161 回归）。
+         它表达的是「这个 Agent 自己不枚举模型」，不是「模型不能切」。
+         WorkBuddy 改走 SDK（A155）后正好落进这一格：模型清单来自 SDK 的
+         平台目录（`/api/models`，26 条 Auto/Fast/DeepSeek…），而 Agent 级
+         接口只回 unknown —— 旧写法于是把一份**能选**的清单渲染成只读，
+         表现为「模型不能切换了」。
+         只读清单（zcode 的 agent-config）自带 models，走不到这里；
+         手动模式 kind='manual' 也不受影响。 */
+      const noOwnCatalog = agentModelSource.kind === 'unknown' && agentModels.length === 0;
+      if (!noOwnCatalog) return agentModelSource;
+      if (usesPlatformModels && models.length > 0) {
+        return { kind: 'catalog', selectable: true };
+      }
+      return agentModelSource;
+    }
     if (agentModels.length > 0) return agentModelSource;
-    if (currentAgent?.kind === 'sdk' && models.length > 0) {
+    if (usesPlatformModels && models.length > 0) {
       return { kind: 'catalog', selectable: true };
     }
     return { kind: 'unknown', selectable: true };
-  }, [agentModels, agentModelSource, currentAgent?.kind, currentAgentId, models]);
+  }, [agentModels, agentModelSource, currentAgentId, usesPlatformModels, models]);
 
   /**
    * **能真正传下去**的模型（A151）。
@@ -985,7 +1013,10 @@ function AppContent() {
         navigate('/settings?section=login');
         return;
       }
-      navigate(`/settings?agent=${encodeURIComponent(agentId)}`);
+      // 必须带 section=login：设置页默认停在「外观」，而凭据行只在
+      // 「登录配置」里渲染 —— 不带的话 `?agent=` 的定位会静默失败，
+      // 用户就被扔在外观页（这正是之前那个 bug）。
+      navigate(`/settings?section=login&agent=${encodeURIComponent(agentId)}`);
     },
     [navigate, location.pathname]
   );
@@ -1389,6 +1420,7 @@ function AppContent() {
                     onReprobe={registry.probe}
                     onOpenCredential={handleOpenCredential}
                     onDeleteCustom={handleDeleteCustomAgent}
+                    onAvatarChanged={registry.load}
                   />
                 ) : currentSession ? (
                   /* A103：gap 让「聊天列 / 工作区」之间留缝；两块各自圆角，

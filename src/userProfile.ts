@@ -19,9 +19,15 @@ import { useSyncExternalStore } from 'react';
 export interface UserProfile {
   nickname: string;
   avatar: string;
+  /**
+   * A160：上传的图片头像（`/api/avatars/<file>`），空串 = 没上传。
+   * 优先级：图片 > 预设 > 昵称首字 > 「我」。移除图片后回到预设，
+   * 所以这里**不会**把 avatar 清掉。
+   */
+  avatarImage: string;
 }
 
-const EMPTY: UserProfile = { nickname: '', avatar: '' };
+const EMPTY: UserProfile = { nickname: '', avatar: '', avatarImage: '' };
 
 /** 头像预设。id 会原样存进服务端的 user-profile.json，**不要改已发不动的 id** */
 export interface AvatarPreset {
@@ -105,6 +111,7 @@ export async function loadUserProfile(): Promise<UserProfile> {
       snapshot = {
         nickname: typeof data?.nickname === 'string' ? data.nickname : '',
         avatar: typeof data?.avatar === 'string' ? data.avatar : '',
+        avatarImage: typeof data?.avatarImage === 'string' ? data.avatarImage : '',
       };
     } catch {
       // 拉不到就当没有资料：不给默认昵称，也不阻塞界面
@@ -134,6 +141,7 @@ export async function saveUserProfile(patch: Partial<UserProfile>): Promise<User
     snapshot = {
       nickname: typeof data?.nickname === 'string' ? data.nickname : '',
       avatar: typeof data?.avatar === 'string' ? data.avatar : '',
+      avatarImage: typeof data?.avatarImage === 'string' ? data.avatarImage : '',
     };
     emit();
     return snapshot;

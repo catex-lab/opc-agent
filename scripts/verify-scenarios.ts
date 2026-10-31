@@ -53,7 +53,14 @@ for (const s of SCENARIOS) {
   ok(!!s.description && s.description.trim().length > 0, `[${s.id}] description 非空`);
   ok(!!s.systemPrompt && s.systemPrompt.trim().length > 0, `[${s.id}] systemPrompt 非空`);
   ok(!!s.icon && s.icon.trim().length > 0, `[${s.id}] icon 非空`);
-  ok(/^#[0-9A-Fa-f]{6}$/.test(s.color), `[${s.id}] color 是合法十六进制色`, s.color);
+  // A159：颜色改成主题令牌后，这里不再接受裸 hex —— 裸 hex 在深色主题下
+  // 只有 2.2~3.5:1（场景 chip 是 12px 文字，必须 ≥4.5）。令牌本身的值与
+  // 对比度由 verify:uiux-tokens 守着。
+  ok(
+    new RegExp(`^var\\(--tc-scn-${s.id}\\)$`).test(s.color),
+    `[${s.id}] color 是该场景的主题令牌 var(--tc-scn-${s.id})`,
+    s.color
+  );
   ok(
     VALID_PERMISSION.includes(s.permissionMode),
     `[${s.id}] permissionMode 合法`,

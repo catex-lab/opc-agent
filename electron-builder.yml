@@ -32,11 +32,16 @@ files:
   - '!**/*.tsbuildinfo'
   - '!**/{CHANGELOG.md,README.md,readme.md,LICENSE,LICENSE.md}'
   - '!**/{.github,.vscode,__tests__,test,tests,example,examples,docs}/**'
-  # 2026-10-30：@tencent-ai/agent-sdk 内嵌的 CLI（cli/）许可声明缺失
-  #（package.json 写 "SEE LICENSE IN README.md" 但 README 未随包发布），
-  # 因此从安装包里排除，改由用户自行安装 codebuddy CLI。
-  # SDK 本体 lib/（MIT）保留；运行时通过 CODEBUDDY_CODE_PATH 指向本机 CLI。
-  - '!node_modules/@tencent-ai/agent-sdk/cli/**'
+  # 2026-10-31：把 @tencent-ai/agent-sdk 内嵌的 CLI（cli/）**打回安装包**。
+  #
+  # 此前（2026-10-30）因为 cli/package.json 写 "SEE LICENSE IN README.md"
+  # 而 README 未随包发布，曾整目录排除，改要求用户自行安装 codebuddy CLI。
+  # 实测后果是：WorkBuddy 在打包版里恒为「未安装」（本机 PATH / 常见目录都没有
+  # codebuddy），而开发态因为 node_modules 里有这份 cli/ 所以正常 —— 典型的
+  # 「dev 能用、装完不能用」。已确认随 SDK 一起分发（+约 107MB）。
+  #
+  # 运行时由 bootstrap.cjs 把 CODEBUDDY_CODE_PATH 指到 app.asar.unpacked 下的
+  # 真实路径（见下面 asarUnpack），SDK 的 resolveCLIPath() 第一顺位就用它。
 
 # ── Electron 运行时来源 ────────────────────────────────────────────────────
 # 默认流程是：下载 electron zip → 解压到 <out>/win-unpacked.tmp
@@ -63,6 +68,11 @@ asarUnpack:
   # 用的是包里自带的 `prebuilds/win32-x64/*.node`（N-API，ABI 稳定，Electron
   # 直接能加载，已实测），所以**不需要**原生重建，nodeGypRebuild 保持 false。
   - node_modules/node-pty/**
+  # WorkBuddy 的 codebuddy CLI 必须在 asar 外：它自己会 spawn vendor 下的
+  # ripgrep / shim 等真实可执行文件，asar 内的路径 spawn 不了；而且
+  # bootstrap.cjs 需要给它一个**真实存在的绝对路径**（CODEBUDDY_CODE_PATH
+  # 只对 existsSync 通过的真实文件生效）。
+  - node_modules/@tencent-ai/agent-sdk/cli/**
 
 # 本项目唯一的原生模块是 node-pty，而它走 N-API 预编译件（见上），
 # 所以保持关掉重建：开了只会让 @electron/rebuild 在本机撞上 Spectre 库缺失

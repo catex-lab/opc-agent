@@ -17,6 +17,9 @@ import { installEnv } from './installEnv.js';
 import { getModelsForAgent, mergeModelOptions, type ModelOption } from './modelCatalog.js';
 import { permissionSupportFor } from './permissions.js';
 import { toAgentInfo, unknownStatus } from './types.js';
+// A160：Agent 自定义 Logo（用户上传）。映射在 data/agent-appearance.json，
+// 不改定义表 —— 恢复默认 = 删映射。
+import { getAgentLogoUrl } from '../avatar-store.js';
 // A115：用户资料注入（昵称 → systemPrompt）。见 withUserIdentity 的注释。
 import { withUserIdentity } from '../user-profile.js';
 import type { EventSource } from '../../shared/blocks.js';
@@ -134,8 +137,15 @@ class AgentRegistry {
     // 只在真的探测到时挂字段 —— 探不到就不出现，不写「未知」占位。
     const hints = familyHintsFor(id);
     const env = this.installEnvFor(descriptor);
+    // A156：SDK 厂商只下发**显式写了**的那些；缺省仍是 Tencent SDK，
+    // 前端把「缺字段」当 tencent 处理，与旧版本响应兼容。
+    const sdkProvider = findDef(id)?.sdk?.provider;
+    // A160：自定义 Logo 只挂**有值**的；缺字段 = 用内置 icon，与老响应兼容。
+    const logoUrl = getAgentLogoUrl(id);
     return {
       ...toAgentInfo(descriptor, status),
+      ...(sdkProvider && descriptor.kind === 'sdk' ? { sdkProvider } : {}),
+      ...(logoUrl ? { logoUrl } : {}),
       ...(hosts && hosts.length > 0 ? { endpointHosts: hosts } : {}),
       ...(peers.length > 0 ? { familyPeers: peers } : {}),
       ...(hints?.localSiblings && hints.localSiblings.length > 0

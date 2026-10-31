@@ -332,8 +332,8 @@ if (body) {
   ok(body.background === body.cardToken, '底色 = --td-bg-color-secondarycontainer（读令牌，不写死）', body.background);
   ok(body.color === body.tok.secondary, '正文颜色 = secondary（比答案轻一档，不是最浅那档）', body.color);
   ok(
-    Math.abs(body.lineHeight - 1.75) < 0.02,
-    '行高 1.75（长推理链要透气）',
+    Math.abs(body.lineHeight - 1.7) < 0.02,
+    '行高 1.7（2026-10-30：过程流行间距统一）',
     body.lineHeight.toFixed(2)
   );
 }
@@ -374,12 +374,12 @@ const headStyle = await page.evaluate(() => {
   };
 });
 if (headStyle.cs) {
-  ok(headStyle.cs.fontSize === '12px', '头部字号 12px（secondary 档）', headStyle.cs.fontSize);
+  ok(headStyle.cs.fontSize === '14px', '头部字号 14px（过程流全局同号）', headStyle.cs.fontSize);
   ok(headStyle.cs.color === body?.tok?.secondary, '头部颜色 = secondary', headStyle.cs.color);
   ok(headStyle.cs.display === 'flex' && parseFloat(headStyle.cs.gap) === 7, '头部 flex + 7px 间距', `${headStyle.cs.display} / ${headStyle.cs.gap}`);
 }
 ok(headStyle.titleFont === '500', '「思考」标题 500 字重', headStyle.titleFont);
-ok(headStyle.metaFont === '11px', '元信息 11px（caption 档）', headStyle.metaFont);
+ok(headStyle.metaFont === '14px', '元信息 14px（与头部同号，不再小一档）', headStyle.metaFont);
 ok(headStyle.metaColor === body?.tok?.placeholder, '元信息 = placeholder（比标题更淡）', headStyle.metaColor);
 ok(headStyle.badgeColor === headStyle.token.brand, '摘要角标文字 = 品牌色（读令牌，不写死 hex）', headStyle.badgeColor);
 ok(headStyle.badgeBg === headStyle.token.brandBg, '摘要角标底色 = 10% 品牌色', `${headStyle.badgeBg} vs ${headStyle.token.brandBg}`);
@@ -507,7 +507,7 @@ if (note) {
   ok(note.paddingLeft === '10px', '卡片内边距 10px（轨迹里空间更紧，比消息级浅）', note.paddingLeft);
   ok(!/mono|consolas|courier/.test(note.fontFamily), '不再用等宽字体（那是工具输出的语言）', note.fontFamily.split(',')[0]);
   ok(Math.abs(note.lineHeight - 1.7) < 0.02, '行高 1.7', note.lineHeight.toFixed(2));
-  ok(note.headFontSize === '12px', '头部 12px（与消息级同一档）', note.headFontSize);
+  ok(note.headFontSize === '14px', '头部 14px（过程流全局同号）', note.headFontSize);
   ok(note.headColor === note.secondary, '头部颜色 = secondary', note.headColor);
   ok(note.headText.includes('深度思考') && note.headText.includes('字'), '头部保留「深度思考 + 字数」', note.headText);
 }

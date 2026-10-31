@@ -53,7 +53,13 @@ export function resolveModelForAgent(
   const def = findDef(agentId);
   if (!def) return requested || undefined;
 
-  if (def.descriptor.kind === 'sdk') {
+  // A156：只有 Tencent SDK（CodeBuddy / WorkBuddy）才吃平台模型清单。
+  // claude / codex 虽然也是 kind='sdk'，但模型名属于各自厂商的命名空间，
+  // 把 `claude-sonnet-4` 塞给它们会被当成非法模型。它们的 cli 规格仍在，
+  // 所以继续走下面的白名单 / 透传分支，与改造前行为一致。
+  const usesPlatformCatalog =
+    def.descriptor.kind === 'sdk' && (def.sdk?.provider ?? 'tencent') === 'tencent';
+  if (usesPlatformCatalog) {
     return requested || PLATFORM_DEFAULT_MODEL;
   }
 

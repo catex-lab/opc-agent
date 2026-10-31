@@ -27,6 +27,7 @@
  * 只提示一次，且用 warn 而不是 error。
  */
 import type { GlowPrefs } from './uiPrefs';
+import type { CloseBehavior } from '../shared/close-behavior';
 
 /** 与 `server/preferences.ts` 的 `Prefs` 一一对应（那边是事实来源） */
 export interface Prefs {
@@ -37,6 +38,8 @@ export interface Prefs {
   workspaceOpen?: boolean;
   glow?: GlowPrefs;
   defaultModel?: string;
+  /** 关闭窗口的行为（A154），三档见 `shared/close-behavior.ts` */
+  closeBehavior?: CloseBehavior;
 }
 
 export type PrefsPatch = { [K in keyof Prefs]?: Prefs[K] | null };

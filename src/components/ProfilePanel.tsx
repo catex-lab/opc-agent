@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MessagePlugin } from 'tdesign-react';
 import { useUserProfile, saveUserProfile } from '../userProfile';
+import { removeUserAvatar, uploadUserAvatar } from '../avatarApi';
 import { AvatarPickerGrid, UserAvatar } from './UserAvatar';
+import { AvatarCropDialog } from './AvatarCropDialog';
 
 /**
  * 「我的资料」分区（A115）。
@@ -26,6 +28,10 @@ export function ProfilePanel() {
   const [draft, setDraft] = useState(profile.nickname);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  // A160：上传图片头像。待裁剪的文件放这里，null = 对话框关闭
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 外部变化（比如另一处入口改了昵称）要能反映到输入框里
   useEffect(() => {
@@ -64,6 +70,20 @@ export function ProfilePanel() {
 
   return (
     <div data-settings-panel="profile">
+      {/* A160：待裁剪的图片。选完文件先弹裁剪，再上传 */}
+      <AvatarCropDialog
+        file={cropFile}
+        title="更换我的头像"
+        onCancel={() => setCropFile(null)}
+        onConfirm={dataUrl => {
+          setCropFile(null);
+          setUploadingAvatar(true);
+          void uploadUserAvatar(dataUrl)
+            .catch(err => MessagePlugin.error(`头像上传失败：${err instanceof Error ? err.message : String(err)}`))
+            .finally(() => setUploadingAvatar(false));
+        }}
+      />
+
       <div className="mb-4">
         <h2 className="text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
           我的资料
@@ -74,8 +94,53 @@ export function ProfilePanel() {
           不用卡片包起来 —— 这个分区只有两项，包卡片会显得很空。 */}
       <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
         <div className="flex flex-col items-center gap-2">
-          <UserAvatar nickname={profile.nickname} avatar={profile.avatar} size={72} />
+          <UserAvatar
+            nickname={profile.nickname}
+            avatar={profile.avatar}
+            image={profile.avatarImage}
+            size={72}
+          />
           <span className="tc-hint">这就是 Agent 看到的你</span>
+          {/* A160：上传本地图片。图片是覆盖层，移除后回到下面的预设 */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="tc-btn-secondary"
+              disabled={uploadingAvatar}
+              data-user-avatar-upload
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {uploadingAvatar ? '上传中…' : '上传图片'}
+            </button>
+            {profile.avatarImage && (
+              <button
+                type="button"
+                className="text-caption underline"
+                style={{ color: 'var(--td-text-color-placeholder)' }}
+                data-user-avatar-remove
+                onClick={() => {
+                  void removeUserAvatar().catch(err =>
+                    MessagePlugin.error(`移除头像失败：${err instanceof Error ? err.message : String(err)}`)
+                  );
+                }}
+              >
+                移除图片
+              </button>
+            )}
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            data-user-avatar-file
+            onChange={e => {
+              const f = e.target.files?.[0] ?? null;
+              // 清空 value：同一张图再选一次也要能触发 onChange
+              e.target.value = '';
+              if (f) setCropFile(f);
+            }}
+          />
         </div>
 
         <div className="min-w-0 flex-1 space-y-4">
@@ -129,12 +194,12 @@ export function ProfilePanel() {
             </div>
             <AvatarPickerGrid
               value={profile.avatar}
-              onChange={id => void saveUserProfile({ avatar: id }).catch(err =>
+              onChange={id => void saveUserProfile({ avatar: id, avatarImage: '' }).catch(err =>
                 MessagePlugin.error(`头像保存失败：${err instanceof Error ? err.message : String(err)}`)
               )}
             />
             <p className="mt-1.5 text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              没有选头像时用昵称首字；昵称也没有就显示「我」。
+              上传的图片优先于预设；点上面的预设会切回预设头像。没有头像时用昵称首字；昵称也没有就显示「我」。
             </p>
           </div>
         </div>

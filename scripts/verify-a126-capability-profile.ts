@@ -135,7 +135,13 @@ async function main() {
   // ============= 7. key 推导：官方 / 自定义 / 本地 =============
   {
     eq(capabilityKeyOf('codex', 'gpt-5'), KEY, '7-1 codex 官方端点 → official:<host>');
-    eq(gatewayOf('claude'), 'local:cli', '7-2 无官方端点 → local:<kind>');
+    // A156：claude 改用 Claude Agent SDK 后 kind='sdk'，网关标记得跟着变。
+    // 旧断言写死 'local:cli'，改 kind 之后它会失败 —— 而这条断言本来要验证的
+    // 是「没有官方端点 → local:<kind>」的**推导规则**，不是 claude 的具体形态，
+    // 所以这里跟着形态改，规则本身不动。
+    // 副作用：claude 的能力标定缓存 key 从 `local:cli` 变成 `local:sdk`，
+    // 之前实测过的旧行不再命中，下次打开会重新标定一次 —— 这是正确行为。
+    eq(gatewayOf('claude'), 'local:sdk', '7-2 无官方端点 → local:<kind>');
     eq(runProfileOf('codex', 'gpt-5').declared, ['thinking_summary', 'tool', 'tool_output', 'usage'],
       '7-3 declared 来自定义表');
 

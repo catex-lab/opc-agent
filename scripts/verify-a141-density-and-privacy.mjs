@@ -455,6 +455,23 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
   ok(!/服务商\s+，/.test(body), '标点没有被 JSX 换行折叠出的空格顶开');
   ok(/只存在本机/.test(body), '给「数据在哪」一个明确答案');
 
+  /* 勾选清单与解释正文必须同一档字号（12.5px）。
+     原来 `.tc-about-keep` 没写字号、继承了页面默认正文 14px，
+     同一段说明里清单比它下面的解释大一号 —— 用户看到的就是「这块字太大」。
+     判据取**两者的 computed 值相等**，而不是钉死 12.5：将来整体调档也不会误红。 */
+  const typeScale = await page.evaluate(() => {
+    const pick = (sel) => {
+      const el = document.querySelector(sel);
+      return el ? parseFloat(getComputedStyle(el).fontSize) : null;
+    };
+    return { keep: pick('.tc-about-keep li'), bodyText: pick('.tc-about-block-body') };
+  });
+  ok(typeScale.keep !== null && typeScale.bodyText !== null,
+    '字号取样点都在（清单 + 解释正文）', JSON.stringify(typeScale));
+  ok(typeScale.keep === typeScale.bodyText,
+    '★ 勾选清单与解释正文同字号（清单不比正文更响）',
+    `清单 ${typeScale.keep}px / 正文 ${typeScale.bodyText}px`);
+
   // 入口：href 必须是真地址，不能是占位
   const links = await page.locator('[data-about-link]').evaluateAll(els => els.map(el => ({
     key: el.getAttribute('data-about-link'),
@@ -558,6 +575,13 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
     'Electron', '@tencent-ai/agent-sdk', 'express', 'node-pty', 'uuid', 'typescript',
     'react / react-dom', 'tdesign-react', '@tdesign-react/chat',
     'lucide-react', 'react-router-dom', '@xterm/xterm',
+    // 2026-10-31：SDK 通道接入后随包分发的三个直接依赖。
+    // 其中 claude-agent-sdk 是**专有许可**（© All rights reserved），
+    // 漏掉它等于让安装包里的非开源组件没有任何声明。
+    '@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk',
+    // 内嵌子包：cli/ 重新随包分发后必须点名（2026-10-30 曾因排除打包而删掉这条，
+    // 打包配置改回来时漏了这里 —— 清单与页面都会漏掉 109MB 的随包组件）。
+    '@tencent-ai/codebuddy-code',
   ];
   const missingPkgs = REQUIRED_PKGS.filter(n => !licText.includes(n));
   ok(missingPkgs.length === 0, '两类随包分发的组件都点名了（后端依赖 + 前端打包）', missingPkgs.join(', ') || `全部 ${REQUIRED_PKGS.length} 个在列`);

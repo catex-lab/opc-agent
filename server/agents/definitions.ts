@@ -17,7 +17,7 @@ import { codexSandboxFor } from './permissions.js';
  * tool_use），user 行里是 tool_result。这也是「工具参数与结果成对出现」
  * 能还原成卡片的前提。
  */
-function mapClaudeCodeLine(obj: unknown): AgentEvent | AgentEvent[] | null {
+export function mapClaudeCodeLine(obj: unknown): AgentEvent | AgentEvent[] | null {
   const o = obj as {
     type?: string;
     is_error?: boolean;
@@ -188,7 +188,50 @@ export interface HttpSpec {
 }
 
 /**
- * 这里曾经有个 `SdkSpec`（A76）：让 Qoder 走官方 Agent SDK 通道
+ * SDK 通道（kind === 'sdk' 时必填）。
+ *
+ * 为什么需要它：`@tencent-ai/agent-sdk` 的内置 CLI 一套引擎服务着**两个产品**，
+ * 两者的差别全在「环境 / 端点 / 配置根」这三项：
+ *
+ *   - CodeBuddy（国际）：`environment: 'external'`、端点由 CLI 自己选、
+ *     配置根默认 `~/.codebuddy`
+ *   - WorkBuddy 国内版：`environment: 'internal'`、`endpoint: www.workbuddy.cn`、
+ *     配置根 `~/.workbuddy`
+ *
+ * 早先这三项在适配器里**写死成 external + 默认配置根**，WorkBuddy 因此一直
+ * 拿着 CodeBuddy 的登录态与模型清单跑 —— 看着能通，其实接的是另一个产品。
+ * 本机实测（2026-10-31）：internal + workbuddy.cn + configDir=~/.workbuddy
+ * 能复用桌面端已有登录（同一账号），模型清单 16 条且含 `hy3-x` / `kimi-k3-1`
+ * 这些 WorkBuddy 独有项；不带 configDir 时会卡在 initialize 超时。
+ */
+export interface SdkSpec {
+  /**
+   * 底层 SDK 厂商。缺省 `tencent`。
+   *
+   * 为什么 kind 仍然只有一个 `'sdk'`：对上层而言「走官方 SDK」这件事是同一档
+   * 可信度（`eventSourceOf` 判 native），差别只在**谁来解析消息**。把
+   * kind 拆成 `sdk-claude` / `sdk-codex` 会让所有 `kind === 'sdk'` 的判断
+   * 逐处补分支，而这些判断关心的从来不是厂商。适配器工厂按 provider 分派。
+   */
+  provider?: 'tencent' | 'claude' | 'codex' | 'opencode';
+  /** 产品环境。缺省按 external（CLI 的默认值） */
+  environment?: 'internal' | 'external';
+  /** 显式端点；缺省由 CLI 按 environment 自己选 */
+  endpoint?: string;
+  /**
+   * 配置根（官方客户端的 `dataFolderName`），支持 `~`。
+   *
+   * ⚠️ 它不只是「日志放哪」：SDK 内置 CLI 的登录态与设置都按这个根隔离。
+   * 指到 `~/.workbuddy` 才能复用 WorkBuddy 桌面端已经登录的账号 ——
+   * 指到默认的 `~/.codebuddy` 则等同于「换了一个客户端」，未登录且初始化超时。
+   */
+  configDir?: string;
+  /** 额外注入给 CLI 的环境变量（一般不需要，非必要不写） */
+  env?: Record<string, string>;
+}
+
+/**
+ * 这里曾经有个**Qoder 专用**的 SdkSpec（A76）：让 Qoder 走官方 Agent SDK 通道
  * （`adapters/qoder-sdk.ts`），换来更细的事件粒度（thinking / tool_use / usage）
  * 和 plan 只读档的三层强制。
  *
@@ -209,6 +252,8 @@ export interface AgentDefinition {
   cli?: CliSpec;
   /** kind === 'http' 时必填 */
   http?: HttpSpec;
+  /** kind === 'sdk' 时必填（见 SdkSpec 的产品差异说明） */
+  sdk?: SdkSpec;
   /** 已知的不可用原因（用于 GUI-only 之类） */
   unsupportedReason?: string;
   /**
@@ -694,7 +739,7 @@ const AGY_EFFORT_LEVELS = ['low', 'medium', 'high'];
  * （exec / --json / --sandbox / --ask-for-approval / -c key=value / resume / apply），
  * 事件结构按同族处理。`errorLabel` 只影响报错文案里的产品名。
  */
-function createCodexLineageMapper(errorLabel: string): (obj: unknown) => AgentEvent | AgentEvent[] | null {
+export function createCodexLineageMapper(errorLabel: string): (obj: unknown) => AgentEvent | AgentEvent[] | null {
   const textSent = new Map<string, number>();
   const outSent = new Map<string, number>();
   let auto = 0;
@@ -865,13 +910,30 @@ const RAW_DEFS: AgentDefinition[] = [
       color: '#0EC8A9',
       installHint: '通过 CodeBuddy CLI 登录，或在设置页填入 API Key',
     },
+    /**
+     * A155：真正接到 WorkBuddy 国内产品上。
+     *
+     * 三项都来自 `~/.workbuddy/cache/acc-product-config-v3.json`（官方自己写的
+     * 规则），不是我们猜的：`networkEnvironment` → environment、`endpoint` →
+     * endpoint、`dataFolderName` → 配置根。
+     *
+     * 少任何一项的后果都在本机实测过：
+     *   - 只改 environment/endpoint、不指配置根 → initialize 超时（174s）；
+     *   - 不改 environment/endpoint（保持 external）→ 能用，但跑的是 CodeBuddy
+     *     国际站，模型清单与 WorkBuddy 桌面端对不上。
+     */
+    sdk: {
+      environment: 'internal',
+      endpoint: 'https://www.workbuddy.cn',
+      configDir: '~/.workbuddy',
+    },
   },
   {
     descriptor: {
       id: 'codex',
       name: 'Codex',
       vendor: 'OpenAI',
-      kind: 'cli',
+      kind: 'sdk',
       // OpenAI 只有一套全球产品，没有「国内版」；region 记 intl 表示「面向海外市场，
       // 国内网络不可直连」（本机实测后端 chatgpt.com 被代理 502）。
       family: 'openai-codex',
@@ -889,8 +951,16 @@ const RAW_DEFS: AgentDefinition[] = [
       icon: 'codex',
       color: '#1F1F1F',
       command: 'codex',
-      installHint: 'npm i -g @openai/codex，然后 codex login',
+      // A157：改走 SDK 后 CLI 由平台包自带，全局安装不再是前置条件
+      installHint: 'SDK 自带 codex 可执行文件，无需全局安装；运行 codex login 或设置 OPENAI_API_KEY',
     },
+    /**
+     * A156：改走官方 `@openai/codex-sdk`（SDK 自带平台二进制，不依赖 PATH）。
+     *
+     * CLI 规格保留：`codex debug models` 的模型目录枚举与能力标定仍按 CLI
+     * 写，删掉会让模型菜单与 `verify:a127` 一起失去依据。
+     */
+    sdk: { provider: 'codex' },
     cli: {
       bin: 'codex',
       // 模型清单：`codex debug models`（help 原文 "Render the raw model catalog as JSON"）。
@@ -1108,6 +1178,10 @@ const RAW_DEFS: AgentDefinition[] = [
       command: 'opencode',
       installHint: 'npm i -g opencode-ai，并配置至少一个 provider 的 API Key',
     },
+    // A158：**不接** `@opencode-ai/sdk`（1.19.5 与已装 opencode 2.0.25 不兼容：
+    // 启动横幅不同导致 createOpencodeServer 永远超时；API 挂在 /api/* 且要
+    // Basic Auth；/session/{id}/message 404、prompt 的 body 结构不匹配；
+    // provider 清单返回空）。继续走 CLI 通道，直到官方发布与 2.x 匹配的 SDK。
     cli: {
       bin: 'opencode',
       buildArgs: (prompt, ctx) => {
@@ -1238,7 +1312,7 @@ const RAW_DEFS: AgentDefinition[] = [
       id: 'claude',
       name: 'Claude Code',
       vendor: 'Anthropic',
-      kind: 'cli',
+      kind: 'sdk',
       family: 'anthropic-claude',
       familyName: 'Claude Code',
       surface: 'cli',
@@ -1260,6 +1334,13 @@ const RAW_DEFS: AgentDefinition[] = [
       // npm i @anthropic-ai/claude-code-win32-x64@<版本> --no-save && node install.cjs
       installHint: '需要登录：运行 claude 后执行 /login（本机暂无凭据，无法代登录）',
     },
+    /**
+     * A156：改走官方 `@anthropic-ai/claude-agent-sdk`（自带平台二进制）。
+     *
+     * CLI 规格同样保留：A106 的双向 control 协议断言与 A127 的能力标定
+     * 都直接读 `def.cli`，它是这两条通道的对照基线，不是死代码。
+     */
+    sdk: { provider: 'claude' },
     cli: {
       bin: 'claude',
       buildArgs: (prompt, ctx) => {
@@ -2118,7 +2199,10 @@ const INSTALL_INFO: Record<string, AgentInstall> = {
   workbuddy: {
     method: 'key',
     requires: 'none',
-    note: '本应用内置 SDK，不需要安装；缺的是登录或 API Key',
+    // 2026-10-31：SDK 自带的 CLI 已随安装包分发（asarUnpack，见
+    // electron-builder.yml），bootstrap.cjs 会把它注入 CODEBUDDY_CODE_PATH。
+    // 所以打包版不再要求用户另装 CLI，缺的只是登录。
+    note: '走内置 SDK（CLI 已随应用分发）；在应用内登录 WorkBuddy 账号即可，也支持填 API Key',
     checkedAt: CHECKED,
     checkedFrom: '官方双版本产品配置（A68 已核：productName / networkEnvironment）',
   },

@@ -191,6 +191,7 @@ export function AgentHoverCard({ agent, onViewDetail, children }: AgentHoverCard
                 id={agent.id}
                 name={agent.name}
                 icon={agent.icon}
+                src={agent.logoUrl}
                 color={agent.color}
                 size={56}
                 availability={agent.status.availability}
@@ -245,7 +246,11 @@ export function AgentHoverCard({ agent, onViewDetail, children }: AgentHoverCard
                     <span
                       key={cap}
                       className="rounded px-1.5 py-[1px] text-caption"
-                      style={{ backgroundColor: `${cm.color}14`, color: cm.color }}
+                      style={{
+                        /* A159：令牌不能拼十六进制后缀，底色用 color-mix 从同一个色算 */
+                        backgroundColor: `color-mix(in srgb, ${cm.color} 8%, transparent)`,
+                        color: cm.color,
+                      }}
                     >
                       {cm.label}
                     </span>

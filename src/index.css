@@ -897,6 +897,35 @@ select:focus-visible {
   --tc-status-warn: #B45309;     /* 4.61:1 */
   --tc-status-danger: #C0392B;   /* 4.99:1 */
   --tc-status-muted: #6E6E6E;    /* 4.68:1（比 secondary 深一档：secondary 对 chrome 只有 4.35） */
+
+  /* ── A159：能力标签 / 场景标签的文字色 ─────────────────────────────
+   *
+   * 这两组原先都是**裸 hex**，并且直接当「文字色」写在 chip 上：
+   *   · CAPABILITY_META.chat 是 #1F1F1F —— 深色主题下几乎等于背景色，
+   *     截图里「擅长领域」第一个标签「问答」两个字直接消失；
+   *   · SCENARIOS 的六个场景色是按浅色主题挑的，深色下蓝 / 绿对背景
+   *     只有 2.2~3.5:1，再叠 12% 同色底就彻底糊了。
+   *
+   * 所以按「文字」而不是「图标」定值：浅色取深、深色取亮，两档都在
+   * **10%（能力）/ 12%（场景）同色底**上 ≥4.5:1（对 chrome 与 content 面）。
+   * 底色一律用 `color-mix(in srgb, var(...) N%, transparent)` 从同一个令牌
+   * 算出来 —— 不能再拼 `${color}18` 这类十六进制后缀，拼到 `var()` 上会
+   * 直接产出非法颜色。
+   * 闸门 `verify:uiux-tokens` 会从这里的值重算对比度，改浅了当场红。
+   */
+  --tc-cap-chat: #1F1F1F;        /* 12.49:1 @ 10% 同色底 / #f5f5f5 */
+  --tc-cap-code: #0B6C7A;        /* 4.86:1 */
+  --tc-cap-write: #7448B2;       /* 5.06:1 */
+  --tc-cap-tools: #0B6B53;       /* 5.14:1 */
+  --tc-cap-image: #B23A33;       /* 4.68:1 */
+  --tc-cap-search: #9C4D06;      /* 4.80:1 */
+
+  --tc-scn-work: #0052D9;        /* 4.98:1 @ 12% 同色底 / #f5f5f5 */
+  --tc-scn-qa: #0868A8;          /* 4.57:1 */
+  --tc-scn-dev: #0B6B53;          /* 4.98:1 */
+  --tc-scn-code: #534AB7;         /* 5.32:1 */
+  --tc-scn-write: #7448B2;        /* 4.91:1 */
+  --tc-scn-image: #B23A33;        /* 4.57:1 */
 }
 
 :root.dark {
@@ -920,6 +949,22 @@ select:focus-visible {
   --tc-status-warn: #E89B4A;
   --tc-status-danger: #F0716B;
   --tc-status-muted: #a3a3a3;
+
+  /* A159：能力 / 场景标签的深色档。不是把浅色值提亮一点，而是重算过
+     对比度（对 10% / 12% 同色底，背景含 #1b1b1b / #1c1c1c / #262626）。 */
+  --tc-cap-chat: #E5E5E5;        /* 9.17:1 @ 10% 同色底 / #262626 */
+  --tc-cap-code: #45BCCF;        /* 5.64:1 */
+  --tc-cap-write: #B78AEB;       /* 4.80:1 */
+  --tc-cap-tools: #34B989;       /* 5.16:1 */
+  --tc-cap-image: #F0716B;       /* 4.53:1 */
+  --tc-cap-search: #F2A24F;      /* 6.02:1 */
+
+  --tc-scn-work: #7AA9F5;        /* 5.11:1 @ 12% 同色底 / #262626 */
+  --tc-scn-qa: #59C3F2;          /* 5.97:1 */
+  --tc-scn-dev: #34B989;         /* 4.96:1 */
+  --tc-scn-code: #A79CF5;        /* 5.08:1 */
+  --tc-scn-write: #BE95F0;       /* 5.11:1 */
+  --tc-scn-image: #F47E76;       /* 4.78:1 */
 }
 
 
@@ -3254,8 +3299,9 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   margin-left: -4px;
   border-radius: 6px;
   color: var(--td-text-color-placeholder);
-  font-size: var(--text-caption);
-  line-height: var(--leading-normal);
+  /* 2026-10-30：11px → 14px（过程流全局同号、行高统一 1.7） */
+  font-size: var(--text-body-lg);
+  line-height: 1.7;
   transition: background-color var(--duration-fast) var(--ease-tencent);
 }
 
@@ -3269,8 +3315,8 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   padding: 6px 8px;
   border-radius: 6px;
   background-color: color-mix(in srgb, var(--td-text-color-primary) 3%, transparent);
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: var(--text-body-lg);
+  line-height: 1.7;
   font-style: italic;
   color: var(--td-text-color-placeholder);
 }
@@ -3306,8 +3352,9 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   margin: 0 0 0 -4px;
   padding: 2px 6px 2px 4px;
   border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.5;
+  /* 2026-10-30：12px/1.5 → 14px/1.7（过程流全局同号、行高统一） */
+  font-size: var(--text-body-lg);
+  line-height: 1.7;
   color: var(--td-text-color-secondary);
   list-style: none;
   transition: background-color var(--duration-fast) var(--ease-tencent);
@@ -3337,16 +3384,17 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
 
 .tc-think-meta {
   color: var(--td-text-color-placeholder);
-  font-size: 11px;
+  /* 2026-10-30：11px → 继承（14px），与头部同号 */
+  font-size: inherit;
   font-variant-numeric: tabular-nums;
 }
 
 /* 只有摘要时的角标：明确标注，避免被当成完整推理链 */
 .tc-think-badge {
-  padding: 1px 6px;
+  padding: 0 6px;
   border-radius: 999px;
-  font-size: 10px;
-  line-height: 1.5;
+  font-size: inherit;
+  line-height: inherit;
   color: var(--td-brand-color);
   background-color: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
 }
@@ -3359,7 +3407,8 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   padding: 8px 12px;
   border-radius: 8px;
   font-size: var(--text-body-lg);
-  line-height: 1.75;
+  /* 2026-10-30：1.75 → 1.7，与整条过程流统一 */
+  line-height: 1.7;
   font-style: normal;
   background-color: var(--td-bg-color-secondarycontainer);
   color: var(--td-text-color-secondary);
@@ -3930,13 +3979,14 @@ html[data-opc-glass='1'] t-chat-sender {
 }
 
 /* 首行从圆点下沿起、末行到圆点上沿止；只有一个步骤时整条线不画。
-   A102：12px → 10px。行高从 25px 降到 22px（动词不再继承 16px），
-   圆点圆心位置跟着上移，连接线的起止点必须同步，否则线会伸进圆心里。 */
+   2026-10-30：行高统一到 14px/1.7（行盒 23.8px、行头高 27.8px），
+   圆心从 10.5px 下移到 13.9px —— 连接线的起止点必须跟着走，
+   否则线会从圆点上方冒出来、在最后一行下方拖一截。 */
 .tc-step:first-child::before {
-  top: 10px;
+  top: 14px;
 }
 .tc-step:last-child::before {
-  bottom: calc(100% - 10px);
+  bottom: calc(100% - 14px);
 }
 .tc-step:only-child::before {
   display: none;
@@ -3945,9 +3995,9 @@ html[data-opc-glass='1'] t-chat-sender {
 .tc-step-dot {
   position: absolute;
   left: 1px;
-  /* A102：9px → 7px。行高从 25px 降到 22px，圆心要从 12.5px 移到 10.5px
-     才能继续落在行头正中（7 + 7/2 = 10.5）。 */
-  top: 7px;
+  /* 圆心落在行头正中：2px 内边距 + 23.8px 行盒的一半 = 13.9px，
+     减去 7px 直径的一半 → 10.4px。 */
+  top: 10px;
   width: 7px;
   height: 7px;
   border-radius: 999px;
@@ -4023,8 +4073,9 @@ html[data-opc-glass='1'] t-chat-sender {
   border-radius: 6px;
   background-color: color-mix(in srgb, var(--td-text-color-primary) 3%, transparent);
   font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 12px;
-  line-height: 1.55;
+  /* 2026-10-30：12px/1.55 → 跟随全局 14px/1.7（行间距统一） */
+  font-size: inherit;
+  line-height: inherit;
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 8rem;
@@ -4128,38 +4179,37 @@ html[data-opc-glass='1'] t-chat-sender {
   gap: 2px;
   min-width: 0;
   margin: 8px 0;
-  /* A102：整条轨迹的字号基准，**必须显式钉住**。
-     以前这里不设字号，`.tc-trace-verb` 一路继承到 body 的 16px，
-     于是一行里动词 16px、目标 12px、diff 11px、耗时 11px ——
-     四种字号挤在 25px 高的一行里，各自行高也不同（实测 21/14/11/15px），
-     基线互相错开。这就是「排版看着很乱」的直接来源。
-     现在钉在角标档，行内只允许两级：
-       主信息（摘要 / 动词 / 目标）→ --text-secondary 12px
-       辅信息（计数 / diff / 耗时 / 来源）→ 继承这里的 11px
-     行高一起钉死：不钉的话 `.tc-diff` 的 line-height:1 会让它比邻居
-     矮一截，`align-items:center` 又把这点差值变成基线错位。 */
-  font-size: var(--text-caption);
-  line-height: var(--leading-normal);
+  /* 2026-10-30（用户口径：「全局使用相同字号大小，行间距统一」）：
+     整条过程执行流统一 14px / 行高 1.7 —— 与答案正文同档（--text-body-lg）。
+
+     以前这里钉的是 11px 角标档，然后摘要 12px、动词 12px、目标 12px、
+     diff 11px、耗时 11px、思考头部 12px、思考正文 14px —— 一片区域里
+     六种字号四种行高，视觉上是「拼」出来的。现在只保留一种：所有过程文字
+     都是 14px，行高一律 1.7；层级改由颜色（primary / secondary /
+     placeholder）和缩进表达。
+
+     行高必须钉在这里：`.tc-diff` 之类的子项若各写各的 line-height，
+     同一行内盒子高度不同，`align-items:center` 会把它们排成错位的基线。 */
+  font-size: var(--text-body-lg);
+  line-height: 1.7;
 }
 
 /* 摘要文字：一行放不下就省略，绝不让它把行高撑成两行 ——
    收起状态下它就是整条轨迹的唯一出口，撑成两行会显得比正文还重。
-   A102：与步骤行的「动词 + 目标」同档（--text-secondary）—— 摘要本来就是
-   这条轨迹的主信息，以前它 11px 而步骤动词 16px，层级是反的。 */
+   字号/行高继承 `.tc-trace`（14px / 1.7），不要再单独钉。 */
 .tc-trace-summary {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-secondary);
   color: var(--td-text-color-placeholder);
 }
 
 .tc-trace-count,
 .tc-trace-meta {
   flex-shrink: 0;
-  font-size: var(--text-caption);
+  font-size: inherit;
   font-variant-numeric: tabular-nums;
   color: var(--td-text-color-placeholder);
 }
@@ -4167,12 +4217,9 @@ html[data-opc-glass='1'] t-chat-sender {
 /* 行头里的「动作词 + 目标」：动词固定，目标可截断。
    目标用等宽字体 —— 文件名/路径里的 l/1/I、0/O 在比例字体下分不清。
    A85：动词和图标退到 placeholder，目标退到 secondary，
-   都不跟正文 primary 抢视线。
-   A102：动词补上字号。缺了这条它继承 body 的 16px，比旁边的目标（12px）
-   大一档，一行里最该被弱化的词反而最重。现在两者同档，靠颜色分主次。 */
+   都不跟正文 primary 抢视线。字号统一 14px，主次只靠颜色。 */
 .tc-trace-verb {
   flex-shrink: 0;
-  font-size: var(--text-secondary);
   color: var(--td-text-color-placeholder);
 }
 
@@ -4182,7 +4229,7 @@ html[data-opc-glass='1'] t-chat-sender {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 12px;
+  font-size: inherit;
   color: var(--td-text-color-secondary);
 }
 
@@ -4197,18 +4244,18 @@ html[data-opc-glass='1'] t-chat-sender {
   margin-left: auto;
 }
 
-/* 「结果未回传」胶囊（A125）。数值取自设计稿：18px 高 / 10.8px 字 / 4px 圆角 /
-   左右 6px 内边距。刻意比 `.tc-trace-meta` 的基准字号小一档 —— 它是状态标记
-   而不是数字，和右边的耗时同大时，用户会把它读成第二个耗时。 */
+/* 「结果未回传」胶囊（A125）。
+   2026-10-30：字号跟随全局 14px（不再单独小一档）—— 「行内还能再塞一个小字」
+   正是上一版字号混乱的来源；要区分它是状态标记，靠胶囊底 + 灰字就够了。
+   高度随之改为自适应，固定 18px 会切掉 14px 字的行盒。 */
 .tc-trace-meta[data-trace-status='interrupted'] {
   display: inline-flex;
   align-items: center;
-  height: 18px;
   padding: 0 6px;
   border-radius: 4px;
   background-color: var(--tc-hover-chrome);
   color: var(--td-text-color-placeholder);
-  font-size: 10.8px;
+  font-size: inherit;
   font-weight: 500;
   letter-spacing: 0.01em;
 }
@@ -4231,7 +4278,8 @@ html[data-opc-glass='1'] t-chat-sender {
   align-items: center;
   gap: 4px;
   font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 11px;
+  /* 2026-10-30：11px → 继承（14px），与整条轨迹同档 */
+  font-size: inherit;
   font-variant-numeric: tabular-nums;
   /* A102：原来是 line-height:1。它让 diff 的盒子只有 11px 高，而同一行的
      动词/目标是 18px —— `align-items:center` 之下这点高度差就变成了
@@ -4275,13 +4323,15 @@ html[data-opc-glass='1'] t-chat-sender {
   overflow: hidden;
   background: var(--tc-surface-content);
   font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 12px;
-  line-height: 1.65;
+  /* 2026-10-30：12px/1.65 → 跟随过程流全局 14px/1.7。
+     diff 是「展开某一步」看到的东西，和明细同处一块区域，字号不能两套。 */
+  font-size: var(--text-body-lg);
+  line-height: 1.7;
 }
 .tc-diffview-note {
   padding: 6px 10px;
   font-family: inherit;
-  font-size: 11px;
+  font-size: inherit;
   color: var(--td-text-color-placeholder);
   background: var(--tc-surface-rail, transparent);
   border-bottom: 1px solid var(--tc-hairline);
@@ -4291,7 +4341,7 @@ html[data-opc-glass='1'] t-chat-sender {
 }
 .tc-diffhunk-head {
   padding: 3px 10px;
-  font-size: 11px;
+  font-size: inherit;
   color: var(--td-text-color-placeholder);
   background: var(--tc-surface-rail, transparent);
 }
@@ -4338,7 +4388,7 @@ html[data-opc-glass='1'] t-chat-sender {
 }
 .tc-diffhunk-more {
   padding: 4px 10px;
-  font-size: 11px;
+  font-size: inherit;
   color: var(--td-text-color-placeholder);
   background: var(--tc-surface-rail, transparent);
 }
@@ -4355,13 +4405,11 @@ html[data-opc-glass='1'] t-chat-sender {
   gap: 6px;
   max-width: 100%;
   padding: 2px 0;
-  /* A102：12px → 11px。验证条和上面的轨迹汇总行是同一种角色（消息底部的
-     一行状态），却一个 12px 一个 11px，并排出现时像两个系统的东西。
-     现在基准统一到 11px，标题单独提一档到 12px（见 .tc-verify-title）。
-     行高一起钉：button 元素默认行高是 normal，不钉的话这一行会比
-     上面的轨迹汇总行矮一截，两条状态行的高度对不上。 */
-  font-size: var(--text-caption);
-  line-height: var(--leading-normal);
+  /* 2026-10-30：与过程执行流统一（14px / 行高 1.7）。
+     它紧贴在轨迹汇总行下面，两条「消息底部状态行」高度必须一样，
+     否则一高一矮像两个系统的东西。 */
+  font-size: var(--text-body-lg);
+  line-height: 1.7;
   color: var(--td-text-color-placeholder);
   background: none;
   border: none;
@@ -4373,9 +4421,7 @@ html[data-opc-glass='1'] t-chat-sender {
 }
 .tc-verify-title {
   flex-shrink: 0;
-  /* A102：显式 12px。父级降到 11px 后不补这条，标题会跟着掉一档，
-     「已验证 / 未验证」这个状态词反而比后面的说明文字还小。 */
-  font-size: var(--text-secondary);
+  font-size: inherit;
   font-weight: 500;
 }
 .tc-verify-meta {
@@ -4683,8 +4729,9 @@ html[data-opc-glass='1'] t-chat-sender {
   margin-left: -4px;
   padding: 2px 6px 2px 4px;
   border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.5;
+  /* 2026-10-30：12px/1.5 → 14px/1.7（过程流全局同号、行高统一） */
+  font-size: var(--text-body-lg);
+  line-height: 1.7;
   color: var(--td-text-color-secondary);
   list-style: none;
   transition: background-color var(--duration-fast) var(--ease-tencent);
@@ -4713,7 +4760,8 @@ html[data-opc-glass='1'] t-chat-sender {
 }
 
 .tc-think-note-meta {
-  font-size: 11px;
+  /* 2026-10-30：11px → 继承（14px），与头部同号 */
+  font-size: inherit;
   color: var(--td-text-color-placeholder);
   font-variant-numeric: tabular-nums;
 }
@@ -4833,4 +4881,395 @@ html[data-opc-glass='1'] t-chat-sender {
  */
 :root.dark [data-app-logo] img {
   filter: brightness(1.06);
+}
+
+/* =====================================================================
+   设置 · 关于与隐私（2026-10-30 重设计 · 单栏统一卡片）
+
+   用户反馈：居中的大身份牌位 + 下方左对齐的隐私/入口/许可三段放在同一页
+   节奏不一致，像六块同级面板。
+
+   新版换成「一页文档」的统一语法：
+     · 顶部退化成一条左对齐的细身份条（小 Logo + 名称 + 版本 + 定位句，
+       右侧构建信息），不再居中、不再有大留白；
+     · 下面四块左对齐的分区，用眉标（小字 + 字距）+ 发丝线分隔，
+       不再有卡片；
+     · 隐私改成「一句陈述 + 三段式块（小标题 + 内容）」，废掉 dt/dd 对账表；
+     · 点星引导从身份条中拆出，作为独立一区；
+     · 入口改成列表行（整行可点、hover 换底）；
+     · 许可改成两列清单。
+
+   ⚠️ 全部规则统一 tc-about-* 前缀：这套语法只服务 AboutPanel，
+   不往外扩散，也不会和设置页其余分区的 Tailwind 工具类打架。
+   ===================================================================== */
+
+/* ── 顶部身份条 ───────────────────────────────────────────────────── */
+.tc-about-topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.tc-about-topbar-id {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.tc-about-topbar-text {
+  min-width: 0;
+}
+
+.tc-about-tile {
+  width: 64px;
+  height: 64px;
+  border-radius: 15px;
+  overflow: hidden;
+  /* 位图自带白底，深色下不跟着反色 —— 与 rail 上的 Logo 同一处理 */
+  background-color: #ffffff;
+  box-shadow:
+    0 0 0 1px var(--tc-edge),
+    0 8px 22px -12px rgb(0 0 0 / 0.55);
+}
+
+/* 顶部身份条上的小 logo：与名称行同高，不再撑出大留白 */
+.tc-about-tile--sm {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  box-shadow:
+    0 0 0 1px var(--tc-edge),
+    0 4px 12px -8px rgb(0 0 0 / 0.5);
+}
+
+.tc-about-tile img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.tc-about-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tc-about-name {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--td-text-color-primary);
+}
+
+.tc-about-ver {
+  padding: 2px 6px;
+  border-radius: 5px;
+  background-color: var(--td-bg-color-component);
+  color: var(--td-text-color-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.tc-about-tagline {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-about-build {
+  flex: none;
+  padding-top: 2px;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--td-text-color-placeholder);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ── 分区：眉标 + 发丝线 ─────────────────────────────────────────── */
+.tc-about-zone {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid var(--tc-edge);
+}
+
+.tc-about-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-about-eyebrow svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 陈述句：这一页最重要的一句话，字号仅次于应用名 */
+.tc-about-statement {
+  margin-top: 10px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--td-text-color-primary);
+}
+
+/* ── 隐私三段式：小标题 + 内容，行间只有发丝线 ──────────────────── */
+.tc-about-blocks {
+  margin-top: 14px;
+}
+
+.tc-about-block {
+  padding: 12px 0;
+  border-top: 1px solid var(--tc-edge);
+}
+
+.tc-about-block:first-child {
+  padding-top: 4px;
+  border-top: 0;
+}
+
+.tc-about-block-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-about-block-body {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--td-text-color-primary);
+}
+
+.tc-about-block-body strong {
+  font-weight: 500;
+}
+
+/* 次级说明：换行另起，不与主句挤在同一段 */
+.tc-about-dim {
+  display: block;
+  margin-top: 5px;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-about-block-body.tc-about-dim {
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-about-keep {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* 与 `.tc-about-block-body` 同档（12.5px / 1.7）。原来这里不写字号，
+     继承到的是页面默认正文（14px）—— 同一段隐私说明里，勾选清单比它
+     下面的解释文字大一号，读起来像两个层级。清单是正文的一部分，
+     不该比正文更响。 */
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--td-text-color-primary);
+}
+
+.tc-about-keep li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.tc-about-keep svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  /* 语义色只在这里用一次：勾选＝「确实留在本机」。
+     其余图标一律 secondary / placeholder，不做彩色装饰。 */
+  color: var(--td-success-color);
+  opacity: 0.85;
+}
+
+/* ── 点星引导卡 ──────────────────────────────────────────────────── */
+/* 两行、无句末标点。它是按钮的注脚，不是另一块内容。 */
+.tc-about-quiet {
+  margin: 10px 0 12px;
+  /* 原来锁 430px：一句话被硬折成两行，后半句读起来像另一条声明。
+     注脚是**一句话**，宽度交给容器，放得下就一行、放不下自然折。 */
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-about-quiet b {
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+}
+
+/* ── 入口列表行 ─────────────────────────────────────────────────── */
+.tc-about-rows {
+  margin-top: 8px;
+}
+
+.tc-about-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  margin: 0 -10px;
+  padding: 0 10px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+  transition: background-color var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-about-row + .tc-about-row {
+  box-shadow: inset 0 1px 0 var(--tc-edge);
+}
+
+.tc-about-row:hover {
+  background-color: var(--tc-fill-hover, var(--td-bg-color-container-hover));
+}
+
+.tc-about-row-lead {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-about-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--td-text-color-primary);
+}
+
+.tc-about-row-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-about-row-go {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--td-text-color-placeholder);
+}
+
+/* ── 页脚：法务小字 + 许可清单 ─────────────────────────────────── */
+.tc-about-legal {
+  font-size: 11px;
+  line-height: 1.75;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-about-legal b {
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-about-lic {
+  margin-top: 14px;
+}
+
+.tc-about-lic > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-about-lic > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tc-about-lic > summary svg {
+  width: 12px;
+  height: 12px;
+}
+
+.tc-about-count {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background-color: var(--td-bg-color-component);
+  color: var(--td-text-color-placeholder);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.tc-about-caret {
+  display: flex;
+  margin-left: auto;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-about-caret svg {
+  transition: transform var(--duration-fast) var(--ease-tencent);
+}
+
+.tc-about-lic[open] .tc-about-caret svg {
+  transform: rotate(180deg);
+}
+
+/* 两列：名称在左、许可类型右对齐。12 个组件一列排会拖出半屏空白。 */
+.tc-about-lic-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 24px;
+  margin-top: 12px;
+}
+
+.tc-about-lic-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-top: 1px solid var(--tc-edge);
+  font-size: 11px;
+}
+
+/* 每一列的前两行是表头行，不画线 */
+.tc-about-lic-item:nth-child(-n + 2) {
+  border-top: 0;
+}
+
+.tc-about-lic-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-about-lic-tag {
+  flex: none;
+  margin-left: auto;
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-about-lic-note {
+  margin-top: 10px;
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--td-text-color-placeholder);
 }

@@ -282,6 +282,7 @@ export function GroupMemberPanel({ members, allAgents, onMembersChange }: GroupM
                     id={agent.id}
                     name={agent.name}
                     icon={agent.icon}
+                    src={agent.logoUrl}
                     color={agent.color}
                     size={22}
                     availability={agent.status.availability}
@@ -334,6 +335,7 @@ export function GroupMemberPanel({ members, allAgents, onMembersChange }: GroupM
                     id={member.id}
                     name={member.name}
                     icon={member.icon}
+                    src={member.logoUrl}
                     color={member.color}
                     size={28}
                     availability={member.status.availability}

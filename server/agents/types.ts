@@ -494,8 +494,24 @@ export type { PermissionMode, PermissionSupport, ToolWhitelistSupport } from '..
 /** 描述 + 状态，即 /api/agents 返回的条目。 */
 export interface AgentInfo extends AgentDescriptor {
   status: AgentStatus;
+  /**
+   * A156：SDK 通道的厂商（`tencent` / `claude` / `codex`）。
+   *
+   * 前端只靠 `kind === 'sdk'` 会把 claude / codex 当成「吃平台模型清单」的
+   * CodeBuddy 系，模型下拉里就会混进 WorkBuddy 的模型名。这里把定义表里的
+   * `sdk.provider` 如实下发，前端才能只对 Tencent SDK 用平台清单。
+   * 缺省 = 没写 provider（即 tencent），保持旧行为。
+   */
+  sdkProvider?: 'tencent' | 'claude' | 'codex' | 'opencode';
   /** P4-5：权限强制能力（UI 据此如实提示「该场景的只读约束落不了地」） */
   permissionSupport?: PermissionSupport;
+  /**
+   * 用户上传的自定义 Logo（A160）。缺省 = 用描述里的 `icon` 内置图标。
+   *
+   * 为什么由注册表在运行时挂、而不写进 descriptor：Logo 是**本机用户的选择**，
+   * 不是这条 Agent 的固有属性 —— 写进定义表会让「恢复默认」变成改代码。
+   */
+  logoUrl?: string;
   /**
    * 最近一次 run 观测到的过程能力档（P2）。
    *

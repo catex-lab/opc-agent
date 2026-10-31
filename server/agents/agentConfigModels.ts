@@ -41,13 +41,18 @@ export interface AgentConfigModels {
   note?: string;
 }
 
-/** 套餐状态的中文说明。认不出的状态直接显示原文，不翻译成猜的意思 */
-const PLAN_STATUS_LABEL: Record<string, string> = {
+/**
+ * 套餐状态的中文说明。认不出的状态直接显示原文，不翻译成猜的意思。
+ *
+ * 导出是因为 `accountProbe.ts` 读同一份 `coding-plan-cache.json` —— 两处
+ * 各抄一份标签，迟早会出现「模型菜单说未订阅、账号区块说未认证」的分叉。
+ */
+export const PLAN_STATUS_LABEL: Record<string, string> = {
   available: '可用',
   unavailable: '不可用',
 };
 
-const PLAN_REASON_LABEL: Record<string, string> = {
+export const PLAN_REASON_LABEL: Record<string, string> = {
   coding_plan_not_entitled: '未订阅该套餐',
   coding_plan_not_connected: '未连接',
   coding_plan_not_authenticated: '未登录',

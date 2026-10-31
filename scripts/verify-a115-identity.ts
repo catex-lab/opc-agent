@@ -84,6 +84,15 @@ console.log('\n[3] normalize 边界');
   ok(normalize({ nickname: 42 as unknown as string }).nickname === '', '坏类型当没有（不抛错）');
   ok(normalize(null).nickname === '' && normalize(null).avatar === '', 'null 也能收敛');
   ok(normalize({ avatar: 'panda' }).avatar === 'panda', '头像 id 原样收');
+
+  // A160：图片头像只认服务端自己发的 URL（手改文件塞外链 / 目录穿越都不落盘）
+  ok(normalize(null).avatarImage === '', 'null 时图片头像为空串');
+  ok(normalize({ avatarImage: '/api/avatars/' + 'a'.repeat(40) + '.webp' }).avatarImage.endsWith('.webp'),
+    '合法的 /api/avatars/<hash>.webp 原样收');
+  ok(normalize({ avatarImage: 'https://evil.example/x.png' }).avatarImage === '', '外链被丢掉');
+  ok(normalize({ avatarImage: '/api/avatars/../../etc/passwd.webp' }).avatarImage === '', '目录穿越被丢掉');
+  ok(normalize({ avatarImage: '/api/avatars/x.svg' }).avatarImage === '', '不在白名单的扩展名被丢掉');
+  ok(normalize({ avatarImage: 42 as unknown as string }).avatarImage === '', '坏类型当没有');
 }
 
 // ── [4] 注入点只有一个入口（源码兜底）────────────────────────────────────

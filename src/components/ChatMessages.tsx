@@ -1468,6 +1468,7 @@ export function ChatMessages({
             <UserAvatar
               nickname={userProfile.nickname}
               avatar={userProfile.avatar}
+              image={userProfile.avatarImage}
               size={36}
               className="self-start"
             />
@@ -1518,6 +1519,7 @@ export function ChatMessages({
                     id={message.agentId || msgAgent?.id || 'assistant'}
                     name={msgAgent?.name || 'Agent'}
                     icon={msgAgent?.icon}
+                    src={msgAgent?.logoUrl}
                     color={msgAgent?.color}
                     size={26}
                     showStatus={false}

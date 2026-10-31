@@ -29,6 +29,9 @@ import {
 import { registry } from "./agents/registry.js";
 import { scoreAgentSkills } from "./agents/types.js";
 import { agentAcceptsModel, findDef, registerCustomDefs } from "./agents/definitions.js";
+// A155：SDK 产品参数（environment / endpoint / configDir）的唯一展开点。
+// 适配器与这里的两个路由共用它，避免「一处修好、另一处仍是 external」。
+import { resolveSdkRuntime } from "./agents/sdkRuntime.js";
 import {
   createCustomSpec,
   customSpecToDefinition,
@@ -47,6 +50,14 @@ import {
   type ImageSize,
 } from "./agents/adapters/image.js";
 import { cacheImage, imageFilePath } from "./image-store.js";
+import { avatarFilePath } from "./avatar-file.js";
+import {
+  agentAppearanceSnapshot,
+  clearAgentLogo,
+  deleteAvatarFileIfUnused,
+  setAgentLogo,
+  storeAvatar,
+} from "./avatar-store.js";
 import { validateDirectory } from "./workspaceDir.js";
 // A131：「最近目录」的忽略清单落到服务端 —— localStorage 按端口分源，换端口就全忘。
 import {
@@ -110,6 +121,7 @@ import {
 } from "./model-routing.js";
 import { ensureCatalogLoaded, getCatalogSummary, getDefaultModelForAgent, invalidateCatalog, isCatalogModel, loadCatalog } from "./agents/modelCatalog.js";
 import { readAgentConfigModels } from "./agents/agentConfigModels.js";
+import { probeAccount } from "./agents/accountProbe.js";
 import { getVerdicts, mergeOfficialExtras, probeModels, readOfficialModels } from "./agents/modelAvailability.js";
 // A115：用户资料（昵称 + 头像）。昵称由 registry.stream 注入 systemPrompt，
 // 这里只负责 HTTP 读写。
@@ -178,6 +190,12 @@ function parseJsonColumn(raw: string | null | undefined): unknown {
 const PORT = process.env.PORT !== undefined ? Number(process.env.PORT) : 3000;
 
 // Middleware
+//
+// A160：头像上传要先于全局解析器挂上更大的体积上限。全局 `express.json()`
+// 默认 100kb，而一张 2MB 图片的 base64 约 2.7MB —— 等路由里的解析器接管时
+// 全局那一个已经先 413 了；body-parser 用 `req._body` 标记「已解析」，
+// 所以这条提前挂上后，下面的全局解析器会自动跳过已解析的请求。
+app.use("/api/avatars", express.json({ limit: "4mb" }));
 app.use(express.json());
 
 // 缓存可用模型列表（含 description / 免费付费角标，见 agents/sdk-models.ts）
@@ -210,7 +228,19 @@ interface LoginStatusResponse {
   };
 }
 
-// 检查 CodeBuddy CLI 登录状态
+/**
+ * A155：取某个 SDK 类 Agent 的运行参数。
+ *
+ * 定义表是唯一来源 —— 三项目前在 WorkBuddy 条目上声明（internal /
+ * https://www.workbuddy.cn / ~/.workbuddy）。这里不写任何默认值：
+ * 条目没声明就按 SDK 自己的默认走（external + ~/.codebuddy），
+ * 这样新增 SDK 产品时不会因为「漏配」被悄悄接到别的产品上而看不出来。
+ */
+function sdkRuntimeFor(agentId: string) {
+  return resolveSdkRuntime(findDef(agentId)?.sdk);
+}
+
+// 检查 WorkBuddy（SDK 通道）的登录状态
 app.get("/api/check-login", async (req, res) => {
   const response: LoginStatusResponse = {
     isLoggedIn: false,
@@ -248,13 +278,15 @@ app.get("/api/check-login", async (req, res) => {
     let needsLogin = false;
     
     const result = await unstable_v2_authenticate({
-      environment: 'external',
+      // A155：以前写死 environment: 'external' —— 查的是 CodeBuddy 国际站，
+      // WorkBuddy 桌面端的登录态在 ~/.workbuddy，这里必须用同一套参数。
+      ...sdkRuntimeFor('workbuddy'),
       onAuthUrl: async (authState) => {
         // 如果执行到这个回调，说明未登录
         needsLogin = true;
         console.log('[Check Login] 需要登录，认证 URL:', authState.authUrl);
         // 将认证 URL 返回给前端（如果需要）
-        response.error = '未登录，请先登录 CodeBuddy CLI';
+        response.error = '未登录，请先登录 WorkBuddy';
       }
     });
     
@@ -352,6 +384,9 @@ async function loadSdkModels(force = false): Promise<{
 
   console.log("[Models] Creating session to fetch available models...");
   const session = await unstable_v2_createSession({
+    // A155：取模型清单也必须连到 WorkBuddy 国内版，否则拿回的是
+    // CodeBuddy 国际站的清单 —— 用户在菜单里选的模型在 WorkBuddy 上并不存在。
+    ...sdkRuntimeFor('workbuddy'),
     cwd: process.cwd()
   });
 
@@ -505,18 +540,103 @@ app.get("/api/user-profile", (_req, res) => {
 
 app.put("/api/user-profile", (req, res) => {
   try {
-    // 只认这两个字段，别的键一律忽略 —— 免得调用方把整个 req.body 倒进来
+    // 只认这三个字段，别的键一律忽略 —— 免得调用方把整个 req.body 倒进来
     // 把文件撑成谁都不知道形状的东西。
-    const { nickname, avatar } = req.body ?? {};
+    // A160：avatarImage 只接受 `/api/avatars/<file>` 形状（normalize 里再校验一次）；
+    // 旧文件在保存后按「无人引用」清理。
+    const { nickname, avatar, avatarImage } = req.body ?? {};
+    const prevImage = loadUserProfile().avatarImage;
     const next = saveUserProfile({
       ...(typeof nickname === "string" ? { nickname } : {}),
       ...(typeof avatar === "string" ? { avatar } : {}),
+      ...(typeof avatarImage === "string" ? { avatarImage } : {}),
     });
+    if (prevImage && prevImage !== next.avatarImage) {
+      const oldFile = prevImage.slice("/api/avatars/".length);
+      deleteAvatarFileIfUnused(oldFile);
+    }
     res.json(next);
   } catch (error: any) {
     console.error("[UserProfile] Save error:", error);
     res.status(500).json({ error: error?.message || "保存用户资料失败" });
   }
+});
+
+// ============= 头像图片（A160）=============
+// 用户头像与 Agent Logo 共用一套「内容哈希落盘」的仓库，见 server/avatar-store.ts。
+// 两条写接口都只收 dataUrl（前端裁成 320×320 WebP），服务端嗅探文件头再落盘。
+
+app.post("/api/avatars", (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const kind = body.kind;
+    if (kind !== "user" && kind !== "agent") {
+      return res.status(400).json({ error: "kind 必须是 user 或 agent" });
+    }
+    const { url, file } = storeAvatar(body.dataUrl);
+    if (kind === "user") {
+      const prev = loadUserProfile().avatarImage;
+      saveUserProfile({ avatarImage: url });
+      if (prev && prev !== url) deleteAvatarFileIfUnused(prev.slice("/api/avatars/".length));
+      return res.json({ url, profile: loadUserProfile() });
+    }
+    const agentId = typeof body.agentId === "string" ? body.agentId.trim() : "";
+    if (!agentId) return res.status(400).json({ error: "缺少 agentId" });
+    // 只允许改**真实存在**的 Agent：否则这张图永远没人引用，只会占磁盘
+    if (!registry.get(agentId)) return res.status(404).json({ error: "Agent 不存在" });
+    // 换 Logo 时把上一张按「无人引用」清掉（用户头像可能正用着同一张图）。
+    // 旧映射必须在 setAgentLogo **之前**读 —— 之后就只剩新文件了。
+    const prevFile = agentAppearanceSnapshot()[agentId]?.logo;
+    const logoUrl = setAgentLogo(agentId, file);
+    if (prevFile && prevFile !== file) deleteAvatarFileIfUnused(prevFile);
+    res.json({ url: logoUrl, agentId });
+  } catch (error: any) {
+    console.error("[Avatars] Upload error:", error);
+    res.status(400).json({ error: error?.message || "保存头像失败" });
+  }
+});
+
+app.delete("/api/avatars", (_req, res) => {
+  try {
+    const prev = loadUserProfile().avatarImage;
+    const next = saveUserProfile({ avatarImage: "" });
+    if (prev) deleteAvatarFileIfUnused(prev.slice("/api/avatars/".length));
+    res.json({ ok: true, profile: next });
+  } catch (error: any) {
+    console.error("[Avatars] Delete user error:", error);
+    res.status(500).json({ error: error?.message || "移除头像失败" });
+  }
+});
+
+// 恢复某个 Agent 的内置 Logo。只删映射，不动定义表。
+app.delete("/api/agents/:agentId/logo", (req, res) => {
+  try {
+    const { agentId } = req.params;
+    if (!registry.get(agentId)) return res.status(404).json({ error: "Agent 不存在" });
+    const released = clearAgentLogo(agentId);
+    if (released) deleteAvatarFileIfUnused(released);
+    res.json({ ok: true, agentId });
+  } catch (error: any) {
+    console.error("[Avatars] Delete agent logo error:", error);
+    res.status(500).json({ error: error?.message || "恢复默认 Logo 失败" });
+  }
+});
+
+// 头像文件。内容哈希命名 → 内容永不变，可以放心长缓存。
+app.get("/api/avatars/:file", (req, res) => {
+  let filePath: string;
+  try {
+    filePath = avatarFilePath(req.params.file);
+  } catch {
+    return res.status(404).json({ error: "头像不存在" });
+  }
+  res.sendFile(
+    filePath,
+    { headers: { "Cache-Control": "public, max-age=31536000, immutable" } },
+    err => {
+      if (err && !res.headersSent) res.status(404).json({ error: "头像不存在" });
+    }
+  );
 });
 
 // ============= 界面偏好（A135）=============
@@ -688,6 +808,9 @@ app.delete("/api/agents/custom/:agentId", async (req, res) => {
     if (!removed) return res.status(404).json({ error: "自建 Agent 不存在" });
     // 凭据与内存态一起清：只删定义会让 Key 留在 agent-credentials.json 里
     clearCredential(agentId);
+    // A160：自定义 Logo 也一起释放，否则重建同 id 会沿用一张早已删掉的图
+    const releasedLogo = clearAgentLogo(agentId);
+    if (releasedLogo) deleteAvatarFileIfUnused(releasedLogo);
     registry.unregisterCustom(agentId);
     registerCustomDefs(loadCustomSpecs().map(customSpecToDefinition));
     res.json({ ok: true, id: agentId });
@@ -784,6 +907,25 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "获取模型列表失败" });
+  }
+});
+
+/**
+ * 某个 Agent 的账号与权益（**只读**）。
+ *
+ * 为什么单开一个接口、不并进 `/api/agents`：账号数据来自各 Agent 的
+ * 凭据与配置文件，读写都要小心（zcode 的 credentials.json 是加密信封），
+ * 而名册接口每 30 秒就被调一次。单开 + 详情页按需拉，才能把「只读」这件事
+ * 收在一个适配层里（见 `agents/accountProbe.ts`）。
+ *
+ * `account: null` = 这个 Agent 没有可读的账号/权益数据 —— 前端据此整块不渲染，
+ * 而不是摆一行「未知」。
+ */
+app.get("/api/agents/:agentId/account", async (req, res) => {
+  try {
+    res.json({ account: probeAccount(req.params.agentId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "读取账号信息失败" });
   }
 });
 

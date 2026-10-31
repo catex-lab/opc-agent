@@ -176,6 +176,101 @@ try {
   ok(false, '[3] 用例异常', String(e).slice(0, 160));
 }
 
+// ============= [4] A159：擅长领域标签在深色下必须看得清 =============
+/**
+ * 截图反馈的原点：CAPABILITY_META.chat 是近黑 #1F1F1F，深色主题下
+ * 「问答」两个字几乎消失。这里不只看颜色值，而是**把 chip 的同色底
+ * 合成到它的实际背景上**再算对比度 —— 只看文字色会漏掉「底也跟着变浅」
+ * 的那一半。
+ */
+console.log('\n[4] 深色主题：擅长领域标签可读');
+try {
+  const readCapabilityChips = () => page.evaluate(() => {
+    const parse = s => {
+      // 普通 hex / var(--hex) 走 rgb(a)；color-mix() 的结果在 Chrome 里序列化成
+      // color(srgb r g b / a)（分量是 0~1 浮点），两种都要认，否则 alpha 会被
+      // 读成 0，chip 的底色被当成不存在。
+      let m = s.match(/rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\s*\)/);
+      if (m) return { rgb: [+m[1], +m[2], +m[3]], a: m[4] === undefined ? 1 : Number(m[4]) };
+      m = s.match(/color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\)/);
+      if (m) {
+        return {
+          rgb: [+m[1], +m[2], +m[3]].map(x => Math.round(x * 255)),
+          a: m[4] === undefined ? 1 : Number(m[4]),
+        };
+      }
+      return null;
+    };
+    const solidBgOf = el => {
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        const c = parse(getComputedStyle(p).backgroundColor);
+        if (c && c.a >= 0.99) return c.rgb;
+      }
+      return [255, 255, 255];
+    };
+    const chips = [...document.querySelectorAll('[data-capability]')].map(el => {
+      const cs = getComputedStyle(el);
+      const fg = parse(cs.color);
+      const own = parse(cs.backgroundColor);
+      const base = solidBgOf(el);
+      const bg = own
+        ? [0, 1, 2].map(i => Math.round(own.rgb[i] * own.a + base[i] * (1 - own.a)))
+        : base;
+      return {
+        key: el.getAttribute('data-capability'),
+        text: (el.textContent || '').trim(),
+        fg: fg?.rgb ?? null,
+        bg,
+        alpha: own?.a ?? 0,
+      };
+    });
+    return { dark: document.documentElement.classList.contains('dark'), chips };
+  });
+
+  const lum = rgb => {
+    const ch = rgb.map(c => {
+      const s = c / 255;
+      return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+  };
+  const contrast = (a, b) => {
+    const x = lum(a), y = lum(b);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+  };
+
+  // 先显式固定浅色读一遍，作为「颜色确实随主题切换」的对照
+  await page.evaluate(() => localStorage.setItem('theme', 'light'));
+  await openDetail('codex');
+  const light = await readCapabilityChips();
+  ok(!light.dark, '浅色对照：<html> 没有 .dark');
+  ok(light.chips.length === 2, '「擅长领域」两个标签都在', `实际 ${light.chips.length}`);
+
+  await page.evaluate(() => localStorage.setItem('theme', 'dark'));
+  await openDetail('codex');
+  const dark = await readCapabilityChips();
+  ok(dark.dark, '深色主题已生效（<html>.dark）');
+  ok(dark.chips.length === 2, '深色下标签数量不变', `实际 ${dark.chips.length}`);
+  ok(
+    dark.chips.every(c => c.alpha > 0 && c.alpha < 0.2),
+    '标签底色是 color-mix 的同色淡底（不是拼十六进制后缀）',
+    dark.chips.map(c => `${c.key}:${c.alpha}`).join(' ')
+  );
+  const lightFg = Object.fromEntries(light.chips.map(c => [c.key, c.fg]));
+  ok(
+    dark.chips.every(c => lightFg[c.key] && c.fg && c.fg.join() !== lightFg[c.key].join()),
+    '标签文字色随主题切换（不是写死的浅色 hex）',
+    dark.chips.map(c => `${c.key}: ${lightFg[c.key]} → ${c.fg}`).join(' | ')
+  );
+  for (const c of dark.chips) {
+    const r = c.fg ? contrast(c.fg, c.bg) : 0;
+    ok(r >= 4.5, `深色「${c.text}」标签对比度 ≥4.5:1`, `${c.fg} on rgb(${c.bg}) = ${r.toFixed(2)}:1`);
+  }
+  await page.screenshot({ path: join(OUT, 'capability-chips-dark.png') });
+} catch (e) {
+  ok(false, '[4] 用例异常', String(e).slice(0, 160));
+}
+
 ok(errors.length === 0, '无控制台错误', errors.slice(0, 2).join(' | ') || 'clean');
 
 await browser.close();

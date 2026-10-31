@@ -26,6 +26,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { dataDirPath } from './paths.js';
+import { AVATAR_URL_RE } from './avatar-file.js';
 
 /** 头像预设的 id。与前端 `src/userProfile.ts` 的 AVATAR_PRESETS 同一份清单 */
 export type UserAvatarId = string;
@@ -35,9 +36,16 @@ export interface UserProfile {
   nickname: string;
   /** 头像预设 id。空串 = 用昵称首字兜底 */
   avatar: UserAvatarId;
+  /**
+   * 用户自己上传的图片头像（`/api/avatars/<file>`）。空串 = 没上传。
+   *
+   * 与 `avatar`（预设）并存而不是改写成同一个字段：图片是覆盖层，
+   * 移除图片后要能**回到之前选的预设**，而不是把预设一起忘了。
+   */
+  avatarImage: string;
 }
 
-const EMPTY: UserProfile = { nickname: '', avatar: '' };
+const EMPTY: UserProfile = { nickname: '', avatar: '', avatarImage: '' };
 
 let cached: UserProfile | null = null;
 
@@ -62,7 +70,13 @@ export function normalize(input: unknown): UserProfile {
   const o = (input ?? {}) as Partial<UserProfile>;
   const nickname = typeof o.nickname === 'string' ? o.nickname.trim().slice(0, 24) : '';
   const avatar = typeof o.avatar === 'string' ? o.avatar.trim().slice(0, 40) : '';
-  return { nickname, avatar };
+  // 只认服务端自己发的头像 URL：手改文件塞一个外链或 ../ 进来都不能落盘，
+  // 否则界面会从本地路径加载任意文件（或把请求打到外部主机）。
+  const avatarImage =
+    typeof o.avatarImage === 'string' && AVATAR_URL_RE.test(o.avatarImage.trim())
+      ? o.avatarImage.trim()
+      : '';
+  return { nickname, avatar, avatarImage };
 }
 
 export function loadUserProfile(): UserProfile {

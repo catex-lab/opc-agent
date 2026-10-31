@@ -18,8 +18,6 @@
  *      删的理由是**后半句兑现不了**：当时本仓远端还是 private（见 MEMORY.md §0），
  *      用户照着点进去只会看到 404。给一个点不通的「可自行核验」，比不给更伤信任。
  *      仓库公开后这半句重新成立，届时可把整段恢复成「可自行核验」。
- *      前半句（没有统计 / 埋点 / 崩溃上报）仍然是真的，但它已经由标题
- *      「不收集任何信息」+ 下方两栏明细覆盖，不必再用一段话重复一遍。
  *      ⚠️ 别把这段话加回来 —— 除非仓库真的转为公开。
  *   4. 引导点星。点星对开源项目是零成本的支持，但**不能做成弹窗骚扰** ——
  *      放在关于页里，用户主动看到，愿意点就点。
@@ -27,15 +25,29 @@
  * 为什么不再给「完整说明」外链：旧文案指向官网的 privacy.html，
  * 但该页是否存在从未核实过，而正文已经把该说的说完（数据在哪、
  * 什么会离开本机、源码在哪）。宁可少一个可能 404 的链接。
+ *
+ * ── 2026-10-30 重设计（单栏统一卡片）─────────────────────────────────
+ * 用户反馈：居中的大身份牌位 + 下方左对齐的隐私/入口/许可三段放在同一页
+ * 节奏不一致，像六块同级面板。改成「一页文档」：
+ *   · 顶部退化成一条左对齐的细身份条（小 Logo + 名称 + 版本 + 定位句，
+ *     右侧构建信息），不再居中、不再有大留白；
+ *   · 隐私 = 眉标 + 一句陈述 + 三段式块（只存在本机 / 离开本机 / 第三方 Agent），
+ *     废掉 dt/dd 对账表，三段都用「小标题 + 内容」的同一结构；
+ *   · 点星引导从身份条中拆出，作为独立一区（data-about-star 挂在这张卡上）；
+ *   · 入口 = 列表行（整行可点，hover 换底）；
+ *   · 页脚 = 法务小字 + 两列许可清单。
+ * 结构变了，但 `data-about-*` 这几个锚点（privacy / link / star / feedback /
+ * licenses）**一个都没动** —— verify:a141 靠它们定位，重构时别顺手删。
  */
 import { useEffect, useState } from 'react';
 import {
   Github,
   Star,
-  ExternalLink,
   ShieldCheck,
   Check,
-  Bug,
+  MessageSquare,
+  ChevronRight,
+  ChevronDown,
   Package,
 } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
@@ -111,7 +123,15 @@ const LINKS = [
  */
 const THIRD_PARTY = [
   { name: 'Electron', license: 'MIT', holder: 'Electron contributors（运行时含 Chromium）' },
-  { name: '@tencent-ai/agent-sdk', license: 'MIT', holder: 'Tencent' },
+  { name: '@tencent-ai/agent-sdk', license: 'MIT', holder: 'Tencent（含内嵌 CodeBuddy CLI）' },
+  // 内嵌子包，2026-10-31 起随安装包分发（+约 109MB）。它自述「许可见 README.md」
+  // 而 README 没随包发布 —— 页面上如实写「条款缺失」，不替它编一个许可。
+  { name: '@tencent-ai/codebuddy-code', license: '条款缺失', holder: 'Tencent · 内嵌于 agent-sdk/cli' },
+  // 2026-10-31：三个 SDK 通道接入后，随包分发的直接依赖多了三项。
+  // Claude 那条是**专有许可**，不是 MIT/Apache —— 页面上必须写清楚，
+  // 否则读者会以为安装包里全是宽松许可。
+  { name: '@anthropic-ai/claude-agent-sdk', license: '专有（非开源）', holder: 'Anthropic PBC · © All rights reserved（含 claude.exe）' },
+  { name: '@openai/codex-sdk', license: 'Apache-2.0', holder: 'OpenAI（含平台二进制）' },
   { name: 'express', license: 'MIT', holder: 'TJ Holowaychuk 等贡献者' },
   { name: 'node-pty', license: 'MIT', holder: 'Christopher Jeffrey / Microsoft' },
   { name: 'uuid', license: 'MIT', holder: 'Robert Kieffer 等贡献者' },
@@ -139,307 +159,170 @@ export default function AboutPanel() {
     : '正在读取构建信息…';
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h2 className="text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-          关于与隐私
-        </h2>
-        <p className="mt-1 text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>
-          查看应用版本、隐私承诺与官方入口。
-        </p>
-      </div>
-
-      {/* ── 应用信息 ─────────────────────────────────────────── */}
-      <div
-        className="flex items-start gap-4 rounded-xl p-4 sm:p-5"
-        style={{
-          backgroundColor: 'var(--tc-layer-2)',
-          border: '1px solid var(--tc-edge)',
-        }}
-      >
-        <img src={appIcon} alt="" className="h-14 w-14 shrink-0 rounded-xl" />
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <span className="text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-              {info?.name || 'OPC Agent'}
-            </span>
-            <span
-              className="rounded px-1.5 py-0.5 text-xs"
-              style={{
-                backgroundColor: 'var(--td-bg-color-component)',
-                color: 'var(--td-text-color-secondary)',
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              v{info?.version || '—'}
-            </span>
+    <div>
+      {/* ── 顶部身份条 ────────────────────────────────────────────
+          退化成一条左对齐的细条：小 logo + 名称 + 版本 + 一句话定位，
+          右侧是构建信息。不再居中、不再有大留白 —— 与下方各分区共用
+          同一套左对齐节奏，整页读起来像一份文档而不是六个同级面板。 */}
+      <header className="tc-about-topbar">
+        <div className="tc-about-topbar-id">
+          <div className="tc-about-tile tc-about-tile--sm">
+            <img src={appIcon} alt="" />
           </div>
-          <p className="mt-1 text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>
-            本机多 Agent 团队协作桌面应用 —— 把本机的各类 Agent 当作通讯录里的联系人
-          </p>
-          <p className="mt-2 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-            {buildLine}
-          </p>
-        </div>
-      </div>
-
-      {/* ── 隐私承诺 ─────────────────────────────────────────── */}
-      <div
-        className="rounded-xl p-4 sm:p-5"
-        style={{
-          backgroundColor: 'var(--tc-layer-2)',
-          border: '1px solid var(--tc-edge-strong)',
-        }}
-        data-about-privacy
-      >
-        <div className="flex items-center gap-2">
-          <ShieldCheck size={16} style={{ color: 'var(--td-text-color-primary)' }} />
-          <h3 className="text-title font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-            不收集任何信息
-          </h3>
-        </div>
-
-        {/* 2026-10-29：这里原有一段「没有统计、没有埋点、没有崩溃上报、
-            源码里不存在任何遥测模块，全部代码在 GitHub 公开，可自行核验」。
-            当时删掉是因为仓库还是 private，「可自行核验」兑现不了。
-            仓库公开后这半句重新成立，届时可把整段恢复成「可自行核验」。
-            当前仍由「标题 + 两栏明细」把话说完整。 */}
-
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div
-            className="rounded-lg p-3"
-            style={{ backgroundColor: 'var(--tc-layer-3)', border: '1px solid var(--tc-edge)' }}
-          >
-            <div className="mb-2 text-xs font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
-              只存在本机，从不外发
+          <div className="tc-about-topbar-text">
+            <div className="tc-about-name-row">
+              <span className="tc-about-name">{info?.name || 'OPC Agent'}</span>
+              <span className="tc-about-ver">v{info?.version || '—'}</span>
             </div>
-            <ul className="space-y-1.5">
+            <p className="tc-about-tagline">把本机的各种 Agent，当作通讯录里的联系人。</p>
+          </div>
+        </div>
+        <p className="tc-about-build">{buildLine}</p>
+      </header>
+
+      {/* ── 隐私：陈述句 + 三段式 ─────────────────────────────────
+          废掉 dt/dd 对账表：三段（只存在本机 / 离开本机 / 第三方 Agent）
+          都用同一种「小标题 + 内容」的块结构，与入口、许可两区的卡片
+          节奏一致。 */}
+      <div className="tc-about-zone" data-about-privacy>
+        <div className="tc-about-eyebrow">
+          <ShieldCheck />
+          隐私
+        </div>
+        <div className="tc-about-statement">不收集任何信息</div>
+
+        <div className="tc-about-blocks">
+          <section className="tc-about-block">
+            <h4 className="tc-about-block-label">只存在本机</h4>
+            <ul className="tc-about-keep">
               {LOCAL_ONLY.map(item => (
-                <li
-                  key={item}
-                  className="flex items-start gap-2 text-xs leading-5"
-                  style={{ color: 'var(--td-text-color-secondary)' }}
-                >
-                  <Check
-                    size={13}
-                    className="mt-0.5 shrink-0"
-                    style={{ color: 'var(--td-success-color)' }}
-                  />
+                <li key={item}>
+                  <Check />
                   <span>{item}</span>
                 </li>
               ))}
             </ul>
-          </div>
+          </section>
 
-          <div
-            className="rounded-lg p-3"
-            style={{ backgroundColor: 'var(--tc-layer-3)', border: '1px solid var(--tc-edge)' }}
-          >
-            <div className="mb-2 text-xs font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
-              什么会离开本机
-            </div>
+          <section className="tc-about-block">
+            <h4 className="tc-about-block-label">离开本机</h4>
             {/* 整句写成一行、不留换行：JSX 会把换行折叠成一个空格，
                 于是「发送给 你自己配置的模型服务商 ，这是功能本身」——
                 中文里凭空多出两格空白。标点必须紧贴相邻元素。 */}
-            <p className="text-xs leading-5" style={{ color: 'var(--td-text-color-secondary)' }}>
-              只有你发消息时的对话内容 —— 它会被发送给<span style={{ color: 'var(--td-text-color-primary)' }}>你自己配置的模型服务商</span>，这是功能本身，不是统计。
+            <p className="tc-about-block-body">
+              只有你发消息时的对话内容，它会被发送给你<strong>自己配置的模型服务商</strong>，这是功能本身，不是收集。
+              <span className="tc-about-dim">
+                应用不经过任何中转服务器，也没有自建后端；你点开的外链交给系统浏览器打开。
+              </span>
             </p>
-            <p className="mt-2 text-xs leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              应用不经过任何中转服务器，也没有自建后端。你点开的外链会交给系统浏览器打开。
-            </p>
-          </div>
-        </div>
+          </section>
 
-        {/* 2026-10-29：把「只存在本机」限定到本应用自身 —— 你接入的第三方 Agent
-            （腾讯 WorkBuddy、Anthropic Claude Code 等）是各自厂商的产品，
-            其自身行为（含各自的遥测/条款）不受本应用控制。
-            这句是必要的：应用自身零遥测（A141），但部分 Agent 的 CLI 自带
-            厂商侧的上报端点，不声明会被误解为「WorkBuddy 也不外发」。 */}
-        <p className="mt-3 text-xs leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          以上是本应用自身的承诺。你接入的第三方 Agent（如腾讯 WorkBuddy、Anthropic Claude Code 等）是各自厂商的产品，其自身行为不受本应用控制。
-        </p>
+          {/* 2026-10-29：把「只存在本机」限定到本应用自身 —— 你接入的第三方 Agent
+              （腾讯 WorkBuddy、Anthropic Claude Code 等）是各自厂商的产品，
+              其自身行为（含各自的遥测/条款）不受本应用控制。
+              这句是必要的：应用自身零遥测（A141），但部分 Agent 的 CLI 自带
+              厂商侧的上报端点，不声明会被误解为「WorkBuddy 也不外发」。 */}
+          <section className="tc-about-block">
+            <h4 className="tc-about-block-label">第三方 Agent</h4>
+            <p className="tc-about-block-body tc-about-dim">
+              以上是本应用自身的承诺。你接入的第三方 Agent（如腾讯 WorkBuddy、Anthropic Claude Code 等）是各自厂商的产品，其自身行为不受本应用控制。
+            </p>
+          </section>
+        </div>
       </div>
 
-      {/* ── 官方入口 ─────────────────────────────────────────── */}
-      <div>
-        <h3 className="mb-2 text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-          官方入口
-        </h3>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {/* ── 点星引导卡 ──────────────────────────────────────────
+          从 hero 中拆出，作为独立一区。`data-about-star` 挂在这张卡上
+          （verify:a141 按这个锚点读「点个星」+「不收费/不收集」文案，
+          以及内部的 `data-about-star-cta` 按钮）。 */}
+      <div className="tc-about-zone tc-about-star-zone" data-about-star>
+        <div className="tc-about-eyebrow">支持</div>
+        {/* 一句话、不折行（不插 <br>）：两句话是同一段注脚，断在中间会让
+            第二句读起来像另一条独立声明。宽度不够时按容器自然换行。 */}
+        <p className="tc-about-quiet">
+          本项目不收费、不投放广告、也不收集数据。如果它帮到了你，<b>点个星</b>就是最实际的支持。
+        </p>
+        <a
+          href={REPO_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="tc-btn-brand"
+          style={{ textDecoration: 'none' }}
+          data-about-star-cta
+        >
+          <Star size={14} />
+          去 GitHub 点星
+        </a>
+      </div>
+
+      {/* ── 官方入口：列表行 ───────────────────────────────────── */}
+      <div className="tc-about-zone">
+        <div className="tc-about-eyebrow">官方入口</div>
+        <div className="tc-about-rows">
           {LINKS.map(({ key, href, label, hint, Icon }) => (
             <a
               key={key}
               href={href}
               target="_blank"
               rel="noreferrer"
-              className="group flex items-center gap-3 rounded-xl p-3 transition-colors"
-              style={{
-                backgroundColor: 'var(--tc-layer-2)',
-                border: '1px solid var(--tc-edge)',
-                // 全局 a 有品牌色 + 下划线，这里必须显式压掉 ——
-                // 否则卡片里的说明文字会变成一整片下划线
-                textDecoration: 'none',
-                color: 'inherit',
-              }}
+              className="tc-about-row"
               data-about-link={key}
             >
-              <span
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md"
-                style={{
-                  backgroundColor: 'var(--td-bg-color-component)',
-                  color: 'var(--td-text-color-secondary)',
-                }}
-              >
-                <Icon size={16} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span
-                  className="block truncate text-sm font-medium"
-                  style={{ color: 'var(--td-text-color-primary)' }}
-                >
-                  {label}
-                </span>
-                <span
-                  className="block truncate text-xs"
-                  style={{ color: 'var(--td-text-color-placeholder)' }}
-                >
-                  {hint}
-                </span>
-              </span>
-              <ExternalLink size={13} style={{ color: 'var(--td-text-color-placeholder)' }} />
+              <Icon className="tc-about-row-lead" />
+              <span className="tc-about-row-label">{label}</span>
+              <span className="tc-about-row-meta">{hint}</span>
+              <ChevronRight className="tc-about-row-go" />
             </a>
           ))}
-        </div>
-      </div>
 
-      {/* ── 点星引导 ─────────────────────────────────────────── */}
-      <div
-        className="flex flex-col gap-4 rounded-xl p-4 sm:flex-row sm:items-center sm:p-5"
-        style={{
-          backgroundColor: 'var(--tc-layer-3)',
-          border: '1px solid var(--tc-edge-strong)',
-        }}
-        data-about-star
-      >
-        <span
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-          style={{ backgroundColor: 'var(--tc-solid)', color: 'var(--tc-on-brand)' }}
-        >
-          <Star size={18} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-            觉得好用就给项目点个星
-          </div>
-          <div
-            className="mt-0.5 text-xs leading-5"
-            style={{ color: 'var(--td-text-color-secondary)' }}
-          >
-            这个项目不收费、不投放广告、不收集数据，唯一需要的就是一点关注度。
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
           <a
             href={ISSUE_URL}
             target="_blank"
             rel="noreferrer"
-            className="tc-btn-secondary inline-flex items-center gap-1.5"
-            style={{ textDecoration: 'none' }}
+            className="tc-about-row"
             data-about-feedback
           >
-            <Bug size={14} />
-            反馈问题
-          </a>
-          <a
-            href={REPO_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="tc-btn-brand"
-            style={{ textDecoration: 'none' }}
-            data-about-star-cta
-          >
-            <Star size={14} />
-            去 GitHub 点星
+            <MessageSquare className="tc-about-row-lead" />
+            <span className="tc-about-row-label">反馈问题</span>
+            <span className="tc-about-row-meta">Issues · 附上版本号会更快定位</span>
+            <ChevronRight className="tc-about-row-go" />
           </a>
         </div>
       </div>
 
-      {/* ── 协议与声明 ───────────────────────────────────────── */}
-      <div className="space-y-1.5 text-xs leading-relaxed" style={{ color: 'var(--td-text-color-placeholder)' }}>
-        <p>
-          本项目以 <span style={{ color: 'var(--td-text-color-secondary)' }}>MIT</span> 协议开源。
+      {/* ── 页脚：法务小字 + 许可清单 ──────────────────────────── */}
+      <div className="tc-about-zone">
+        <p className="tc-about-legal">
+          本项目以 <b>MIT</b> 协议开源。OPC Agent 是独立第三方工具，与 WorkBuddy、Codex、Gemini、Claude Code 等产品无隶属关系，相关名称与商标归各自所有者；使用第三方 Agent 时，你的调用仍受对应服务商条款约束。
         </p>
-        <p>
-          OPC Agent 是独立第三方工具，与 WorkBuddy、Codex、Gemini、Claude Code 等产品无隶属关系，
-          相关名称与商标归各自所有者。使用第三方 Agent 时，你的调用仍受对应服务商条款约束。
-        </p>
+
+        {/* 用原生 <details>：这里不需要状态，也不需要 TDesign 的折叠面板 ——
+            多引一个组件只为了一次展开，成本比收益高。 */}
+        <details className="tc-about-lic" open data-about-licenses>
+          <summary>
+            <Package />
+            第三方许可
+            <span className="tc-about-count">{THIRD_PARTY.length} 个组件</span>
+            <span className="tc-about-caret">
+              <ChevronDown />
+            </span>
+          </summary>
+
+          <div className="tc-about-lic-grid">
+            {THIRD_PARTY.map(item => (
+              <div key={item.name} className="tc-about-lic-item">
+                <span className="tc-about-lic-name">{item.name}</span>
+                <span className="tc-about-lic-tag">{item.license}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* 不写死组件数量：依赖一变数字就过期。以清单文件为准。 */}
+          <p className="tc-about-lic-note">
+            这些组件不在本项目的 MIT 范围内，各自适用自己的许可。含传递依赖的完整清单见仓库根目录 THIRD-PARTY-LICENSES.txt。
+          </p>
+        </details>
       </div>
-
-      {/* ── 第三方许可 ───────────────────────────────────────── */}
-      {/* 用原生 <details>：这里不需要状态，也不需要 TDesign 的折叠面板 ——
-          多引一个组件只为了一次展开，成本比收益高。 */}
-      <details
-        className="rounded-xl p-4 sm:p-5"
-        style={{ backgroundColor: 'var(--tc-layer-2)', border: '1px solid var(--tc-edge)' }}
-        data-about-licenses
-      >
-        <summary
-          className="cursor-pointer text-sm font-medium"
-          style={{ color: 'var(--td-text-color-primary)' }}
-        >
-          <Package
-            size={14}
-            style={{
-              color: 'var(--td-text-color-secondary)',
-              verticalAlign: '-2px',
-              marginRight: 6,
-            }}
-          />
-          第三方许可
-          <span
-            className="ml-2 text-xs font-normal"
-            style={{ color: 'var(--td-text-color-placeholder)' }}
-          >
-            随安装包分发的主要组件
-          </span>
-        </summary>
-
-        <p className="mt-3 text-xs leading-5" style={{ color: 'var(--td-text-color-secondary)' }}>
-          本项目自身以 MIT 协议开源。安装包里打进了下面这些第三方组件，它们各自适用自己的许可，
-          <span style={{ color: 'var(--td-text-color-primary)' }}>不在本项目的 MIT 范围内</span>。
-        </p>
-
-        <ul className="mt-2 space-y-1.5">
-          {THIRD_PARTY.map(item => (
-            <li
-              key={item.name}
-              className="flex items-start gap-2 text-xs leading-5"
-              style={{ color: 'var(--td-text-color-secondary)' }}
-            >
-              <span
-                className="shrink-0 rounded px-1.5"
-                style={{
-                  backgroundColor: 'var(--td-bg-color-component)',
-                  color: 'var(--td-text-color-placeholder)',
-                  fontVariantNumeric: 'tabular-nums',
-                }}
-              >
-                {item.license}
-              </span>
-              <span className="min-w-0">
-                <span style={{ color: 'var(--td-text-color-primary)' }}>{item.name}</span>
-                <span style={{ color: 'var(--td-text-color-placeholder)' }}> · {item.holder}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-
-        {/* 不写死组件数量：依赖一变数字就过期。以清单文件为准。 */}
-        <p className="mt-3 text-xs leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          含传递依赖的完整清单随源码发布，见仓库根目录的 THIRD-PARTY-LICENSES.txt；
-          各组件的许可全文随其包内 LICENSE 文件分发。
-        </p>
-      </details>
     </div>
   );
 }

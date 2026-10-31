@@ -20,7 +20,10 @@
  *
  * 完成态**默认收起**（长会话里一条消息挂 20 行会把上下文冲散），
  * 但流式过程中默认展开 —— 用户此刻正在盯着它干活。
- * 用户手动切过之后就不再自动干预。
+ * 手动切过之后就不再自动干预。
+ *
+ * 单步明细（2026-10-30）：执行中默认展开，**执行完立即收起**；
+ * 整条过程流的字号/行高统一为 14px / 1.7（见 index.css `.tc-trace`）。
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -286,7 +289,27 @@ function detailOf(item: TraceItem): ReactNode {
 
 /** 单步 */
 function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boolean }) {
-  const [open, setOpen] = useState(false);
+  const running = item.status === 'running';
+  /**
+   * 「每执行完一步就自动折叠」（2026-10-30 用户口径）。
+   *
+   * 执行中的步骤默认展开明细 —— 用户此刻正盯着它干活，命令/输出就是要看的；
+   * 一旦状态离开 running（completed / error / interrupted），这一格立即收起，
+   * 整条轨迹回到「一行一步」的密度，不会因为跑过的步骤全都摊开而变成一堵墙。
+   *
+   * 不用 `touched` 放过手动展开：口径是「执行完就折叠」，用户中途点开是为了
+   * 看当下那一眼，跑完再挂着反而是旧内容占位。想再看就再点一次，明细还在。
+   */
+  const [open, setOpen] = useState(running && !collapse);
+  const prevRunning = useRef(running);
+  useEffect(() => {
+    if (prevRunning.current && !running) setOpen(false);
+    prevRunning.current = running;
+  }, [running]);
+  // 这一轮已经出答案 → 过程让位，明细一并收起
+  useEffect(() => {
+    if (collapse) setOpen(false);
+  }, [collapse]);
   const Icon = iconOf(item.toolName);
   const detail = item.kind === 'tool' ? detailOf(item) : null;
   // A96：文件类工具优先给行级 diff。没有 diff 数据（read / delete / 未知工具）
