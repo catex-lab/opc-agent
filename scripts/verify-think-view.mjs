@@ -281,7 +281,7 @@ ok(openState[1] === false, '最新一条「已完成且有正文」也折叠（�
 ok(openState[2] === false, '正文已出现的消息，上方思考折叠', String(openState[2]));
 ok(openState[3] === true, '最新一条「还没有正文」的思考展开（过程此刻就是内容）', String(openState[3]));
 
-// ── [3] 正文视觉契约（灰卡，2026-10-30 改版）──────────────────
+// ── [3] 正文视觉契约（灰卡，2026-10-30 改版）──────────────────────
 console.log('\n[3] 正文视觉契约：浅灰圆角卡片 + 14px secondary + 正体');
 const body = await page.evaluate(() => {
   const el = document.querySelector('.tc-think[data-think-format="raw"] .tc-think-body');

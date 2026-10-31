@@ -61,7 +61,7 @@ import { useOverflowY } from '../hooks/useOverflowY';
 /**
  * 工具 → 图标 + 颜色。
  *
- * 单色化（2026-10-30，改版）：图标一律 secondary 灰，状态区分靠形状
+ * 单色化（2026-10-30 改版）：图标一律 secondary 灰，状态区分靠形状
  * （✓/✗/空心圈/脉冲点），不靠颜色。`--tool-color-*` 令牌保留在 index.css 备用。
  * 入参一律 `String()` 兜底 —— 历史上 `tool.name` 缺失时这里抛过一次
  * `toLowerCase of undefined`，而它发生在消息列表渲染中，直接把整屏打成白屏。
@@ -509,7 +509,7 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
           }
         }}
       >
-        {/* 改版（2026-10-30）：行首不再摆状态图标三件套
+        {/* 2026-10-30 改版：行首不再摆状态图标三件套
             （绿勾/红叉/脉冲点），chevron 紧跟摘要文案之后而不是钉在行尾 ——
             这一行读起来是「干了什么 ⌄」，状态由步骤行各自表达。 */}
         <span className="tc-trace-summary" data-trace-summary title={summary.text}>
