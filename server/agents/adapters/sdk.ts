@@ -13,19 +13,12 @@ import {
   unstable_v2_createSession,
   unstable_v2_resumeSession,
   type CanUseTool,
-  type PermissionResult,
   type SdkSession,
 } from '@tencent-ai/agent-sdk';
 import { AsyncQueue, PendingReplies, linkAbort } from '../channel.js';
-import { decideToolAccess } from '../toolPolicy.js';
-import { evaluateToolCall } from '../permission-gate.js';
-import { currentPermissionRules } from '../../permission-rules.js';
 import { withMemoryContext } from '../../memory.js';
-import {
-  SDK_PERMISSION_OPTIONS,
-  buildDenialMessage,
-  reasonCodeOfKind,
-} from '../../../shared/permissions.js';
+import { SDK_PERMISSION_OPTIONS } from '../../../shared/permissions.js';
+import { createCanUseToolBridge } from './sdkApproval.js';
 import type {
   AgentDescriptor,
   AgentEvent,
@@ -34,6 +27,8 @@ import type {
   PermissionDecision,
   SendContext,
 } from '../types.js';
+import type { AgentDefinition } from '../definitions.js';
+import { resolveSdkRuntime, type SdkRuntime } from '../sdkRuntime.js';
 
 /** 权限请求等待上限，与前端提示一致 */
 const PERMISSION_TIMEOUT = 5 * 60 * 1000;
@@ -159,6 +154,14 @@ export function getLastAuthUrl(): string | null {
 
 export class SdkAdapter implements AgentProvider {
   readonly descriptor: AgentDescriptor;
+  /**
+   * A155：产品运行参数（environment / endpoint / env）。
+   *
+   * 一个适配器实例只对应一个 Agent，所以在这里展开一次就够。展开交给
+   * `resolveSdkRuntime`（与 `server/index.ts` 的模型/登录检查共用同一份逻辑），
+   * 避免「适配器一套、HTTP 路由又一套」——那种分叉最后一定只修好一处。
+   */
+  private readonly runtime: SdkRuntime;
 
   /** 正在运行的调用：sessionId → 中止控制 */
   private active = new Map<string, { abort: () => void }>();
@@ -185,8 +188,9 @@ export class SdkAdapter implements AgentProvider {
   /** 空闲清扫定时器（整个适配器一个就够） */
   private sweepTimer: NodeJS.Timeout | null = null;
 
-  constructor(descriptor: AgentDescriptor) {
-    this.descriptor = descriptor;
+  constructor(def: AgentDefinition) {
+    this.descriptor = def.descriptor;
+    this.runtime = resolveSdkRuntime(def.sdk);
   }
 
   // ============= 探测 =============
@@ -207,8 +211,11 @@ export class SdkAdapter implements AgentProvider {
 
     try {
       let needsLogin = false;
+      // A155：以前这里写死 `environment: 'external'`，所以 WorkBuddy 查的是
+      // CodeBuddy 国际站的登录态 —— 用户明明登录了 WorkBuddy，名册却显示未登录。
+      // `this.runtime` 带着 internal / workbuddy.cn / ~/.workbuddy 三项。
       const result = await unstable_v2_authenticate({
-        environment: 'external',
+        ...this.runtime,
         onAuthUrl: async (authState: { authUrl?: string }) => {
           needsLogin = true;
           if (authState?.authUrl) lastAuthUrl = authState.authUrl;
@@ -252,7 +259,7 @@ export class SdkAdapter implements AgentProvider {
           availability: 'not-installed',
           installed: false,
           message:
-            '未检测到 CodeBuddy CLI。请先安装 CodeBuddy 并确保 codebuddy 在 PATH 中，' +
+            '未检测到 SDK 内置 CLI。请安装 CodeBuddy CLI 并确保 codebuddy 在 PATH 中，' +
             '或设置环境变量 CODEBUDDY_CODE_PATH 指向可执行文件。',
           probedAt: now,
         };
@@ -324,118 +331,17 @@ export class SdkAdapter implements AgentProvider {
     const unlinkAbort = linkAbort(ctx.signal, abort);
 
     // ---- 权限桥接：SDK 回调 → 事件流 → 前端答复 ----
-    const canUseTool: CanUseTool = async (toolName, input, options) => {
-      // ---- P4-5 工具白名单：先于任何放行判断 ----
-      //
-      // 顺序很关键：白名单是**场景约束**，`bypassPermissions` 只是「不弹审批」。
-      // 若把 bypass 放在前面，用户选了「问答」（白名单为空）再切到全放行，
-      // 就等于白名单形同虚设。
-      const gate = decideToolAccess(ctx.allowedTools, toolName);
-      if (!gate.allowed) {
-        console.log(
-          `[SDK] 工具被场景白名单拦截: ${toolName} (category=${gate.category ?? 'unlisted'})`
-        );
-        // 两段式：先定性「不是工具故障」，再给替代路径 —— 否则模型会重试
-        return {
-          behavior: 'deny',
-          message: buildDenialMessage('rule_blocked', gate.reason),
-        } as PermissionResult;
-      }
-
-      // ---- A40 权限门禁（规则匹配 + Bash 分类器 + 路径越界）----
-      // 放在 bypass 判断**之前**：全放行的含义是「不弹窗问人」，
-      // 不是「连 rm -rf / 也照跑」。后者由门禁的 dangerous 一档负责，
-      // 任何模式都拦。
-      const verdict = evaluateToolCall({
-        toolName,
-        input: (input ?? {}) as Record<string, unknown>,
-        cwd: ctx.cwd,
-        rules: currentPermissionRules(),
-      });
-      if (verdict.decision === 'deny') {
-        console.log(`[SDK] 门禁拦截 ${toolName}: ${verdict.rule} — ${verdict.reason ?? ''}`);
-        return {
-          behavior: 'deny',
-          message: buildDenialMessage('rule_blocked', verdict.reason ?? verdict.rule),
-        } as PermissionResult;
-      }
-
-      // 全放行模式直接过（risky 也不问了 —— 用户已经表态）
-      if (ctx.permissionMode === 'bypassPermissions') {
-        return { behavior: 'allow', updatedInput: input } as PermissionResult;
-      }
-
-      // 用户规则明示允许（A40 的 auto）：到这一步已经过完高危检查，
-      // 不必再为「已经表过态的工具」反复弹窗。内置分类器的 risky 不享受
-      // 这个待遇 —— 它只负责解释，不负责免问。
-      if (verdict.auto) {
-        return { behavior: 'allow', updatedInput: input } as PermissionResult;
-      }
-
-      // ---- P4：本会话的「始终」记忆 ----
-      // 放在白名单 / 门禁 / bypass / auto 之后：用户点过「始终允许」的工具
-      // 不再弹窗，但高危检查已经先行拦过，记忆不能把危险操作放出去。
-      const memory = this.approvalMemory.get(sessionId);
-      if (memory?.deny.has(toolName)) {
-        return {
-          behavior: 'deny',
-          message: buildDenialMessage('user_denied_always', toolName),
-        } as PermissionResult;
-      }
-      if (memory?.allow.has(toolName)) {
-        return { behavior: 'allow', updatedInput: input } as PermissionResult;
-      }
-
-      const requestId = randomUUID();
-      queue.push({
-        type: 'permission_request',
-        requestId,
-        toolUseId: (options as { toolUseID?: string })?.toolUseID,
-        toolName,
-        input: (input ?? {}) as Record<string, unknown>,
-        // 弹窗上要显示「为什么问这一句」，否则用户只看到一堵墙
-        risk: verdict.risk,
-        rule: verdict.rule,
-        // A132：把服务端的兜底时刻如实带下去，前端才能画倒计时而不是自己猜。
-        // 三家都有 PERMISSION_TIMEOUT；ACP 没有，所以 acp.ts 不带这个字段。
-        expiresAt: Date.now() + PERMISSION_TIMEOUT,
-        // 这些是 SDK 真的能兑现的档位（见 approvalMemory 的注释）
-        options: [...SDK_PERMISSION_OPTIONS],
-      });
-
-      // 挂起，直到前端 POST /api/permission-response
-      const decision = await this.replies.register(
-        requestId,
-        () => ({ behavior: 'deny', reasonCode: 'timeout' }) as PermissionDecision,
-        PERMISSION_TIMEOUT,
-        // 归属到会话：别的会话收尾时不能把我的待答复项清掉
-        sessionId,
-        // 会话结束与超时是两件不同的事，原因码不能互相冒充
-        () => ({ behavior: 'deny', reasonCode: 'cancelled' }) as PermissionDecision
-      );
-
-      const chosen = decision.optionId
-        ? SDK_PERMISSION_OPTIONS.find(o => o.id === decision.optionId)
-        : undefined;
-      const kind = chosen?.kind;
-
-      if (decision.behavior === 'allow') {
-        if (kind === 'allow_always') {
-          this.memoryFor(sessionId).allow.add(toolName);
-        }
-        return { behavior: 'allow', updatedInput: input } as PermissionResult;
-      }
-
-      const code =
-        (kind && reasonCodeOfKind(kind)) || decision.reasonCode || 'user_rejected';
-      if (code === 'user_denied_always') {
-        this.memoryFor(sessionId).deny.add(toolName);
-      }
-      return {
-        behavior: 'deny',
-        message: buildDenialMessage(code, decision.message || toolName),
-      } as PermissionResult;
-    };
+    // 四道闸门（白名单 / 门禁 / bypass / 始终记忆）收敛在 sdkApproval，
+    // Claude 适配器走同一份实现 —— 两家 SDK 各写一套必然有一处被改漏。
+    const canUseTool: CanUseTool = createCanUseToolBridge({
+      queue,
+      replies: this.replies,
+      memory: this.memoryFor(sessionId),
+      ctx,
+      sessionId,
+      options: SDK_PERMISSION_OPTIONS,
+      expiresInMs: PERMISSION_TIMEOUT,
+    }) as CanUseTool;
 
     const started = Date.now();
 
@@ -612,6 +518,9 @@ export class SdkAdapter implements AgentProvider {
 
   private createEntry(slot: SessionSlot, ctx: SendContext, resumeFrom: string | null): PoolEntry {
     const options = {
+      // A155：产品三要素（environment / endpoint / env）必须跟着会话走。
+      // 少这三项的后果不是报错，而是**连到另一个产品**上继续跑。
+      ...this.runtime,
       cwd: ctx.cwd || process.cwd(),
       model: ctx.model,
       maxTurns: 10,
@@ -776,6 +685,9 @@ export class SdkAdapter implements AgentProvider {
       const stream = query({
         prompt: ctx.prompt,
         options: {
+          // A155：回退路径同样要带产品三要素，否则关掉会话池
+          // （OPC_SDK_SESSION_POOL=0）就立刻退回「接到另一个产品」。
+          ...this.runtime,
           cwd: ctx.cwd || process.cwd(),
           model: ctx.model,
           maxTurns: 10,

@@ -1,5 +1,6 @@
 /**
- * 界面偏好（主题 / 界面透明度 / 两侧栏宽 / 工作区开关 / 鼠标光斑 / 默认模型）。
+ * 界面偏好（主题 / 界面透明度 / 两侧栏宽 / 工作区开关 / 鼠标光斑 / 默认模型 /
+ * 关闭窗口行为）。
  *
  * ## 为什么必须在服务端，不能只留 localStorage
  *
@@ -27,6 +28,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { dataDirPath } from './paths.js';
+import { isCloseBehavior, type CloseBehavior } from '../shared/close-behavior.js';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 
@@ -52,6 +54,14 @@ export interface Prefs {
   workspaceOpen?: boolean;
   glow?: GlowPrefs;
   defaultModel?: string;
+  /**
+   * 关闭窗口的行为（A154）。
+   *
+   * 放在服务端而不是只在主进程存一份：设置页与主进程必须读同一个值，
+   * 而主进程与 Express 就在同一个进程里（见 `electron/main.ts` 头注释），
+   * `loadPrefs()` 读到的就是设置页刚 PATCH 进来的那份缓存。
+   */
+  closeBehavior?: CloseBehavior;
 }
 
 /** `null` 在补丁里表示**清空这一项**（回到「没设过」），与 `undefined`（不动）不同 */
@@ -100,6 +110,7 @@ export function normalizePrefs(input: unknown): Prefs {
   if (typeof o.defaultModel === 'string' && o.defaultModel.trim()) {
     out.defaultModel = o.defaultModel.trim().slice(0, MAX_MODEL_ID_LEN);
   }
+  if (isCloseBehavior(o.closeBehavior)) out.closeBehavior = o.closeBehavior;
   const g = o.glow as Record<string, unknown> | undefined;
   if (g && typeof g === 'object') {
     const size = isIntIn(g.size, PREFS_LIMITS.glowSize) ? g.size : null;
@@ -187,6 +198,16 @@ export function validatePrefsPatch(input: unknown): PrefsValidation {
         else if (typeof v === 'string' && v.trim() && v.length <= MAX_MODEL_ID_LEN) {
           patch.defaultModel = v.trim();
         } else return { ok: false, error: 'defaultModel 必须是非空字符串（≤200 字）' };
+        break;
+      case 'closeBehavior':
+        if (v === null) patch.closeBehavior = null;
+        else if (isCloseBehavior(v)) patch.closeBehavior = v;
+        else {
+          return {
+            ok: false,
+            error: `closeBehavior 只能是 quit / tray / ask，收到 ${JSON.stringify(v)}`,
+          };
+        }
         break;
       case 'glow': {
         if (v === null) {

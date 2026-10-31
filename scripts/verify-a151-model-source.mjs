@@ -543,6 +543,79 @@ try {
   ok((await page3.locator('[data-model-manual-input]').inputValue()) === 'gemini-2.5-pro',
     '[6] 再打开时输入框带出当前值');
   ok(page3Errors.length === 0, '[6] 没有未捕获异常', page3Errors.slice(0, 2).join(' | '));
+
+  /* ============= [7] A161 回归：SDK 类 Agent 的平台清单必须**能切** =============
+   *
+   * 症状（用户报的「workbuddy 不能切换模型了」）：WorkBuddy 改走 SDK 后，
+   * `/api/agents/workbuddy/models` 回 `unknown` + 空列表（SDK 不枚举），
+   * 而真正的清单来自平台目录 `/api/models`。前端把「它自己没有清单」误当成
+   * 「模型不可切换」，于是 26 条能选的模型被渲染成只读清单 —— 点了没反应。
+   *
+   * 判据必须落在**能不能点**上，不是「列表有没有内容」：
+   *   · 每行不许带 `data-model-readonly="1"`（只读行才是那个假控件）；
+   *   · 底部必须有「添加模型」（只读时它才消失）；
+   *   · 点一行必须真的选中并关掉浮层（只读行点了浮层不动）。
+   * 这三条与 [3] 的 zcode 只读断言正好互为反例：同一份前端，两种结论。 */
+  console.log('\n[7] WorkBuddy：平台模型清单可切换（A161）');
+  const wbCreated = await json(
+    await fetch(`${base}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentId: 'workbuddy', title: 'A161 平台清单可切' }),
+    })
+  );
+  const wbSid = wbCreated.session?.id;
+  ok(!!wbSid, '[7] 建 workbuddy 会话成功', String(wbSid));
+
+  // 先证明前提成立：Agent 级接口确实是「unknown + 空列表」，
+  // 否则下面几条可能只是因为「它有清单」而绿，跟本次修复无关。
+  const wbModels = await json(await fetch(`${base}/api/agents/workbuddy/models`));
+  ok(wbModels.source === 'unknown' && (wbModels.models ?? []).length === 0,
+    '[7] 前提：Agent 级清单是 unknown + 空（修复针对的正是这一格）',
+    `${wbModels.source} / ${(wbModels.models ?? []).length} 条`);
+
+  const page4 = await ctx.newPage();
+  const page4Errors = [];
+  page4.on('pageerror', e => page4Errors.push(e.message));
+  await page4.goto(`${base}/chat/${wbSid}`, { waitUntil: 'domcontentloaded' });
+  await page4.waitForTimeout(2500);
+
+  const wbTrigger = page4.locator('[data-model-trigger]');
+  /* 新建的会话页要先挂载输入区，2.5s 固定等待在冷启动时不够（第一版就红在
+     这一条，而下面 click() 因为会自动重试反而成功 —— 断言比动作更严格，
+     顺序错了就会得到「动作过了、断言没过」的假红）。这里显式等挂载。 */
+  const wbTriggerShown = await wbTrigger
+    .first()
+    .waitFor({ state: 'attached', timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  ok(wbTriggerShown && (await wbTrigger.count()) === 1, '[7] 模型触发器存在');
+  await wbTrigger.click();
+  await page4.waitForTimeout(400);
+
+  const wbPopup = page4.locator('[data-model-popup]');
+  ok((await wbPopup.count()) === 1, '[7] 浮层打开了');
+
+  const wbRows = page4.locator('[data-model-row]');
+  const wbRowCount = await wbRows.count();
+  ok(wbRowCount >= 1, '[7] 平台清单渲染出来了', `${wbRowCount} 行`);
+
+  const wbReadonlyRows = await page4.locator('[data-model-row][data-model-readonly="1"]').count();
+  ok(wbReadonlyRows === 0, '★ [7] 没有一行是只读的（只读＝点了没反应的假控件）',
+    `${wbReadonlyRows}/${wbRowCount}`);
+
+  ok((await page4.locator('[data-model-popup-add]').count()) === 1,
+    '★ [7] 底部有「添加模型」（只读清单才把它换成解释文案）');
+  ok((await page4.locator('[data-model-popup-note]').count()) === 0,
+    '★ [7] 底部不是「只能读取，不能切换」那句');
+
+  // 点一行：能选的清单点了就该选中并关浮层（只读清单点了浮层不动）
+  const wbFirst = wbRows.first();
+  const wbBox = await wbFirst.boundingBox();
+  if (wbBox) await page4.mouse.click(wbBox.x + wbBox.width / 2, wbBox.y + wbBox.height / 2);
+  await page4.waitForTimeout(400);
+  ok((await wbPopup.count()) === 0, '★ [7] 点一行后浮层关闭（说明真的选中了）');
+  ok(page4Errors.length === 0, '[7] 没有未捕获异常', page4Errors.slice(0, 2).join(' | '));
 } finally {
   if (browser) await browser.close().catch(() => {});
   killTree(child);

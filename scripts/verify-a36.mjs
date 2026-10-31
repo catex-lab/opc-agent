@@ -483,13 +483,14 @@ console.log('\n[8b] 结果未回传与已隐去的思考');
   ok((await chip.count()) > 0, '出现「结果未回传」标记');
   ok(((await chip.textContent()) ?? '').trim() === '结果未回传', '文案是「结果未回传」', ((await chip.textContent()) ?? '').trim());
 
-  // 设计稿数值：18px 高 / 10.8px 字 / 4px 圆角。字号被现有样式带跑会立刻红。
+  // 2026-10-30：胶囊字号并入过程流全局 14px，高度随之自适应
+  //（14px × 1.7 = 23.8px，不再钉死 18px —— 固定高度会切掉行盒）。
   const chipStyle = await chip.evaluate(el => {
     const s = getComputedStyle(el);
     return { h: s.height, fs: s.fontSize, br: s.borderTopLeftRadius };
   });
-  ok(chipStyle.h === '18px', '胶囊高 18px（设计稿）', chipStyle.h);
-  ok(chipStyle.fs === '10.8px', '胶囊字号 10.8px（设计稿）', chipStyle.fs);
+  ok(Math.round(parseFloat(chipStyle.h)) === 24, '胶囊高随行盒（≈24px）', chipStyle.h);
+  ok(chipStyle.fs === '14px', '胶囊字号 14px（过程流全局同号）', chipStyle.fs);
   ok(chipStyle.br === '4px', '胶囊圆角 4px（设计稿）', chipStyle.br);
 
   const dotStyle = await page

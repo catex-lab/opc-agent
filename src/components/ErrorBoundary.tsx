@@ -86,7 +86,8 @@ export class ErrorBoundary extends Component<Props, State> {
             className="px-4 py-2 rounded-lg text-sm font-medium mb-4"
             style={{
               backgroundColor: 'var(--td-brand-color)',
-              color: '#fff',
+              /* A159：深色主题下品牌色反转为浅灰，写死 #fff 会变成浅灰底 + 白字 */
+              color: 'var(--tc-on-brand)',
               border: 'none',
               cursor: 'pointer',
             }}

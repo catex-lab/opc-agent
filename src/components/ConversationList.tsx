@@ -363,6 +363,7 @@ export function ConversationList({
                       id={agent.id}
                       name={displayName}
                       icon={agent.icon}
+                      src={agent.logoUrl}
                       color={agent.color}
                       availability={agent.status.availability}
                       size={42}

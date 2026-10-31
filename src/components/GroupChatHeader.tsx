@@ -168,6 +168,7 @@ export function GroupChatHeader({
                   id={m.id}
                   name={m.name}
                   icon={m.icon}
+                  src={m.logoUrl}
                   color={m.color}
                   size={30}
                   availability={m.status.availability}

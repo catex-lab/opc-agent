@@ -28,6 +28,11 @@ interface AgentAvatarProps {
   name: string;
   /** logo 标识，对应 AGENT_LOGOS 的键 */
   icon?: string;
+  /**
+   * A160：用户自己上传的 Logo URL。有值时**完全覆盖** icon，
+   * 圆形 cover 铺满 + 主题描边；恢复默认后这个值变空，自动退回 icon。
+   */
+  src?: string;
   /** 覆盖品牌色（用户自定义或后端下发） */
   color?: string;
   size?: number;
@@ -41,11 +46,13 @@ export function AgentAvatar({
   id,
   name,
   icon,
+  src,
   color,
   size = 40,
   availability,
   showStatus = true,
 }: AgentAvatarProps) {
+  const customSrc = src?.trim();
   const logo = getAgentLogo(icon);
   const initial = (name || '?').trim().charAt(0).toUpperCase();
 
@@ -74,16 +81,19 @@ export function AgentAvatar({
   // 自带底衬的 logo 留白：太小会顶到圆边，太大会显得 logo 发虚
   const inset = logo && logo.tile === 'light' ? Math.round(size * 0.16) : 0;
 
-  const surface = logo
-    ? logo.tile === 'light'
-      ? 'var(--agent-logo-tile)'
-      : 'transparent'
-    : color || fallbackColor(id);
+  const surface = customSrc
+    ? 'var(--agent-logo-tile)'
+    : logo
+      ? logo.tile === 'light'
+        ? 'var(--agent-logo-tile)'
+        : 'transparent'
+      : color || fallbackColor(id);
 
   // 透明底衬的 logo 是浅色，深色主题下需要一圈浅描边勾轮廓；
   // 浅色底衬则相反，用深色细边把圆从同色背景里分出来
-  const ring =
-    logo?.tile === 'light'
+  const ring = customSrc
+    ? 'inset 0 0 0 1px var(--agent-logo-tile-ring)'
+    : logo?.tile === 'light'
       ? 'inset 0 0 0 1px var(--agent-logo-tile-ring)'
       : 'inset 0 0 0 1px rgba(255,255,255,0.14)';
 
@@ -118,7 +128,23 @@ export function AgentAvatar({
           colorScheme: 'light',
         }}
       >
-        {logo ? (
+        {customSrc ? (
+          <img
+            src={customSrc}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            data-agent-avatar-image
+            style={{
+              display: 'block',
+              width: '100%',
+              height: '100%',
+              // 用户上传的图按圆形裁切铺满：头像位是固定方框，留白会让
+              // 不同尺寸的原图看起来大小不一
+              objectFit: 'cover',
+            }}
+          />
+        ) : logo ? (
           <img
             src={logo.src}
             alt=""

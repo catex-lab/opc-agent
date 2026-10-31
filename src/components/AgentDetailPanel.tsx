@@ -1,7 +1,10 @@
 import { ChevronLeft, MessageSquarePlus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { MessagePlugin } from 'tdesign-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentDetailSections } from './AgentDetailSections';
+import { AvatarCropDialog } from './AvatarCropDialog';
+import { removeAgentLogo, uploadAgentLogo } from '../avatarApi';
 import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
 
 interface AgentDetailPanelProps {
@@ -16,6 +19,8 @@ interface AgentDetailPanelProps {
   onOpenCredential?: (agentId: string) => void;
   /** 删除自建 Agent（A114）。只有 `agent.custom` 为真时才出现 */
   onDeleteCustom?: (agentId: string) => void;
+  /** A160：Logo 变更后刷新注册表（列表 / 名片 / 头部一起变） */
+  onAvatarChanged?: () => void;
 }
 
 /**
@@ -46,6 +51,7 @@ export function AgentDetailPanel({
   onReprobe,
   onOpenCredential,
   onDeleteCustom,
+  onAvatarChanged,
 }: AgentDetailPanelProps) {
   const avail = agent.status.availability;
   const meta = AVAILABILITY_META[avail];
@@ -53,6 +59,10 @@ export function AgentDetailPanel({
   // A114：自建 Agent 才有删除。内置条目是编译进应用的，删了也回不来。
   const canDelete = !!agent.custom && !!onDeleteCustom;
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // A160：Logo 上传（裁剪 → 上传 → 刷新注册表）
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   return (
     <div
@@ -66,6 +76,19 @@ export function AgentDetailPanel({
         borderRadius: 'var(--tc-column-radius)',
       }}
     >
+      <AvatarCropDialog
+        file={cropFile}
+        title={`更换 ${agent.name} 的 Logo`}
+        onCancel={() => setCropFile(null)}
+        onConfirm={dataUrl => {
+          setCropFile(null);
+          setUploadingLogo(true);
+          void uploadAgentLogo(agent.id, dataUrl)
+            .then(() => onAvatarChanged?.())
+            .catch(err => MessagePlugin.error(`Logo 上传失败：${err instanceof Error ? err.message : String(err)}`))
+            .finally(() => setUploadingLogo(false));
+        }}
+      />
       {/* 只有返回键的窄条。高度与别处的 compact 头部同值（--tc-header-height），
           这样切栏时这条底边线跟通讯录栏头落在同一行。 */}
       <div
@@ -97,6 +120,7 @@ export function AgentDetailPanel({
               id={agent.id}
               name={agent.name}
               icon={agent.icon}
+              src={agent.logoUrl}
               color={agent.color}
               availability={avail}
               /* A124（需求）：详情页头像不再挂右下角状态点。
@@ -120,6 +144,52 @@ export function AgentDetailPanel({
             <div className="mt-2 flex items-center gap-1.5 text-body" style={{ color: meta.color }}>
               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta.dot }} />
               {availabilityLabelOf(agent)}
+            </div>
+            {/* A160：头像入口只在资料页（用户确认的交互位置）。
+                上传是叠加在 icon 之上的覆盖层；「恢复默认」只删映射，
+                不改定义表，所以内置条目也能随时回到官方 logo。 */}
+            <div className="mt-2 flex items-center gap-3 text-secondary">
+              <button
+                type="button"
+                className="underline"
+                style={{ color: 'var(--td-brand-color)' }}
+                disabled={uploadingLogo}
+                data-agent-logo-upload
+                onClick={() => logoInputRef.current?.click()}
+              >
+                {uploadingLogo ? '上传中…' : '更换 Logo'}
+              </button>
+              {agent.logoUrl && (
+                <button
+                  type="button"
+                  className="underline"
+                  style={{ color: 'var(--td-text-color-placeholder)' }}
+                  data-agent-logo-reset
+                  onClick={() => {
+                    void removeAgentLogo(agent.id)
+                      .then(() => onAvatarChanged?.())
+                      .catch(err =>
+                        MessagePlugin.error(
+                          `恢复默认 Logo 失败：${err instanceof Error ? err.message : String(err)}`
+                        )
+                      );
+                  }}
+                >
+                  恢复默认
+                </button>
+              )}
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                data-agent-logo-file
+                onChange={e => {
+                  const f = e.target.files?.[0] ?? null;
+                  e.target.value = '';
+                  if (f) setCropFile(f);
+                }}
+              />
             </div>
           </div>
 

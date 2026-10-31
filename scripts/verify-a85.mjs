@@ -181,10 +181,10 @@ if (summary) {
     summary.color
   );
   ok(
-    // A102 把汇总行从 caption(11px) 提到 secondary(12px)，与步骤行主信息同档 ——
-    // 原来 11px 的汇总行配 12px 的步骤行，同一块区域两种字号。
-    summary.fontSize === '12px',
-    '汇总行字号 = secondary (12px，A102 起与步骤行主信息同档)',
+    // 2026-10-30：A102 曾把汇总行从 caption(11px) 提到 secondary(12px)，
+    // 现在过程流全局统一到 14px（与答案正文同档），这里跟着改口径。
+    summary.fontSize === '14px',
+    '汇总行字号 = 14px（过程流全局同号）',
     summary.fontSize
   );
 }

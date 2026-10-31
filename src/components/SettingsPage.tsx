@@ -14,10 +14,11 @@ import {
   Select,
   Switch
 } from 'tdesign-react';
-import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info, UserRound, Plus, PencilLine, Trash2, Check, CircleCheck, CircleX, RefreshCw } from 'lucide-react';
+import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info, UserRound, Plus, PencilLine, Trash2, Check, CircleCheck, CircleX, RefreshCw, Power, Minimize2, HelpCircle } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
 import { HintTip } from './HintTip';
 import { AgentCredentialSettings } from './AgentCredentialSettings';
+import { type CloseBehavior, readCloseBehavior, saveCloseBehavior } from '../closeBehavior';
 import { ProviderSettings } from './ProviderSettings';
 import { ModelCatalogSettings } from './ModelCatalogSettings';
 import { MemoryPanel } from './MemoryPanel';
@@ -127,7 +128,7 @@ const SETTINGS_SECTIONS: Array<{
   { key: 'profile', label: '我的资料', hint: '昵称与头像，昵称会被 Agent 识别', Icon: UserRound },
   { key: 'memory', label: '记忆', hint: '跨会话记忆、用户画像与沉淀的技能', Icon: Brain },
   { key: 'permission', label: '权限门禁', hint: '危险命令分类与自定义规则', Icon: ShieldAlert },
-  { key: 'appearance', label: '外观', hint: '主题、界面透明度、鼠标光斑', Icon: Monitor },
+  { key: 'appearance', label: '外观', hint: '主题、透明度、光斑、关闭窗口行为', Icon: Monitor },
   { key: 'login', label: '登录配置', hint: 'API Key 或命令行登录', Icon: KeyRound },
   { key: 'models', label: '模型清单', hint: '枚举来源与手动刷新', Icon: Layers },
   { key: 'agents', label: '助手人设', hint: '本地提示词与工具权限', Icon: Bot },
@@ -705,6 +706,8 @@ export function SettingsPage({
               两个组件各自管自己的复位入口（透明度靠双击、光斑靠一颗小链接），
               用户找不到「一起还原」的办法。 */}
           <AppearanceSliders />
+
+          <CloseBehaviorSetting />
         </div>
         )}
 
@@ -1253,6 +1256,98 @@ export function SettingsPage({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 关闭窗口的行为（A154）。
+ *
+ * 三档与用户看到的现象一一对应，**默认直接退出** —— A154 之前这就是唯一
+ * 行为，加设置不该顺带改老用户的习惯（见 `src/closeBehavior.ts`）。
+ *
+ * 值只写服务端偏好：主进程与 Express 同进程，下一次关窗口读到的就是新值，
+ * 不需要额外 IPC（理由写在 `src/closeBehavior.ts` 顶部）。
+ */
+const CLOSE_BEHAVIOR_OPTIONS: Array<{
+  value: CloseBehavior;
+  label: string;
+  hint: string;
+  Icon: typeof Monitor;
+}> = [
+  { value: 'quit', label: '直接退出', hint: '关闭窗口即退出应用（默认）', Icon: Power },
+  {
+    value: 'tray',
+    label: '最小化到托盘',
+    hint: '窗口隐藏，任务继续在后台运行；单击托盘图标恢复',
+    Icon: Minimize2,
+  },
+  {
+    value: 'ask',
+    label: '每次询问',
+    hint: '每次关闭都问一次：退出还是最小化到托盘',
+    Icon: HelpCircle,
+  },
+];
+
+function CloseBehaviorSetting() {
+  const [behavior, setBehavior] = useState<CloseBehavior>(readCloseBehavior);
+
+  return (
+    <div className="mt-6" data-close-behavior-setting>
+      <div className="mb-3 flex items-center gap-1.5">
+        <span className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+          关闭窗口时
+        </span>
+        <HintTip
+          label="关闭窗口行为说明"
+          text="选择「直接退出」时，如果还有 Agent 任务在运行，会先弹一次确认；选择「最小化到托盘」则不会中断任务，进程继续留在托盘里。"
+        />
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {CLOSE_BEHAVIOR_OPTIONS.map(({ value, label, hint, Icon }) => {
+          const selected = behavior === value;
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setBehavior(saveCloseBehavior(value))}
+              aria-pressed={selected}
+              title={hint}
+              // 探针锚点：文案会改，data 属性不会
+              data-close-behavior={value}
+              className="flex items-center gap-3 rounded-lg p-3 text-left transition-all"
+              style={{
+                backgroundColor: selected ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-component)',
+                border: `1px solid ${selected ? 'var(--td-brand-color)' : 'transparent'}`,
+              }}
+            >
+              <span
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${selected ? 'tc-chip-brand' : ''}`}
+                style={
+                  selected
+                    ? undefined
+                    : {
+                        backgroundColor: 'var(--td-bg-color-container)',
+                        color: 'var(--td-text-color-secondary)',
+                      }
+                }
+              >
+                <Icon size={18} />
+              </span>
+              <span
+                className="min-w-0 text-body-lg font-medium"
+                style={{ color: 'var(--td-text-color-primary)' }}
+              >
+                {label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-sm" style={{ color: 'var(--td-text-color-placeholder)' }}>
+        最小化到托盘后应用仍在后台运行，托盘右键菜单可以退出。
+      </p>
     </div>
   );
 }

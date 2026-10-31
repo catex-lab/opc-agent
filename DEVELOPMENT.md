@@ -2,6 +2,18 @@
 
 面向要改这个仓库的人。**本文档会滞后，代码不会** —— 冲突时以代码为准，改完顺手回来订正这里。
 
+## 〇、代码里的 `A107` / `A151` 是什么
+
+源码注释、脚本名、闸门输出里到处是这种编号（全仓约 980 处）。它们是**本项目开发过程中的工作项编号**，不是 GitHub issue，也不指向任何公开看板 —— 你在 issue 列表里搜不到。
+
+每个编号对应一次完整的「需求 → 实现 → 验证」闭环，绝大多数能在 `scripts/` 里找到同名闸门（`A151` → `scripts/verify-a151-model-source.mjs`）。所以读到一条带编号的注释时：
+
+- **想知道它当时要求什么**：看同名脚本的文件头注释，那里通常抄了原始需求与实测证据。
+- **想知道它现在还算不算数**：跑那条 `npm run verify:a151`。绿了才算约束仍然成立。
+- **改到了它管的东西**：先跑闸门再改代码。这些注释记录的是「踩过一次的坑」，不是风格偏好。
+
+保留编号而不改写成自然语言，是因为删掉出处后，那些约束就变成没有依据的断言，下一个人只能靠猜。
+
 ## 一、三层结构
 
 ```
@@ -32,6 +44,10 @@ electron/  ──►  主进程（窗口 / 托盘 / CDP / 终端 / 更新）
 | `agents/registry.ts` | Agent 注册表，实例化 16 条定义 |
 | `agents/definitions.ts` | **16 条 Agent 接入定义**（命令名、参数、能力） |
 | `agents/probe.ts` | 在 `PATH` 与约定目录里找可执行文件 |
+| `agents/accountProbe.ts` | 账号与权益：**只读**本机各 Agent 自己的登录态（ZCode 的加密信封不解、Codex 只解 `id_token` 的 payload），不代登录、不外发 |
+| `agents/sdkRuntime.ts` | SDK 通道公共件：动态 `import` + 缺包时的可读提示（缺包只让该 Agent 显示「未安装」） |
+| `agents/adapters/*-sdk.ts` | 官方 SDK 适配器（WorkBuddy / Claude / Codex）：SDK 自带平台二进制，不依赖 `PATH` |
+| `avatar-store.ts` / `avatar-file.ts` | 头像与 Agent Logo 的本地图片仓库：内容哈希命名、服务端嗅探文件头校验 |
 | `agents/permission-gate.ts` | 权限判定，越权拦截 |
 | `preferences.ts` | 偏好读写（主题、栏宽等） |
 | `memory.ts` | 四层记忆读写 |
@@ -50,7 +66,7 @@ electron/  ──►  主进程（窗口 / 托盘 / CDP / 终端 / 更新）
 
 ### 主进程 `electron/`
 
-`main.ts` 建窗口与 IPC，`cdp.ts` 做浏览器调试附着，`terminal.ts` 包 `node-pty`，`preload.cjs` 暴露受限 API。
+`main.ts` 建窗口与 IPC，`cdp.ts` 做浏览器调试附着，`terminal.ts` 包 `node-pty`，`preload.cjs` 暴露受限 API，`close-policy.ts` 决定关闭窗口是退出 / 收进托盘 / 先问（与设置页读同一份偏好）。
 
 ## 三、数据库
 
@@ -134,6 +150,22 @@ Windows 上两个必须注意的点：
 - **构建放后台跑** —— 前端约 2.5 分钟、打包约 4.5 分钟，前台管道会被 2 分钟超时掐掉
 
 打包前先关掉正在运行的 `OPC Agent.exe`（单实例锁会挡住文件替换）。
+
+### 依赖源（`.npmrc`）
+
+仓库里**提交了一份 `.npmrc`**，把 registry 与 Electron / electron-builder 的二进制源都指到
+`registry.npmmirror.com` —— 这是维护者所在网络的现实约束（默认源下 Electron 约 100MB 的
+二进制与打包辅助件会 502），不是对使用者的要求。`package-lock.json` 的 `resolved` 也因此
+全是镜像地址。
+
+不在中国大陆的贡献者可以：
+
+```bash
+npm config set registry https://registry.npmjs.org/   # 或直接删掉 .npmrc
+rm -rf node_modules && npm install
+```
+
+删掉 `.npmrc` 只影响下载来源，不影响构建产物。
 
 ## 九、界面约定
 

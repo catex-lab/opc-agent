@@ -39,6 +39,15 @@ const COPY_SVG =
 
 /** 把一个 `.cherry-copy-code-block` 的字体图标换成 SVG（幂等） */
 function patchButton(btn: Element): void {
+  // A159：复制按钮要透明背景。
+  //
+  // Cherry 给它的默认外观是 `background-color: var(--toolbar-bg)` + 边框，
+  // 在代码块上是一块实心小方块。用**行内样式**盖掉：行内优先于 Cherry 的
+  // 任何类选择器（含 :hover / :active），且只作用于这一个按钮 —— 同组的
+  // 展开 / 编辑按钮保持原样。放在早退分支之前：老会话里已经打过图标标记
+  // 的按钮也要补上，不能因为换过图标就漏掉背景。
+  (btn as HTMLElement).style.backgroundColor = 'transparent';
+
   if (btn.hasAttribute('data-a56-icon')) return;
   const icon = btn.querySelector('i.ch-icon');
   if (!icon) return;

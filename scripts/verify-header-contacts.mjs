@@ -581,15 +581,9 @@ await page.waitForTimeout(1200);
   ok(groupText.includes('Kimi'), '组标题显示官方族名', groupText.replace(/\n/g, ' ').slice(0, 30));
   ok(groupText.includes('Kimi Code CLI'), '组内成员默认展开可见（不用先点开）');
 
-  // 角标：CN×2 + INTL×1；any 不画
-  const badges = await page.evaluate(() =>
-    [...document.querySelectorAll('[data-region-badge]')].map(e => e.getAttribute('data-region-badge'))
-  );
-  ok(badges.filter(b => b === 'CN').length === 2, '两条中国站都是 CN 角标', badges.join(','));
-  ok(badges.filter(b => b === 'INTL').length === 1, '国际站是 INTL 角标', badges.join(','));
-  ok(badges.length === 3, '不分区（any）不画角标', `实际 ${badges.length} 个`);
-  const cnTitle = await page.locator('[data-region-badge="CN"]').first().getAttribute('title');
-  ok(/中国站/.test(cnTitle || ''), '角标 title 用厂商官方口径（中国站）', String(cnTitle));
+  // 区域信息只留在资料页「身份」小节；列表行不再画 CN / INTL 角标
+  const badges = await page.evaluate(() => document.querySelectorAll('[data-region-badge]').length);
+  ok(badges === 0, '列表行不再显示区域角标（CN / INTL）', `实际 ${badges} 个`);
 
   // 折叠 / 展开
   await page.locator('[data-family-group="kimi"] button').first().click();
@@ -1021,13 +1015,19 @@ ok(
 ok((await page.locator('[data-agent-install] [data-install-open]').count()) === 0, '同一条：也不出现任何打开/复制按钮');
 
 // ── 反例：key 类在 needs-auth 下必须出现 ──
+// （A153：详情页不再弹去设置页，而是就地展开凭据编辑器。
+//   所以这里断言跳转按钮消失、编辑器出现。）
 await page.locator('[data-detail-back]').click();
 await page.waitForTimeout(400);
 await page.getByText('豆包', { exact: true }).first().click();
 await page.waitForTimeout(600);
 ok(
-  (await page.locator('[data-agent-install] [data-install-open-settings]').count()) === 1,
-  '**反例**：不需要安装的 key 类在 needs-auth 下**必须**出现「填写 API Key」'
+  (await page.locator('[data-agent-install] [data-install-open-settings]').count()) === 0,
+  '**反例**：key 类在详情页**不**再弹「填写 API Key」跳转按钮'
+);
+ok(
+  (await page.locator('[data-agent-credential-inline]').count()) === 1,
+  'key 类就地展开凭据编辑器（取/存/清 + 连通性 + 模型）'
 );
 
 // ============= [4] 控制台 ==============

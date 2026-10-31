@@ -125,9 +125,17 @@ const NON_PACKAGE_DIRS = new Set([
   'test', 'tests', '__tests__', 'spec', 'specs', 'docs', 'doc', 'scripts', 'build',
   'dist', 'coverage', 'demo', 'demos', 'fixture', 'fixtures', 'tools', 'site', 'website',
 ]);
-/** 内嵌子包中不从安装包分发的条目（electron-builder.yml 排除或法律原因） */
+/**
+ * 内嵌子包中不从安装包分发的条目（electron-builder.yml 排除或法律原因）。
+ *
+ * ⚠️ **这张表必须与 `electron-builder.yml` 的 files/asarUnpack 保持一致**：
+ * 排除打包才加进来，重新分发就必须删掉。2026-10-31 就踩过一次 ——
+ * `cli/**` 被重新打回安装包（+109MB），而这里仍写着「已排除」，
+ * 于是清单少列了一整个随包分发的子包（`--check` 也是绿的，因为生成器
+ * 和清单都按同一个错误前提跑）。判据永远是「**分发单元**」。
+ */
 const NESTED_EXCLUDE_NAMES = new Set([
-  '@tencent-ai/codebuddy-code', // cli/ 已排除打包（许可声明缺失）
+  // 当前没有：`@tencent-ai/codebuddy-code` 自 2026-10-31 起随包分发，已从此表移除。
 ]);
 
 function nestedPackages(dir, parentName) {

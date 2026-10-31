@@ -354,6 +354,11 @@ export interface CustomAgent {
   systemPrompt: string;
   /** Logo 键，对应 agentLogos.ts 的 AGENT_LOGOS */
   icon?: string;
+  /**
+   * A160：注册表里用户上传的自定义 Logo。`icon` 是内置图标，这个是覆盖层；
+   * 只在「从注册表映射成 CustomAgent」时带上，localStorage 里的自建 Agent 没有。
+   */
+  logoUrl?: string;
   color?: string;
   permissionMode?: PermissionMode;
   /** P4-5：权限强制能力（由注册表映射过来，供场景页如实提示） */
@@ -526,6 +531,11 @@ export interface RegisteredAgent {
   vendor?: string;
   kind: AgentKind;
   /**
+   * A156：SDK 通道的厂商。只有 kind==='sdk' 且定义表显式写了 provider 时才有；
+   * 缺省 = Tencent SDK（CodeBuddy / WorkBuddy 共用平台模型清单）。
+   */
+  sdkProvider?: 'tencent' | 'claude' | 'codex' | 'opencode';
+  /**
    * 用户自建 Agent（A114）。名册页据此给「删除」入口。
    * 与后端 `server/agents/types.ts` 的 `AgentDescriptor.custom` 同源。
    */
@@ -549,6 +559,11 @@ export interface RegisteredAgent {
   description?: string;
   icon?: string;
   color?: string;
+  /**
+   * A160：用户上传的自定义 Logo（`/api/avatars/<file>`）。
+   * 缺省 = 用 `icon` 内置图标；是覆盖层，恢复默认后这个字段就消失。
+   */
+  logoUrl?: string;
   command?: string;
   installHint?: string;
   /** 结构化的获取方式（A71）。有它时界面按 method 出按钮，没有就退回纯文字 */
@@ -601,6 +616,66 @@ export interface RegisteredAgent {
   };
 }
 
+/**
+ * 账号与权益（来自 `/api/agents/:agentId/account`，**只读**）。
+ *
+ * 与 `lastRequest` 的区别：那个是「上次请求真的打到哪」（使用记录），
+ * 这个是「现在登录的是谁、领了哪些套餐、选中了哪个」（配置现状）。
+ * 两者都可能过期，所以 `checkedAt` 一定要透到界面上。
+ *
+ * 全部可选字段都可能缺 —— 缺 = 该 Agent 读不到，**不代表没有**。
+ */
+export interface AgentAccountIdentity {
+  name?: string;
+  /** 邮箱原文。界面**必须掩码**后再显示（见 AgentDetailSections 的 maskEmail） */
+  email?: string;
+  org?: string;
+  /** 当前套餐名（codex 的 `ChatGPT Free`） */
+  planLabel?: string;
+  source: string;
+  /** 读不到身份的原因原话。与「没有账号」是两回事 */
+  unavailableReason?: string;
+}
+
+export interface AgentAccountPlan {
+  id: string;
+  name: string;
+  status: 'active' | 'inactive' | 'unknown';
+  detail?: string;
+  /** 套餐内真实模型名 */
+  models: string[];
+  /** 是否是当前选中的那一个 */
+  selected: boolean;
+  /** 选中了但没生效 —— 「领了却用不了」就是这个组合 */
+  effective: boolean;
+}
+
+export interface AgentAccountSelection {
+  family: string;
+  familyLabel: string;
+  kindLabel: string;
+  providerName: string;
+  providerKey: string;
+  effective: boolean;
+  detail?: string;
+}
+
+export interface AgentAccount {
+  identity?: AgentAccountIdentity;
+  currentSelection?: AgentAccountSelection[];
+  plans: AgentAccountPlan[];
+  source: string;
+  /** 数据快照时间。缓存类数据必须带，否则分不清「没有」与「过期」 */
+  checkedAt?: string;
+  stale?: boolean;
+  note?: string;
+  /** 本应用能不能把这个 Agent 的模型传给 CLI */
+  modelSelectable: boolean;
+  modelNote: string;
+  /** 不能在这里切时「去哪儿切」的原话 */
+  switchHint?: string;
+}
+
 /** 产品形态（≠ 接入方式 kind）。`ide` 是保留值：本项目不接 IDE。 */
 export type AgentSurface = 'cli' | 'acp' | 'sdk' | 'http' | 'ide';
 
@@ -630,14 +705,24 @@ export const REGION_META: Record<AgentRegion, { badge: string; label: string }> 
   any: { badge: '', label: '不分区' },
 };
 
-/** 能力标签的中文名与配色 */
+/**
+ * 能力标签的中文名与配色。
+ *
+ * `color` 是**文字色**，一律走 `--tc-cap-*` 令牌（A159）。原先写裸 hex：
+ * chat 的 #1F1F1F 在深色主题下几乎等于背景色（「问答」两个字看不见），
+ * 其余五色也是按浅色底挑的，深色下只有 2.2~3.5:1。令牌的浅/深两档都算过
+ * 「10% 同色底」上的对比度，见 index.css 那段注释。
+ *
+ * ⚠️ 调用方**不能**再用 `${color}18` 这种十六进制后缀拼底色 —— 令牌是
+ * `var(...)`，拼出来是非法颜色。底色用 `color-mix(in srgb, <color> N%, transparent)`。
+ */
 export const CAPABILITY_META: Record<AgentCapability, { label: string; color: string }> = {
-  chat: { label: '问答', color: '#1F1F1F' },
-  code: { label: '代码', color: '#0E7A8C' },
-  write: { label: '写作', color: '#834EC2' },
-  tools: { label: '工具调用', color: '#0E7A5F' },
-  image: { label: '生图', color: '#D54941' },
-  search: { label: '联网检索', color: '#E37318' },
+  chat: { label: '问答', color: 'var(--tc-cap-chat)' },
+  code: { label: '代码', color: 'var(--tc-cap-code)' },
+  write: { label: '写作', color: 'var(--tc-cap-write)' },
+  tools: { label: '工具调用', color: 'var(--tc-cap-tools)' },
+  image: { label: '生图', color: 'var(--tc-cap-image)' },
+  search: { label: '联网检索', color: 'var(--tc-cap-search)' },
 };
 
 /**

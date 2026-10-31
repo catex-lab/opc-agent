@@ -467,6 +467,7 @@ export function GroupSettingsPanel({
                         id={m.id}
                         name={remarks[m.id] || m.name}
                         icon={m.icon}
+                        src={m.logoUrl}
                         color={m.color}
                         size={34}
                         availability={m.status.availability}
@@ -567,6 +568,7 @@ export function GroupSettingsPanel({
                         id={a.id}
                         name={a.name}
                         icon={a.icon}
+                        src={a.logoUrl}
                         color={a.color}
                         size={22}
                         availability={a.status.availability}

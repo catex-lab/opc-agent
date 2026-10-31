@@ -282,6 +282,89 @@ ok(
 );
 ok(/data-agent-status=/.test(contactsSrc), '状态词带 data-agent-status 锚点（运行时按状态定位）', '缺锚点');
 
+// ── H：能力 / 场景标签的文字色（A159）─────────────────────────────────
+/**
+ * 这两组色是**文字**（11~12px chip），不是图标。原先写死裸 hex：
+ *   · CAPABILITY_META.chat #1F1F1F 在深色主题下几乎等于背景色；
+ *   · SCENARIOS 六个场景色深色下只有 2.2~3.5:1。
+ *
+ * chip 的实际底色是「同色 10% / 12% 叠在表面色上」，所以这里**按那个底**
+ * 算对比度，而不是拿白底算 —— 拿白底算会给出一个偏乐观的数，深色主题
+ * 下正好漏判。表面色从 CSS 读，不写死。
+ */
+const mixHex = (fg, bg, p) => {
+  const f = fg.replace('#', '');
+  const b = bg.replace('#', '');
+  const ch = i =>
+    Math.round(parseInt(f.slice(i, i + 2), 16) * p + parseInt(b.slice(i, i + 2), 16) * (1 - p));
+  return '#' + [0, 2, 4].map(i => ch(i).toString(16).padStart(2, '0')).join('');
+};
+
+const surfaces = new Map();
+for (const name of ['chrome', 'content', 'raised']) {
+  surfaces.set(
+    name,
+    [...css.matchAll(new RegExp(`--tc-surface-${name}:\\s*(#[0-9a-fA-F]{6})`, 'g'))].map(m => m[1])
+  );
+  ok(surfaces.get(name).length >= 2, `--tc-surface-${name} 浅深两份都在（下面要拿它算对比度）`, `找到 ${surfaces.get(name).length} 份`);
+}
+
+const chipBases = ['chrome', 'content', 'raised'];
+
+function checkChipTokens(prefix, names, tintPct) {
+  for (const name of names) {
+    const vals = [...css.matchAll(new RegExp(`--${prefix}-${name}:\\s*(#[0-9a-fA-F]{6})`, 'g'))].map(m => m[1]);
+    ok(vals.length === 2, `--${prefix}-${name} 浅色与深色各定义一次`, `实际 ${vals.length} 次：${vals.join(',') || '无'}`);
+    if (vals.length < 2) continue;
+    for (const [theme, idx] of [['浅色', 0], ['深色', 1]]) {
+      let worst = null;
+      for (const base of chipBases) {
+        const bg = surfaces.get(base)?.[idx];
+        if (!bg) continue;
+        const tinted = mixHex(vals[idx], bg, tintPct);
+        const r = contrast(vals[idx], tinted);
+        if (!worst || r < worst.r) worst = { r, base, bg, tinted };
+      }
+      ok(
+        !!worst && worst.r >= 4.5,
+        `--${prefix}-${name} ${theme}在 ${Math.round(tintPct * 100)}% 同色底上 ≥4.5:1`,
+        worst ? `最差 ${worst.r.toFixed(2)}:1（${worst.base} ${worst.bg} → ${worst.tinted}）` : '缺表面色'
+      );
+    }
+  }
+}
+
+checkChipTokens('tc-cap', ['chat', 'code', 'write', 'tools', 'image', 'search'], 0.10);
+checkChipTokens('tc-scn', ['work', 'qa', 'dev', 'code', 'write', 'image'], 0.12);
+
+/**
+ * 反向保护：调用方必须走令牌，且**不许**再拼十六进制后缀。
+ * 令牌是 `var(...)`，`` `${color}18` `` 会变成 `var(--tc-cap-chat)18` ——
+ * 浏览器直接丢弃整条声明，chip 退回透明底 + 令牌文字色，比原样更难查。
+ */
+const capBlock = typesSrc.slice(typesSrc.indexOf('CAPABILITY_META'), typesSrc.indexOf('EVENT_CAPABILITY_META'));
+ok(!/color:\s*'#/.test(capBlock), 'CAPABILITY_META 的 color 全部走 --tc-cap-* 令牌', '出现裸 hex：深色主题下会消失');
+ok(/color:\s*'var\(--tc-cap-/.test(capBlock), 'CAPABILITY_META 确实引用了 --tc-cap-*', '一个都没引用');
+
+const scnSrc = fs.readFileSync(path.join(ROOT, 'shared', 'scenarios.ts'), 'utf8');
+ok(!/color:\s*'#/.test(scnSrc), 'SCENARIOS 的 color 全部走 --tc-scn-* 令牌', '出现裸 hex：深色下场景 chip 只有 2.2~3.5:1');
+ok(/color:\s*'var\(--tc-scn-/.test(scnSrc), 'SCENARIOS 确实引用了 --tc-scn-*', '一个都没引用');
+
+const suffixHits = [];
+for (const file of files) {
+  const rel = path.relative(SRC, file).split(path.sep).join('/');
+  const lines = blankComments(fs.readFileSync(file, 'utf8')).split(/\r?\n/);
+  lines.forEach((line, i) => {
+    const m = line.match(/\$\{[^}]*\.color\}[0-9a-fA-F]{2}/);
+    if (m) suffixHits.push(`${rel}:${i + 1} ${m[0]}`);
+  });
+}
+ok(
+  suffixHits.length === 0,
+  '没有调用方再把十六进制后缀拼到 color 上（令牌是 var()，拼了就非法）',
+  suffixHits.join(' | ')
+);
+
 // ── G：可滚动内容区的「还有更多」信号（A134）──────────────────────────
 /**
  * 这一节的由来：Windows 的 Chrome 用 overlay 滚动条，静止时不画。获取 Agent

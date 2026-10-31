@@ -118,13 +118,20 @@ export function NewChatView({
                   className={`tc-choice-card flex flex-col items-start gap-1.5 p-2.5 text-left${isSelected ? ' is-selected' : ''}`}
                   style={
                     isSelected
-                      ? { borderColor: s.color, backgroundColor: `${s.color}14` }
+                      ? {
+                          /* A159：场景色是 var(--tc-scn-*)，不能再拼 `${color}14` */
+                          borderColor: s.color,
+                          backgroundColor: `color-mix(in srgb, ${s.color} 8%, transparent)`,
+                        }
                       : undefined
                   }
                 >
                   <span
                     className="flex h-7 w-7 items-center justify-center rounded-lg"
-                    style={{ backgroundColor: `${s.color}1f`, color: s.color }}
+                    style={{
+                      backgroundColor: `color-mix(in srgb, ${s.color} 12%, transparent)`,
+                      color: s.color,
+                    }}
                   >
                     {Icon ? <Icon size={15} /> : null}
                   </span>
@@ -182,6 +189,7 @@ export function NewChatView({
                       id={agent.id}
                       name={agent.name}
                       icon={agent.icon}
+                      src={agent.logoUrl}
                       color={agent.color}
                       size={40}
                       showStatus={false}
@@ -336,7 +344,10 @@ export function NewChatView({
               <div className="flex items-center gap-2 mb-2">
                 <span
                   className="rounded px-1.5 py-[2px] text-caption"
-                  style={{ backgroundColor: `${selectedScenario.color}1f`, color: selectedScenario.color }}
+                  style={{
+                    backgroundColor: `color-mix(in srgb, ${selectedScenario.color} 12%, transparent)`,
+                    color: selectedScenario.color,
+                  }}
                 >
                   {selectedScenario.label}场景
                 </span>
@@ -352,6 +363,7 @@ export function NewChatView({
                     id={selectedAgent.id}
                     name={selectedAgent.name}
                     icon={selectedAgent.icon}
+                    src={selectedAgent.logoUrl}
                     color={selectedAgent.color}
                     size={24}
                     showStatus={false}

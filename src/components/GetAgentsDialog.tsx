@@ -235,6 +235,7 @@ export function GetAgentsDialog({
                           id={a.id}
                           name={a.name}
                           icon={a.icon}
+                          src={a.logoUrl}
                           color={a.color}
                           availability={a.status.availability}
                           size={28}

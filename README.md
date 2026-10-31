@@ -25,6 +25,8 @@ OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个�
 - **思考过程展示** —— 按 Agent 能力开关，三态视觉区分
 - **项目视图** —— 任务面板与项目维度归档
 - **四层记忆** —— 会话 / 用户 / 项目 / 全局，各自独立作用域
+- **账号与权益** —— 只读本机 Agent 自己的登录态，显示当前账号与套餐；不代登录、不上传凭据
+- **头像与外观** —— 用户头像与 Agent Logo 可自定义，图片按内容哈希落盘、服务端嗅探校验
 
 ![群聊界面](docs/screenshots/03-group.png)
 
@@ -41,7 +43,10 @@ OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个�
 | Qoder CN | 豆包 | ZCode | Kimi |
 | Pi | Antigravity CLI | Kimi Code CLI | Trae（暂时下架） |
 
-探测方式是**白名单**：只认这 16 条定义里写死的命令名，在 `PATH` 与各自约定目录里查找可执行文件。名单外的 CLI 即使装了也不会被自动发现 —— 这是刻意的，避免把 IDE 的图形启动器误判成 CLI。
+接入方式有两种，以**写死的白名单**为准，不做自由发现：
+
+- **CLI 探测（13 条）**：只认定义里写死的命令名，在 `PATH` 与各自约定目录里查找可执行文件。名单外的 CLI 即使装了也不会被自动发现 —— 这是刻意的，避免把 IDE 的图形启动器误判成 CLI。
+- **官方 SDK 直连（3 条：WorkBuddy / Claude Code / Codex）**：走厂商 SDK，SDK 自带平台二进制，不依赖本机 `PATH`，因此开箱即用；代价是安装包体积（见 [THIRD-PARTY.md](./THIRD-PARTY.md) 的许可说明）。
 
 > Trae 目前下架：只认 `traecli`（企业版），IDE 自带的 `trae-cn` 是 VS Code 垫片，接进去会被当成可执行路径、拉起图形窗口。定义保留，恢复只需从 `RETIRED_AGENT_IDS` 里删掉 id。
 
@@ -55,6 +60,10 @@ OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个�
 
 1. **Node.js 22+** —— 数据库用的是 `node:sqlite`，低版本没有这个内置模块。
 2. **本机至少装一个 Agent CLI**。这个应用本身不含任何模型，它只是把你自己装好的 Agent 收进一个界面。一个 CLI 都没装的话，打开会是空通讯录。
+
+> **本仓库只提供源码，不发布预编译安装包。** 自己 `npm run electron:build` 打出来的包只在你本机可用；
+> 公开分发安装包会牵涉到随包的三方组件（其中 Claude Agent SDK 是「保留所有权利」的专有许可），
+> 具体条款与两条可选路线见 [THIRD-PARTY.md](./THIRD-PARTY.md)。
 
 ```bash
 git clone https://github.com/catex-lab/opc-agent.git
@@ -77,7 +86,7 @@ npm run electron:build # 产物在 release/
 | 前端 | React 18 + TypeScript + Vite + TDesign |
 | 后端 | Express，构建时内联进主进程 |
 | 数据库 | `node:sqlite`（Node 22 内置模块，**不是** better-sqlite3） |
-| Agent 接入 | `@tencent-ai/agent-sdk` 等厂商 SDK，以及各 Agent 自有 CLI |
+| Agent 接入 | 厂商 SDK（`@tencent-ai/agent-sdk` / `@anthropic-ai/claude-agent-sdk` / `@openai/codex-sdk`）与各 Agent 自有 CLI 两条通道 |
 | 终端 | `node-pty` |
 
 ## 目录结构

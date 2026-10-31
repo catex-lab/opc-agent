@@ -29,7 +29,7 @@ import { NewGroupDialog } from './NewGroupDialog';
 import { GroupAvatar } from './UserAvatar';
 import { useGroupAvatar } from '../sessionFlags';
 import { MENU_ITEM_CLASS } from './menuItem';
-import { AVAILABILITY_META, REGION_META, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
+import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
 
 interface ContactsPanelProps {
   agents: RegisteredAgent[];
@@ -617,9 +617,6 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
   const displayName = remark || agent.name;
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [editing, setEditing] = useState(false);
-  const regionMeta = agent.region ? REGION_META[agent.region] : undefined;
-  /** 角标文字；`any`（不分区）在 REGION_META 里就是空串，这里自然不渲染 */
-  const regionBadge = regionMeta?.badge ?? '';
 
   const body = (
     <>
@@ -629,6 +626,7 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
           id={agent.id}
           name={displayName}
           icon={agent.icon}
+          src={agent.logoUrl}
           color={agent.color}
           availability={agent.status.availability}
           size={42}
@@ -640,20 +638,6 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
       >
         {displayName}
       </span>
-      {/* 区域角标（A68）：CN / INTL 两个缩写。
-          只在「有区域且不是不分区」时出现 —— 把「不分区」也画成角标，会让满屏都是
-          角标、反而看不出重点。title 用后端下发的**厂商官方口径**
-          （腾讯「国内版」/ Kimi「中国站」），我们不自创一套统一叫法去覆盖它。 */}
-      {regionBadge && (
-        <span
-          className="shrink-0 rounded px-1 text-caption"
-          style={{ color: 'var(--td-text-color-placeholder)' }}
-          title={`区域：${agent.regionName ?? regionMeta?.label ?? regionBadge}`}
-          data-region-badge={regionBadge}
-        >
-          {regionBadge}
-        </span>
-      )}
       {/* 状态词：**每一行都写**，不只写异常行（A134 / 审查报告 P0-3）。
           原来只有非 ready 行才有文字，于是「三个 Agent 只有绿点、Gemini 有橙字」——
           同一列表两种表达方式，用户读不出绿点到底是「已安装」还是「已连接」还是

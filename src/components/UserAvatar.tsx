@@ -19,16 +19,23 @@ import { AVATAR_PRESETS, avatarPresetOf, initialOf } from '../userProfile';
 export function UserAvatar({
   nickname,
   avatar,
+  image,
   size = 36,
   className,
   title,
 }: {
   nickname: string;
   avatar?: string;
+  /**
+   * A160：上传的图片头像。优先级 图片 > 预设 > 昵称首字 > 「我」。
+   * 图片是覆盖层 —— 移除后自动回到之前选的预设，不会变成空白。
+   */
+  image?: string;
   size?: number;
   className?: string;
   title?: string;
 }) {
+  const customSrc = image?.trim();
   const preset = avatarPresetOf(avatar);
   const glyph = preset?.glyph ?? (nickname ? initialOf(nickname) : '我');
   return (
@@ -39,18 +46,32 @@ export function UserAvatar({
         height: size,
         fontSize: Math.round(size * 0.52),
         lineHeight: 1,
-        backgroundColor: preset?.color ?? 'var(--td-bg-color-secondarycontainer)',
+        overflow: customSrc ? 'hidden' : undefined,
+        backgroundColor: customSrc
+          ? 'var(--agent-logo-tile)'
+          : preset?.color ?? 'var(--td-bg-color-secondarycontainer)',
         // 无预设时用文字色：深色主题下这颗圆是浅底的（--agent-logo-tile 一族），
         // 文字必须跟主题走，否则浅底上出现白字
-        color: preset ? undefined : 'var(--td-text-color-secondary)',
+        color: preset && !customSrc ? undefined : 'var(--td-text-color-secondary)',
         border: '1px solid var(--tc-edge)',
         userSelect: 'none',
       }}
       title={title ?? (nickname || '我')}
       aria-label={nickname || '我'}
-      data-user-avatar={preset?.id ?? (nickname ? 'initial' : 'me')}
+      data-user-avatar={customSrc ? 'image' : preset?.id ?? (nickname ? 'initial' : 'me')}
     >
-      {glyph}
+      {customSrc ? (
+        <img
+          src={customSrc}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          data-user-avatar-image
+          style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+      ) : (
+        glyph
+      )}
     </span>
   );
 }

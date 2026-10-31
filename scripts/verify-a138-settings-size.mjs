@@ -248,12 +248,16 @@ console.log('\n[2] 固定高度后「还有更多」的信号仍按真实溢出�
     memory ? `溢出 ${memory.overflow}px` : '量不到');
   ok(memory && memory.fade === '1', '溢出时挂了 data-fade=1（A134 硬规矩）', `fade=${memory?.fade}`);
 
-  // 外观：内容短，不该出现「还有更多」的信号
+  /**
+   * 外观：A154 之前这里内容短，被当成「不溢出 → 不画渐隐」的对照组。
+   * A154 加了「关闭窗口时」三选之后它不再必然短于 700px —— 所以不再写死
+   * 「外观必须不溢出」，改成**规则断言**：渐隐只由真实溢出量决定。
+   * （硬要留一个短分区做对照，会在下一次往那个分区加设置时再次变红。）
+   */
   const appearance = await pick('appearance');
-  ok(appearance && appearance.overflow <= 2, '「外观」分区内容比容器短（用来对照）',
-    appearance ? `溢出 ${appearance.overflow}px` : '量不到');
-  ok(appearance && appearance.fade === null, '内容没溢出时不画渐隐（别把信号画在没有更多的地方）',
-    `fade=${appearance?.fade}`);
+  ok(appearance && (appearance.overflow > 2 ? appearance.fade === '1' : appearance.fade === null),
+    '「外观」的渐隐与真实溢出量一致',
+    appearance ? `溢出 ${appearance.overflow}px, fade=${appearance.fade}` : '量不到');
 
   /**
    * 切分区要回到顶部。
@@ -262,7 +266,7 @@ console.log('\n[2] 固定高度后「还有更多」的信号仍按真实溢出�
    * 固定之后每个分区都是同一个 700px 容器，从「记忆」滚到一半切到
    * 「关于与隐私」，浏览器**不会**帮你夹回去 —— 用户会落在半截。
    */
-  // 回到长内容分区再滚 —— 上一行停在「外观」，那一页没有可滚空间
+  // 回到长内容分区再滚 —— 无论上一页有没有可滚空间，都要重新量
   await pick('memory');
   const scrolled = await page.evaluate(sel => {
     const inner = document.querySelector(sel)?.querySelector('[data-settings-panel]');

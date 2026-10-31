@@ -99,9 +99,14 @@ console.log('\nA100 事件来源判定');
   );
 
   const structured = rows.filter(r => r.source === 'structured_cli');
-  const jsonl = rows.filter(r => r.parse === 'jsonl').length;
-  const jsonObject = rows.filter(r => r.parse === 'json-object').length;
-  ok(structured.length === jsonl + jsonObject, '结构化输出数 = jsonl + json-object', `${structured.length} = ${jsonl}+${jsonObject}`);
+  // A156：claude / codex 改用各自厂商的 SDK 后 kind 变成 'sdk'，但它们的
+  // cli 规格仍在（模型目录与 A106/A127 对照基线要读），parse 依然是 jsonl。
+  // 若按「所有 parse=jsonl 的条目」计数，这两条会被算进 structured_cli 的
+  // 预期值里，而实际来源是 native —— 分母凭空多出 2。这里只统计仍走 CLI
+  // 通道的条目，断言才和 source 的语义对齐。
+  const jsonl = rows.filter(r => r.kind === 'cli' && r.parse === 'jsonl').length;
+  const jsonObject = rows.filter(r => r.kind === 'cli' && r.parse === 'json-object').length;
+  ok(structured.length === jsonl + jsonObject, '结构化输出数 = CLI 条目里的 jsonl + json-object', `${structured.length} = ${jsonl}+${jsonObject}`);
 
   // 汇总一行，方便人眼核对「到底哪几个 Agent 会被标成低可信度」
   console.log(`\n    native         ${group('native').join(', ')}`);

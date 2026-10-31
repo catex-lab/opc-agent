@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { InstallCard } from './InstallCard';
+import { AgentCredentialEditor } from './AgentCredentialEditor';
 import {
   AVAILABILITY_META,
   CAPABILITY_META,
@@ -8,6 +10,7 @@ import {
   REGION_META,
   SURFACE_META,
   availabilityLabelOf,
+  type AgentAccount,
   type RegisteredAgent,
 } from '../types';
 
@@ -64,6 +67,14 @@ export function AgentDetailSections({
   const capabilities = agent.capabilities
     .map(cap => ({ key: cap, meta: CAPABILITY_META[cap] }))
     .filter((c): c is { key: typeof c.key; meta: NonNullable<typeof c.meta> } => !!c.meta);
+
+  /**
+   * 账号与权益（A152）。按需拉 `/api/agents/:id/account`，不塞进名册接口 ——
+   * 这份数据要读每个 Agent 的凭据/配置文件，不该跟着 30 秒一次的名册刷新走。
+   *
+   * 拿不到（null）时整块不渲染：读不到 ≠ 没有账号，摆一行「未知」只会误导。
+   */
+  const account = useAgentAccount(agent.id);
 
   // A115：整页共用的排版刻度（理由见文件头）。值写成常量而不是散在 JSX 里，
   // 是为了让「加一块新内容」时直接抄这两个名字，不会再长出第四种规格。
@@ -231,8 +242,33 @@ export function AgentDetailSections({
               <InstallCard
                 agent={agent}
                 onReprobe={onReprobe}
-                onOpenCredential={onOpenCredential}
+                /* key 类 Agent：详情页就地展开凭据编辑器，不再弹去设置页。
+                   不传 onOpenCredential，InstallCard 就不会画「填写 API Key」
+                   跳转按钮 —— 编辑器自己就是入口。 */
+                onOpenCredential={isKeyOnly ? undefined : onOpenCredential}
               />
+            </div>
+          )}
+
+          {/* key 类 Agent：就地凭据配置（取 / 存 / 清 + 连通性 + 模型）。
+              不论 availability 是什么都显示 —— 已配置时用户可能想换 Key 或
+              测连通性，未配置时这就是唯一入口。编辑器与设置页「登录配置」
+              是同一块代码、同一份数据。 */}
+          {isKeyOnly && (
+            <div
+              className="border-t"
+              style={{ borderColor: 'var(--tc-edge)' }}
+              data-agent-credential-inline
+            >
+              <div
+                className={`${ROW_X} pt-2.5 text-secondary`}
+                style={{ color: 'var(--td-text-color-placeholder)' }}
+              >
+                凭据配置
+              </div>
+              <div className={ROW_X}>
+                <AgentCredentialEditor agentId={agent.id} onSaved={onReprobe} />
+              </div>
             </div>
           )}
         </div>
@@ -342,13 +378,203 @@ export function AgentDetailSections({
         </section>
       )}
 
+      {/* 账号与权益（A152）──
+          用户报的两件事：①「打开详情页不知道登录的是哪个账号」；
+          ②「ZCode 领了 Start Plan，应用里看不到、也选不了」。
+
+          这一块只做**读**：zcode 的账号是加密的（读不到就明说读不到），
+          套餐状态是本地缓存（带时间戳，过期就标注），能不能在这里切由
+          `modelSelectable` 说 —— 能切的才写「能切」，其余给「去哪儿切」。
+
+          为什么放在「身份」后面：「这是哪个产品」读完，紧接着要回答的
+          就是「算谁的账号、领了什么」。 */}
+      {account && (
+        <section className="mt-6" data-agent-account>
+          <h3 className="tc-section-title mb-2">账号与权益</h3>
+          <div
+            className={`tc-detail-rows overflow-hidden ${CARD}`}
+            style={{ backgroundColor: 'var(--td-bg-color-container)' }}
+          >
+            {account.identity && (
+              <DetailRow
+                label="当前登录"
+                value={
+                  account.identity.email || account.identity.name ? (
+                    <>
+                      {account.identity.name}
+                      {account.identity.name && account.identity.email ? ' · ' : ''}
+                      {/* 邮箱必须掩码：详情页是会被截图分享的地方 */}
+                      {account.identity.email ? maskEmail(account.identity.email) : ''}
+                      <span
+                        className="mt-0.5 block text-secondary leading-relaxed"
+                        style={{ color: 'var(--td-text-color-placeholder)' }}
+                      >
+                        {[account.identity.planLabel, account.identity.source].filter(Boolean).join(' · ')}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      {account.identity.unavailableReason || '读不到账号信息'}
+                      <span
+                        className="mt-0.5 block text-secondary leading-relaxed"
+                        style={{ color: 'var(--td-text-color-placeholder)' }}
+                      >
+                        来源 {account.identity.source}
+                      </span>
+                    </>
+                  )
+                }
+              />
+            )}
+
+            {/* 当前套餐：按 provider family 一行。这是回答「登录的是哪个账号」
+                最接近事实的部分 —— 账号名读不到，但「选中了哪套订阅」读得到。 */}
+            {account.currentSelection && account.currentSelection.length > 0 && (
+              <DetailRow
+                label="当前套餐"
+                value={
+                  <>
+                    {account.currentSelection.map(s => (
+                      <span key={s.family} className="block" data-account-selection={s.family}>
+                        {s.familyLabel}：{s.kindLabel} → {s.providerName}
+                        <span
+                          className="mt-0.5 block text-secondary leading-relaxed"
+                          style={{
+                            color: s.effective ? 'var(--td-brand-color)' : 'var(--td-warning-color)',
+                          }}
+                        >
+                          {s.effective ? '生效中' : `未生效 · ${s.detail || '状态未知'}`}
+                        </span>
+                      </span>
+                    ))}
+                  </>
+                }
+              />
+            )}
+
+            {/* 已领取权益：套餐 → 状态 → 含哪些模型 → 是否生效。
+                这四个字段是「能不能用、为什么不能用」的全部证据。 */}
+            {account.plans.length > 0 && (
+              <div className={`${ROW_X} ${ROW_Y}`} data-agent-account-plans>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-body" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                    已领取权益
+                  </span>
+                  {/* 缓存时间必须写在数据旁边，否则「未订阅」会被当成事实 */}
+                  {account.checkedAt && (
+                    <span
+                      className="text-secondary"
+                      data-account-checked-at
+                      style={{
+                        color: account.stale ? 'var(--td-warning-color)' : 'var(--td-text-color-placeholder)',
+                      }}
+                    >
+                      数据 {formatAgo(account.checkedAt)}
+                      {account.stale ? '（已过期，仅供参考）' : ''}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-col gap-2">
+                  {account.plans.map(plan => (
+                    <div
+                      key={plan.id}
+                      data-agent-plan={plan.id}
+                      data-plan-status={plan.status}
+                      data-plan-effective={plan.effective ? '1' : '0'}
+                      className={`${CARD_INNER} px-3 py-2`}
+                      style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
+                    >
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span
+                          className="text-body font-medium"
+                          style={{
+                            color:
+                              plan.status === 'active'
+                                ? 'var(--td-text-color-primary)'
+                                : 'var(--td-text-color-secondary)',
+                          }}
+                        >
+                          {plan.name}
+                        </span>
+                        <span
+                          className="text-secondary"
+                          style={{ color: 'var(--td-text-color-placeholder)' }}
+                        >
+                          {plan.detail || (plan.status === 'active' ? '可用' : '状态未知')}
+                        </span>
+                        {plan.effective && (
+                          <span className="text-secondary" style={{ color: 'var(--td-brand-color)' }}>
+                            生效中
+                          </span>
+                        )}
+                        {/* 「已选」与「未生效」同时出现，正是用户报的那个状态 ——
+                            必须两个词都写出来，只写一个都会掩盖另一半 */}
+                        {plan.selected && !plan.effective && (
+                          <span className="text-secondary" style={{ color: 'var(--td-warning-color)' }}>
+                            已选，未生效
+                          </span>
+                        )}
+                      </div>
+                      {plan.models.length > 0 && (
+                        <div
+                          className="mt-1 text-secondary leading-relaxed"
+                          style={{ color: 'var(--td-text-color-placeholder)' }}
+                        >
+                          含 {plan.models.join(' · ')}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {account.note && (
+            <p
+              className="mt-2 text-secondary leading-relaxed"
+              data-account-note
+              style={{ color: 'var(--td-text-color-placeholder)' }}
+            >
+              {account.note}
+            </p>
+          )}
+          <p
+            className="mt-1 text-secondary leading-relaxed"
+            data-account-model-note
+            style={{ color: 'var(--td-text-color-placeholder)' }}
+          >
+            {account.modelNote}
+          </p>
+          {account.switchHint && (
+            <p
+              className="mt-1 text-secondary leading-relaxed"
+              data-account-switch-hint
+              style={{ color: 'var(--td-brand-color)' }}
+            >
+              {account.switchHint}
+            </p>
+          )}
+        </section>
+      )}
+
       {/* 擅长领域 */}
       {capabilities.length > 0 && (
         <section className="mt-6">
           <h3 className="tc-section-title mb-2">擅长领域</h3>
           <div className="flex flex-wrap gap-2">
             {capabilities.map(({ key, meta: cm }) => (
-              <span key={key} className={CHIP} style={{ backgroundColor: `${cm.color}18`, color: cm.color }}>
+              <span
+                key={key}
+                className={CHIP}
+                data-capability={key}
+                /* A159：底色从同一个令牌算 —— CAPABILITY_META 的颜色是
+                   `var(--tc-cap-*)`，不能再用 `${cm.color}18` 拼十六进制后缀。 */
+                style={{
+                  backgroundColor: `color-mix(in srgb, ${cm.color} 9%, transparent)`,
+                  color: cm.color,
+                }}
+              >
                 {cm.label}
               </span>
             ))}
@@ -570,4 +796,46 @@ function formatAgo(iso: string): string {
   const day = Math.floor(hour / 24);
   if (day < 30) return `${day} 天前`;
   return new Date(t).toLocaleDateString('zh-CN');
+}
+
+/**
+ * 账号与权益的按需加载。
+ *
+ * 任何失败（后端 500 / 网络断）都当作「没有」—— 详情页是核心页面，
+ * 不能因为一块附加信息拉取失败就弹错误条。拉不到就整块不渲染，
+ * 用户看到的仍是完整的资料页。
+ *
+ * `agentId` 变了（同族跳转）要重新拉：两套账号数据完全不同。
+ */
+function useAgentAccount(agentId: string): AgentAccount | null {
+  const [account, setAccount] = useState<AgentAccount | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setAccount(null);
+    fetch(`/api/agents/${encodeURIComponent(agentId)}/account`)
+      .then(res => (res.ok ? res.json() : null))
+      .then((data: { account?: AgentAccount | null } | null) => {
+        if (!alive) return;
+        setAccount(data?.account ?? null);
+      })
+      .catch(() => {
+        if (alive) setAccount(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [agentId]);
+  return account;
+}
+
+/**
+ * 邮箱掩码：`svipcatai@gmail.com` → `z***@gmail.com`。
+ *
+ * 详情页会被截图、会被贴进群里，完整邮箱没必要出现在界面上；
+ * 但保留首字母与域名，用户仍然认得出是哪个账号。
+ */
+function maskEmail(email: string): string {
+  const at = email.indexOf('@');
+  if (at <= 0) return email;
+  return `${email.slice(0, 1)}***@${email.slice(at + 1)}`;
 }

@@ -90,6 +90,7 @@ export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps
             id={agent.id}
             name={agent.name}
             icon={agent.icon}
+            src={agent.logoUrl}
             color={agent.color}
             availability={agent.status.availability}
             size={52}

@@ -138,7 +138,10 @@ export function ChatHeader({
           {scenario && (
             <span
               className="rounded px-1.5 py-[1px] text-caption"
-              style={{ backgroundColor: `${scenario.color}1f`, color: scenario.color }}
+              style={{
+                backgroundColor: `color-mix(in srgb, ${scenario.color} 12%, transparent)`,
+                color: scenario.color,
+              }}
               title={`场景：${scenario.description}`}
             >
               {scenario.label}

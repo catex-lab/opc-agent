@@ -152,7 +152,7 @@ await page.waitForTimeout(1000);
 await page.locator('[data-steps-bar]').first().click();
 await page.waitForTimeout(400);
 
-console.log('\n[1] 步骤行内只有两档字号');
+console.log('\n[1] 步骤行内只有一档字号');
 const sizes = await page.evaluate(() => {
   const rows = [];
   for (const head of document.querySelectorAll('.tc-step-head')) {
@@ -166,7 +166,9 @@ const sizes = await page.evaluate(() => {
   return rows;
 });
 const distinct = [...new Set(sizes.flat().map(s => s.fs))].sort((a, b) => a - b);
-ok(distinct.length === 2, '一行之内只有两档字号', `实测 ${distinct.join(' / ')}px`);
+// 2026-10-30：从「两档（主信息 12 / 辅信息 11）」收紧到「一档」——
+// 用户口径是过程流全局同字号，所以行内不再允许任何小字。
+ok(distinct.length === 1, '一行之内只有一档字号（14px）', `实测 ${distinct.join(' / ')}px`);
 const verbFs = await page.evaluate(() =>
   parseFloat(getComputedStyle(document.querySelector('.tc-trace-verb')).fontSize));
 const targetFs = await page.evaluate(() =>
@@ -174,10 +176,9 @@ const targetFs = await page.evaluate(() =>
 ok(verbFs === targetFs, '动词与目标同档', `${verbFs}px vs ${targetFs}px`);
 
 console.log('\n[2] 动词不再继承 16px');
-ok(verbFs === 12, '动词钉在 12px', `实测 ${verbFs}px`);
-// 注意：不能断言「三者行高像素相等」—— diff 是 11px 字，继承 1.5 倍后
-// 必然是 16.5px，和 12px 字的 18px 不可能相等。真正决定基线是否对齐的是
-// **行高与字号同比**（半行距等比），所以断言比值。
+ok(verbFs === 14, '动词钉在 14px', `实测 ${verbFs}px`);
+// 行高统一到 1.7（比值而非像素：不同元素的行盒高度本就由字号决定，
+// 真正决定基线是否对齐的是**行高与字号同比**）。
 const ratios = await page.evaluate(() => {
   const pick = sel => {
     const el = document.querySelector(sel);
@@ -188,8 +189,8 @@ const ratios = await page.evaluate(() => {
   return { verb: pick('.tc-trace-verb'), target: pick('.tc-trace-target'), diff: pick('.tc-diff') };
 });
 ok(
-  Math.abs(ratios.verb - 1.5) < 0.01 && Math.abs(ratios.target - 1.5) < 0.01 && Math.abs(ratios.diff - 1.5) < 0.01,
-  '动词 / 目标 / diff 行高都与字号同比（1.5）',
+  Math.abs(ratios.verb - 1.7) < 0.01 && Math.abs(ratios.target - 1.7) < 0.01 && Math.abs(ratios.diff - 1.7) < 0.01,
+  '动词 / 目标 / diff 行高都与字号同比（1.7）',
   `${ratios.verb} / ${ratios.target} / ${ratios.diff}`
 );
 
@@ -236,7 +237,7 @@ const dot = await page.evaluate(() => {
     off: Math.abs((d.top + d.height / 2) - (head.top + head.height / 2)),
   };
 });
-ok(dot.headH === 22, '行头高度 22px（修复前 25px）', `实测 ${dot.headH}px`);
+ok(dot.headH === 28, '行头高度 28px（14px 字 / 行高 1.7 + 4px 内边距）', `实测 ${dot.headH}px`);
 ok(dot.off <= 1.5, '圆点圆心与行头中心重合', `偏差 ${dot.off.toFixed(1)}px`);
 
 console.log('\n[6] 三条状态条高度一致');

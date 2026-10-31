@@ -86,6 +86,23 @@ if (process.env.PORT === undefined) process.env.PORT = '0';
     return;
   }
 
+  /** 安装包里随 SDK 一起分发的 CLI（asarUnpack 到 app.asar.unpacked） */
+  function fromBundle() {
+    // 只认 asar.unpacked 下的真实路径：asar 内的路径 spawn 不了，
+    // 而且 CLI 自己还要 spawn 同目录的 vendor 可执行文件，__dirname 必须是真目录。
+    const p = path.join(
+      path.dirname(app.getAppPath()),
+      'app.asar.unpacked',
+      'node_modules',
+      '@tencent-ai',
+      'agent-sdk',
+      'cli',
+      'bin',
+      'codebuddy'
+    );
+    return fs.existsSync(p) ? p : null;
+  }
+
   /** 找 PATH 中的 codebuddy */
   function fromPath() {
     try {
@@ -136,7 +153,7 @@ if (process.env.PORT === undefined) process.env.PORT = '0';
     return null;
   }
 
-  const codebuddyPath = fromPath() || fromCommon();
+  const codebuddyPath = fromBundle() || fromPath() || fromCommon();
   if (codebuddyPath) {
     process.env.CODEBUDDY_CODE_PATH = codebuddyPath;
     process.env.OPC_CODEBUDDY_CLI = codebuddyPath;

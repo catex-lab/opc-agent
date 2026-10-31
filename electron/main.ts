@@ -23,6 +23,9 @@ import { join, isAbsolute } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { server } from '../server/index.js';
 import { registry } from '../server/agents/registry.js';
+import { loadPrefs } from '../server/preferences.js';
+import { runHub } from '../server/run-hub.js';
+import { decideCloseAction } from './close-policy.js';
 import { browserPanel, runBrowserSmoke } from './browser-view.js';
 import { terminal, type TerminalState } from './terminal.js';
 import {
@@ -82,7 +85,17 @@ if (process.platform === 'win32') {
 let mainWindow: BrowserWindow | null = null;
 
 /**
- * 等到 HTTP 服务真正开始监听，再返回窗口该加载的地址。
+ * 是否正在退出。`true` 时 `close` 事件直接放行 —— 这一层是 A154 加拦截后
+ * 唯一的「免打扰」出口：托盘菜单「退出」、系统关机、以及我们自己在用户
+ * 确认之后发起的关闭，都必须能真的关掉。
+ */
+let isQuitting = false;
+
+/** 关闭询问未决时不许叠第二个对话框（连按两次关闭 / Alt+F4 连按） */
+let closePromptOpen = false;
+
+/**
+ * 等 HTTP 服务真正开始监听，再返回窗口该加载的地址。
  *
  * 不能直接用 `PORT` 算地址：打包态传的是 `PORT=0`（由系统分配空闲端口），
  * 真实端口只有 `listening` 之后才能从 `server.address()` 读到。
@@ -663,6 +676,30 @@ async function createWindow() {
   mainWindow.on('leave-full-screen', pushWindowState);
   watchSystemTheme();
 
+  /**
+   * A154：关闭窗口先问偏好，而不是直接退出。
+   *
+   * 三档行为（直接退出 / 最小化到托盘 / 每次询问）与「还有任务在跑就确认」
+   * 都在 `handleCloseRequest` 里；这里只负责「拦下系统默认的关闭」。
+   *
+   * 为什么**永远**拦一层：用户可能用右上角、Alt+F4、任务栏右键关闭 ——
+   * 那些都不经过页面里的按钮。只在 `quit` 且无任务时放行到底，其余都在
+   * 这里被改写（隐藏窗口或先弹确认）。
+   */
+  mainWindow.on('close', event => {
+    if (isQuitting) return;
+    const win = mainWindow;
+    if (!win || win.isDestroyed()) return;
+    event.preventDefault();
+    if (closePromptOpen) return;
+    closePromptOpen = true;
+    void handleCloseRequest(win)
+      .catch(err => console.error('[Main] 关闭确认失败:', (err as Error).message))
+      .finally(() => {
+        closePromptOpen = false;
+      });
+  });
+
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => {
     // P4：shell 是一个能执行任意命令的活对象，不能比窗口活得久。
@@ -698,11 +735,121 @@ async function createWindow() {
 }
 
 /**
+ * A154：读「关闭窗口」偏好。
+ *
+ * 与设置页读的是同一份 `preferences.json`（详情见 `src/closeBehavior.ts`）。
+ * 读不到 / 值坏了一律按默认 `quit` —— 与界面上的默认选项保持一致，不能让
+ * 一个坏字段把用户困在「点了关闭没反应」里。
+ */
+function readCloseBehavior() {
+  try {
+    return loadPrefs().closeBehavior ?? 'quit';
+  } catch {
+    return 'quit' as const;
+  }
+}
+
+/** 还在跑的 Agent 任务数。读不到（旧版/异常）就当 0，不因统计失败而挡住关闭。 */
+function runningTaskCount(): number {
+  try {
+    return runHub.activeRuns().length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * 真正关闭窗口。
+ *
+ * 刻意**不是** `app.quit()`：关闭窗口的语义要延续 A154 之前的样子 ——
+ * Windows 上 `window-all-closed` 随后退出应用，macOS 上应用留在 Dock。
+ * 直接 quit 会把 macOS 的语义一起改掉。
+ *
+ * `isQuitting` 只在这一下放行：`win.close()` 会同步触发我们自己的 `close`
+ * 拦截，不放行就会「确认了退出却弹回对话框」。随即复位，是为了 macOS
+ * 上窗口关了但进程还在时，下次开窗仍能正常询问。
+ */
+function closeWindowNow() {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) {
+    app.quit();
+    return;
+  }
+  isQuitting = true;
+  win.close();
+  setImmediate(() => {
+    isQuitting = false;
+  });
+}
+
+/**
+ * A154：关闭窗口前的决策与执行。
+ *
+ * 分支表在 `electron/close-policy.ts`（纯函数，打靶脚本能穷举）；这里只负责
+ * 把「隐藏 / 关闭 / 确认 / 询问」翻译成真实动作。
+ *
+ * 为什么用**原生**对话框而不是让页面弹 TDesign：这是退出路径，渲染进程
+ * 恰好卡住时也必须给出选择；而且用户点的是系统画出来的关闭按钮，原生框
+ * 与它属于同一层语义。
+ */
+async function handleCloseRequest(win: BrowserWindow) {
+  const running = runningTaskCount();
+  const action = decideCloseAction({
+    behavior: readCloseBehavior(),
+    runningTasks: running,
+    trayAvailable: !!tray,
+  });
+
+  if (action === 'hide') {
+    win.hide();
+    return;
+  }
+  if (action === 'close') {
+    closeWindowNow();
+    return;
+  }
+
+  if (action === 'confirm-quit') {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: '还有任务在运行',
+      message: `还有 ${running} 个任务正在运行。`,
+      detail: '退出会立即中止这些任务，未完成的内容可能丢失。',
+      buttons: ['仍然退出', '取消'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response === 0) closeWindowNow();
+    return;
+  }
+
+  // ask：三选一。带了运行中的任务时，把「直接退出」的代价写在同一句里，
+  // 不另开一个确认框 —— 否则用户要先答「怎么关」再答「确定吗」，很烦。
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'question',
+    title: '关闭窗口',
+    message: running > 0 ? `还有 ${running} 个任务在运行。` : '要退出应用，还是最小化到托盘？',
+    detail:
+      running > 0
+        ? '最小化到托盘会继续执行这些任务；直接退出会中止它们。'
+        : '最小化到托盘后，单击托盘图标可以重新打开窗口。',
+    buttons: ['最小化到托盘', '直接退出', '取消'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+  });
+  if (response === 0) win.hide();
+  else if (response === 1) closeWindowNow();
+}
+
+/**
  * 系统托盘（系统提示栏）里的应用图标。
  *
- * 为什么现在才加：这个应用此前没有任何托盘驻留。**刻意不做「关闭窗口
- * 缩到托盘」** —— 那会改变退出语义（用户关了窗口却不知道进程还活着），
- * 托盘只做两件事：单击显示/聚焦窗口，右键菜单（显示 / 退出）。
+ * 托盘从一开始就有，但「关闭窗口缩到托盘」在 A154 之前是**刻意不做**的：
+ * 那会改变退出语义（用户关了窗口却不知道进程还活着）。A154 把它做成
+ * 设置里的可选项（默认仍是直接退出），托盘也因此多了一个真实用途。
+ * 托盘本身始终只做两件事：单击显示/聚焦窗口，右键菜单（显示 / 退出）。
  *
  * 图标用 .ico 而不是 .png：Windows 托盘按 DPI 取 16/20/24/32 四档，
  * ico 是多尺寸容器，系统自己挑最接近的那枚；塞单张 png 会被系统强行
@@ -785,6 +932,10 @@ app.on('window-all-closed', () => {
 // 退出前回收 ACP 等长驻子进程（ACP 类 agent 是常驻的 Python 进程，
 // 不主动杀会变成孤儿进程留在系统里）
 app.on('before-quit', () => {
+  // A154：真正的退出从这里开始（托盘菜单「退出」、系统关机、Cmd+Q）。
+  // 置位后 `close` 拦截全部放行 —— 否则「退出」会被自己的确认框挡住，
+  // 系统关机时更会变成关不掉的拒绝关机。
+  isQuitting = true;
   try {
     registry.disposeAll();
   } catch (err) {

@@ -94,6 +94,10 @@ declare module '@tencent-ai/agent-sdk' {
 
   export interface AuthenticateOptions {
     environment?: 'external' | 'internal' | (string & {});
+    /** A155：显式端点；缺省由 CLI 按 environment 自己选 */
+    endpoint?: string;
+    /** A155：注入给 CLI 子进程的环境变量（SDK 会与 process.env 合并） */
+    env?: Record<string, string>;
     /** 只有「未登录」时才会被调用，因此回调触发本身就是未登录的信号 */
     onAuthUrl?: (state: AuthState) => void | Promise<void>;
     [key: string]: unknown;
@@ -158,6 +162,12 @@ declare module '@tencent-ai/agent-sdk' {
     systemPrompt?: string;
     permissionMode?: string;
     canUseTool?: CanUseTool;
+    /** A155：产品环境（WorkBuddy 国内版是 internal） */
+    environment?: 'external' | 'internal' | (string & {});
+    /** A155：显式端点，缺省由 CLI 按 environment 自己选 */
+    endpoint?: string;
+    /** A155：注入给 CLI 子进程的环境变量（与 process.env 合并） */
+    env?: Record<string, string>;
     /** 显式端口等透传参数（对象 → `--flag value`） */
     extraArgs?: Record<string, string | null>;
     [key: string]: unknown;
@@ -172,6 +182,9 @@ declare module '@tencent-ai/agent-sdk' {
       systemPrompt?: string;
       permissionMode?: string;
       canUseTool?: CanUseTool;
+      environment?: 'external' | 'internal' | (string & {});
+      endpoint?: string;
+      env?: Record<string, string>;
       extraArgs?: Record<string, string | null>;
       [key: string]: unknown;
     }

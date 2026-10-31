@@ -337,6 +337,7 @@ export function NewGroupDialog({
                             id={a.id}
                             name={nameOf(a)}
                             icon={a.icon}
+                            src={a.logoUrl}
                             color={a.color}
                             availability={a.status.availability}
                             size={32}
@@ -412,6 +413,7 @@ export function NewGroupDialog({
                       id={id}
                       name={name}
                       icon={a?.icon}
+                      src={a?.logoUrl}
                       color={a?.color}
                       availability={a?.status.availability}
                       size={32}

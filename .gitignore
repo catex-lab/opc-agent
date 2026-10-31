@@ -32,6 +32,11 @@ Thumbs.db
 # 设计预览页（preview-thinking.html）的截图产物，同理。
 .preview-shots/
 
+# 临时探针目录：会话里为了截图/量 DOM 现写的 .cjs/.ps1 与截图。
+# 里面常带本机绝对路径（如 C:\Users\<name>\AppData\Roaming\npm\node_modules），
+# 而且随时会被整批重写 —— 不是源码，不该进版本库。
+.uploads/
+
 # ── data/ 整个目录都是本机运行时数据，一律不进版本库 ──────────────────
 # 逐项说明（漏任何一条都可能把隐私推上远端）：
 #   chat.db / *.db-shm / *.db-wal  sessions / messages 真实对话内容

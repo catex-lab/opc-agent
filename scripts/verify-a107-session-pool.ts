@@ -31,6 +31,7 @@ import { configKeyOf, configDiff } from '../server/agents/adapters/sdk.js';
 import { SdkAdapter } from '../server/agents/adapters/sdk.js';
 import { AsyncQueue, PendingReplies } from '../server/agents/channel.js';
 import type { SendContext } from '../server/agents/types.js';
+import type { AgentDefinition } from '../server/agents/definitions.js';
 
 // ============= 基础设施 =============
 
@@ -335,7 +336,11 @@ async function l2() {
   // 让 SDK 走 node 而不是 Electron 的 process.execPath
   process.env.ELECTRON_RUN_AS_NODE = '';
 
-  const adapter = new SdkAdapter({ id: 'workbuddy', name: 'WorkBuddy' });
+  // A155：构造器改成接收完整 AgentDefinition（要读 def.sdk 的产品参数）。
+  // 这个脚本只跑桩 CLI 的池逻辑，不关心产品参数，所以最小化给一个 descriptor。
+  const adapter = new SdkAdapter({
+    descriptor: { id: 'workbuddy', name: 'WorkBuddy' },
+  } as AgentDefinition);
 
   // ---- 2-1 进程复用：两条消息只起一个进程 ----
   clearLog();
@@ -650,7 +655,14 @@ async function l3() {
       say('3-2 预热阶段没有发送消息', !readLog().some((l) => l.event === 'user'));
       if (warmStarted) {
         const evWarm = await sseChat(port, warmSid, 'first');
-        say('3-2 首条消息有回复', evWarm.some((e) => e.type === 'block_delta'));
+        // 与 3-1 同理：首段文本随 block_open 的快照下发，没有对应的 block_delta。
+        // 原来这里只认 block_delta，workbuddy 未就绪时 3-2 整段被跳过所以没暴露；
+        // A155 修好 WorkBuddy 的登录探测后这段开始真跑，断言才红。
+        say(
+          '3-2 首条消息有回复',
+          textOf(evWarm).includes('stub-reply-1'),
+          types(evWarm).slice(0, 120)
+        );
         say(
           '3-2 首条消息复用预热的进程（starts 仍为 1）',
           starts(readLog()).length === 1,

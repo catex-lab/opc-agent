@@ -140,9 +140,15 @@ async function newPage({ dark = false, delay = 0, groupFlags = null, profilePut 
           const custom = profilePut(body);
           if (custom) return route.fulfill(custom);
         }
-        return json({ ok: true, profile: { nickname: body.nickname ?? '', avatar: body.avatar ?? '' } });
+        // 回包形状必须与真实接口一致：客户端读的是**顶层**字段
+        // （`{ok:true, profile:{...}}` 会让界面把刚保存的值又清空）。
+        return json({
+          nickname: body.nickname ?? '',
+          avatar: body.avatar ?? '',
+          avatarImage: body.avatarImage ?? '',
+        });
       }
-      return json({ nickname: '', avatar: '' });
+      return json({ nickname: '', avatar: '', avatarImage: '' });
     }
     if (/\/api\/sessions\/[^/]+$/.test(url)) {
       const id = url.split('/').pop().split('?')[0];
@@ -550,9 +556,10 @@ console.log('\n[6] 我的资料：PUT 落库、字段收敛、失败回滚');
   const avPut = puts.find(p => 'avatar' in p);
   ok(!!avPut && avPut.avatar === 'cat', '点预设发出 PUT', JSON.stringify(avPut));
 
-  // 字段只认 nickname / avatar：多带的字段是接口漏洞
-  const stray = puts.find(p => Object.keys(p).some(k => k !== 'nickname' && k !== 'avatar'));
-  ok(!stray, 'PUT 只带 nickname / avatar 两个字段', stray ? JSON.stringify(stray) : 'clean');
+  // 字段只认 nickname / avatar / avatarImage（A160 图片头像）：多带的字段是接口漏洞
+  const allowed = ['nickname', 'avatar', 'avatarImage'];
+  const stray = puts.find(p => Object.keys(p).some(k => !allowed.includes(k)));
+  ok(!stray, 'PUT 只带 nickname / avatar / avatarImage 三个字段', stray ? JSON.stringify(stray) : 'clean');
 
   // 失败回滚：PUT 500 → 输入框回到原值 + 错误提示（不能静默丢字段）
   const { ctx: ctx2, page: page2 } = await newPage({

@@ -58,7 +58,17 @@ export interface ScenarioTemplate {
   needsCwd?: boolean;
   /** 图标键，由 UI 映射到具体图标组件（避免数据层耦合 UI 库） */
   icon: string;
-  /** 主题色 */
+  /**
+   * 主题色。
+   *
+   * A159：值是 `var(--tc-scn-*)` 令牌，不是裸 hex —— 场景色在这里既做
+   * chip 文字色也做卡片选中底衬，裸 hex 只能在浅色主题下成立（深色下
+   * 蓝 / 绿对背景只有 2.2~3.5:1）。令牌的浅/深两档都由
+   * `verify:uiux-tokens` 算过对比度。
+   *
+   * ⚠️ UI 侧**不要**再拼 `${color}1f` 这类十六进制后缀作底色，改用
+   * `color-mix(in srgb, ${color} N%, transparent)`。
+   */
   color: string;
 }
 
@@ -74,7 +84,7 @@ export const SCENARIOS: ScenarioTemplate[] = [
     recommendedAgentId: 'workbuddy',
     permissionMode: 'default',
     icon: 'briefcase',
-    color: '#0052D9',
+    color: 'var(--tc-scn-work)',
   },
   {
     id: 'qa',
@@ -86,7 +96,7 @@ export const SCENARIOS: ScenarioTemplate[] = [
     recommendedAgentId: 'workbuddy',
     permissionMode: 'plan',
     icon: 'help-circle',
-    color: '#0594FA',
+    color: 'var(--tc-scn-qa)',
   },
   {
     id: 'dev',
@@ -101,7 +111,7 @@ export const SCENARIOS: ScenarioTemplate[] = [
     permissionMode: 'acceptEdits',
     needsCwd: true,
     icon: 'wrench',
-    color: '#0E7A5F',
+    color: 'var(--tc-scn-dev)',
   },
   {
     id: 'code',
@@ -119,7 +129,7 @@ export const SCENARIOS: ScenarioTemplate[] = [
     permissionMode: 'acceptEdits',
     needsCwd: true,
     icon: 'code',
-    color: '#534AB7',
+    color: 'var(--tc-scn-code)',
   },
   {
     id: 'write',
@@ -131,7 +141,7 @@ export const SCENARIOS: ScenarioTemplate[] = [
     recommendedAgentId: 'workbuddy',
     permissionMode: 'plan',
     icon: 'pen-line',
-    color: '#834EC2',
+    color: 'var(--tc-scn-write)',
   },
   {
     id: 'image',
@@ -143,7 +153,7 @@ export const SCENARIOS: ScenarioTemplate[] = [
     recommendedAgentId: 'hermes',
     permissionMode: 'default',
     icon: 'image',
-    color: '#D54941',
+    color: 'var(--tc-scn-image)',
   },
 ];
 

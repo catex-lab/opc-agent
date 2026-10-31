@@ -189,6 +189,21 @@ console.log('\n[2] 代码块：A55 后按钮精简');
   const dur = await page.locator('text=1.2s').count();
   ok(dur > 0, '工具卡显示耗时 1.2s', String(dur));
 
+  // A159：代码块右上角复制按钮背景透明。
+  // 按钮在 `t-chat-md-content` 的 shadow DOM 里，且 **悬停代码块时才创建**
+  // （Cherry 每次 hover 重建），所以必须先 hover 再读计算样式。
+  await page.locator('.chat-markdown t-chat-md-content pre').first().hover();
+  await page.waitForTimeout(400);
+  const copyBg = await page.evaluate(() => {
+    const hosts = Array.from(document.querySelectorAll('.chat-markdown t-chat-md-content'));
+    for (const host of hosts) {
+      const btn = host.shadowRoot?.querySelector('.cherry-copy-code-block');
+      if (btn) return getComputedStyle(btn).backgroundColor;
+    }
+    return null;
+  });
+  ok(copyBg === 'rgba(0, 0, 0, 0)', 'A159 复制按钮背景透明', copyBg ?? '按钮未出现');
+
   await ctx.close();
 }
 
