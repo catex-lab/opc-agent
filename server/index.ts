@@ -1719,7 +1719,6 @@ app.delete("/api/sessions/:sessionId/messages", (req, res) => {
 
 /**
  * A33 分支：把「截至某条消息」的会话复制成一个新会话。
-
  *
  * 复制的是**会话元数据 + 截至该消息的全部消息**（含 blocks / tool_calls /
  * images / 成本统计），在新会话 id 下重新落一遍。`sdk_session_id` 不复制：
