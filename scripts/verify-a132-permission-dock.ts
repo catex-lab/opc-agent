@@ -75,11 +75,34 @@ eq(sortPendingPermissions([], 'S1'), [], '空队列不炸');
 
 section('[5] 源码契约：expiresAt 只能是「有兜底的适配器才有」');
 const src = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8');
-for (const f of ['../server/agents/adapters/sdk.ts', '../server/agents/adapters/cli.ts']) {
+/**
+ * 两种**都合法**的形态（2026-11-01 修假红）：
+ *
+ *   ① 适配器自己算绝对时间：`expiresAt: Date.now() + PERMISSION_TIMEOUT`（cli.ts）
+ *   ② 把相对时长交给共用桥接，由桥接算绝对时间：`expiresInMs: PERMISSION_TIMEOUT`
+ *      （sdk.ts / claude-sdk.ts 走 createCanUseToolBridge）
+ *
+ * 原来只认 ①，于是 SDK 通道在改成走桥接之后这条一直是红的 —— 而链路本身
+ * 是通的（`sdkApproval.ts` 里 `expiresAt: Date.now() + expiresInMs`）。
+ * 那是一条**假红**：断言绑死了实现的字面写法，而不是绑契约。
+ */
+for (const f of [
+  '../server/agents/adapters/sdk.ts',
+  '../server/agents/adapters/claude-sdk.ts',
+  '../server/agents/adapters/cli.ts',
+]) {
   const s = src(f);
-  ok(/type: 'permission_request'[\s\S]{0,900}?expiresAt: Date\.now\(\) \+ PERMISSION_TIMEOUT/.test(s),
-    `${f.split('/').pop()} 入队时带 expiresAt`);
+  const own = /type: 'permission_request'[\s\S]{0,900}?expiresAt: Date\.now\(\) \+ PERMISSION_TIMEOUT/.test(s);
+  const delegated = /createCanUseToolBridge\([\s\S]{0,400}?expiresInMs: PERMISSION_TIMEOUT/.test(s);
+  ok(own || delegated, `${f.split('/').pop()} 入队时带超时（自己算 expiresAt，或交给桥接算）`);
 }
+// 肯定式配套：桥接内部真的把「相对时长」换成了「绝对时间」。
+// 没有这一条，上面那个 delegated 分支在桥接被删空时同样是绿的。
+const bridge = src('../server/agents/adapters/sdkApproval.ts');
+ok(
+  /expiresAt: Date\.now\(\) \+ expiresInMs/.test(bridge),
+  '桥接把 expiresInMs 换成绝对的 expiresAt（否则倒计时永远是假的）'
+);
 // 反向探针：ACP 没有超时兜底，给它塞一个 expiresAt 就是在撒谎
 const acp = src('../server/agents/adapters/acp.ts');
 ok(!/type: 'permission_request'[\s\S]{0,900}?expiresAt/.test(acp), 'ACP 不入队 expiresAt（它真没有超时）');
