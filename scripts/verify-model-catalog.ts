@@ -660,8 +660,18 @@ function read(rel: string): string {
   );
 
   const appSrc = read('src/App.tsx');
+  /* 认「这个 effect 的依赖数组里同时有 currentAgentId 与 modelsEpoch」，
+     **不绑死字面写法**。
+     A162 给这个 effect 补了 `setSelectedModel` 依赖（切 Agent 时要一并清掉
+     上一个 Agent 的选中值），实际是 `[currentAgentId, modelsEpoch, setSelectedModel]`。
+     旧断言写死了 `[currentAgentId, modelsEpoch]` 的精确文本，于是从 `e452f38`
+     起这条一直是红的 —— 链路是通的，红的是断言绑死了形式。
+     （同类问题在 A162 修过一次：`verify:a132` 只认 `expiresAt: Date.now() + …`
+      这一种写法，改走桥接后就红。） */
+  const modelEffectDeps =
+    (appSrc.match(/\},\s*\[[^\]]*modelsEpoch[^\]]*\]\s*\)/g) ?? []).join('\n');
   ok(
-    /\[currentAgentId, modelsEpoch\]/.test(appSrc),
+    /currentAgentId/.test(modelEffectDeps),
     '刷新：模型列表 effect 必须依赖 modelsEpoch（否则刷完回到会话菜单还是旧的）'
   );
   ok(

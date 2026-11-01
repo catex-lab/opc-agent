@@ -144,6 +144,40 @@ try {
   ok((zcode.models ?? []).some(m => /自定义 provider/.test(m.description ?? '')),
     '[2] 自定义 provider 的真实模型名在');
 
+  /* 「当前用的那条」必须能在清单里被指出来。
+     zcode 的清单（config.json 的内置项 + provider_config 的自定义模型）与
+     `currentModel`（rollout 里最近真正跑过的模型）是**两套命名空间**：
+     本机实测 currentModel = GLM-5.3-Flash 挂在 `account:zai-start-plan` 套餐上，
+     而清单 13 条里一条都不是它。后端不补这一行，界面上十几行就**一条高亮都没有**，
+     用户只能说「这些好像都不是我在用的」。
+     这条断言钉的是**契约**（清单必须能指认当前模型），不依赖本机清单里恰好有没有它。 */
+  const zcodeIds = (zcode.models ?? []).map(m => m.modelId);
+  ok(!!zcode.defaultModel && zcodeIds.includes(zcode.defaultModel),
+    '[2] 清单必须包含当前模型（否则界面一条「当前」都标不出来）',
+    `${zcode.defaultModel} ∈ ${zcodeIds.length} 条`);
+
+  /* 补进来的那一行要**明说**它不在配置清单里 —— 它是「事实」不是「可选项」，
+     不许让用户以为能在这里切过去。 */
+  const currentRow = (zcode.models ?? []).find(m => m.modelId === zcode.defaultModel);
+  if (currentRow && currentRow.provider === 'runtime') {
+    ok(/不在\s*ZCode\s*配置的清单里|不在配置清单里/.test(currentRow.description ?? ''),
+      '[2] 补进来的「当前」行明说它不在配置清单里', String(currentRow.description ?? '').slice(0, 40));
+    ok(currentRow.providerName === '最近一次运行',
+      '[2] 「当前」行标了来源（最近一次运行）', String(currentRow.providerName ?? ''));
+  }
+
+  /* 套餐状态是**快照**，过期就不许冒充事实。
+     本机实测那份 `coding-plan-cache.json` 的 `entryStatus.updatedAt` 停在 2026-09-18，
+     而用户 2026-10-30 才领的 Weekend Build —— 原样输出就是「未订阅该套餐」，
+     真相只是「照片 44 天前拍的」。
+     这里钉源码（接口层拿不到 stale 标志）：降级逻辑一旦被删掉就红。 */
+  const modelsSrc = fs.readFileSync(path.join(ROOT, 'server/agents/agentConfigModels.ts'), 'utf8');
+  ok(/entryStatus\?\.updatedAt/.test(modelsSrc),
+    '[2] 套餐状态读快照时间（entryStatus.updatedAt）');
+  ok(/PLAN_SNAPSHOT_STALE_MS/.test(modelsSrc) && /planStale/.test(modelsSrc),
+    '[2] 过期快照降级为「状态未知」（不拿旧照片冒充未订阅）');
+  ok(/缓存快照/.test(modelsSrc), '[2] 降级后仍把上次看到的样子留在括号里');
+
   // 对照：既没目录也没配置文件时，必须维持 unknown（不许假装有清单）。
   //
   // ⚠️ 这里原来用的是 gemini。P3 之后 gemini 归到 `manual`（它接受 --model，
@@ -282,11 +316,37 @@ try {
   // 也不用 force:true（那等于绕过真实命中测试，证明不了什么）。
   // 正确做法是用**真实鼠标坐标**打过去 —— 命中测试照跑，事件照发，
   // 如果真绑了 onClick 就会生效。这正是要验证的「点了没反应」。
-  const firstRow = rows.first();
-  const firstId = await firstRow.getAttribute('data-model-id');
-  ok((await firstRow.getAttribute('aria-disabled')) === 'true', '[3] 只读行标了 aria-disabled（读屏器也知道点不动）');
-  const box = await firstRow.boundingBox();
-  if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  /* ⚠️ 不能假设「DOM 第一行」还在可视区里。
+     `data-model-row` 是**选中**标记（`selected ? '1' : '0'`），打开浮层时那段
+     effect 会把 `[data-model-row="1"]` 滚进可见区 —— 只读清单以前永远没有选中项
+     （currentId 恒空），所以它一直是死代码、从不滚动；一旦「当前」行补进清单
+     （本轮修复），列表就真的滚到那一行了，第一行被顶出容器（实测 y=89 vs 容器
+     441），点击坐标落在浮层外 ⇒ 浮层被关掉，后面几条断言全被带红。
+     所以：先挑一行**确实落在列表可视区内**的，再用真实坐标打，并用
+     elementFromPoint 自证这一击落在该行上（项目纪律：不许 force、不许派事件）。 */
+  const listBox = await page.locator('[data-model-popup-list]').boundingBox();
+  const visible = [];
+  for (let i = 0; i < rowCount; i++) {
+    const b = await rows.nth(i).boundingBox();
+    if (!b || !listBox) continue;
+    const cy = b.y + b.height / 2;
+    if (cy > listBox.y + 4 && cy < listBox.y + listBox.height - 4) visible.push({ i, b });
+  }
+  ok(visible.length > 0, '[3] 列表里至少有一行真的落在可视区内', `${visible.length}/${rowCount}`);
+
+  const hitRow = visible[0];
+  const hitRowId = await rows.nth(hitRow.i).getAttribute('data-model-id');
+  ok((await rows.nth(hitRow.i).getAttribute('aria-disabled')) === 'true',
+    '[3] 只读行标了 aria-disabled（读屏器也知道点不动）');
+  const tx = hitRow.b.x + hitRow.b.width / 2;
+  const ty = hitRow.b.y + hitRow.b.height / 2;
+  const hitId = await page.evaluate(([x, y]) => {
+    const el = document.elementFromPoint(x, y);
+    return el?.closest('[data-model-id]')?.getAttribute('data-model-id') ?? '';
+  }, [tx, ty]);
+  ok(hitId === hitRowId, '[3] 点击坐标确实落在该行上（命中测试自证）', `${hitId} vs ${hitRowId}`);
+
+  await page.mouse.click(tx, ty);
   await page.waitForTimeout(300);
   ok((await popup.count()) === 1, '[3] 点只读行不会关掉浮层（没有「选中」这个动作）');
   ok((await trigger.innerText()).trim() === triggerText, '[3] 点只读行不会改触发器上的文字');
@@ -297,7 +357,19 @@ try {
   const currentId = (await currentRows.first().getAttribute('data-model-id')) ?? '';
   ok(currentId === String(zcode.defaultModel), '[3] 「当前」那条 = 后端给的最近使用模型',
     `${currentId} vs ${zcode.defaultModel}`);
-  ok(!!firstId && currentId.length > 0, '[3] 行 id 非空（否则上面几条是假绿）');
+
+  /* 打开浮层时，「当前」那行必须被滚进可见区 —— 否则用户要在一长串里自己找。
+     这条同时是上面坐标问题的**产品侧**判据：不是「闸门绕开了滚动」，
+     而是「滚动本身是对的」。 */
+  const curBox = await currentRows.first().boundingBox();
+  ok(
+    !!curBox && !!listBox && curBox.y >= listBox.y - 1 &&
+      curBox.y + curBox.height <= listBox.y + listBox.height + 1,
+    '[3] 打开浮层时「当前」那行被滚进可见区',
+    curBox && listBox ? `row ${Math.round(curBox.y)} vs list ${Math.round(listBox.y)}..${Math.round(listBox.y + listBox.height)}` : ''
+  );
+
+  ok(!!hitRowId && currentId.length > 0, '[3] 行 id 非空（否则上面几条是假绿）');
 
   ok(pageErrors.length === 0, '[3] 没有未捕获异常', pageErrors.slice(0, 2).join(' | '));
 
@@ -380,7 +452,14 @@ try {
   const target = page2.locator(sel(clickId));
   ok((await target.count()) === 1, '[5] 目标行存在（未验证那条）', clickId);
   const clickRow = async loc => {
+    /* 先真的把它滚进可视区（用户也是这么做的：滚轮/触摸板）。
+       列表有 22 条、容器 max-height 320，目标可能落在可视区外 ——
+       不滚动直接 `boundingBox()` 会一直等一个稳定可见的位置直到超时。
+       注意仍然用**真实鼠标坐标**点击，不用 `loc.click()`（那会走可操作性
+       检查，对 aria-disabled 的行直接判失败）。 */
+    await loc.scrollIntoViewIfNeeded();
     const b = await loc.boundingBox();
+    if (!b) throw new Error(`目标行取不到坐标：${await loc.getAttribute('data-model-id')}`);
     await page2.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
   };
 

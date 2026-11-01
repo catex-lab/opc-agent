@@ -29,7 +29,7 @@
 import fs from 'fs';
 import path from 'path';
 import { agentAcceptsModel } from './definitions.js';
-import { PLAN_REASON_LABEL, PLAN_STATUS_LABEL } from './agentConfigModels.js';
+import { PLAN_REASON_LABEL, PLAN_SNAPSHOT_STALE_MS, PLAN_STATUS_LABEL } from './agentConfigModels.js';
 
 /** 身份：能读到的账号信息。读不到的字段一律不填 */
 export interface AccountIdentity {
@@ -99,7 +99,9 @@ export interface AgentAccountProbe {
   switchHint?: string;
 }
 
-const STALE_MS = 24 * 60 * 60 * 1000;
+/* 套餐快照的有效期。**不再各写一份字面量**：`readZcodeModels` 读的是同一份
+   `coding-plan-cache.json`，两处对「这张照片还算不算事实」必须给同一个答案。 */
+const STALE_MS = PLAN_SNAPSHOT_STALE_MS;
 
 /** config.json 里的 `systemDisabledReason` —— 与 coding-plan-cache 的 reason 不是同一套 */
 const SYSTEM_DISABLED_LABEL: Record<string, string> = {

@@ -58,6 +58,19 @@ export const PLAN_REASON_LABEL: Record<string, string> = {
   coding_plan_not_authenticated: '未登录',
 };
 
+/**
+ * 套餐状态快照的有效期（与 `accountProbe.ts` 的 `STALE_MS` 同值）。
+ *
+ * 两处读的是**同一份** `coding-plan-cache.json` 的 `entryStatus.updatedAt`，
+ * 对「这张照片还算不算事实」必须给同一个答案 —— 所以常量放在这里由那边复用，
+ * 而不是各写一份字面量。
+ *
+ * 为什么必须有这个判定：本机实测那份快照停在 **2026-09-18**，而用户 2026-10-30
+ * 才领的 Weekend Build，之后一直在用套餐里的 `GLM-5.3-Flash`。原样输出就是
+ * 「你未订阅该套餐」，而真相只是「照片是 44 天前拍的，里面当然没有」。
+ */
+export const PLAN_SNAPSHOT_STALE_MS = 24 * 60 * 60 * 1000;
+
 function readJson(file: string): any | null {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -142,6 +155,14 @@ export function readZcodeModels(): AgentConfigModels | null {
     string,
     { status?: string; reason?: string }
   >;
+  /* 快照时间必须**先**算出来：下面每一行都要看自己读的是不是一张旧照片。
+     （A163 在 `accountProbe.ts` 里踩过同一个坑：`stale` 在函数末尾才算，
+     循环里根本不知道自己拿的是 44 天前的缓存。） */
+  const snapshotAt = planCache?.entryStatus?.updatedAt;
+  const planStale =
+    typeof snapshotAt === 'number' && Date.now() - snapshotAt > PLAN_SNAPSHOT_STALE_MS;
+  const planSnapshotDate =
+    typeof snapshotAt === 'number' ? new Date(snapshotAt).toISOString().slice(0, 10) : '';
   const builtinRows: ModelOption[] = [];
   for (const [id, value] of Object.entries(builtin)) {
     if (!id.startsWith('builtin:')) continue;
@@ -153,8 +174,13 @@ export function readZcodeModels(): AgentConfigModels | null {
     const isPlan = /-(coding|start)-plan$/.test(key);
     const status = st?.status ? PLAN_STATUS_LABEL[st.status] ?? st.status : '';
     const reason = st?.reason ? PLAN_REASON_LABEL[st.reason] ?? st.reason : '';
+    /* 过期快照不许冒充事实。降级成「状态未知」，把「上次看到的样子」
+       降级进括号里 —— 用户既知道我们不知道，也知道上次看到的是什么。 */
+    const shown = [status, reason].filter(Boolean).join(' · ');
     const detail = isPlan
-      ? ['套餐', status || '状态未知', reason].filter(Boolean).join(' · ')
+      ? planStale && st?.status
+        ? ['套餐', '状态未知', `缓存快照（${planSnapshotDate} 显示「${shown}」）`].join(' · ')
+        : ['套餐', status || '状态未知', reason].filter(Boolean).join(' · ')
       : 'API Key 入口';
     builtinRows.push({
       modelId: id,
@@ -203,9 +229,28 @@ export function readZcodeModels(): AgentConfigModels | null {
 
   if (models.length === 0) return null;
 
+  const currentModel = readZcodeLastModel(v2Dir);
+
+  /* 「当前用的那条」必须能在清单里被指出来 —— 否则界面上十几行**一条高亮都没有**，
+     用户只能看到「这些好像都不是我在用的」，却说不出到底在用哪个。
+     实测：rollout 里跑的是套餐的 `GLM-5.3-Flash`（provider `account:zai-start-plan`），
+     而清单只覆盖 config.json 的 6 个内置项 + provider_config 的自定义模型 ——
+     两套命名空间本来就不重叠，`GLM-5.3-Flash` 一条都不在里面。
+     所以补一行，并**明说它不在配置清单里**：它是「事实」不是「可选项」，
+     只读清单里点不动，不会让用户以为能在这里切过去。 */
+  if (currentModel && !seen.has(currentModel)) {
+    models.push({
+      modelId: currentModel,
+      name: currentModel,
+      description: '当前使用 · 来自最近一次运行，不在 ZCode 配置的清单里',
+      provider: 'runtime',
+      providerName: '最近一次运行',
+    });
+  }
+
   return {
     models,
-    currentModel: readZcodeLastModel(v2Dir),
+    currentModel,
     note: 'ZCode 不支持命令行切换模型：模型在它自己的设置里选，这里只读取展示。',
   };
 }
