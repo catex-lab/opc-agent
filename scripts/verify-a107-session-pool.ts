@@ -632,9 +632,20 @@ async function l3() {
     // 这条依赖 workbuddy 的探测状态是 ready —— 预热刻意只在「确认可用」时
     // 启动（未登录/未安装不该白起 24MB 进程）。本机没登录时按「跳过」处理，
     // 不伪装成通过：那不是代码问题，是环境没到那一步。
-    const ready = await waitAgentReady(port, 'workbuddy', 20_000);
-    if (!ready) {
-      console.log('[A107] ⊘ 3-2 预热跳过：workbuddy 状态不是 ready（未登录/网络受限），按设计不预热');
+    const probe = await waitAgentReady(port, 'workbuddy', 45_000);
+    if (probe.state === 'not-ready') {
+      skipped.push(`3-2 预热后首条消息（workbuddy 状态 ${probe.availability}）`);
+      console.log(
+        `[A107] ⊘ 3-2 跳过：workbuddy 状态是 ${probe.availability}（未登录/网络受限），按设计不预热`
+      );
+    } else if (probe.state === 'unknown') {
+      /* 探测没给出结论 ≠ 环境未就绪。把它当跳过，就是把「没人知道」写成
+         「跑不了」—— A109 这条闸门就是这么长期假绿的。所以这里必须红。 */
+      say(
+        '3-2 前置：Agent 状态可判读（不是超时仍 unknown）',
+        false,
+        `45s 内仍是 ${probe.availability ?? 'unknown'}`
+      );
     } else {
       clearLog();
       const warmSid = (
@@ -656,8 +667,7 @@ async function l3() {
       if (warmStarted) {
         const evWarm = await sseChat(port, warmSid, 'first');
         // 与 3-1 同理：首段文本随 block_open 的快照下发，没有对应的 block_delta。
-        // 原来这里只认 block_delta，workbuddy 未就绪时 3-2 整段被跳过所以没暴露；
-        // A155 修好 WorkBuddy 的登录探测后这段开始真跑，断言才红。
+        // 原来这里只认 block_delta，workbuddy 未就绪时 3-2 整段被跳过所以没暴露。
         say(
           '3-2 首条消息有回复',
           textOf(evWarm).includes('stub-reply-1'),
@@ -668,6 +678,10 @@ async function l3() {
           starts(readLog()).length === 1,
           `starts=${starts(readLog()).length}`
         );
+      } else {
+        // 预热没起进程 ⇒ 上面两条断言根本没跑。以前这里静默跳过，
+        // 报告里看不出「A109 的那两条今天没验」。
+        skipped.push('3-2 预热后首条消息（预热没起进程，两条断言未执行）');
       }
     }
   } finally {
@@ -676,9 +690,26 @@ async function l3() {
   }
 }
 
-/** 轮询 /api/agents 直到某个 Agent 的探测结果明确（不是 unknown） */
-async function waitAgentReady(port: number, agentId: string, timeoutMs: number): Promise<boolean> {
+/**
+ * 轮询 /api/agents 直到某个 Agent 的探测结果明确。
+ *
+ * A109 修正（2026-11-01）：返回**三态**，不再是一个 boolean。
+ *
+ * 原来的写法是「超时 = false = 不可用」，于是两种完全不同的情况被混成一种：
+ *   · Agent 明确说 needs-auth / not-installed  → 真的跑不了，跳过合理
+ *   · 超时后仍是 unknown                        → **我们不知道**。跳过等于把
+ *     「没人知道」说成「环境未就绪」，一条从未执行过的断言就这样伪装成绿。
+ *
+ * 顺带把超时从 20s 提到 45s：本机实测 workbuddy 要 **27 秒**才从 unknown
+ * 变成 needs-auth，20s 必然超时 —— 即便它将来 ready 了，也会被当成不可用。
+ */
+async function waitAgentReady(
+  port: number,
+  agentId: string,
+  timeoutMs: number
+): Promise<{ state: 'ready' | 'not-ready' | 'unknown'; availability?: string }> {
   const deadline = Date.now() + timeoutMs;
+  let last: string | undefined;
   while (Date.now() < deadline) {
     try {
       const data = (await (await fetch(`http://127.0.0.1:${port}/api/agents`)).json()) as {
@@ -686,14 +717,15 @@ async function waitAgentReady(port: number, agentId: string, timeoutMs: number):
       };
       const info = data.agents?.find((a) => a.id === agentId);
       const availability = info?.status?.availability;
-      if (availability === 'ready') return true;
-      if (availability && availability !== 'unknown') return false;
+      last = availability;
+      if (availability === 'ready') return { state: 'ready', availability };
+      if (availability && availability !== 'unknown') return { state: 'not-ready', availability };
     } catch {
       /* 还没起来 */
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  return false;
+  return { state: 'unknown', availability: last };
 }
 
 async function fetchJson(url: string, method: string, body: unknown) {
@@ -725,6 +757,14 @@ async function sseChat(port: number, sessionId: string, message: string) {
 // ============= 主控 =============
 
 let failed = 0;
+/**
+ * 被跳过的段（A109）。
+ *
+ * 存在的理由：跳过本身没问题，**静默跳过**才是问题 —— 一条从没执行过的断言
+ * 在报告里和「通过」长得一模一样。这里把它们收起来在结尾点名，并且
+ * `A107_REQUIRE_L3=1` 时直接把跳过算成失败（手工验收/登录后复验用）。
+ */
+const skipped: string[] = [];
 const origSay = say;
 // @ts-expect-error 覆盖 say 统计失败
 say = (label: string, ok: boolean, detail?: string) => {
@@ -743,9 +783,13 @@ say = (label: string, ok: boolean, detail?: string) => {
       try {
         await l3();
       } catch (e) {
-        // L3 起真服务端，在沙箱/CI 里可能因环境受限失败 —— 不计入失败，
-        // 只提示需要手动跑一遍（或带足够权限再跑）。
-        console.log(`[A107] L3 未运行（环境限制，非失败）：${(e as Error).message}`);
+        // L3 起真服务端，在沙箱/CI 里可能因环境受限失败。但**不能静默**：
+        // 这个 catch 曾经把「waitReady 等错了日志文案」这种脚本自身缺陷
+        // 也吞成「环境限制，非失败」，让整条 e2e 长期是假的（A109 查出来的）。
+        // 现在至少进跳过清单，结尾点名。
+        const msg = (e as Error).message;
+        skipped.push(`3 服务端 e2e 未跑（${msg.slice(0, 90)}）`);
+        console.log(`[A107] ⊘ L3 未运行：${msg}`);
       }
     }
   } finally {
@@ -753,5 +797,13 @@ say = (label: string, ok: boolean, detail?: string) => {
     try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ }
   }
   console.log(`\n=== A107 结果：${failed === 0 ? '全绿' : failed + ' 项失败'} ===`);
+  if (skipped.length) {
+    console.log(`⊘ 跳过 ${skipped.length} 段 —— 这些断言本次**没有执行**，不能当通过：`);
+    for (const s of skipped) console.log(`  - ${s}`);
+    if (process.env.A107_REQUIRE_L3 === '1') {
+      console.log('A107_REQUIRE_L3=1 ⇒ 跳过按失败计（登录/网络就绪后请这样复验）');
+      process.exit(1);
+    }
+  }
   process.exit(failed === 0 ? 0 : 1);
 })();

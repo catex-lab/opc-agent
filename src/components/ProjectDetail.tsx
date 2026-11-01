@@ -124,12 +124,31 @@ export function ProjectDetail({
     if (copyTimer.current) window.clearTimeout(copyTimer.current);
   }, []);
 
+  /**
+   * 只接受**最新一次**请求的结果（A119 竞态修复）。
+   *
+   * 这个函数有两个触发点会重叠：`project.id` 变化的 effect，和每个写操作
+   * 成功后的 `await fetchTasks()`。连点几下删除就会同时有好几个 GET 在途，
+   * 而它们的响应顺序**没有任何保证** —— 先发的后到，就会把「已经空了」的
+   * 新结果盖回「还剩一条」的旧结果，界面于是停在一个不存在的任务上。
+   * 这正是 `verify:a119` 的「[6] 全删光后回到空态」偶发超时的原因
+   * （与改动无关的间歇性红，不是产品逻辑写错）。
+   *
+   * 用自增序号做「最后发起者胜」，而不是 AbortController：被丢弃的那份
+   * 响应本身没害处，只是不该落地；中断请求还要处理 AbortError 分支。
+   * 序号同时覆盖了「切项目后旧项目的响应迟到」这一种。
+   */
+  const tasksReqId = useRef(0);
+
   const fetchTasks = useCallback(async () => {
+    const reqId = ++tasksReqId.current;
     setTasksLoading(true);
     setTasksError(null);
     try {
       const r = await fetch(`/api/projects/${project.id}/tasks`);
       const j = await r.json();
+      // 更晚发起的请求已经在途 ⇒ 这份无论对错都过时了，丢弃。
+      if (reqId !== tasksReqId.current) return;
       if (!r.ok) throw new Error(j?.error || `读取任务失败（${r.status}）`);
       setTasks(
         (j.tasks ?? []).map((t: any) => ({
@@ -142,9 +161,12 @@ export function ProjectDetail({
         }))
       );
     } catch (e: any) {
+      if (reqId !== tasksReqId.current) return;
       setTasksError(e?.message || '读取任务失败');
     } finally {
-      setTasksLoading(false);
+      // loading 同理：只有最新那次说了算，否则旧请求先结束会把转圈提前关掉，
+      // 而屏幕上还是空列表 —— 看起来像「加载完了但没有任务」。
+      if (reqId === tasksReqId.current) setTasksLoading(false);
     }
   }, [project.id]);
 
