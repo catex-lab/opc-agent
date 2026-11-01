@@ -318,13 +318,43 @@ function AppContent() {
    */
   const [modelsEpoch, setModelsEpoch] = useState(0);
 
+  /**
+   * 上一个 Agent 的 id（A162）。
+   *
+   * 用来区分两种「清单要重取」：**换 Agent** 和 **同一个 Agent 重新枚举**
+   * （`modelsEpoch`）。只有前者需要把模型选中值作废 —— 模型名是各 Agent
+   * 私有的命名空间，opencode 的 `zai/glm-4.7` 在 gemini 那里根本不存在。
+   *
+   * `mounted` 是必须的：首次挂载时 `currentAgentId` 从 undefined 变成有值，
+   * 那不是「换 Agent」，不能因此清掉用户上次用过的默认模型。
+   */
+  const agentSwitchRef = useRef<{ mounted: boolean; id?: string }>({ mounted: false });
+
   useEffect(() => {
+    const switched =
+      agentSwitchRef.current.mounted && agentSwitchRef.current.id !== currentAgentId;
+    agentSwitchRef.current = { mounted: true, id: currentAgentId };
+
     if (!currentAgentId) {
       setAgentModels([]);
       setAgentDefaultModel('');
       setAgentModelSource({ kind: 'unknown', selectable: true });
       return;
     }
+
+    /* A162：换 Agent 的**那一刻**就把模型选中值清空，不等新清单回来。
+       等清单就有一段窗口期：此刻手上还是上一个 Agent 的清单，一个陌生模型名
+       在里面「合法」，`pickableModels` 的校验会放它过去 —— 用户这时发出
+       首条消息就带着它走了（服务端按该 Agent 的默认模型处理，界面却显示
+       「已选中」，正是这个项目一直在守的那种假控件）。
+       清空是安全的：空值在后端就是「用这个 Agent 自己的默认模型」。 */
+    if (switched) {
+      setAgentModels([]);
+      setAgentDefaultModel('');
+      setAgentModelSource({ kind: 'unknown', selectable: true });
+      setSelectedModel('');
+    }
+
     let cancelled = false;
     void (async () => {
       try {
@@ -374,7 +404,7 @@ function AppContent() {
     return () => {
       cancelled = true;
     };
-  }, [currentAgentId, modelsEpoch]);
+  }, [currentAgentId, modelsEpoch, setSelectedModel]);
 
   /**
    * A156：只有 Tencent SDK（CodeBuddy / WorkBuddy）用平台模型清单。
@@ -511,6 +541,11 @@ function AppContent() {
     // 手动模式（P3）：模型名是用户自己填的，这里没有「列表」可比对，
     // 一旦按列表清空就等于把用户填的值抹掉。
     if (manualModel) return;
+    /* A162：清单还没跟上当前 Agent（刚切过去、请求在途）。
+       此刻这份清单属于上一个 Agent，拿它校验只会把值改错；更糟的是
+       `pickableModels` 为空时下面会走「清空选中」—— 那正是 A151 踩过的
+       坑，这次从「切 Agent」这个入口复发。等清单回来再判。 */
+    if (agentModelSource.forAgent !== currentAgentId) return;
     if (pickableModels.length === 0) {
       if (selectedModel) setSelectedModel('');
       return;
@@ -520,7 +555,15 @@ function AppContent() {
       ? agentDefaultModel
       : pickableModels[0].modelId;
     setSelectedModel(preferred);
-  }, [pickableModels, selectedModel, setSelectedModel, agentDefaultModel, manualModel]);
+  }, [
+    pickableModels,
+    selectedModel,
+    setSelectedModel,
+    agentDefaultModel,
+    manualModel,
+    agentModelSource.forAgent,
+    currentAgentId,
+  ]);
 
   // 从 URL 同步 sessionId
   useEffect(() => {
@@ -617,6 +660,20 @@ function AppContent() {
       if (currentSessionId) updateSessionModel(currentSessionId, modelId);
     },
     [currentSessionId, updateSessionModel, setSelectedModel]
+  );
+
+  /**
+   * 新建会话时该带哪个模型名（A162）。
+   *
+   * 只有当目标 Agent **就是**当前 Agent 时才敢沿用界面上的选中值。换了一个
+   * Agent 就必须留空 —— 模型名是各 Agent 私有的命名空间，把一个不属于它的
+   * 名字写进会话，等于给这条会话埋一个「界面显示已选中、发出去却被忽略」的
+   * 假值；而它会随会话落库，下次打开还挂着。空值由后端解释为
+   * 「用该 Agent 自己的默认模型」，等清单回来再由 effect 填上具体名字。
+   */
+  const modelForNewSession = useCallback(
+    (agentId?: string) => (agentId && agentId === currentAgentId ? selectedModel : ''),
+    [currentAgentId, selectedModel]
   );
 
   const handleDeleteSession = useCallback(
@@ -751,7 +808,8 @@ function AppContent() {
       const newSession: Session = {
         id: uuidv4(),
         title: agent?.name || '新对话',
-        model: selectedModel,
+        // A162：不是同一个 Agent 就不继承界面上的模型名
+        model: modelForNewSession(agentId),
         agentId,
         permissionMode: 'default',
         createdAt: new Date(),
@@ -766,7 +824,7 @@ function AppContent() {
       setCurrentSessionId(newSession.id);
       navigate(`/chat/${newSession.id}`);
     },
-    [registry, selectedModel, setSessions, setCurrentSessionId, navigate]
+    [registry, modelForNewSession, setSessions, setCurrentSessionId, navigate]
   );
 
   const handleRenameProject = useCallback(async (project: Project, name: string) => {
@@ -880,7 +938,8 @@ function AppContent() {
       const newSession: Session = {
         id: uuidv4(),
         title: agent?.name || '新对话',
-        model: selectedModel,
+        // A162：从别的 Agent 那边过来时不许继承它的模型名
+        model: modelForNewSession(agentId),
         agentId,
         permissionMode: 'default',
         createdAt: new Date(),
@@ -894,7 +953,7 @@ function AppContent() {
       setCurrentSessionId(newSession.id);
       navigate(`/chat/${newSession.id}`);
     },
-    [sessions, registry, selectedModel, setSessions, setCurrentSessionId, navigate, handleSelectSession]
+    [sessions, registry, modelForNewSession, setSessions, setCurrentSessionId, navigate, handleSelectSession]
   );
 
   /**

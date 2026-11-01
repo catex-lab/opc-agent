@@ -376,6 +376,81 @@ async function main() {
       ok(true, '[6] 全删光后回到空态');
     }
 
+    // ── [11] 晚到的响应不许覆盖更新的结果（A119 竞态）─────────────
+    //
+    // 这一条把「[6] 全删光后回到空态」那种**靠概率**的红换成了确定性复现。
+    // 原来那条只在机器恰好慢的时候才红（约 50%），改对了也证明不了 ——
+    // 根因是两个列表请求并发：`project.id` 的 effect 一个、写操作成功后
+    // `await fetchTasks()` 一个，谁后到谁落地。连点几下删除就会撞上。
+    //
+    // 做法：拦下详情页首帧那次列表 GET，压 3 秒再回，且回的是一份**只有
+    // stale-marker 的旧快照**；在这 3 秒里新增一条真任务，于是
+    // 「新请求先到、旧请求后到」。
+    //   旧实现（按到达顺序落地）⇒ 界面被 stale-marker 盖掉（必红）
+    //   新实现（按发起顺序判新旧）⇒ stale 被丢弃（必绿）
+    {
+      let intercepted = 0;
+      const staleBody = JSON.stringify({
+        tasks: [
+          {
+            id: 'stale-1',
+            project_id: projectId,
+            title: 'stale-marker',
+            status: 'todo',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      });
+      const tasksUrl = `**/api/projects/${projectId}/tasks`;
+      await page.route(tasksUrl, async route => {
+        if (route.request().method() !== 'GET') return route.continue();
+        if (intercepted > 0) return route.continue();
+        intercepted++;
+        await new Promise(r => setTimeout(r, 3000));
+        await route
+          .fulfill({ status: 200, contentType: 'application/json', body: staleBody })
+          .catch(() => {});
+      });
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('[data-project-task-input]', { timeout: 20000 });
+      const staleInput = page.locator('[data-project-task-input]');
+      await staleInput.fill('晚到的响应不该盖掉我');
+      await staleInput.press('Enter');
+      await page.waitForFunction(
+        () => document.querySelectorAll('[data-project-task-row]').length === 1,
+        null,
+        { timeout: 10000 }
+      );
+      // 夹具自证：如果这条是 0，说明拦截没命中，下面的绿就毫无意义
+      ok(intercepted === 1, '[11] 首帧那次列表请求确实被拦住并延迟', String(intercepted));
+
+      // 等被延迟的那份回来（3s + 余量）
+      await page.waitForTimeout(3600);
+      const titles = (await page.locator('[data-project-task-title]').allTextContents()).map(t =>
+        t.trim()
+      );
+      ok(
+        !titles.some(t => t.includes('stale-marker')),
+        '[11] 晚到的旧快照没有覆盖列表',
+        titles.join(' | ')
+      );
+      ok(
+        titles.length === 1 && titles[0].includes('晚到的响应不该盖掉我'),
+        '[11] 界面停在真实的最新列表',
+        titles.join(' | ')
+      );
+
+      await page.unroute(tasksUrl);
+
+      // 收尾：删掉这条，让后面的段继续在空态上跑
+      const onlyRow = page.locator('[data-project-task-row]').first();
+      await onlyRow.hover();
+      await onlyRow.locator('[data-project-task-delete]').click();
+      await page.waitForSelector('[data-project-task-empty]', { timeout: 10000 });
+    }
+
     // ── [5] /projects 只开列表 ──────────────────────────────────
     {
       await page.goto(`${base}/projects`, { waitUntil: 'domcontentloaded' });

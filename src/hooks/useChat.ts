@@ -185,11 +185,24 @@ export function useChat(options: UseChatOptions) {
       const requestedMode = newChatOptions.permissionMode;
       const finalPermissionMode =
         requestedMode && requestedMode !== 'default' ? requestedMode : agentPermissionMode;
-      
+
+      /* A162：目标 Agent 与当前会话的 Agent **不同**时，绝不沿用界面上的模型名。
+         模型名是各 Agent 私有的命名空间（opencode 的 `zai/glm-4.7` 之于 gemini），
+         写进新会话就是一个「界面显示已选中、发出去被忽略」的假值，而且会随
+         会话落库。留空由后端解释成「用该 Agent 自己的默认模型」。
+
+         没有当前会话时（这个分支的兜底形态）**照旧沿用**：那种情况下
+         `selectedModel` 就是用户刚在新对话页上亲手选的，不存在「别的 Agent
+         的残留」—— 一刀切留空会把用户的选择丢掉，那是另一种 bug。 */
+      const carryModel =
+        currentSession?.agentId && currentSession.agentId !== requestedAgentId
+          ? ''
+          : selectedModel;
+
       const newSession: Session = {
         id: uuidv4(),
         title: messageContent.slice(0, 30) + (messageContent.length > 30 ? '...' : ''),
-        model: selectedModel,
+        model: carryModel,
         agentId: requestedAgentId,
         cwd: newChatOptions.cwd || undefined,
         // A62：新会话从新对话页带来的档位（没摆下拉就 undefined）
@@ -214,7 +227,9 @@ export function useChat(options: UseChatOptions) {
       currentSystemPrompt = newSession.systemPrompt;
       currentScenarioId = newSession.scenarioId;
       
-      updateSessionModel(newSession.id, selectedModel);
+      // 空值不必写进 sessionModels —— 那张表是「这个会话记下的模型」，
+      // 记一个空串只会让恢复逻辑多走一次 falsy 分支。
+      if (carryModel) updateSessionModel(newSession.id, carryModel);
       
       onNavigate?.(`/chat/${newSession.id}`);
     }
