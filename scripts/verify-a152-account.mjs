@@ -21,6 +21,7 @@
  */
 import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
@@ -157,6 +158,65 @@ try {
   ok(zcode?.modelSelectable === false, '[2] zcode 的套餐/模型不可在本应用切换');
   ok(typeof zcode?.switchHint === 'string' && zcode.switchHint.includes('ZCode'),
     '[2] zcode 给出「去 ZCode 里切」的引导', String(zcode?.switchHint ?? '').slice(0, 20));
+
+  /* A164：过期缓存不许冒充事实 —— 这一条要**拿原始缓存交叉核对**，
+     否则「全都标成 unknown」和「实现写死 unknown」看起来一模一样。
+     规则：缓存里写着 available / unavailable 的行，在 stale 时必须降级成
+     unknown，且 detail 带「缓存快照」前缀。新鲜时反过来：不许降级。 */
+  const cacheFile = path.join(os.homedir(), '.zcode', 'v2', 'coding-plan-cache.json');
+  if (fs.existsSync(cacheFile)) {
+    let cacheItems = {};
+    try {
+      cacheItems = JSON.parse(fs.readFileSync(cacheFile, 'utf8'))?.entryStatus?.items ?? {};
+    } catch {
+      /* 解析不了就跳过这一组，不制造假红 */
+    }
+    const judged = (zcode?.plans ?? []).filter(p => ['available', 'unavailable'].includes(cacheItems[p.id]?.status));
+    if (judged.length > 0) {
+      if (zcode.stale === true) {
+        const notDowngraded = judged.filter(p => p.status !== 'unknown');
+        ok(notDowngraded.length === 0,
+          '[2] 缓存过期时，缓存里的「可用/不可用」一律降级成 unknown（不许说成事实）',
+          notDowngraded.map(p => `${p.id}=${p.status}`).join(' | '));
+        const noPrefix = judged.filter(p => !String(p.detail ?? '').startsWith('缓存快照'));
+        ok(noPrefix.length === 0,
+          '[2] 降级的行在详情里标出「缓存快照」，让人一眼看出这是旧照片',
+          noPrefix.map(p => `${p.id}=${p.detail ?? ''}`).join(' | '));
+      } else {
+        // 肯定式：缓存新鲜时必须保留原判，别为了过上面那条把所有行都降级。
+        const wronglyDowngraded = judged.filter(p => p.status === 'unknown');
+        ok(wronglyDowngraded.length === 0,
+          '[2] 缓存新鲜时不许降级（否则「降级」就成了永远为真的空话）',
+          wronglyDowngraded.map(p => p.id).join(' | '));
+      }
+    }
+  }
+
+  /* A164：本机绑了 account 型 Coding Plan 账号时必须说出来。
+     用户的困惑正是「我领了，为什么说没有」—— 真实权益挂在 account:* provider 上，
+     而那张 builtin 表里根本没有它。读的是 credentials.json 的**键名**。 */
+  const credFile = path.join(os.homedir(), '.zcode', 'v2', 'credentials.json');
+  if (fs.existsSync(credFile)) {
+    let keys = [];
+    try {
+      keys = Object.keys(JSON.parse(fs.readFileSync(credFile, 'utf8')));
+    } catch {
+      /* 同上，解析不了就不判 */
+    }
+    const boundKeys = keys.filter(k => k.startsWith('account-provider:coding-plan:'));
+    if (boundKeys.length > 0) {
+      ok(String(zcode?.identity?.unavailableReason ?? '').includes('Coding Plan 账号凭据'),
+        '[2] 本机有 account 型套餐凭据时，必须点明「它不在这张表里」',
+        `${boundKeys.length} 份`);
+    }
+  }
+
+  /* 隐私红线：这次改动第一次去读 credentials.json，虽然只读键名，
+     但必须有断言守住「值一个都不许漏出来」——否则哪天顺手读了值也没人发现。 */
+  const accountDump = JSON.stringify(zcode ?? {});
+  ok(!/enc:v1:/.test(accountDump), '[2] 账号数据里不许出现加密信封（enc:v1:）');
+  ok(!/\bsk-[A-Za-z0-9]{10,}/.test(accountDump), '[2] 账号数据里不许出现明文 API Key');
+  ok(!/eyJhbGciOi[A-Za-z0-9_-]{10,}/.test(accountDump), '[2] 账号数据里不许出现 JWT');
 
   const codex = (await json(await fetch(`${base}/api/agents/codex/account`))).account;
   ok(!!codex?.identity?.email, '[2] codex 的邮箱读得到（id_token 可解）', String(codex?.identity?.email ?? ''));

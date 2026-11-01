@@ -422,13 +422,26 @@ function qoderPermission(mode: PermissionMode | undefined): string {
  * 一致 —— 所以只写一份。复制成两份的后果是「哪天修了国际版忘了国内版」，
  * 而那种偏差在 CN 没有账号可测的前提下**永远不会被发现**。
  *
- * 参数形态来自 `qodercli --help`（1.1.73）实测：
- *   -p/--print 非交互输出；--permission-mode 四档；-m/--model 当前会话模型。
+ * 参数形态来自 `qodercli --help`（1.1.73 首测；A163 时升到 1.1.78 复核，
+ * 新增的续接 / 输出格式相关开关逐条实测，见函数内注释）：
+ *   -p/--print 非交互输出；--permission-mode 四档；-m/--model 当前会话模型；
+ *   -r/--resume <id> 续接；--output-format stream-json 结构化输出。
  * 注意 `-p` 是**开关**不是「-p 后跟提示词」，提示词是位置参数
  * （Usage: qodercli [options] [command] [query...]），放最后。
  */
 function qoderCliArgs(prompt: string, ctx: SendContext): string[] {
-  const args = ['-p'];
+  // `--output-format stream-json` 不是为了「更好看」，而是**续接的前提**：
+  // 纯文本模式拿不到 `session_id`，没有它下一轮就无从 `-r`。
+  const args = ['-p', '--output-format', 'stream-json'];
+  /* A163 续接。2026-11-01 本机 qodercli 1.1.78 实测三步：
+   *   ① `-p --session-id <uuid> "记住 417"` → 建会话；
+   *   ② `-p --session-id <同一个 uuid>` → 直接报
+   *      "Session ID ... is already in use."（**不是**续接语义）；
+   *   ③ `-p -r <uuid> "那个数字是多少"` → 答 `417`。
+   * 所以续接只能用 `-r`，`--session-id` 只在「我们想自己指定首轮 id」时用。
+   * 这里用 `-r`，首轮 id 由 qodercli 自己生成、我们从 init 事件里读。
+   */
+  if (ctx.resumeToken) args.push('-r', ctx.resumeToken);
   args.push('--permission-mode', qoderPermission(ctx.permissionMode));
   if (ctx.model) args.push('-m', ctx.model);
   // 思考强度（A62）：官方 IDE 的模型面板上有「思考强度：低/中/高/最大/超高」，
@@ -439,6 +452,38 @@ function qoderCliArgs(prompt: string, ctx: SendContext): string[] {
   if (ctx.reasoningEffort) args.push('--reasoning-effort', ctx.reasoningEffort);
   args.push(prompt);
   return args;
+}
+
+/**
+ * qodercli 的 stream-json 行 → 统一事件。
+ *
+ * 事件形状与 Claude Code **同构**（实测 1.1.78：`system/init`、
+ * `assistant.message.content[]` 带 text/thinking/tool_use、`result`），
+ * 所以主体直接复用 `mapClaudeCodeLine`，只多剥一层钩子噪音。
+ *
+ * 为什么必须剥：qoder 每轮开头会吐 3~5 行 `system/hook_*`（SessionStart 的
+ * skill 注入，单条 `additionalContext` 就有几 KB）。这些行喂给 Claude 映射器
+ * 会返回 null，而 null 在适配器里等于「进 raw 旁路」—— 抽屉被钩子塞满，
+ * 真正的错误反而挤不进去。返回**空数组**表示「认识这一行、且它没有可渲染
+ * 内容」，比 null 更准确（适配器见到空数组既不产事件也不落 raw）。
+ */
+function mapQoderLine(obj: unknown): AgentEvent | AgentEvent[] | null {
+  const o = obj as { type?: string; subtype?: unknown };
+  if (o?.type === 'system' && typeof o.subtype === 'string' && o.subtype.startsWith('hook_')) {
+    return [];
+  }
+  return mapClaudeCodeLine(obj);
+}
+
+/** `session_id` 只在 `system/init` 上出现一次，取它就是续接令牌 */
+function qoderResumeToken(obj: unknown): string | null {
+  // 先挡非对象：`JSON.parse('null')` 是合法的，一行 `null` 就能让
+  // `o.type` 抛 TypeError，整轮 run 直接崩掉（不是「解析失败」而是「进程异常」）。
+  if (!obj || typeof obj !== 'object') return null;
+  const o = obj as { type?: string; subtype?: string; session_id?: unknown };
+  return o.type === 'system' && o.subtype === 'init' && typeof o.session_id === 'string'
+    ? o.session_id
+    : null;
 }
 
 /**
@@ -1522,9 +1567,12 @@ const RAW_DEFS: AgentDefinition[] = [
       // A76 之后事件粒度变了：SDK 通道能给出 thinking / tool / usage，
       // 文本通道给不出。这里按**能力上限**标（名册用它判断要不要画折叠条），
       // 实际走 CLI 回退时前端收到的事件自然更少，不会画出空卡片。
-      // CLI 通道只给文本（`parse: 'text'`），thinking / tool / usage 事件拿不到。
-      // 标了就会画出永远空着的折叠条 —— 按**实际能给的**标，不按愿望标。
-      eventCapabilities: [],
+      // A163 改 jsonl 之后：`assistant.message.content[]` 里的 thinking /
+      // tool_use 与 `result.usage` 都能映射出来了（本机 1.1.78 实测有
+      // thinking 与 text 两类块），所以这里从 `[]` 改成实际能给的三类。
+      // 仍**不**标 'search'：qoder 的 WebSearch 结果只出现在 tool 事件里，
+      // 没有独立的 search 事件。
+      eventCapabilities: ['thinking', 'tool', 'usage'],
       description: '阿里 Qoder Agent，经本机 qodercli 接入（需自行安装并登录）',
       icon: 'qoder',
       color: '#444441',
@@ -1543,7 +1591,21 @@ const RAW_DEFS: AgentDefinition[] = [
       //    using \"qfmodel\" instead."（被静默换掉），而 `-m sensenova-6.8-flash-lite`
       //    正常返回。所以 modelCatalog 取的是括号前的名字（A58）。
       buildArgs: qoderCliArgs,
-      parse: 'text',
+      /* A163：从 `parse: 'text'` 改成 `'jsonl'`。
+       *
+       * 起因是用户实测：第一轮让它装 Agent Mail CLI 失败，点「再次尝试」后
+       * 它说「这一轮对话里我没有先前尝试的记录」；批准权限时又说「这条消息
+       * 之前没有待批准的计划或变更」。**每轮都是全新进程，零上下文。**
+       *
+       * 根因不是模型记性差：本条目既没有 `extractResumeToken`，`qoderCliArgs`
+       * 也从不传续接参数。而 qodercli 1.1.78 的 `--help` 明确有
+       * `-c/--continue`、`-r/--resume [id]`、`--session-id`、`--list-sessions`。
+       * 不用 `-c`：那是「最近一个会话」，多会话并发时会串到别人的对话上
+       * （与 A142 同一类缺陷）。用 `-r <本会话的 id>`，归属明确。
+       */
+      parse: 'jsonl',
+      mapLine: mapQoderLine,
+      extractResumeToken: qoderResumeToken,
     },
     // 只走 CLI 通道。曾经这里有 `sdk: { flavor: 'qoder-intl' }`（A76），
     // 2026-10-30 因授权依据不足移除，理由见上面 `SdkSpec` 那段注释。
@@ -1587,7 +1649,10 @@ const RAW_DEFS: AgentDefinition[] = [
       authScope: 'qoder.cn',
       authScopeName: 'Qoder CN 账号',
       capabilities: ['chat', 'code', 'write', 'tools'],
-      eventCapabilities: [],
+      // 与国际版同步（A163）。同样是**推断**：CN 版没有可执行文件可测，
+      // 依据是两份 README 参数表同构。若哪天实测发现 CN 版不给
+      // thinking / tool 事件，把这里退回 `[]`，别让它画出空的折叠条。
+      eventCapabilities: ['thinking', 'tool', 'usage'],
       description:
         '阿里 Qoder 国内版（qoder.cn），账号与积分独立；经本机 qoderclicn 接入，本机无 CN 账号未实测',
       // 与国际版同一个品牌，复用同一套 logo 资源（不另画一个不存在的图形）
@@ -1615,7 +1680,16 @@ const RAW_DEFS: AgentDefinition[] = [
       // 所以直接复用同一个 buildArgs，不复制一份会漂的代码。
       bin: 'qoderclicn',
       buildArgs: qoderCliArgs,
-      parse: 'text',
+      // A163：与国际版同步改 jsonl + `-r` 续接。**这一条是推断，不是实测** ——
+      // 本机没有 CN 账号、也没有 `qoderclicn` 可执行文件，无法验证
+      // `--output-format stream-json` 与 `-r` 在 CN 版上是否同构。
+      // 依据是两份 README 逐节同构、参数表一致（见上面 buildArgs 的说明）。
+      // 判据留在这里：哪天装上 CN 版，第一件事跑
+      //   `qoderclicn -p -o stream-json "say hi"`
+      // 看有没有 `system/init` + `session_id`；没有就把这两行退回 `text`。
+      parse: 'jsonl',
+      mapLine: mapQoderLine,
+      extractResumeToken: qoderResumeToken,
     },
     // 只走 CLI 通道（理由同国际版，见 `SdkSpec` 那段注释）。
     // 两个候选目录都搜：`~/.qoder-cn/bin/qoderclicn`（与 `~/.qoder/bin/qodercli`

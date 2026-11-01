@@ -155,6 +155,36 @@ function nameKey(name: string): string {
 }
 
 /**
+ * 本机到底绑了哪些 Coding Plan 账号 —— **只读键名，不碰值**。
+ *
+ * 为什么需要：用户报「已经领了权益，应用里却显示未订阅」。实测发现原因是
+ * 探测只读 `config.json` 的 `builtin:*` 四个槽位，而他真正生效的权益挂在
+ * **`account:*` provider** 上（`account:zai-start-plan`），那张表里根本没有
+ * 这一行 —— 于是界面把「我表里没有」说成了「你没订阅」。
+ *
+ * 这些 account provider 的授权快照只存在于 ZCode 渲染进程的 localStorage
+ * （Electron leveldb），本应用读不到。但 `credentials.json` 的**键名**是明文，
+ * 形如：
+ *   account-provider:coding-plan:account:zai-team-coding-plan:account:<uuid>:api-key
+ * 足以回答「本机有没有绑过、绑了几份、属于哪个套餐族」。
+ *
+ * 值的部分（`enc:v1:` 信封、api-key）**一律不读** —— 见文件头的安全红线。
+ */
+function boundCodingPlanAccounts(home: string): { families: string[]; count: number } {
+  const creds = readJson(path.join(home, '.zcode', 'v2', 'credentials.json'));
+  if (!creds || typeof creds !== 'object') return { families: [], count: 0 };
+  const families = new Set<string>();
+  let count = 0;
+  for (const key of Object.keys(creds as Record<string, unknown>)) {
+    const m = /^account-provider:coding-plan:account:([^:]+):account:[^:]+:api-key$/.exec(key);
+    if (!m) continue;
+    families.add(m[1]);
+    count += 1;
+  }
+  return { families: [...families], count };
+}
+
+/**
  * ZCode：账号身份**读不到**，套餐状态读得到但可能过期。
  *
  * 三份文件分工（都是它自己的本地配置）：
@@ -189,6 +219,12 @@ function probeZcode(home: string): AgentAccountProbe | null {
 
   const selectedSet = new Set(Object.values(selectedKeys).filter(v => typeof v === 'string').map(providerIdOf));
 
+  /* 快照时间必须**先**算出来，因为下面每一行的状态都要看它。
+     原来这段在函数末尾，于是循环里根本不知道自己读的是不是一张旧照片。 */
+  const updatedAt = planCache?.entryStatus?.updatedAt;
+  const checkedAt = typeof updatedAt === 'number' ? new Date(updatedAt).toISOString() : undefined;
+  const stale = checkedAt ? Date.now() - Date.parse(checkedAt) > STALE_MS : undefined;
+
   const plans: AccountPlan[] = [];
   for (const [id, value] of Object.entries(providers)) {
     if (!isPlanKey(id)) continue;
@@ -198,16 +234,27 @@ function probeZcode(home: string): AgentAccountProbe | null {
     const sysReason = value.systemDisabledReason
       ? SYSTEM_DISABLED_LABEL[value.systemDisabledReason] ?? value.systemDisabledReason
       : undefined;
-    const status: AccountPlan['status'] =
+    const rawStatus: AccountPlan['status'] =
       cacheStatus === 'available' ? 'active' : cacheStatus === 'unavailable' ? 'inactive' : 'unknown';
+    /* 过期缓存**不许**冒充事实。
+       本机实测：这份缓存的 `updatedAt` 是 2026-09-18，而用户 2026-10-30 才领的
+       Weekend Build —— 原样输出就是「你未订阅该套餐」，而真相只是「这张照片
+       45 天前拍的，里面当然没有」。所以过期的行一律降级成 `unknown`，
+       把「上次看到的样子」降级进 detail 的前缀里。 */
+    const downgraded = stale === true && rawStatus !== 'unknown';
+    const status: AccountPlan['status'] = downgraded ? 'unknown' : rawStatus;
     const selected = selectedSet.has(id);
+    const parts = [
+      cacheStatus ? PLAN_STATUS_LABEL[cacheStatus] ?? cacheStatus : undefined,
+      reason || sysReason,
+    ]
+      .filter(Boolean)
+      .join(' · ');
     plans.push({
       id,
       name: value.name || id.replace('builtin:', ''),
       status,
-      detail: [cacheStatus ? PLAN_STATUS_LABEL[cacheStatus] ?? cacheStatus : undefined, reason || sysReason]
-        .filter(Boolean)
-        .join(' · ') || undefined,
+      detail: parts ? (downgraded ? `缓存快照 · ${parts}` : parts) : undefined,
       models: Object.keys(value.models ?? {}),
       selected,
       // 「选中」与「生效」必须分开：本机就是 selected=true、enabled=false 的状态。
@@ -254,19 +301,28 @@ function probeZcode(home: string): AgentAccountProbe | null {
       providerName: provider?.name || providerId,
       providerKey: providerId,
       effective: enabled,
-      detail: enabled ? undefined : reason || '未启用',
+      // 过期时同样加前缀：这一行是整块最醒目的「当前选择」，
+      // 它上面写「未订阅该套餐」最容易被当成事实。
+      detail: enabled ? undefined : `${stale ? '缓存快照 · ' : ''}${reason || '未启用'}`,
     };
   });
 
-  const updatedAt = planCache?.entryStatus?.updatedAt;
-  const checkedAt = typeof updatedAt === 'number' ? new Date(updatedAt).toISOString() : undefined;
-  const stale = checkedAt ? Date.now() - Date.parse(checkedAt) > STALE_MS : undefined;
+  /* 本机绑了哪些 Coding Plan 账号 —— 只读键名。这是「我明明领了」这件事
+     唯一能从文件里拿到的旁证：真实生效的权益挂在 `account:*` provider 上，
+     不在上面那张 builtin 表里，配额与到期时间又只存在 ZCode 的渲染进程里。 */
+  const bound = boundCodingPlanAccounts(home);
+  const boundNote =
+    bound.count > 0
+      ? `键名显示本机已绑定 ${bound.count} 份 Coding Plan 账号凭据（${bound.families.join(' / ')}）——` +
+        '它们属于 account:* provider，不在上面这张 builtin 表里，授权与额度只能在 ZCode 里看。'
+      : '';
 
   return {
     identity: {
       source: '~/.zcode/v2/credentials.json',
       unavailableReason:
-        'ZCode 把账号信息加密存在 credentials.json（enc:v1 信封），本应用读不到邮箱 / 昵称；只能在 ZCode 里查看当前登录的账号。',
+        'ZCode 把账号信息加密存在 credentials.json（enc:v1 信封），本应用读不到邮箱 / 昵称；只能在 ZCode 里查看当前登录的账号。' +
+        (boundNote ? `另外，${boundNote}` : ''),
     },
     currentSelection,
     plans,
@@ -274,7 +330,8 @@ function probeZcode(home: string): AgentAccountProbe | null {
     checkedAt,
     stale,
     note: stale
-      ? '套餐状态来自 ZCode 的本地缓存，已经很久没刷新 —— 缓存里没有的权益（例如刚领的 Weekend Build）不代表没领到。'
+      ? '上面这张表读的是 ZCode 的 builtin 套餐槽位缓存，已经过期 —— 它只说明「上次检查时 builtin 槽位的样子」，' +
+        '既不代表你现在的订阅状态，也看不到 account 账号型套餐（刚领的 Weekend Build 就在那边）。'
       : '套餐状态来自 ZCode 的本地缓存；本应用只读，不改它的任何配置。',
     modelSelectable: agentAcceptsModel('zcode'),
     modelNote: agentAcceptsModel('zcode')
