@@ -111,6 +111,21 @@ import {
   savePermissionRules,
 } from "./permission-rules.js";
 import { distillSkill } from "./skill-distill.js";
+// A164 扩展（技能 + MCP 的统一管理）。**只读用户的 Agent 目录**，
+// 不写任何 `~/.<agent>/` 下的东西 —— 见 PLAN-EXTENSIONS.md §2.1。
+import {
+  acceptSource as extAcceptSource,
+  deleteItem as extDeleteItem,
+  findItem as extFindItem,
+  listItems as extListItems,
+  listSources as extListSources,
+  listTargets as extListTargets,
+  stats as extStats,
+  updateLocal as extUpdateLocal,
+  type ExtensionKind,
+} from "./extensions/store.js";
+import { runImport as extRunImport, refreshItem as extRefreshItem } from "./extensions/import.js";
+import { MODE_LABEL as EXT_MODE_LABEL, TARGETS as EXT_TARGETS } from "./extensions/targets.js";
 import { legacyToBlocks, textOfBlocks, toolCallsOfBlocks } from "../shared/blocks.js";
 import type { CapabilityProfile } from "../shared/capabilities.js";
 import type { RunEvent } from "../shared/blocks.js";
@@ -2360,6 +2375,130 @@ app.delete("/api/memory/skills/:name", (req, res) => {
     return;
   }
   res.json({ ok: true, stats: memoryStats() });
+});
+
+// ── 扩展（A164）──────────────────────────────────────────────────────────
+//
+// 只读用户目录、只写自己的库。**删除只删 OPC 的副本，源文件一律不动。**
+// kind 只认 skill / mcp，非法值一律 400 —— 不静默纠正（见 AGENTS.md §2 的四步法）。
+
+function parseExtKind(raw: string): ExtensionKind | null {
+  return raw === "skill" || raw === "mcp" ? raw : null;
+}
+
+app.get("/api/extensions", (_req, res) => {
+  const items = extListItems().map(it => {
+    const sources = extListSources(it.id);
+    return { ...it, sources, sourceCount: sources.length };
+  });
+  res.json({
+    items,
+    stats: extStats(),
+    // 15 个 Agent 的完整清单（含没有技能目录的），前端按它渲染矩阵
+    targets: EXT_TARGETS,
+    modeLabel: EXT_MODE_LABEL,
+  });
+});
+
+app.get("/api/extensions/:kind/:name", (req, res) => {
+  const kind = parseExtKind(req.params.kind);
+  if (!kind) {
+    res.status(400).json({ error: "kind 只能是 skill 或 mcp" });
+    return;
+  }
+  const item = extFindItem(kind, req.params.name);
+  if (!item) {
+    res.status(404).json({ error: "扩展不存在" });
+    return;
+  }
+  res.json({
+    item,
+    sources: extListSources(item.id),
+    targets: extListTargets(item.id),
+    modeLabel: EXT_MODE_LABEL,
+  });
+});
+
+app.put("/api/extensions/:kind/:name", (req, res) => {
+  const kind = parseExtKind(req.params.kind);
+  if (!kind) {
+    res.status(400).json({ error: "kind 只能是 skill 或 mcp" });
+    return;
+  }
+  const b = req.body ?? {};
+  const patch: { body?: string; title?: string; description?: string; configJson?: string } = {};
+  // 逐字段判存在：`undefined` = 不动，传空串 = 明确清空（与 updateSession 同一口径）
+  if (typeof b.body === "string") patch.body = b.body;
+  if (typeof b.title === "string") patch.title = b.title;
+  if (typeof b.description === "string") patch.description = b.description;
+  if (typeof b.configJson === "string") {
+    // MCP 配置必须是合法 JSON，否则存进去界面就打不开了
+    try {
+      JSON.parse(b.configJson);
+    } catch {
+      res.status(400).json({ error: "configJson 不是合法 JSON" });
+      return;
+    }
+    patch.configJson = b.configJson;
+  }
+  if (Object.keys(patch).length === 0) {
+    res.status(400).json({ error: "没有可更新的字段" });
+    return;
+  }
+  const updated = extUpdateLocal(kind, req.params.name, patch);
+  if (!updated) {
+    res.status(404).json({ error: "扩展不存在" });
+    return;
+  }
+  res.json({ ok: true, item: updated });
+});
+
+app.delete("/api/extensions/:kind/:name", (req, res) => {
+  const kind = parseExtKind(req.params.kind);
+  if (!kind) {
+    res.status(400).json({ error: "kind 只能是 skill 或 mcp" });
+    return;
+  }
+  if (!extDeleteItem(kind, req.params.name)) {
+    res.status(404).json({ error: "扩展不存在" });
+    return;
+  }
+  res.json({ ok: true, stats: extStats() });
+});
+
+app.post("/api/extensions/import", (_req, res) => {
+  try {
+    res.json(extRunImport());
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "导入失败" });
+  }
+});
+
+app.post("/api/extensions/:kind/:name/refresh", (req, res) => {
+  const kind = parseExtKind(req.params.kind);
+  if (!kind) {
+    res.status(400).json({ error: "kind 只能是 skill 或 mcp" });
+    return;
+  }
+  const r = extRefreshItem(kind, req.params.name);
+  const item = extFindItem(kind, req.params.name);
+  res.json({ ...r, item, targets: item ? extListTargets(item.id) : [] });
+});
+
+// 冲突三选一里的「用源的覆盖」
+app.post("/api/extensions/:kind/:name/accept-source", (req, res) => {
+  const kind = parseExtKind(req.params.kind);
+  if (!kind) {
+    res.status(400).json({ error: "kind 只能是 skill 或 mcp" });
+    return;
+  }
+  if (!extAcceptSource(kind, req.params.name)) {
+    res.status(404).json({ error: "扩展不存在" });
+    return;
+  }
+  // 接受之后立刻按源刷新一次，把正文换成源的样子
+  const r = extRefreshItem(kind, req.params.name);
+  res.json({ ok: true, ...r });
 });
 
 // ── 项目（A98）──────────────────────────────────────────────────────────

@@ -19,9 +19,10 @@ import { useSessions } from './hooks/useSessions';
 import { useModels } from './hooks/useModels';
 import { useChat } from './hooks/useChat';
 import { useAgentRegistry } from './hooks/useAgentRegistry';
+import { useExtensions, useExtensionDetail } from './hooks/useExtensions';
 import { getScenario } from './scenarios';
 import { exportSessionToMarkdown } from './utils/exportSession';
-import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project, type AgentModelSource } from './types';
+import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project, type AgentModelSource, type ExtensionKind } from './types';
 
 import { NavRail, type NavKey } from './components/NavRail';
 import { TitleBar } from './components/TitleBar';
@@ -30,6 +31,8 @@ import { ConversationList, markSessionRead } from './components/ConversationList
 import { ContactsPanel } from './components/ContactsPanel';
 import { ProjectPanel } from './components/ProjectPanel';
 import { ProjectDetail } from './components/ProjectDetail';
+import { ExtensionPanel } from './components/ExtensionPanel';
+import { ExtensionDetail } from './components/ExtensionDetail';
 import { SidebarResizer } from './components/SidebarResizer';
 import { pickDirectory } from './workspace';
 import { AgentDetailPanel } from './components/AgentDetailPanel';
@@ -67,6 +70,12 @@ function App() {
           `/projects/:projectId` = 连详情一起打开。刷新与前进/后退都能还原。 */}
       <Route path="/projects" element={<AppContent />} />
       <Route path="/projects/:projectId" element={<AppContent />} />
+      {/* A164：扩展视图的深链。`/extensions` = 只开列表栏；
+          `/extensions/skill/:name` / `/extensions/mcp/:name` = 连详情一起打开。
+          kind 放在路径里而不是 query：它和 name 一起才唯一确定一条扩展
+          （技能与 MCP 是两个命名空间，同名不冲突）。 */}
+      <Route path="/extensions" element={<AppContent />} />
+      <Route path="/extensions/:extKind/:extName" element={<AppContent />} />
       <Route path="/settings" element={<AppContent />} />
     </Routes>
   );
@@ -77,6 +86,16 @@ function AppContent() {
   const { sessionId: urlSessionId, projectId: urlProjectId } = useParams<{
     sessionId?: string;
     projectId?: string;
+  }>();
+  /**
+   * A164：扩展视图的深链参数。
+   *
+   * 参数名刻意不叫 `kind` / `name`：`useParams` 返回的是**所有**路由参数的并集，
+   * 用这么泛的名字容易和以后别处加的 `:name` 撞上，撞了还查不出来。
+   */
+  const { extKind: urlExtKind, extName: urlExtName } = useParams<{
+    extKind?: string;
+    extName?: string;
   }>();
   const location = useLocation();
   const isSettingsPage = location.pathname === '/settings';
@@ -90,11 +109,20 @@ function AppContent() {
     location.pathname === '/projects' || location.pathname.startsWith('/projects/');
 
   /**
+   * A164：是不是停在扩展视图。判据同项目栏 —— **路径前缀**，
+   * 因为 `/extensions`（没选具体条目）也属于这一栏。
+   */
+  const isExtensionsPath =
+    location.pathname === '/extensions' || location.pathname.startsWith('/extensions/');
+
+  /**
    * A117 起主导航只有状态、没有 URL，于是「切到项目栏再刷新」会掉回聊天视图。
    * A119 补上深链后，初始值直接从 URL 还原 —— 用惰性初始化而不是挂载后再
    * effect 改一遍，是为了避免首帧先渲染聊天栏、下一帧才换成项目栏的闪动。
    */
-  const [nav, setNav] = useState<NavKey>(() => (isProjectsPath ? 'projects' : 'chats'));
+  const [nav, setNav] = useState<NavKey>(() =>
+    isProjectsPath ? 'projects' : isExtensionsPath ? 'extensions' : 'chats'
+  );
 
   /**
    * A117：项目视图的状态。
@@ -150,6 +178,26 @@ function AppContent() {
    * 会退到上一个 Agent 的资料页，而不是离开通讯录。
    */
   const [detailAgentId, setDetailAgentId] = useState<string | null>(null);
+
+  /* ── A164：扩展（Agent 技能 + MCP 服务）──────────────────────────────
+   *
+   * 与项目栏同一套结构：列表在 App 层、详情按需拉、选中项进 URL。
+   * 详情单独拉（不走列表那份）的理由见 hooks/useExtensions.ts 的文件头 ——
+   * 23 条正文一起塞进首屏响应是纯浪费。
+   */
+  const ext = useExtensions();
+  const [selectedExt, setSelectedExt] = useState<{ kind: ExtensionKind; name: string } | null>(
+    () =>
+      (urlExtKind === 'skill' || urlExtKind === 'mcp') && urlExtName
+        ? { kind: urlExtKind, name: urlExtName }
+        : null
+  );
+  const extDetail = useExtensionDetail(selectedExt?.kind ?? null, selectedExt?.name ?? null);
+  /** 详情组件按需重拉的入口，避免在依赖数组里写 `extDetail`（每次渲染都是新对象） */
+  const reloadExtDetail = extDetail.reload;
+  const reloadExtList = ext.load;
+  const removeExtension = ext.remove;
+  const runExtImport = ext.runImport;
 
   /**
    * A77：右侧工作区文件面板是否展开。
@@ -610,11 +658,65 @@ function AppContent() {
     navigate('/projects', { replace: true });
   }, [isProjectsPath, urlProjectId, projects, projectsLoading, projectsError, navigate]);
 
+  /**
+   * A164：URL → 扩展视图状态的同步（与项目栏同一套双向深链）。
+   *
+   * 清空分支同样必须存在：从 `/extensions/skill/A` 退到 `/extensions` 时
+   * 若不清，右侧会继续挂着 A 的详情 —— URL 说没选、界面说选了。
+   *
+   * kind 白名单校验不可省：`/extensions/bogus/x` 这种手输链接如果原样
+   * 塞进 state，详情接口会回 400，用户看到的是一句「kind 只能是 skill 或 mcp」
+   * 的技术错误，而不是「这条不存在，已退回列表」。
+   */
+  useEffect(() => {
+    if (!isExtensionsPath) return;
+    setNav('extensions');
+    setDetailAgentId(null);
+    const validKind = urlExtKind === 'skill' || urlExtKind === 'mcp';
+    if (validKind && urlExtName) {
+      setSelectedExt(prev =>
+        prev && prev.kind === urlExtKind && prev.name === urlExtName
+          ? prev
+          : { kind: urlExtKind as ExtensionKind, name: urlExtName }
+      );
+    } else if (selectedExt) {
+      setSelectedExt(null);
+    }
+  }, [isExtensionsPath, urlExtKind, urlExtName, selectedExt]);
+
+  /**
+   * A164：深链里的扩展已经不存在（被移除 / 手输了一个不存在的名字）时，
+   * 把 URL 收回 `/extensions`。
+   *
+   * 判据是 `ext.loaded` 而不是 `items.length`：一个扩展都没导入的干净环境里
+   * 列表合法地是空数组，拿长度判会把「还没拉过」误当成「不存在」
+   * （A151 踩过两次）。`loaded` 只在**成功**拉过一轮后才为 true，
+   * 请求失败时保持 false，于是网络抖动不会把人踢回列表。
+   */
+  useEffect(() => {
+    if (!isExtensionsPath || !selectedExt) return;
+    if (!ext.loaded) return;
+    if (ext.items.some(it => it.kind === selectedExt.kind && it.name === selectedExt.name)) return;
+    setSelectedExt(null);
+    navigate('/extensions', { replace: true });
+  }, [isExtensionsPath, selectedExt, ext.loaded, ext.items, navigate]);
+
+  /**
+   * A164：进扩展栏才拉列表。
+   *
+   * 与项目栏同一条理由 —— 启动时白拉一次纯浪费。但这里**每次进栏都拉**：
+   * 用户可能刚在自己的客户端里装了个新技能，只拉一次的话切回来看到的
+   * 是一份没有线索说明它过期的旧快照。
+   */
+  useEffect(() => {
+    if (nav !== 'extensions') return;
+    void reloadExtList();
+  }, [nav, reloadExtList]);
+
   // 打开会话即标记已读（驱动未读红点）
   useEffect(() => {
     if (currentSessionId) markSessionRead(currentSessionId);
   }, [currentSessionId]);
-
   // 当切换会话时，恢复该会话的模型选择。
   // 会话里**没有记模型**（新会话 / 老数据）时不要写空值 —— 那会把上面
   // 按 Agent 默认模型选好的值清掉，界面变成一个空的模型下拉。
@@ -767,6 +869,71 @@ function AppContent() {
     },
     [navigate]
   );
+
+  /**
+   * A164：选中一条扩展（state → URL）。
+   *
+   * 与 `handleSelectProject` 对称。name 要 encodeURIComponent —— 技能名里
+   * 有点号、斜杠的不少（`ui-ux-pro-max`、`superpowers/brainstorming`），
+   * 不编码会把路径切错，落到 `/extensions/skill/superpowers` 上。
+   */
+  const handleSelectExtension = useCallback(
+    (kind: ExtensionKind, name: string) => {
+      setSelectedExt({ kind, name });
+      navigate(`/extensions/${kind}/${encodeURIComponent(name)}`);
+    },
+    [navigate]
+  );
+
+  /**
+   * A164：移除一条扩展的 **OPC 副本**（源文件不动）。
+   *
+   * 删完必须把选中项一起清掉并导航回列表：不清的话 URL 还指着一条
+   * 已经不存在的扩展，那个「深链失效」的 effect 也会在下一帧补一刀 ——
+   * 两处同时 navigate 会让后退历史里多出一条空记录。
+   */
+  const handleDeleteExtension = useCallback(
+    async (kind: string, name: string) => {
+      const ok = await removeExtension(kind, name);
+      if (ok) {
+        setSelectedExt(null);
+        navigate('/extensions', { replace: true });
+      }
+      return ok;
+    },
+    [removeExtension, navigate]
+  );
+
+  /**
+   * A164：窄屏单栏模式下的「返回列表」。
+   *
+   * 与项目详情不同，扩展列表**不记住选中项**在返回后回填 —— 返回的语义是
+   * 「我要挑另一条」，把刚才那条继续标着高亮会让人以为它还是当前页。
+   */
+  const handleBackToExtensions = useCallback(() => {
+    setSelectedExt(null);
+    navigate('/extensions');
+  }, [navigate]);
+
+  /**
+   * A164：从本机所有 Agent 目录导入一次。
+   *
+   * 报告必须弹给用户看 —— 「导入」这个动作在用户脑子里是「装东西」，
+   * 而它实际做的是「读一遍已有目录」。不说清「新增 0 / 未变 25」，
+   * 他会以为导入失败了，然后反复点。
+   */
+  const handleImportExtensions = useCallback(async () => {
+    const report = await runExtImport();
+    if (!report) return;
+    const parts = [
+      `新增 ${report.added}`,
+      `更新 ${report.updated}`,
+      `未变 ${report.unchanged}`,
+    ];
+    if (report.conflicts.length > 0) parts.push(`${report.conflicts.length} 条冲突`);
+    if (report.blocked.length > 0) parts.push(`${report.blocked.length} 条含敏感内容`);
+    MessagePlugin.success(`导入完成：${parts.join(' · ')}`);
+  }, [runExtImport]);
 
   /**
    * A117：添加项目。
@@ -1036,8 +1203,17 @@ function AppContent() {
       // 都逼他重新点一遍。
       setCurrentSessionId(null);
       navigate(selectedProjectId ? `/projects/${selectedProjectId}` : '/projects');
+    } else if (key === 'extensions') {
+      // A164：同项目栏 —— 保留选中项，只是把右侧从 ChatPage 换掉。
+      // 不清会话的话，切到扩展栏的第一帧右侧还会挂着 ChatPage。
+      setCurrentSessionId(null);
+      navigate(
+        selectedExt
+          ? `/extensions/${selectedExt.kind}/${encodeURIComponent(selectedExt.name)}`
+          : '/extensions'
+      );
     }
-  }, [navigate, isSettingsPage, setCurrentSessionId, selectedProjectId]);
+  }, [navigate, isSettingsPage, setCurrentSessionId, selectedProjectId, selectedExt]);
 
   /**
    * A37：设置从「整页路由」改成「弹窗」。
@@ -1286,7 +1462,13 @@ function AppContent() {
    * A117：项目详情也算内容区 —— 否则窄屏点一个项目，右侧的详情根本不渲染，
    * 看起来像「点了没反应」。
    */
-  const showContent = !!detailAgent || !!currentSession || (nav === 'projects' && !!selectedProjectId);
+  const showContent =
+    !!detailAgent ||
+    !!currentSession ||
+    (nav === 'projects' && !!selectedProjectId) ||
+    /* A164：扩展详情也算内容区 —— 否则窄屏点一条扩展，右侧详情根本不渲染，
+       看起来像「点了没反应」（与项目详情同一条）。 */
+    (nav === 'extensions' && !!selectedExt);
   const showColumn = !compact || !showContent;
 
   /**
@@ -1399,6 +1581,19 @@ function AppContent() {
                 onRefresh={fetchProjects}
                 compact={compact}
               />
+            ) : nav === 'extensions' ? (
+              <ExtensionPanel
+                items={ext.items}
+                stats={ext.stats}
+                loading={ext.loading}
+                importing={ext.importing}
+                error={ext.error}
+                selected={selectedExt}
+                onSelect={handleSelectExtension}
+                onImport={() => void handleImportExtensions()}
+                onRefresh={() => void reloadExtList()}
+                compact={compact}
+              />
             ) : (
               <ContactsPanel
                 agents={registry.agents}
@@ -1466,6 +1661,26 @@ function AppContent() {
                       </p>
                     </div>
                   )
+                ) : nav === 'extensions' ? (
+                  /* A164：扩展详情。**不判 selectedExt 是否为空** —— 组件自己
+                     会渲染空态（「选一个扩展」），比在这里再写一份空态少一处漂移。
+                     窄屏下 showContent 为 false 时这块整段不渲染，所以空态
+                     不会把列表栏顶掉。 */
+                  <ExtensionDetail
+                    item={extDetail.item}
+                    targets={extDetail.targets}
+                    allTargets={ext.targets}
+                    loading={extDetail.loading}
+                    error={extDetail.error}
+                    onReload={() => void reloadExtDetail()}
+                    onBack={compact ? handleBackToExtensions : undefined}
+                    onSaved={() => void reloadExtList()}
+                    onDeleted={() => {
+                      setSelectedExt(null);
+                      navigate('/extensions', { replace: true });
+                    }}
+                    onDelete={handleDeleteExtension}
+                  />
                 ) : detailAgent ? (
                   // 资料页自带的 onBack 清掉 detailAgent，单栏模式下这就等于
                   // 「回到通讯录列表」（showContent 变 false），无需另开一个返回口。

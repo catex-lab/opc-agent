@@ -202,6 +202,71 @@ db.exec(`
     capabilities TEXT NOT NULL,
     probed_at INTEGER NOT NULL
   );
+
+  -- ── 扩展（A164）：技能与 MCP 的统一管理 ────────────────────────────
+  --
+  -- 三张表的分工见 PLAN-EXTENSIONS.md §6。这里只重复两条决策：
+  --   1. 技能与 MCP **共用**主表，用 kind 区分 —— 用户要「一个入口两个分组」，
+  --      共用一张表最省事；将来加「规则文件」只多一个 kind，不改表结构。
+  --   2. 挂载状态**独立成表** —— 一个能力对 15 个 Agent 有 15 行状态，塞进主表
+  --      就得存 JSON 数组，「哪些 Agent 支持 X」会退化成全表扫 JSON。
+  --
+  -- ⚠️ content_hash 是**源文件**的指纹，body_hash 是**本地正文**的指纹。
+  --    两者分开才能判断「是源变了」还是「我改过」—— 合成一个字段，
+  --    冲突处理就只能瞎猜。
+  CREATE TABLE IF NOT EXISTS extension_item (
+    id               TEXT PRIMARY KEY,
+    -- 'skill' | 'mcp'
+    kind             TEXT NOT NULL,
+    -- 稳定键：技能目录名 / MCP 服务名
+    name             TEXT NOT NULL,
+    title            TEXT,
+    description      TEXT,
+    -- 技能正文（MCP 为 NULL）
+    body             TEXT,
+    -- MCP 配置 JSON（技能为 NULL）
+    config_json      TEXT,
+    content_hash     TEXT NOT NULL,
+    body_hash        TEXT NOT NULL,
+    revision         INTEGER NOT NULL DEFAULT 1,
+    -- 1 = 用户在 OPC 里改过，重新导入时**不得自动覆盖**
+    locally_modified INTEGER NOT NULL DEFAULT 0,
+    -- 1 = 命中敏感内容，正文未落库
+    blocked          INTEGER NOT NULL DEFAULT 0,
+    blocked_reason   TEXT,
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    created_at       TEXT,
+    updated_at       TEXT,
+    UNIQUE(kind, name)
+  );
+
+  CREATE TABLE IF NOT EXISTS extension_source (
+    id           TEXT PRIMARY KEY,
+    item_id      TEXT NOT NULL,
+    agent_id     TEXT NOT NULL,
+    path         TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    seen_at      TEXT,
+    UNIQUE(item_id, agent_id, path)
+  );
+
+  CREATE TABLE IF NOT EXISTS extension_target (
+    id         TEXT PRIMARY KEY,
+    item_id    TEXT NOT NULL,
+    agent_id   TEXT NOT NULL,
+    -- native | flag | prompt | unsupported
+    mode       TEXT NOT NULL,
+    -- active | pending | error | unknown
+    status     TEXT NOT NULL,
+    -- 1 = 该 Agent 自己的目录里就有这份（事实，不是能力）
+    present    INTEGER NOT NULL DEFAULT 0,
+    detail     TEXT,
+    checked_at TEXT,
+    UNIQUE(item_id, agent_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_extension_source_item ON extension_source(item_id);
+  CREATE INDEX IF NOT EXISTS idx_extension_target_item ON extension_target(item_id);
 `);
 
 /**

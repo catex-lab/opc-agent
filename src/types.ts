@@ -790,3 +790,103 @@ export function availabilityLabelOf(agent: {
   if (availability === 'needs-auth' && agent.kind === 'http') return '缺 Key';
   return AVAILABILITY_META[availability].label;
 }
+
+/* ── A164 扩展（Agent 技能 + MCP 服务）───────────────────────────────────
+ *
+ * 与 `AgentSkill`（A2A 式能力标签，见 server/agents/types.ts）和 L3 技能记忆
+ * （`data/memory/skills/*.md`，设置页「技能」那一栏）**都不是一回事**。
+ * 这里说的是「从用户本机各家 Agent 目录里读进来的、可在 OPC 里共用一份的
+ * SKILL.md / MCP 配置」。命名冲突的完整证据见 PLAN-EXTENSIONS.md §4.2。
+ */
+
+export type ExtensionKind = 'skill' | 'mcp';
+
+/**
+ * 挂载能力，四档。**这不是四种状态，是四种能力** ——
+ * `unsupported` 表示「这个 Agent 根本没有把外部技能送进去的通道」，
+ * 与「有这个通道但这次没送」是两件事，界面上必须分开表达（灰色而不是叉）。
+ */
+export type ExtensionMountMode = 'native' | 'flag' | 'prompt' | 'unsupported';
+
+export interface ExtensionSourceRef {
+  agentId: string;
+  path: string;
+  contentHash: string;
+  seenAt: string | null;
+}
+
+export interface ExtensionTargetState {
+  agentId: string;
+  mode: ExtensionMountMode;
+  status: string;
+  /** 事实：该 Agent 自己的目录里确实有这一份 */
+  present: boolean;
+  detail: string | null;
+  checkedAt: string | null;
+}
+
+export interface ExtensionItem {
+  id: string;
+  kind: ExtensionKind;
+  name: string;
+  title: string | null;
+  description: string | null;
+  /** 技能正文；命中敏感内容时后端置 null（整段不落库） */
+  body: string | null;
+  /** MCP 配置 JSON 文本；命中敏感内容时值被替换成 *** 但结构保留 */
+  configJson: string | null;
+  contentHash: string;
+  bodyHash: string;
+  revision: number;
+  locallyModified: boolean;
+  blocked: boolean;
+  blockedReason: string | null;
+  enabled: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+/** 列表项在 item 之上多带一份来源清单（`GET /api/extensions` 直接给） */
+export interface ExtensionListItem extends ExtensionItem {
+  sources: ExtensionSourceRef[];
+  sourceCount: number;
+}
+
+export interface ExtensionStats {
+  skillCount: number;
+  mcpCount: number;
+  blockedCount: number;
+  duplicateCount: number;
+  conflictCount: number;
+}
+
+export interface ExtensionTargetSpec {
+  agentId: string;
+  label: string;
+  skillsDir: string | null;
+  mode: ExtensionMountMode;
+  note: string;
+}
+
+export interface ExtensionImportReport {
+  skillScanned: number;
+  mcpScanned: number;
+  added: number;
+  updated: number;
+  unchanged: number;
+  conflicts: Array<{ kind: ExtensionKind; name: string }>;
+  blocked: Array<{ kind: ExtensionKind; name: string; reason: string }>;
+}
+
+/**
+ * 四档能力的中文标签。
+ *
+ * ⚠️ `unsupported` 写成「不支持」而不是「未挂载」：后者听起来像「这次忘了」，
+ * 用户会去找一个不存在的开关。真相是那个 Agent 没有这条通道。
+ */
+export const EXT_MOUNT_LABEL: Record<ExtensionMountMode, string> = {
+  native: '原生支持',
+  flag: '启动参数',
+  prompt: '提示词注入',
+  unsupported: '不支持',
+};

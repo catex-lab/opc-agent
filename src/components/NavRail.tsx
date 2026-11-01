@@ -1,6 +1,6 @@
-import { MessageCircle, Users, Menu, FolderKanban } from 'lucide-react';
+import { MessageCircle, Users, Menu, FolderKanban, Boxes } from 'lucide-react';
 
-export type NavKey = 'chats' | 'projects' | 'contacts';
+export type NavKey = 'chats' | 'projects' | 'contacts' | 'extensions';
 
 interface NavRailProps {
   active: NavKey | 'settings';
@@ -12,7 +12,7 @@ interface NavRailProps {
 
 /**
  * 最左侧的窄导航栏 —— 社交应用里那一条「功能切换条」。
- * 只放最高频的三个入口，不承载任何业务内容。
+ * 只放最高频的几个入口，不承载任何业务内容。
  *
  * 设计要点：
  *   • 统一 44×44 按钮 + 20px 图标，节奏一致
@@ -54,6 +54,15 @@ export function NavRail({
        会让人以为它是「又一个通讯录」，而它其实更接近「聊天的另一种组织方式」。 */
     { key: 'projects', icon: FolderKanban, label: '项目' },
     { key: 'contacts', icon: Users, label: '通讯录' },
+    /* A164：「扩展」排在通讯录之后。
+       前三项都是「去哪干活」——聊天是会话、项目是会话的归堆、通讯录是找哪个
+       Agent 干。扩展不是干活的地方，是「给 Agent 装了哪些能力」的清单，属于
+       配置类，放最后不打断「聊天 → 项目 → 通讯录」这条主路径。
+
+       名字定为「扩展」而不是「工具集」：仓里「工具」已有 86 处，全指 Agent 的
+       工具调用（AgentTrace / toolPolicy），再叫工具集会让人以为是看调用日志的；
+       「技能」也有 24 处（MemoryPanel 的 L3 技能记忆）。详见 PLAN-EXTENSIONS.md §4.2。 */
+    { key: 'extensions', icon: Boxes, label: '扩展' },
   ];
 
   const isActive = (key: string) => active === key;
