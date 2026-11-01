@@ -331,6 +331,24 @@ try {
   const mcpNorm = await fetch(`${base}/api/extensions/mcp/shared_ok/normalize`);
   ok(mcpNorm.status === 400, '[4] MCP 不能归一化 → 400（不假装 0 命中）', String(mcpNorm.status));
 
+  /* 重复下标：`accepted: [0,0]` 只改 1 条，`applied` 也必须报 1 ——
+     「报的数字比实际做的多」是撒谎，用户会以为漏改了。
+     这一段会把正文改掉，测完立刻回滚，否则 [6] 段看到的就不是原文了。 */
+  const dupRes = await json(
+    await fetch(`${base}/api/extensions/skill/alpha/normalize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accepted: [0, 0, 0] }),
+    })
+  );
+  ok(dupRes.ok === true && dupRes.applied === 1, '[4] 重复下标只算 1 条', String(dupRes.applied));
+  const afterDup = await detail();
+  ok(afterDup.body.includes('{{SKILL_DIR}}') && afterDup.body.includes('`Read` 工具'),
+    '[4] 只改了第 0 条（路径），工具名那条没动');
+  await fetch(`${base}/api/extensions/skill/alpha/revert-normalize`, { method: 'POST' });
+  const afterDupRev = await detail();
+  ok(afterDupRev.body === before.body, '[4] 测完回滚，正文回到原文（给 [6] 段留干净状态）');
+
   // ══════════════ [5] 接口层：P2 分发 ══════════════
   console.log('\n[5] 接口层：MCP 分发');
   const dq = await json(await fetch(`${base}/api/extensions/distribute/preview?agentId=qoder`));

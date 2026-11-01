@@ -2608,7 +2608,9 @@ app.post("/api/extensions/:kind/:name/normalize", (req, res) => {
       res.status(400).json({ error: `accepted 下标越界：${bad}（共 ${r.hits.length} 条）` });
       return;
     }
-    selected = list;
+    /* 去重：`accepted: [0,0]` 只改 1 条，`applied` 也必须报 1。
+       报数字比实际做的多是「撒谎」，用户会以为漏改了。 */
+    selected = [...new Set(list)];
   }
   const nextBody = extApplyHits(item.body, r.hits, selected);
   const updated = extApplyNormalized(kind, req.params.name, nextBody);
