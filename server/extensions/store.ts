@@ -29,6 +29,8 @@ export interface ExtensionItem {
   title: string | null;
   description: string | null;
   body: string | null;
+  /** 归一化前的原文；只在「做过归一化」时非空，用于一键回滚（A166 / P1） */
+  bodyOriginal: string | null;
   configJson: string | null;
   contentHash: string;
   bodyHash: string;
@@ -91,6 +93,7 @@ function rowToItem(r: Record<string, unknown>): ExtensionItem {
     title: r.title == null ? null : String(r.title),
     description: r.description == null ? null : String(r.description),
     body: r.body == null ? null : String(r.body),
+    bodyOriginal: r.body_original == null ? null : String(r.body_original),
     configJson: r.config_json == null ? null : String(r.config_json),
     contentHash: String(r.content_hash ?? ''),
     bodyHash: String(r.body_hash ?? ''),
@@ -314,6 +317,57 @@ export function updateLocal(
     kind,
     name
   );
+  return findItem(kind, name);
+}
+
+/**
+ * 应用归一化后的正文（A166 / P1）。
+ *
+ * 与 `updateLocal` 的区别：这条**把归一化前的原文留到 `body_original`**，
+ * 于是「接受」是可逆的。
+ *
+ * `COALESCE(body_original, ?)` 而不是直接赋值：只有第一次归一化才写原文。
+ * 否则「归一化 → 回滚 → 再归一化」第二次会把原文写成**归一化后**的文本，
+ * 回滚就再也回不到原样了（这是不可逆的数据损坏，不是显示问题）。
+ *
+ * 同时置 `locally_modified = 1`：正文确实被我们改过，重新导入不该悄悄覆盖。
+ */
+export function applyNormalized(
+  kind: ExtensionKind,
+  name: string,
+  newBody: string
+): ExtensionItem | undefined {
+  const existing = findItem(kind, name);
+  if (!existing) return undefined;
+  const at = nowIso();
+  db.prepare(
+    `UPDATE extension_item
+        SET body = ?, body_original = COALESCE(body_original, ?),
+            body_hash = ?, locally_modified = 1, revision = revision + 1, updated_at = ?
+      WHERE kind = ? AND name = ?`
+  ).run(newBody, existing.body, hashOf(newBody), at, kind, name);
+  return findItem(kind, name);
+}
+
+/**
+ * 回滚到归一化前的原文。
+ *
+ * **不清 `locally_modified`**：原文也可能与源不同（用户可能先手改过再归一化），
+ * 没有证据说「现在这份等于源」。宁可让它继续算「本地改过」，也不要让一次
+ * 重新导入把用户的内容覆盖掉 —— 覆盖是不可逆的，多一个「本地改过」标记只是
+ * 多一次冲突提示。
+ */
+export function revertNormalized(kind: ExtensionKind, name: string): ExtensionItem | undefined {
+  const existing = findItem(kind, name);
+  if (!existing) return undefined;
+  if (existing.bodyOriginal == null) return existing;
+  const at = nowIso();
+  db.prepare(
+    `UPDATE extension_item
+        SET body = ?, body_original = NULL, body_hash = ?,
+            revision = revision + 1, updated_at = ?
+      WHERE kind = ? AND name = ?`
+  ).run(existing.bodyOriginal, hashOf(existing.bodyOriginal), at, kind, name);
   return findItem(kind, name);
 }
 

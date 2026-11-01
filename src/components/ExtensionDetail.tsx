@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ChevronLeft, Sparkles, Plug, Save, RotateCw, Trash2, Copy, ShieldAlert,
-  Info, Pencil, FolderOpen, Check,
+  Info, Pencil, FolderOpen, Check, Undo2,
 } from 'lucide-react';
 import { MessagePlugin } from 'tdesign-react';
 import type {
@@ -11,7 +11,8 @@ import type {
   ExtensionTargetSpec,
   ExtensionTargetState,
 } from '../types';
-import { EXT_MOUNT_LABEL } from '../types';
+import { EXT_MOUNT_LABEL, EXT_NORMALIZE_RULE_LABEL } from '../types';
+import { useExtensionNormalize } from '../hooks/useExtensions';
 import { ConfirmDialog } from './ConfirmDialog';
 import { copyText } from '../clipboard';
 import { revealInFolder, hasNativeDialogs } from '../workspace';
@@ -114,6 +115,18 @@ export function ExtensionDetail({
   const kind = item?.kind ?? null;
   const name = item?.name ?? null;
 
+  /* 归一化（A166 / P1）。**预览是纯读**，只有点「接受」才写库 ——
+     PLAN §8.3 的硬要求：归一化不自动应用，必须给人看 diff。 */
+  const norm = useExtensionNormalize(kind, name);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+
+  /* 预览换了就默认全选。用 `preview` 整体当依赖而不是 hits.length：
+     换条目时可能两条命中数一样，按长度判会留下上一条的勾选状态。 */
+  useEffect(() => {
+    const hits = norm.preview?.hits ?? [];
+    setPicked(new Set(hits.map((_, i) => i)));
+  }, [norm.preview]);
+
   /**
    * 正文/配置的初始值。
    *
@@ -144,6 +157,45 @@ export function ExtensionDetail({
   }, [targets, allTargets]);
 
   const readyCount = matrix.filter(m => m.state === 'ready').length;
+
+  /* 接受归一化：只提交用户勾中的那几条（下标数组）。
+     空选择直接不提交 —— 后端对空数组返回 400，前端先挡住，
+     否则用户会收到一条「没有选中任何一条」的报错弹窗，像是操作失败。 */
+  const applyNormalize = async () => {
+    const accepted = [...picked].sort((a, b) => a - b);
+    if (accepted.length === 0) {
+      MessagePlugin.warning('先勾选要替换的条目');
+      return;
+    }
+    const ok = await norm.apply(accepted);
+    if (ok) {
+      MessagePlugin.success(`已替换 ${accepted.length} 处`);
+      onReload();
+      onSaved();
+    } else {
+      MessagePlugin.warning(norm.error || '应用归一化失败');
+    }
+  };
+
+  const revertNormalize = async () => {
+    const ok = await norm.revert();
+    if (ok) {
+      MessagePlugin.success('已回滚到归一化前的原文');
+      onReload();
+      onSaved();
+    } else {
+      MessagePlugin.warning(norm.error || '回滚失败');
+    }
+  };
+
+  const togglePick = (i: number) => {
+    setPicked(prev => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
 
   const save = async () => {
     if (!item) return;
@@ -479,6 +531,123 @@ export function ExtensionDetail({
             </ul>
           )}
         </Section>
+
+        {/* ── 归一化（A166 / P1）──────────────────────────────────────── */}
+        {!isMcp && (
+          <Section
+            title="归一化"
+            subtitle="把写死的家目录路径换成占位符，让同一份技能在任何 Agent 的目录下都能用"
+            attr="data-ext-normalize"
+            action={
+              item.bodyOriginal != null ? (
+                <button
+                  type="button"
+                  onClick={() => void revertNormalize()}
+                  disabled={norm.applying}
+                  className="flex h-7 items-center gap-1 rounded-md px-2.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)] disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ color: 'var(--td-text-color-secondary)', border: '1px solid var(--tc-edge-strong)' }}
+                  data-ext-revert-normalize
+                >
+                  <Undo2 size={12} />
+                  回滚到原文
+                </button>
+              ) : norm.preview?.changed ? (
+                <button
+                  type="button"
+                  onClick={() => void applyNormalize()}
+                  disabled={picked.size === 0 || norm.applying}
+                  className="flex h-7 items-center gap-1 rounded-md px-2.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)] disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ color: 'var(--td-brand-color)', border: '1px solid var(--tc-edge-strong)' }}
+                  data-ext-apply-normalize
+                >
+                  <Check size={12} />
+                  {norm.applying ? '应用中' : `接受选中的 ${picked.size} 条`}
+                </button>
+              ) : undefined
+            }
+          >
+            {item.bodyOriginal != null ? (
+              <>
+                <p className="text-caption leading-5" style={{ color: 'var(--td-text-color-secondary)' }}>
+                  已归一化。正文里现在是 <code>{'{{SKILL_DIR}}'}</code> /{' '}
+                  <code>{'{{SKILLS_ROOT}}'}</code> 这类占位符 ——
+                  <strong>分发时会替换成目标 Agent 的实际路径</strong>，替换本身属于 P3。
+                  原文已保留，随时可以回滚。
+                </p>
+                <p className="mt-1 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                  OPC 不会把归一化后的正文写回你任何 Agent 的目录。
+                </p>
+              </>
+            ) : norm.loading ? (
+              <p className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                正在生成预览…
+              </p>
+            ) : norm.error ? (
+              <p className="text-caption" style={{ color: 'var(--td-error-color)' }}>
+                {norm.error}
+              </p>
+            ) : norm.preview?.changed ? (
+              <>
+                <p className="mb-2 text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
+                  共 {norm.preview.hits.length} 处
+                  {(['home-path', 'tool-name'] as const).map(r =>
+                    norm.preview!.summary[r] > 0 ? (
+                      <span key={r}>
+                        {' · '}
+                        {EXT_NORMALIZE_RULE_LABEL[r]} {norm.preview!.summary[r]}
+                      </span>
+                    ) : null
+                  )}
+                  <span style={{ color: 'var(--td-text-color-placeholder)' }}>
+                    {' '}
+                    · 勾选后点「接受」，只改勾中的那几条
+                  </span>
+                </p>
+                <ul
+                  className="tc-scroll-fade max-h-[240px] overflow-y-auto rounded-lg"
+                  style={{ border: '1px solid var(--tc-edge-strong)' }}
+                  data-ext-normalize-hits
+                >
+                  {norm.preview.hits.map((h, i) => (
+                    <li
+                      key={`${h.start}-${i}`}
+                      className="flex items-start gap-2 px-2.5 py-1.5"
+                      style={{
+                        borderTop: i === 0 ? undefined : '1px solid var(--tc-edge-strong)',
+                        backgroundColor: picked.has(i) ? 'var(--td-bg-color-component)' : undefined,
+                      }}
+                      data-ext-normalize-hit={i}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={picked.has(i)}
+                        onChange={() => togglePick(i)}
+                        className="mt-1 shrink-0"
+                        aria-label={`第 ${h.line} 行：${h.before}`}
+                        data-ext-normalize-pick
+                      />
+                      <span
+                        className="shrink-0 font-mono text-caption"
+                        style={{ color: 'var(--td-text-color-placeholder)', width: 38 }}
+                      >
+                        L{h.line}
+                      </span>
+                      <span className="min-w-0 flex-1 break-all font-mono text-caption leading-5">
+                        <span style={{ color: 'var(--td-error-color)' }}>{h.before}</span>
+                        <span style={{ color: 'var(--td-text-color-placeholder)' }}> → </span>
+                        <span style={{ color: 'var(--tc-status-ok)' }}>{h.after}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="text-caption leading-5" style={{ color: 'var(--td-text-color-secondary)' }}>
+                这条正文里没有写死的家目录路径，也没有明确的工具名引用，不需要归一化。
+              </p>
+            )}
+          </Section>
+        )}
 
         {/* ── 正文 / 配置 ────────────────────────────────────────────── */}
         <Section

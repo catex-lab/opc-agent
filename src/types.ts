@@ -833,6 +833,14 @@ export interface ExtensionItem {
   description: string | null;
   /** 技能正文；命中敏感内容时后端置 null（整段不落库） */
   body: string | null;
+  /**
+   * 归一化前的原文（A166 / P1）。
+   *
+   * 只在「做过归一化」时非空 —— 非空就说明可以一键回滚。
+   * 归一化后的正文里会含 `{{SKILL_DIR}}` / `{{SKILLS_ROOT}}` 占位符，
+   * **需要分发层替换成目标 Agent 的实际路径**才可用（P3）。
+   */
+  bodyOriginal: string | null;
   /** MCP 配置 JSON 文本；命中敏感内容时值被替换成 *** 但结构保留 */
   configJson: string | null;
   contentHash: string;
@@ -877,6 +885,37 @@ export interface ExtensionImportReport {
   conflicts: Array<{ kind: ExtensionKind; name: string }>;
   blocked: Array<{ kind: ExtensionKind; name: string; reason: string }>;
 }
+
+/* ── 归一化（A166 / P1）──────────────────────────────────────────────── */
+
+export type ExtensionNormalizeRule = 'home-path' | 'tool-name';
+
+export interface ExtensionNormalizeHit {
+  rule: ExtensionNormalizeRule;
+  /** 原文中的字符偏移（含） */
+  start: number;
+  /** 字符偏移（不含） */
+  end: number;
+  before: string;
+  after: string;
+  /** 1-based 行号 */
+  line: number;
+}
+
+export interface ExtensionNormalizePreview {
+  changed: boolean;
+  hits: ExtensionNormalizeHit[];
+  summary: Record<ExtensionNormalizeRule, number>;
+  /** 归一化后的全文 */
+  preview: string;
+  /** 已经归一化过 ⇒ 能回滚 */
+  hasOriginal: boolean;
+}
+
+export const EXT_NORMALIZE_RULE_LABEL: Record<ExtensionNormalizeRule, string> = {
+  'home-path': '家目录绝对路径',
+  'tool-name': '工具名引用',
+};
 
 /**
  * 四档能力的中文标签。

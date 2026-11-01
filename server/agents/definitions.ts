@@ -9,6 +9,7 @@ import type { AgentDescriptor, AgentEvent, AgentInstall, SendContext } from './t
 import type { ScenarioTool } from '../../shared/scenarios.js';
 import type { EventSource } from '../../shared/blocks.js';
 import { codexSandboxFor } from './permissions.js';
+import { mcpArgsFor } from '../extensions/distribute.js';
 
 /**
  * Claude Code 系（claude / cursor-agent）的 stream-json 行映射。
@@ -429,29 +430,43 @@ function qoderPermission(mode: PermissionMode | undefined): string {
  * 注意 `-p` 是**开关**不是「-p 后跟提示词」，提示词是位置参数
  * （Usage: qodercli [options] [command] [query...]），放最后。
  */
-function qoderCliArgs(prompt: string, ctx: SendContext): string[] {
-  // `--output-format stream-json` 不是为了「更好看」，而是**续接的前提**：
-  // 纯文本模式拿不到 `session_id`，没有它下一轮就无从 `-r`。
-  const args = ['-p', '--output-format', 'stream-json'];
-  /* A163 续接。2026-11-01 本机 qodercli 1.1.78 实测三步：
-   *   ① `-p --session-id <uuid> "记住 417"` → 建会话；
-   *   ② `-p --session-id <同一个 uuid>` → 直接报
-   *      "Session ID ... is already in use."（**不是**续接语义）；
-   *   ③ `-p -r <uuid> "那个数字是多少"` → 答 `417`。
-   * 所以续接只能用 `-r`，`--session-id` 只在「我们想自己指定首轮 id」时用。
-   * 这里用 `-r`，首轮 id 由 qodercli 自己生成、我们从 init 事件里读。
-   */
-  if (ctx.resumeToken) args.push('-r', ctx.resumeToken);
-  args.push('--permission-mode', qoderPermission(ctx.permissionMode));
-  if (ctx.model) args.push('-m', ctx.model);
-  // 思考强度（A62）：官方 IDE 的模型面板上有「思考强度：低/中/高/最大/超高」，
-  // CLI 对应 `--reasoning-effort <level>`。**8 个合法值是从 CLI 的报错原文里
-  // 拿到的**，不是猜的：
-  //   "Invalid reasoning effort: bogus. Valid values are: auto, none, low,
-  //    medium, high, xhigh, max, ultracode."
-  if (ctx.reasoningEffort) args.push('--reasoning-effort', ctx.reasoningEffort);
-  args.push(prompt);
-  return args;
+/**
+ * qodercli 的参数构造（qoder 与 qoder-cn 共用）。
+ *
+ * 做成**按 agentId 生成**的工厂而不是单函数：P2 要把 OPC 库里的 MCP 服务
+ * 按目标 Agent 分别汇成 `mcp-<agentId>.json`（两者的配置文件、
+ * 各自已有的服务名都不一样），硬编码一个 id 会把两个通道搞混。
+ */
+function makeQoderCliArgs(agentId: string) {
+  return function qoderCliArgs(prompt: string, ctx: SendContext): string[] {
+    // `--output-format stream-json` 不是为了「更好看」，而是**续接的前提**：
+    // 纯文本模式拿不到 `session_id`，没有它下一轮就无从 `-r`。
+    const args = ['-p', '--output-format', 'stream-json'];
+    /* A163 续接。2026-11-01 本机 qodercli 1.1.78 实测三步：
+     *   ① `-p --session-id <uuid> "记住 417"` → 建会话；
+     *   ② `-p --session-id <同一个 uuid>` → 直接报
+     *      "Session ID ... is already in use."（**不是**续接语义）；
+     *   ③ `-p -r <uuid> "那个数字是多少"` → 答 `417`。
+     * 所以续接只能用 `-r`，`--session-id` 只在「我们想自己指定首轮 id」时用。
+     * 这里用 `-r`，首轮 id 由 qodercli 自己生成、我们从 init 事件里读。
+     */
+    if (ctx.resumeToken) args.push('-r', ctx.resumeToken);
+    args.push('--permission-mode', qoderPermission(ctx.permissionMode));
+    if (ctx.model) args.push('-m', ctx.model);
+    // 思考强度（A62）：官方 IDE 的模型面板上有「思考强度：低/中/高/最大/超高」，
+    // CLI 对应 `--reasoning-effort <level>`。**8 个合法值是从 CLI 的报错原文里
+    // 拿到的**，不是猜的：
+    //   "Invalid reasoning effort: bogus. Valid values are: auto, none, low,
+    //    medium, high, xhigh, max, ultracode."
+    if (ctx.reasoningEffort) args.push('--reasoning-effort', ctx.reasoningEffort);
+    /* P2：把 OPC 库里从**别的** Agent 共享过来的 MCP 服务指给 qoder。
+       零写入 —— 文件生成在 `data/extensions/mcp-<agentId>.json`，只经启动参数传入。
+       没有可共享的条目时 `mcpArgsFor` 返回空数组，argv 与改动前完全一致。
+       不加 `--strict-mcp-config`：那会忽略用户自己配的、还没导入 OPC 的 MCP。 */
+    args.push(...mcpArgsFor(agentId));
+    args.push(prompt);
+    return args;
+  };
 }
 
 /**
@@ -1590,7 +1605,7 @@ const RAW_DEFS: AgentDefinition[] = [
       //    实测 `-m qoder-custom-efc0bc4d-…` → "Model ... is not available right now;
       //    using \"qfmodel\" instead."（被静默换掉），而 `-m sensenova-6.8-flash-lite`
       //    正常返回。所以 modelCatalog 取的是括号前的名字（A58）。
-      buildArgs: qoderCliArgs,
+      buildArgs: makeQoderCliArgs('qoder'),
       /* A163：从 `parse: 'text'` 改成 `'jsonl'`。
        *
        * 起因是用户实测：第一轮让它装 Agent Mail CLI 失败，点「再次尝试」后
@@ -1679,7 +1694,7 @@ const RAW_DEFS: AgentDefinition[] = [
       // 的 bin 名，2026-10-22 查包元数据确认）。参数形态与国际版同构 ——
       // 所以直接复用同一个 buildArgs，不复制一份会漂的代码。
       bin: 'qoderclicn',
-      buildArgs: qoderCliArgs,
+      buildArgs: makeQoderCliArgs('qoder-cn'),
       // A163：与国际版同步改 jsonl + `-r` 续接。**这一条是推断，不是实测** ——
       // 本机没有 CN 账号、也没有 `qoderclicn` 可执行文件，无法验证
       // `--output-format stream-json` 与 `-r` 在 CN 版上是否同构。

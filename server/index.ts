@@ -115,16 +115,20 @@ import { distillSkill } from "./skill-distill.js";
 // 不写任何 `~/.<agent>/` 下的东西 —— 见 PLAN-EXTENSIONS.md §2.1。
 import {
   acceptSource as extAcceptSource,
+  applyNormalized as extApplyNormalized,
   deleteItem as extDeleteItem,
   findItem as extFindItem,
   listItems as extListItems,
   listSources as extListSources,
   listTargets as extListTargets,
+  revertNormalized as extRevertNormalized,
   stats as extStats,
   updateLocal as extUpdateLocal,
   type ExtensionKind,
 } from "./extensions/store.js";
 import { runImport as extRunImport, refreshItem as extRefreshItem } from "./extensions/import.js";
+import { applyHits as extApplyHits, normalizeSkillBody } from "./extensions/normalize.js";
+import { buildMcpConfig } from "./extensions/distribute.js";
 import { MODE_LABEL as EXT_MODE_LABEL, TARGETS as EXT_TARGETS } from "./extensions/targets.js";
 import { legacyToBlocks, textOfBlocks, toolCallsOfBlocks } from "../shared/blocks.js";
 import type { CapabilityProfile } from "../shared/capabilities.js";
@@ -2400,6 +2404,24 @@ app.get("/api/extensions", (_req, res) => {
   });
 });
 
+/* 分发预览（P2）：告诉界面「这条会被送进哪些 Agent、以什么形态」。
+   只读 —— 真正的配置文件在发消息时生成（见 distribute.ts）。
+
+   ⚠️ 必须注册在 `/api/extensions/:kind/:name` **之前**：否则 Express 会把它
+   当成 kind='distribute' / name='preview' 匹配走，parseExtKind 直接 400。 */
+app.get("/api/extensions/distribute/preview", (req, res) => {
+  const agentId = typeof req.query.agentId === "string" ? req.query.agentId : "";
+  if (!agentId) {
+    res.status(400).json({ error: "缺少 agentId" });
+    return;
+  }
+  try {
+    res.json(buildMcpConfig(agentId));
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "生成分发预览失败" });
+  }
+});
+
 app.get("/api/extensions/:kind/:name", (req, res) => {
   const kind = parseExtKind(req.params.kind);
   if (!kind) {
@@ -2499,6 +2521,116 @@ app.post("/api/extensions/:kind/:name/accept-source", (req, res) => {
   // 接受之后立刻按源刷新一次，把正文换成源的样子
   const r = extRefreshItem(kind, req.params.name);
   res.json({ ok: true, ...r });
+});
+
+/* ══════════ A166 / P1：归一化（预览 → 逐条确认 → 回滚）══════════
+ *
+ * 三步分开是刻意的：**归一化绝不自动应用**（PLAN-EXTENSIONS.md §8.3）。
+ * 预览是纯函数，不碰库；应用要用户明确传 `accepted`；
+ * 回滚靠 `body_original` 这一列。
+ *
+ * 只有技能有正文，MCP 是配置（归一化对它没有意义）—— 对 mcp 一律 400，
+ * 不静默返回空 diff（那会让前端以为「这条不需要归一化」）。
+ */
+app.get("/api/extensions/:kind/:name/normalize", (req, res) => {
+  const kind = parseExtKind(req.params.kind);
+  if (!kind) {
+    res.status(400).json({ error: "kind 只能是 skill 或 mcp" });
+    return;
+  }
+  if (kind !== "skill") {
+    res.status(400).json({ error: "只有技能正文可以归一化，MCP 是配置不是正文" });
+    return;
+  }
+  const item = extFindItem(kind, req.params.name);
+  if (!item) {
+    res.status(404).json({ error: "扩展不存在" });
+    return;
+  }
+  if (item.body == null) {
+    res.status(409).json({
+      error: "这条没有正文可归一化",
+      reason: item.blocked ? "命中敏感内容，正文未落库" : "正文为空",
+    });
+    return;
+  }
+  const r = normalizeSkillBody(item.body, item.name);
+  res.json({
+    changed: r.changed,
+    hits: r.hits,
+    summary: r.summary,
+    // 全文预览（前端可以直接铺 diff 视图）
+    preview: r.text,
+    // 已经归一化过的话告诉前端「能回滚」
+    hasOriginal: item.bodyOriginal != null,
+  });
+});
+
+app.post("/api/extensions/:kind/:name/normalize", (req, res) => {
+  const kind = parseExtKind(req.params.kind);
+  if (!kind) {
+    res.status(400).json({ error: "kind 只能是 skill 或 mcp" });
+    return;
+  }
+  if (kind !== "skill") {
+    res.status(400).json({ error: "只有技能正文可以归一化，MCP 是配置不是正文" });
+    return;
+  }
+  const item = extFindItem(kind, req.params.name);
+  if (!item) {
+    res.status(404).json({ error: "扩展不存在" });
+    return;
+  }
+  if (item.body == null) {
+    res.status(409).json({ error: "这条没有正文可归一化" });
+    return;
+  }
+  const r = normalizeSkillBody(item.body, item.name);
+  if (!r.changed) {
+    res.status(409).json({ error: "没有可归一化的内容", summary: r.summary });
+    return;
+  }
+  /* `accepted` 是 hit 的下标数组（「逐条确认」）；不传 = 全部接受。
+     传了空数组是明确错误 —— 那等于「点了接受但一条都不选」，
+     静默写回原文会让用户以为操作成功。 */
+  const body = req.body ?? {};
+  let selected: number[] | undefined;
+  if (Array.isArray(body.accepted)) {
+    const list: number[] = body.accepted
+      .filter((n: unknown) => Number.isInteger(n))
+      .map(Number);
+    if (list.length === 0) {
+      res.status(400).json({ error: "accepted 为空数组：没有选中任何一条" });
+      return;
+    }
+    const bad = list.find((n: number) => n < 0 || n >= r.hits.length);
+    if (bad !== undefined) {
+      res.status(400).json({ error: `accepted 下标越界：${bad}（共 ${r.hits.length} 条）` });
+      return;
+    }
+    selected = list;
+  }
+  const nextBody = extApplyHits(item.body, r.hits, selected);
+  const updated = extApplyNormalized(kind, req.params.name, nextBody);
+  res.json({ ok: true, applied: selected ? selected.length : r.hits.length, item: updated });
+});
+
+app.post("/api/extensions/:kind/:name/revert-normalize", (req, res) => {
+  const kind = parseExtKind(req.params.kind);
+  if (!kind) {
+    res.status(400).json({ error: "kind 只能是 skill 或 mcp" });
+    return;
+  }
+  const item = extFindItem(kind, req.params.name);
+  if (!item) {
+    res.status(404).json({ error: "扩展不存在" });
+    return;
+  }
+  if (item.bodyOriginal == null) {
+    res.status(409).json({ error: "这条没有归一化记录，无可回滚" });
+    return;
+  }
+  res.json({ ok: true, item: extRevertNormalized(kind, req.params.name) });
 });
 
 // ── 项目（A98）──────────────────────────────────────────────────────────

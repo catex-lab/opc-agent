@@ -144,6 +144,67 @@ const MCP_FILES: ReadonlyArray<{ agentId: string; file: string; format: 'json' |
  * 不引 TOML 库的理由同上：我们只需要 command / args / env / url 四个字段，
  * 而 codex 的 config.toml 里其余内容（模型、审批策略）与 MCP 无关。
  */
+/**
+ * TOML 标量转换（字符串 / 布尔 / 数字）。数组见 `parseTomlArray`。
+ *
+ * 抽出来的理由：数组元素和顶层值用的是同一套规则，两处各写一遍必然漂移
+ * （`["a", "b"]` 里元素该去引号、顶层 `"a"` 也该去，漏一处就是「数组里带引号、
+ * 单值不带」这种诡异结果）。
+ */
+function tomlScalar(raw: string): unknown {
+  const s = raw.trim();
+  if ((s.startsWith("'") && s.endsWith("'")) || (s.startsWith('"') && s.endsWith('"'))) {
+    return s.slice(1, -1);
+  }
+  if (s === 'true' || s === 'false') return s === 'true';
+  if (/^-?\d+$/.test(s)) return Number(s);
+  return s;
+}
+
+/**
+ * TOML 数组：`["a", "b"]` / `[]` / `[1, 2]`。
+ *
+ * **为什么必须解析它**：codex 的 `config.toml` 里 `args = ["--foo", "bar"]`
+ * 是**数组**，只按标量处理会得到字符串 `"[\"--foo\", \"bar\"]"` ——
+ * 原样交给 MCP 客户端就是一个参数（还是带方括号的），服务直接起不来。
+ * 实测本机 `node_repl` 的 `args` / `env_vars` 都踩了这个。
+ *
+ * 逐字符扫描而不是 `split(',')`：元素本身可能含逗号
+ * （`["--path", "a,b"]`），按逗号切会把一个参数劈成两个。
+ */
+function parseTomlArray(text: string): unknown[] {
+  const inner = text.trim().slice(1, -1).trim();
+  if (!inner) return [];
+  const out: unknown[] = [];
+  let cur = '';
+  let quote = '';
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (quote) {
+      if (ch === '\\' && i + 1 < inner.length) {
+        cur += ch + inner[++i];
+        continue;
+      }
+      if (ch === quote) quote = '';
+      cur += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      cur += ch;
+      continue;
+    }
+    if (ch === ',') {
+      out.push(tomlScalar(cur));
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(tomlScalar(cur));
+  return out;
+}
+
 export function parseTomlMcpServers(text: string): Array<{ name: string; config: Record<string, unknown> }> {
   const out = new Map<string, Record<string, unknown>>();
   let cur: Record<string, unknown> | null = null;
@@ -169,15 +230,9 @@ export function parseTomlMcpServers(text: string): Array<{ name: string; config:
     if (!cur) continue;
     const kv = /^([A-Za-z0-9_-]+)\s*=\s*(.+)$/.exec(line);
     if (!kv) continue;
-    let v: unknown = kv[2].trim();
-    const s = String(v);
-    if ((s.startsWith("'") && s.endsWith("'")) || (s.startsWith('"') && s.endsWith('"'))) {
-      v = s.slice(1, -1);
-    } else if (s === 'true' || s === 'false') {
-      v = s === 'true';
-    } else if (/^-?\d+$/.test(s)) {
-      v = Number(s);
-    }
+    const s = kv[2].trim();
+    const v: unknown =
+      s.startsWith('[') && s.endsWith(']') ? parseTomlArray(s) : tomlScalar(s);
     if (inEnv) {
       (cur.env as Record<string, unknown>)[kv[1]] = v;
     } else {

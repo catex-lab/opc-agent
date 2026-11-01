@@ -312,6 +312,19 @@ ensureColumn('sessions', 'system_prompt', 'system_prompt TEXT');
 ensureColumn('sessions', 'permission_mode', 'permission_mode TEXT');
 ensureColumn('sessions', 'pinned', 'pinned INTEGER NOT NULL DEFAULT 0');
 /**
+ * A166（P1）：扩展的归一化前原文。
+ *
+ * `body` 是当前生效的正文（可能是归一化后 / 用户手改的），`body_original`
+ * 只在「做过归一化」时非空，用来**一键回滚**。
+ *
+ * 为什么必须是单独一列而不是「再存一条 item」：归一化是可逆的视图变换，
+ * 回滚要恢复的是同一行的同一个字段；拆成两条会让「来源数」「冲突判定」
+ * 全部要重新定义（哪条算主？），代价远大于收益。
+ *
+ * 老库为 NULL = 从没归一化过，回滚按钮不出现，语义正确。
+ */
+ensureColumn('extension_item', 'body_original', 'body_original TEXT');
+/**
  * A98：会话所属项目。
  *
  * 三个值各有含义（A131 起）：**NULL** = 从没算过，交给

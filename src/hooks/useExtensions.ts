@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   ExtensionImportReport,
   ExtensionListItem,
+  ExtensionNormalizePreview,
   ExtensionSourceRef,
   ExtensionStats,
   ExtensionTargetSpec,
@@ -212,4 +213,117 @@ export function useExtensionDetail(kind: string | null, name: string | null) {
   }, [load]);
 
   return { item, targets, loading, error, reload: load };
+}
+
+/**
+ * 归一化（A166 / P1）：预览 → 逐条接受 → 回滚。
+ *
+ * ## 为什么「预览」和「应用」是两个动作
+ *
+ * PLAN-EXTENSIONS.md §8.3 的硬要求：归一化**不自动应用**，必须给人看 diff。
+ * 所以这里 `load()` 只拿 diff（纯读），`apply()` 才写库，而且
+ * `accepted` 是 hit 的下标数组 —— 用户勾哪条就只改哪条。
+ *
+ * ## 为什么 apply / revert 之后要调用方自己 reload 详情
+ *
+ * 正文变了，详情里那份 `item.body` 就旧了。这个 hook 不持有 detail 的 state
+ * （两个 hook 各自独立拉），所以只能返回 `true` 让调用方 `reload()` ——
+ * 偷偷在内部再 fetch 一次详情会让「谁最后落地」变成竞态
+ * （A162 在项目列表上踩过：两个触发点乱序，先发的慢请求覆盖后发的）。
+ */
+export function useExtensionNormalize(kind: string | null, name: string | null) {
+  const [preview, setPreview] = useState<ExtensionNormalizePreview | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const seqRef = useRef(0);
+
+  const load = useCallback(async () => {
+    if (!kind || !name || kind !== 'skill') {
+      setPreview(null);
+      setError(null);
+      return;
+    }
+    const seq = ++seqRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/normalize`
+      );
+      const data = await res.json().catch(() => ({}));
+      if (seq !== seqRef.current) return;
+      if (!res.ok) {
+        /* 409 = 「这条没有正文可归一化」（被拦截 / 空正文）。这不是错误弹窗的料，
+           界面上显示成一句说明即可 —— 所以把 error 置空，只留 preview=null。 */
+        setPreview(null);
+        if (res.status !== 409) {
+          throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+        }
+        return;
+      }
+      setPreview(data as ExtensionNormalizePreview);
+    } catch (e) {
+      if (seq !== seqRef.current) return;
+      setError((e as Error).message || '生成归一化预览失败');
+      setPreview(null);
+    } finally {
+      if (seq === seqRef.current) setLoading(false);
+    }
+  }, [kind, name]);
+
+  const apply = useCallback(
+    async (accepted?: number[]): Promise<boolean> => {
+      if (!kind || !name) return false;
+      setApplying(true);
+      setError(null);
+      try {
+        const res = await fetch(
+          `/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/normalize`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(accepted ? { accepted } : {}),
+          }
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+        await load();
+        return true;
+      } catch (e) {
+        setError((e as Error).message || '应用归一化失败');
+        return false;
+      } finally {
+        setApplying(false);
+      }
+    },
+    [kind, name, load]
+  );
+
+  const revert = useCallback(async (): Promise<boolean> => {
+    if (!kind || !name) return false;
+    setApplying(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/revert-normalize`,
+        { method: 'POST' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+      await load();
+      return true;
+    } catch (e) {
+      setError((e as Error).message || '回滚失败');
+      return false;
+    } finally {
+      setApplying(false);
+    }
+  }, [kind, name, load]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return { preview, loading, applying, error, reload: load, apply, revert };
 }
