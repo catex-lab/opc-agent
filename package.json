@@ -160,6 +160,7 @@
     "verify:a166-normalize": "node scripts/verify-a166-normalize.mjs",
     "verify:a167-inject": "tsx scripts/verify-a167-inject.ts",
     "verify:a168-drift": "tsx scripts/verify-a168-drift.ts",
+    "verify:a169-skill-plugin": "tsx scripts/verify-a169-skill-plugin.ts",
     "verify:kb": "tsx scripts/verify-kb-index.ts"
   },
   "dependencies": {

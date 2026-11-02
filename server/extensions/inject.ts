@@ -89,7 +89,7 @@ function toPosix(p: string): string {
 }
 
 /** 目录名安全化。技能名来自 frontmatter，不能直接当路径用（`../` 会逃逸）。 */
-function safeDirName(name: string): string | null {
+export function safeDirName(name: string): string | null {
   const s = name.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '');
   return s ? s : null;
 }

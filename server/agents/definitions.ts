@@ -9,7 +9,7 @@ import type { AgentDescriptor, AgentEvent, AgentInstall, SendContext } from './t
 import type { ScenarioTool } from '../../shared/scenarios.js';
 import type { EventSource } from '../../shared/blocks.js';
 import { codexSandboxFor } from './permissions.js';
-import { mcpArgsFor } from '../extensions/distribute.js';
+import { mcpArgsFor, skillArgsFor } from '../extensions/distribute.js';
 
 /**
  * Claude Code 系（claude / cursor-agent）的 stream-json 行映射。
@@ -464,6 +464,10 @@ function makeQoderCliArgs(agentId: string) {
        没有可共享的条目时 `mcpArgsFor` 返回空数组，argv 与改动前完全一致。
        不加 `--strict-mcp-config`：那会忽略用户自己配的、还没导入 OPC 的 MCP。 */
     args.push(...mcpArgsFor(agentId));
+    /* P5-D：OPC 共享技能。同样零写入 —— 聚合 plugin 壳 + 把镜像**拷贝**进
+       `data/extensions/opc-skill-plugin/skills/`，经 `--plugin-dir` 传入。
+       qoder-cli 会自动扫描 plugin 内的 skills/ 子目录。 */
+    args.push(...skillArgsFor(agentId));
     args.push(prompt);
     return args;
   };
