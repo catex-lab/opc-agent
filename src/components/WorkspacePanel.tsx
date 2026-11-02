@@ -49,6 +49,14 @@ import { WorkspaceTerminal } from './WorkspaceTerminal';
  * 预览层**不做编辑**：没有保存、没有写回、没有冲突处理。写操作仍然只有
  * Agent 与外部编辑器两条路 —— 这条边界与 `server/fs.ts` 的「只读」口径一致，
  * 别在这里加 textarea。
+ *
+ * ## A172：html 在面板内做**沙箱预览**
+ *
+ * html 用 `<iframe sandbox>`（**不给** `allow-scripts` / `allow-same-origin`）
+ * + `srcDoc` 渲染，srcDoc 里再注入 `default-src 'none'` 的 CSP、剥掉
+ * `meta refresh`、加 `<base target="_blank">`。目标只有三条：
+ * **只看不改、不联网、不执行脚本**。默认走预览，可切「源码」；切换偏好落到
+ * localStorage（与标签页偏好同一套 key）。
  */
 
 interface OpcBridge {
@@ -110,9 +118,63 @@ export const MAX_PREVIEW_LINES = 2000;
  */
 export const MAX_MARKDOWN_BYTES = 256 * 1024;
 
+/**
+ * A172：html 沙箱预览的大小上限，与 `server/fs.ts` 的 `MAX_TEXT_BYTES` 同值。
+ *
+ * 前端不能 import 服务端模块（会把 Node 代码拖进浏览器 bundle），所以这里
+ * 复制一份口径。服务端超过 1 MB 会直接返回 `too-large`（连源码都不给），
+ * 两边必须保持一致 —— 改 `server/fs.ts` 的这个值时这里要同步。
+ */
+export const MAX_HTML_PREVIEW_BYTES = 1024 * 1024;
+
+/** html 预览偏好（预览 / 源码）。与标签页偏好同一套 `opc.workspace-*` 命名。 */
+const HTML_VIEW_KEY = 'opc.workspace-html-view';
+
 /** 只有这两种扩展名走富文本渲染；`.mdx` 不认（里面可能有 JSX，渲染不了）。 */
 function isMarkdownFile(name: string): boolean {
   return /\.(md|markdown)$/i.test(name);
+}
+
+/** html 沙箱预览只认 `.html` / `.htm`。 */
+function isHtmlFile(name: string): boolean {
+  return /\.(html|htm)$/i.test(name);
+}
+
+/**
+ * A172：注入到 srcDoc 里的严格 CSP。
+ *
+ * - `default-src 'none'`：脚本、图片、字体、媒体、frame、XHR/fetch/WebSocket
+ *   全部落到默认拒绝，文件里任何一个外链都发不出去 —— **零网络请求**；
+ * - `style-src 'unsafe-inline'`：只留内联样式（否则页面会裸奔，连居中都没有）；
+ * - `form-action 'none'`：表单提交也拒；
+ * - `base-uri 'none'`：防止文件里写 `<base href="https://evil">` 把相对 URL 改写。
+ */
+const HTML_PREVIEW_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'";
+
+/**
+ * A172：把任意 html 改造成可安全塞进 `srcDoc` 的文档。
+ *
+ * 三件事：
+ *   1. **剥掉 `<meta http-equiv="refresh">`** —— CSP 管不住「文档自己导航自己」，
+ *      meta refresh 能把 iframe 跳到外网，是绕过 `default-src 'none'` 的唯一口子；
+ *   2. 注入 CSP（越早越好：紧跟 `<head>` 之后，或补一个 `<head>`）；
+ *   3. 加 `<base target="_blank">` —— 原文件里的链接只能在「新窗口」打开，而
+ *      沙箱没给 `allow-popups`，等于点了没反应，不会把面板整个接管。
+ */
+export function buildSafeHtmlDocument(raw: string): string {
+  const headInject =
+    `<meta http-equiv="Content-Security-Policy" content="${HTML_PREVIEW_CSP}">` +
+    '<base target="_blank">';
+  const withoutRefresh = raw.replace(
+    /<meta\s+http-equiv\s*=\s*(?:"refresh"|'refresh'|refresh)[^>]*>/gi,
+    ''
+  );
+  const head = /<head(\s[^>]*)?>/i;
+  if (head.test(withoutRefresh)) return withoutRefresh.replace(head, m => `${m}${headInject}`);
+  const html = /<html(\s[^>]*)?>/i;
+  if (html.test(withoutRefresh)) return withoutRefresh.replace(html, m => `${m}<head>${headInject}</head>`);
+  return `<head>${headInject}</head>${withoutRefresh}`;
 }
 
 /**
@@ -666,6 +728,35 @@ function FilePreview({
    */
   const markdownPlainFallback =
     data?.kind === 'text' && isMarkdownFile(entry.name) && !richMarkdown;
+
+  /**
+   * A172：html 的「预览 / 源码」切换。
+   *
+   * 默认预览；偏好是全局的（同一套 localStorage 偏好），所以同一个文件关掉
+   * 再打开时会停在上次选的视图 —— 用户不用每开一次就切一次。
+   */
+  const [htmlView, setHtmlView] = useState<'preview' | 'source'>(() => {
+    try {
+      return localStorage.getItem(HTML_VIEW_KEY) === 'source' ? 'source' : 'preview';
+    } catch {
+      return 'preview';
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(HTML_VIEW_KEY, htmlView);
+    } catch {
+      /* 隐私模式写不进去只影响下次默认值 */
+    }
+  }, [htmlView]);
+
+  const isHtml = isHtmlFile(entry.name);
+  const htmlHasSource = data?.kind === 'text';
+  /** 上限沿用文本阈值；服务端超过 1 MB 直接返回 too-large，这里只是同口径兜底 */
+  const htmlPreviewAllowed = isHtml && htmlHasSource && (data?.size ?? 0) <= MAX_HTML_PREVIEW_BYTES;
+  /** 拿了源码但超过阈值（服务端阈值若放宽才会出现）：强制源码 + 说明 */
+  const htmlOversizeFallback = isHtml && htmlHasSource && !htmlPreviewAllowed;
+  const showHtmlPreview = htmlPreviewAllowed && htmlView === 'preview';
   const mono = {
     fontFamily: 'var(--font-mono)',
     /* A133：原来是裸 12。文件预览是「次级信息」（读而不是写），
@@ -698,6 +789,35 @@ function FilePreview({
         >
           {entry.name}
         </span>
+        {htmlPreviewAllowed && (
+          <div
+            className="flex shrink-0 items-center gap-0.5 rounded-md p-0.5"
+            style={{ border: '1px solid var(--tc-hairline)' }}
+            role="group"
+            aria-label="html 预览方式"
+            data-html-view-toggle
+          >
+            {(['preview', 'source'] as const).map(v => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setHtmlView(v)}
+                aria-pressed={htmlView === v}
+                className="rounded px-1.5 py-0.5 text-caption transition-colors"
+                style={{
+                  color:
+                    htmlView === v
+                      ? 'var(--td-text-color-primary)'
+                      : 'var(--td-text-color-secondary)',
+                  background:
+                    htmlView === v ? 'var(--tc-hover-chrome)' : 'transparent',
+                }}
+              >
+                {v === 'preview' ? '预览' : '源码'}
+              </button>
+            ))}
+          </div>
+        )}
         <span
           className="shrink-0 text-caption"
           style={{ color: 'var(--td-text-color-placeholder)' }}
@@ -768,23 +888,52 @@ function FilePreview({
               文件超过 {formatSize(MAX_MARKDOWN_BYTES)}，markdown 按纯文本显示
             </p>
           )}
-          <div className="min-h-0 flex-1 overflow-auto">
-            <div className="flex min-h-full">
-              <pre
-                className="shrink-0 select-none py-2 pl-2 pr-2 text-right"
-                style={{ ...mono, color: 'var(--td-text-color-placeholder)' }}
-                aria-hidden
-              >
-                {shown.map((_, i) => i + 1).join('\n')}
-              </pre>
-              <pre
-                className="min-w-0 flex-1 py-2 pl-1 pr-3"
-                style={{ ...mono, color: 'var(--td-text-color-primary)' }}
-              >
-                {shown.join('\n')}
-              </pre>
+          {/* A172：html 拿了源码但超预览阈值时，退回源码并说明原因 */}
+          {htmlOversizeFallback && (
+            <p
+              className="shrink-0 px-3 py-1.5 text-caption"
+              style={{
+                borderBottom: '1px solid var(--tc-hairline)',
+                color: 'var(--td-text-color-placeholder)',
+              }}
+              data-html-oversize-fallback
+            >
+              文件超过 {formatSize(MAX_HTML_PREVIEW_BYTES)}，html 按源码显示（不做沙箱预览）
+            </p>
+          )}
+          {showHtmlPreview ? (
+            /* A172：沙箱预览。sandbox 留空 = 全部能力关闭（不给脚本、不给
+               同源、不给弹窗、不给表单）；CSP 与剥 meta refresh 见
+               buildSafeHtmlDocument。srcDoc 不经过网络，内容来自 /api/fs/read。 */
+            <iframe
+              className="min-h-0 w-full flex-1"
+              style={{ border: 0, background: '#fff' }}
+              title={`${entry.name} 预览`}
+              sandbox=""
+              referrerPolicy="no-referrer"
+              srcDoc={buildSafeHtmlDocument(data.content ?? '')}
+              data-html-preview-iframe
+            />
+          ) : (
+            <div className="min-h-0 flex-1 overflow-auto">
+              <div className="flex min-h-full">
+                <pre
+                  className="shrink-0 select-none py-2 pl-2 pr-2 text-right"
+                  style={{ ...mono, color: 'var(--td-text-color-placeholder)' }}
+                  aria-hidden
+                >
+                  {shown.map((_, i) => i + 1).join('\n')}
+                </pre>
+                <pre
+                  className="min-w-0 flex-1 py-2 pl-1 pr-3"
+                  style={{ ...mono, color: 'var(--td-text-color-primary)' }}
+                  data-html-source-pane={isHtml ? '' : undefined}
+                >
+                  {shown.join('\n')}
+                </pre>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       ) : data.kind === 'image' ? (
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-3">
@@ -800,9 +949,11 @@ function FilePreview({
           style={{ color: 'var(--td-text-color-secondary)' }}
         >
           <FileIcon size={22} style={{ color: 'var(--td-text-color-placeholder)' }} />
-          <p className="text-body">
+          <p className="text-body" data-file-preview-blocked-reason={isHtml ? 'html-too-large' : undefined}>
             {data.kind === 'too-large'
-              ? `文件太大（${formatSize(data.size)}），面板内不预览`
+              ? isHtml
+                ? `html 文件超过 ${formatSize(MAX_HTML_PREVIEW_BYTES)}，面板内不加载（不做沙箱预览）`
+                : `文件太大（${formatSize(data.size)}），面板内不预览`
               : '这是二进制文件，面板内不预览'}
           </p>
           <button
@@ -816,7 +967,7 @@ function FilePreview({
         </div>
       )}
 
-      {hidden > 0 && !richMarkdown && (
+      {hidden > 0 && !richMarkdown && !showHtmlPreview && (
         <p
           className="shrink-0 px-3 py-1.5 text-caption"
           style={{
