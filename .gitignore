@@ -67,3 +67,6 @@ data/
 /UIUX-AUDIT.md
 /PLAN-*.md
 /preview-thinking.html
+
+# ── Agent 工作记忆：含本机路径与内部决策，不进版本库 ──────────────
+/.workbuddy-ai/

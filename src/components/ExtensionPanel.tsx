@@ -1,6 +1,26 @@
-import { useMemo, useState } from 'react';
-import { Boxes, Download, RefreshCw, Search, Sparkles, Plug, ShieldAlert, Pencil } from 'lucide-react';
-import type { ExtensionKind, ExtensionListItem, ExtensionStats } from '../types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, Boxes, Download, RefreshCw, Search, Sparkles, Plug, ShieldAlert, Pencil } from 'lucide-react';
+import {
+  EXT_DRIFT_LABEL,
+  type ExtensionDriftState,
+  type ExtensionKind,
+  type ExtensionListItem,
+  type ExtensionStats,
+} from '../types';
+import { useExtensionDrift } from '../hooks/useExtensions';
+
+/**
+ * 差异四态的取色。
+ *
+ * `updated` 用品牌色而不是绿色：绿色在这栏里已经被 `×N`（来源数）和
+ * 「已就位」占用了，再借一次会让「源变了」看起来像「一切正常」。
+ */
+const DRIFT_COLOR: Record<ExtensionDriftState, string> = {
+  new: 'var(--tc-status-ok)',
+  updated: 'var(--td-brand-color)',
+  conflict: 'var(--tc-status-warn)',
+  gone: 'var(--td-text-color-placeholder)',
+};
 
 interface ExtensionPanelProps {
   items: ExtensionListItem[];
@@ -51,6 +71,54 @@ export function ExtensionPanel({
   compact = false,
 }: ExtensionPanelProps) {
   const [keyword, setKeyword] = useState('');
+  /**
+   * 差异检测（A168 / P4）。面板挂载时才轮询，切走就停 —— 见 `useExtensionDrift`。
+   */
+  const drift = useExtensionDrift();
+  const [driftOpen, setDriftOpen] = useState(false);
+  const driftCounts = drift.report?.counts;
+  /** 能一键跟上的：`new` / `updated`。`conflict` 不在里面（会丢用户的编辑），`gone` 也不在。 */
+  const applicable = useMemo(
+    () => (drift.report?.entries ?? []).filter(e => e.state === 'new' || e.state === 'updated'),
+    [drift.report]
+  );
+  /** 徽章上只放得下「N 处变化」，分类明细进 title —— 侧栏就这么宽，塞不下四段文案 */
+  const driftBreakdown = useMemo(() => {
+    if (!driftCounts) return '';
+    const parts: string[] = [];
+    if (driftCounts.new) parts.push(`新发现 ${driftCounts.new}`);
+    if (driftCounts.updated) parts.push(`源已更新 ${driftCounts.updated}`);
+    if (driftCounts.conflict) parts.push(`有冲突 ${driftCounts.conflict}`);
+    if (driftCounts.gone) parts.push(`源已消失 ${driftCounts.gone}`);
+    return parts.join(' · ');
+  }, [driftCounts]);
+
+  const applyDrift = async (entries: Array<{ kind: string; name: string }>) => {
+    const results = await drift.apply(entries);
+    // 只有真写进去了才重拉列表 —— `conflict` / `missing` 什么都没改，
+    // 重拉一次会让列表闪一下却没变化。
+    if (results?.some(r => r.outcome === 'added' || r.outcome === 'updated')) onRefresh();
+  };
+
+  /** 栏头的「重新读取」= 列表 + 差异一起刷新。分开两个按钮只会让人猜哪个管什么。 */
+  const handleRefresh = () => {
+    onRefresh();
+    void drift.reload();
+  };
+
+  /**
+   * 全量导入结束的那一刻重扫一次差异。
+   *
+   * 不做的话：点完「导入」，列表已经是最新的，但差异徽章还挂着导入前的结论
+   * （最长 60 秒）。用户会以为「导入没生效」，然后再点一次。
+   * 用 `importing` 的**下降沿**触发，而不是在 `onImport` 里 setTimeout ——
+   * 后者是猜导入要多久，猜短了扫到旧状态，猜长了白等。
+   */
+  const wasImporting = useRef(importing);
+  useEffect(() => {
+    if (wasImporting.current && !importing) void drift.reload(true);
+    wasImporting.current = importing;
+  }, [importing, drift]);
 
   const visible = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -171,8 +239,8 @@ export function ExtensionPanel({
         </div>
         <button
           type="button"
-          onClick={onRefresh}
-          title="重新读取列表"
+          onClick={handleRefresh}
+          title="重新读取列表并检查本机源文件有没有变化"
           aria-label="重新读取列表"
           className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-[var(--tc-hover-chrome)]"
           style={{ color: 'var(--td-text-color-secondary)' }}
@@ -194,6 +262,111 @@ export function ExtensionPanel({
           {importing ? '导入中' : '导入'}
         </button>
       </header>
+
+      {/* ── 差异提示（A168 / P4）──────────────────────────────────────
+          只在「真扫到了变化」时出现。没有变化时一个字都不占 ——
+          常驻一条「一切正常」的横幅会把真正要紧的提示淹掉。
+          侧栏很窄，所以徽章只放总数，明细收进「查看」。 */}
+      {driftCounts && driftCounts.total > 0 && (
+        <div className="shrink-0 px-3 pt-2" data-ext-drift data-ext-drift-total={driftCounts.total}>
+          <div
+            className="rounded-xl px-2.5 py-2"
+            style={{
+              backgroundColor: 'var(--td-bg-color-component)',
+              border: '1px solid var(--tc-divider)',
+            }}
+          >
+            <div className="flex items-center gap-1.5">
+              <AlertCircle size={14} className="shrink-0" style={{ color: 'var(--tc-status-warn)' }} />
+              <span
+                className="min-w-0 flex-1 truncate text-body"
+                style={{ color: 'var(--td-text-color-primary)' }}
+                title={driftBreakdown}
+                data-ext-drift-summary
+              >
+                {driftCounts.total} 处变化
+              </span>
+              <button
+                type="button"
+                onClick={() => setDriftOpen(v => !v)}
+                className="shrink-0 rounded-md px-1.5 py-0.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                style={{ color: 'var(--td-brand-color)' }}
+                data-ext-drift-toggle
+              >
+                {driftOpen ? '收起' : '查看'}
+              </button>
+            </div>
+
+            {driftOpen && (
+              <div className="mt-2" data-ext-drift-list>
+                <ul className="space-y-1.5">
+                  {(drift.report?.entries ?? []).map(e => (
+                    <li
+                      key={`${e.kind}:${e.name}`}
+                      className="flex items-start gap-1.5"
+                      data-ext-drift-row={`${e.kind}:${e.name}`}
+                      data-ext-drift-state={e.state}
+                    >
+                      <span className="shrink-0 text-caption" style={{ color: DRIFT_COLOR[e.state] }}>
+                        {EXT_DRIFT_LABEL[e.state]}
+                      </span>
+                      <span
+                        className="min-w-0 flex-1 text-caption leading-5"
+                        style={{ color: 'var(--td-text-color-secondary)' }}
+                      >
+                        <span style={{ color: 'var(--td-text-color-primary)' }}>{e.name}</span>
+                        {' · '}
+                        {e.detail}
+                      </span>
+                      {e.state === 'new' || e.state === 'updated' ? (
+                        <button
+                          type="button"
+                          disabled={drift.applying}
+                          onClick={() => void applyDrift([{ kind: e.kind, name: e.name }])}
+                          className="shrink-0 rounded-md px-1.5 py-0.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)] disabled:opacity-50"
+                          style={{ color: 'var(--td-brand-color)' }}
+                          data-ext-drift-apply={`${e.kind}:${e.name}`}
+                        >
+                          应用
+                        </button>
+                      ) : (
+                        /* 冲突和「源已消失」都不该一键处理：前者会丢用户的编辑，
+                           后者要用户先看一眼再决定删不删。只给一个「查看」。 */
+                        <button
+                          type="button"
+                          onClick={() => onSelect(e.kind, e.name)}
+                          className="shrink-0 rounded-md px-1.5 py-0.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                          style={{ color: 'var(--td-text-color-secondary)' }}
+                          data-ext-drift-open={`${e.kind}:${e.name}`}
+                        >
+                          查看
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                {applicable.length > 1 && (
+                  <button
+                    type="button"
+                    disabled={drift.applying}
+                    onClick={() => void applyDrift(applicable.map(e => ({ kind: e.kind, name: e.name })))}
+                    className="mt-2 w-full rounded-md py-1 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)] disabled:opacity-50"
+                    style={{ color: 'var(--td-brand-color)' }}
+                    data-ext-drift-apply-all
+                  >
+                    {drift.applying ? '应用中…' : `全部应用（${applicable.length}）`}
+                  </button>
+                )}
+                {drift.error && (
+                  <p className="mt-1 text-caption" style={{ color: 'var(--td-error-color)' }} data-ext-drift-error>
+                    {drift.error}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 搜索：技能动辄几十个，没有它只能靠滚。没有条目时不渲染 ——
           对着空列表摆一个搜索框是纯装饰。 */}

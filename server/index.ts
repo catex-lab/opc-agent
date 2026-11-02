@@ -129,6 +129,7 @@ import {
 import { runImport as extRunImport, refreshItem as extRefreshItem } from "./extensions/import.js";
 import { applyHits as extApplyHits, normalizeSkillBody } from "./extensions/normalize.js";
 import { buildMcpConfig } from "./extensions/distribute.js";
+import { applyDrift as extApplyDrift, scanDrift as extScanDrift } from "./extensions/drift.js";
 import { MODE_LABEL as EXT_MODE_LABEL, TARGETS as EXT_TARGETS } from "./extensions/targets.js";
 import { legacyToBlocks, textOfBlocks, toolCallsOfBlocks } from "../shared/blocks.js";
 import type { CapabilityProfile } from "../shared/capabilities.js";
@@ -2419,6 +2420,53 @@ app.get("/api/extensions/distribute/preview", (req, res) => {
     res.json(buildMcpConfig(agentId));
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "生成分发预览失败" });
+  }
+});
+
+/* ══════════ A168 / P4：差异检测（本机源文件 vs OPC 库）══════════
+ *
+ * `GET` 只读扫描，`POST /apply` 逐条应用（走与全量导入同一套判定）。
+ *
+ * ⚠️ 两条都**必须注册在 `/api/extensions/:kind/:name` 之前**：否则 `drift`
+ * 会被当成 `kind` 匹配走，`parseExtKind` 直接 400 —— 表现为「差异接口永远
+ * 返回 400，看着像参数写错了」。（`distribute/preview` 踩过同一个坑。）
+ */
+app.get("/api/extensions/drift", (_req, res) => {
+  try {
+    res.json(extScanDrift());
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "扫描差异失败" });
+  }
+});
+
+app.post("/api/extensions/drift/apply", (req, res) => {
+  const raw = (req.body ?? {}).entries;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    res.status(400).json({ error: "entries 必须是非空数组" });
+    return;
+  }
+  if (raw.length > 200) {
+    res.status(400).json({ error: "一次最多应用 200 条" });
+    return;
+  }
+  const entries: Array<{ kind: "skill" | "mcp"; name: string }> = [];
+  for (const e of raw as Array<Record<string, unknown>>) {
+    const kind = parseExtKind(typeof e?.kind === "string" ? e.kind : "");
+    if (!kind) {
+      res.status(400).json({ error: `kind 只能是 skill 或 mcp：${String(e?.kind)}` });
+      return;
+    }
+    const name = typeof e?.name === "string" ? e.name.trim() : "";
+    if (!name) {
+      res.status(400).json({ error: "name 不能为空" });
+      return;
+    }
+    entries.push({ kind, name });
+  }
+  try {
+    res.json(extApplyDrift(entries));
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "应用差异失败" });
   }
 });
 

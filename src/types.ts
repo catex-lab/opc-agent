@@ -917,6 +917,49 @@ export const EXT_NORMALIZE_RULE_LABEL: Record<ExtensionNormalizeRule, string> = 
   'tool-name': '工具名引用',
 };
 
+/* ── 差异检测（A168 / P4）────────────────────────────────────────────── */
+
+export type ExtensionDriftState = 'new' | 'updated' | 'conflict' | 'gone';
+
+export interface ExtensionDriftEntry {
+  kind: ExtensionKind;
+  name: string;
+  title: string | null;
+  state: ExtensionDriftState;
+  /** 提供新内容的 Agent；`gone` 时为 null */
+  agentId: string | null;
+  sourcePath: string | null;
+  /** 后端拼好的一句话，前端直接显示 */
+  detail: string;
+}
+
+export interface ExtensionDriftReport {
+  scannedAt: string;
+  entries: ExtensionDriftEntry[];
+  counts: { new: number; updated: number; conflict: number; gone: number; total: number };
+}
+
+export interface ExtensionDriftApplyResult {
+  kind: ExtensionKind;
+  name: string;
+  /** `added` / `updated` / `unchanged` / `conflict` / `missing` */
+  outcome: string;
+  reason?: string;
+}
+
+/**
+ * 四态的界面文案。
+ *
+ * `conflict` 用「有冲突」而不是「已更新」：两者都意味着源变了，但只有前者
+ * 应用后会**丢掉用户的编辑**。文案必须让这个差别在第一眼就成立。
+ */
+export const EXT_DRIFT_LABEL: Record<ExtensionDriftState, string> = {
+  new: '新发现',
+  updated: '源已更新',
+  conflict: '有冲突',
+  gone: '源已消失',
+};
+
 /**
  * 四档能力的中文标签。
  *

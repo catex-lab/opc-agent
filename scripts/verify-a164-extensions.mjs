@@ -20,6 +20,8 @@
  *                         [7b] A167 补两档：prompt 态没有这一份 = `injected`（会注入），
  *                         blocked 的 = `sealed`（含敏感内容，不注入）。
  *   [8] 删除即离开    —— 删当前项 → URL 回到 /extensions，右侧不停在幽灵详情。
+ *   [9] 差异检测      —— A168/P4：外部新装 → 徽章出现 → 全部应用 → 徽章消失；
+ *                         冲突行**不许**有「应用」（会丢用户的编辑）。
  *
  * ## 假环境
  *
@@ -376,6 +378,83 @@ try {
       const urlAfter = page.url();
       ok(/\/extensions$/.test(urlAfter), '删除后 URL 回到 /extensions', urlAfter.replace(base, ''));
       ok(await page.locator('[data-ext-detail-empty]').isVisible(), '右侧渲染空态（不停在幽灵详情）');
+
+      // ── [9] A168 / P4：差异检测（外部新装 / 应用 / 冲突不给一键）──
+      console.log('\n[9] 差异检测（P4）');
+      const openDrift = async () => {
+        await page.waitForSelector('[data-ext-drift]', { timeout: 25000 });
+        if (!(await page.locator('[data-ext-drift-list]').isVisible().catch(() => false))) {
+          await page.locator('[data-ext-drift-toggle]').click();
+        }
+        await page.waitForSelector('[data-ext-drift-list]', { timeout: 10000 });
+      };
+
+      await page.goto(`${base}/extensions`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('[data-ext-panel]', { timeout: 25000 });
+
+      /* 路由顺序：drift 若注册在 :kind/:name 之后，这里会是 400 */
+      let dres = await fetch(`${base}/api/extensions/drift`);
+      let drep = await json(dres);
+      ok(dres.status === 200, 'GET /api/extensions/drift → 200（没被 :kind/:name 抢走）', String(dres.status));
+      /* [8] 删掉了 beta 的 OPC 副本，但源文件还在 gemini 目录 ⇒ 差异里应重新出现为「新发现」 */
+      ok(
+        (drep.counts?.total ?? 0) >= 1,
+        '删掉 OPC 副本后，源还在 ⇒ 差异里重新出现',
+        JSON.stringify(drep.counts)
+      );
+
+      // 外部新装一条（模拟用户在自己客户端里刚装好）
+      const deltaDir = path.join(FAKE_HOME, '.codex', 'skills', 'delta');
+      fs.mkdirSync(deltaDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(deltaDir, 'SKILL.md'),
+        '---\nname: delta\ndescription: 刚装上的\n---\n\n# delta\n',
+        'utf8'
+      );
+
+      // 栏头「重新读取」应同时刷新列表与差异（P4 的手动重扫入口）
+      await page.locator('[data-ext-refresh]').click();
+      await openDrift();
+      const total = await page.getAttribute('[data-ext-drift]', 'data-ext-drift-total');
+      ok(Number(total) >= 2, '差异提示出现且条数 ≥ 2', total);
+      ok(
+        (await page.getAttribute('[data-ext-drift-row="skill:delta"]', 'data-ext-drift-state')) === 'new',
+        'delta 显示为「新发现」'
+      );
+      ok(await page.locator('[data-ext-drift-apply-all]').isVisible(), '多条可应用时出现「全部应用」');
+
+      await page.locator('[data-ext-drift-apply-all]').click();
+      await page.waitForSelector('[data-ext-drift]', { state: 'detached', timeout: 25000 });
+      ok(true, '全部应用后差异提示消失（不是「应用了但徽章还挂着」）');
+      ok(await page.locator('[data-ext-row="skill:delta"]').isVisible(), '列表里出现了 delta');
+
+      /* 冲突：本地改过 + 源又变了 ⇒ 这一行**不许**给「应用」（会丢用户的编辑） */
+      await fetch(`${base}/api/extensions/skill/alpha`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: '# 我又改了一次\n' }),
+      });
+      fs.writeFileSync(
+        path.join(FAKE_HOME, '.claude', 'skills', 'alpha', 'SKILL.md'),
+        '---\nname: alpha\ndescription: alpha 的测试技能\n---\n\n# alpha v9\n',
+        'utf8'
+      );
+      await page.locator('[data-ext-refresh]').click();
+      await openDrift();
+      ok(
+        (await page.getAttribute('[data-ext-drift-row="skill:alpha"]', 'data-ext-drift-state')) === 'conflict',
+        'alpha 显示为「有冲突」'
+      );
+      ok(
+        (await page.locator('[data-ext-drift-apply="skill:alpha"]').count()) === 0,
+        '冲突行**没有**「应用」按钮（不给一键丢掉自己的编辑）'
+      );
+      ok(
+        await page.locator('[data-ext-drift-open="skill:alpha"]').isVisible(),
+        '冲突行给的是「查看」'
+      );
+      const alphaAfter = await json(await fetch(`${base}/api/extensions/skill/alpha`));
+      ok(alphaAfter.item?.body === '# 我又改了一次\n', '本地正文没有被差异检测动过', alphaAfter.item?.body);
     } finally {
       await browser.close();
     }

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
+  ExtensionDriftApplyResult,
+  ExtensionDriftReport,
   ExtensionImportReport,
   ExtensionListItem,
   ExtensionNormalizePreview,
@@ -326,4 +328,100 @@ export function useExtensionNormalize(kind: string | null, name: string | null) 
   }, [load]);
 
   return { preview, loading, applying, error, reload: load, apply, revert };
+}
+
+/**
+ * 差异检测（A168 / P4）：本机源文件与 OPC 库现在差了什么。
+ *
+ * ## 为什么轮询放在这里、而不是服务端定时器
+ *
+ * 扫描一次 = 读 54 个 `SKILL.md` + 9 个 MCP 配置文件，几十毫秒。桌面应用
+ * 大部分时间没人看「扩展」这一栏，挂一个常驻 `setInterval` 就是让磁盘
+ * 每分钟醒一次去算一个没人看的结果。
+ *
+ * 所以：**面板挂载时才开始轮询，切走就停**（`ExtensionPanel` 只在
+ * `nav === 'extensions'` 时渲染，见 App.tsx）。这也顺带满足了「定期扫描」——
+ * 用户在看这一栏的时候，60 秒一次。
+ *
+ * ## 为什么轮询那次不置 `loading`
+ *
+ * 首次拉取要显示「正在检查」，但每 60 秒把徽章闪成 loading 是噪音：
+ * 用户会以为「它一直在忙」。轮询走静默路径，失败也不清空上一次的结果 ——
+ * 一次网络抖动不该让「有 3 处变化」的提示突然消失。
+ */
+export function useExtensionDrift() {
+  const [report, setReport] = useState<ExtensionDriftReport | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  /** 与 `useExtensions` 同一个理由：两个触发点（首拉 + 轮询）会并发，只认最后发起的那一个 */
+  const seqRef = useRef(0);
+
+  const load = useCallback(async (silent = false) => {
+    const seq = ++seqRef.current;
+    if (!silent) setLoading(true);
+    try {
+      const res = await fetch('/api/extensions/drift');
+      const data = await res.json().catch(() => ({}));
+      if (seq !== seqRef.current) return;
+      if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+      setReport(data as ExtensionDriftReport);
+      setError(null);
+    } catch (e) {
+      if (seq !== seqRef.current) return;
+      // 静默轮询失败不覆盖上一次结果，只在非静默时报错
+      if (!silent) setError((e as Error).message || '检查变化失败');
+    } finally {
+      if (!silent && seq === seqRef.current) setLoading(false);
+    }
+  }, []);
+
+  /**
+   * 应用若干条差异。返回逐条结果（`conflict` 表示**没有覆盖**本地修改）。
+   * 响应里带新的报告，直接替换 —— 避免「应用成功但徽章还挂着」。
+   *
+   * ⚠️ 替换前**必须先作废在飞的轮询**（`seqRef.current += 1`）：
+   * 60s 轮询与「点应用」是两个独立触发点，某次轮询可能在应用**之前**发出、
+   * 之后才落地，它手里那份是应用前的快照 —— 直接 `setReport` 会把刚刷新的
+   * 报告盖回去，表现正是「应用成功了，徽章还挂着」。这与 A162 修的
+   * 「两个触发点 GET 乱序落地」是同一类缺陷（自增序号，最后发起者胜）。
+   */
+  const apply = useCallback(
+    async (
+      entries: Array<{ kind: string; name: string }>
+    ): Promise<ExtensionDriftApplyResult[] | null> => {
+      if (entries.length === 0) return null;
+      setApplying(true);
+      setError(null);
+      try {
+        const res = await fetch('/api/extensions/drift/apply', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ entries }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+        const body = data as { results?: ExtensionDriftApplyResult[]; report?: ExtensionDriftReport };
+        if (body.report) {
+          seqRef.current += 1; // 作废在飞的轮询，否则它落地时会把这份新报告盖回旧快照
+          setReport(body.report);
+        }
+        return Array.isArray(body.results) ? body.results : [];
+      } catch (e) {
+        setError((e as Error).message || '应用变化失败');
+        return null;
+      } finally {
+        setApplying(false);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(true), 60_000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  return { report, loading, applying, error, reload: load, apply };
 }

@@ -329,6 +329,70 @@ export interface ImportReport {
 }
 
 /**
+ * 内容指纹。**唯一实现**，`drift.ts` 也用它比较「源变没变」。
+ *
+ * 之所以单独导出而不是内联进 payload：差异检测与应用是两条独立的路，
+ * 但必须对「什么算变了」有完全相同的答案。各写一份 `hashOf(...)` 的后果
+ * 不是报错，而是「差异列表说变了、点了应用却说没变」这种没法排查的现象。
+ */
+export function skillContentHash(s: { raw: string }): string {
+  return hashOf(s.raw);
+}
+
+/** MCP 的指纹按**原始配置**（脱敏前）算：脱敏是我们展示层的处理，不该影响「源变没变」。 */
+export function mcpContentHash(m: { config: Record<string, unknown> }): string {
+  return hashOf(JSON.stringify(m.config));
+}
+
+/**
+ * 一条扫描到的技能 → 落库载荷。
+ *
+ * 抽出来是为了让 `runImport` 与 `importByName`（A168 的差异应用）用**同一份**
+ * 判定：脱敏规则、指纹算法、blocked 口径一旦分两处写，必然有一天只改好一处 ——
+ * 表现是「全量导入会拦密钥、单条导入不会」这种没人会去查的分叉。
+ */
+function skillPayload(s: ScannedSkill): ImportPayload {
+  const hits = scanSensitive(s.raw);
+  return {
+    kind: 'skill',
+    name: s.name,
+    title: s.title,
+    description: s.description,
+    // 命中敏感内容 ⇒ 正文不落库
+    body: hits.length > 0 ? null : s.body,
+    configJson: null,
+    contentHash: skillContentHash(s),
+    blocked: hits.length > 0,
+    blockedReason: hits.length > 0 ? blockedReason(hits) : null,
+    agentId: s.agentId,
+    sourcePath: s.dirPath,
+  };
+}
+
+/** 一条扫描到的 MCP → 落库载荷。脱敏（值换 `***`）而不是整条丢弃，理由见 `redactConfig`。 */
+function mcpPayload(m: ScannedMcp): ImportPayload {
+  const { config, hits } = redactConfig(m.config);
+  return {
+    kind: 'mcp',
+    name: m.name,
+    title: m.name,
+    description:
+      typeof m.config.command === 'string'
+        ? `stdio: ${m.config.command}`
+        : typeof m.config.url === 'string'
+          ? `http: ${m.config.url}`
+          : null,
+    body: null,
+    configJson: JSON.stringify(config, null, 2),
+    contentHash: mcpContentHash(m),
+    blocked: hits.length > 0,
+    blockedReason: hits.length > 0 ? `含敏感内容（${hits.join('、')}），已脱敏` : null,
+    agentId: m.agentId,
+    sourcePath: m.sourcePath,
+  };
+}
+
+/**
  * 全量导入一次。
  *
  * 去重口径：**同名即同一份**（`(kind, name)` 唯一）。内容不同也归一条，
@@ -361,27 +425,13 @@ export function runImport(): ImportReport {
 
   for (const [name, list] of byName) {
     const primary = list[0];
-    const hits = scanSensitive(primary.raw);
-    const payload: ImportPayload = {
-      kind: 'skill',
-      name,
-      title: primary.title,
-      description: primary.description,
-      // 命中敏感内容 ⇒ 正文不落库
-      body: hits.length > 0 ? null : primary.body,
-      configJson: null,
-      contentHash: hashOf(primary.raw),
-      blocked: hits.length > 0,
-      blockedReason: hits.length > 0 ? blockedReason(hits) : null,
-      agentId: primary.agentId,
-      sourcePath: primary.dirPath,
-    };
+    const payload = skillPayload(primary);
     const r = importOne(payload);
     if (r.outcome === 'added') report.added += 1;
     else if (r.outcome === 'updated') report.updated += 1;
     else if (r.outcome === 'unchanged') report.unchanged += 1;
     else if (r.outcome === 'conflict') report.conflicts.push({ kind: 'skill', name });
-    if (hits.length > 0) report.blocked.push({ kind: 'skill', name, reason: blockedReason(hits) });
+    if (payload.blocked) report.blocked.push({ kind: 'skill', name, reason: payload.blockedReason ?? '' });
 
     // 其余来源只登记，不改正文
     for (const extra of list.slice(1)) {
@@ -401,31 +451,14 @@ export function runImport(): ImportReport {
 
   for (const [name, list] of mcpByName) {
     const primary = list[0];
-    const { config, hits } = redactConfig(primary.config);
-    const payload: ImportPayload = {
-      kind: 'mcp',
-      name,
-      title: name,
-      description: typeof primary.config.command === 'string'
-        ? `stdio: ${primary.config.command}`
-        : typeof primary.config.url === 'string'
-          ? `http: ${primary.config.url}`
-          : null,
-      body: null,
-      // MCP 命中敏感内容时**脱敏后落库**（保留结构，值换 ***），不是整条丢弃
-      configJson: JSON.stringify(config, null, 2),
-      contentHash: hashOf(JSON.stringify(primary.config)),
-      blocked: hits.length > 0,
-      blockedReason: hits.length > 0 ? `含敏感内容（${hits.join('、')}），已脱敏` : null,
-      agentId: primary.agentId,
-      sourcePath: primary.sourcePath,
-    };
+    // MCP 命中敏感内容时**脱敏后落库**（保留结构，值换 ***），不是整条丢弃
+    const payload = mcpPayload(primary);
     const r = importOne(payload);
     if (r.outcome === 'added') report.added += 1;
     else if (r.outcome === 'updated') report.updated += 1;
     else if (r.outcome === 'unchanged') report.unchanged += 1;
     else if (r.outcome === 'conflict') report.conflicts.push({ kind: 'mcp', name });
-    if (hits.length > 0) report.blocked.push({ kind: 'mcp', name, reason: payload.blockedReason ?? '' });
+    if (payload.blocked) report.blocked.push({ kind: 'mcp', name, reason: payload.blockedReason ?? '' });
 
     for (const extra of list.slice(1)) {
       importOne({ ...payload, agentId: extra.agentId, sourcePath: extra.sourcePath });
@@ -499,20 +532,17 @@ export function refreshItem(kind: 'skill' | 'mcp', name: string): { outcome: str
         continue;
       }
       const { meta, body } = parseFrontmatter(raw);
-      const hits = scanSensitive(raw);
-      const r = importOne({
-        kind: 'skill',
-        name,
-        title: meta.name || name,
-        description: meta.description ?? null,
-        body: hits.length > 0 ? null : body,
-        configJson: null,
-        contentHash: hashOf(raw),
-        blocked: hits.length > 0,
-        blockedReason: hits.length > 0 ? blockedReason(hits) : null,
-        agentId: s.agentId,
-        sourcePath: s.path,
-      });
+      const r = importOne(
+        skillPayload({
+          agentId: s.agentId,
+          name,
+          dirPath: s.path,
+          raw,
+          body,
+          title: meta.name || name,
+          description: meta.description ?? null,
+        })
+      );
       rebuildTargets(item.id, 'skill');
       return { outcome: r.outcome };
     }
@@ -522,20 +552,55 @@ export function refreshItem(kind: 'skill' | 'mcp', name: string): { outcome: str
   // MCP：重扫一遍配置文件，按名字找
   const found = scanAllMcp().find(m => m.name === name);
   if (!found) return { outcome: 'missing', reason: '源配置里已没有这条服务' };
-  const { config, hits } = redactConfig(found.config);
-  const r = importOne({
-    kind: 'mcp',
-    name,
-    title: name,
-    description: typeof found.config.command === 'string' ? `stdio: ${found.config.command}` : null,
-    body: null,
-    configJson: JSON.stringify(config, null, 2),
-    contentHash: hashOf(JSON.stringify(found.config)),
-    blocked: hits.length > 0,
-    blockedReason: hits.length > 0 ? `含敏感内容（${hits.join('、')}），已脱敏` : null,
-    agentId: found.agentId,
-    sourcePath: found.sourcePath,
-  });
+  const r = importOne(mcpPayload(found));
   rebuildTargets(item.id, 'mcp');
+  return { outcome: r.outcome };
+}
+
+/**
+ * 按名字导入/更新**一条**（A168 差异应用用）。
+ *
+ * 与 `refreshItem` 的分工：
+ * - `refreshItem` 只看这条**自己记录的来源**（详情页的「重新导入」按钮）。
+ *   它的前提是「条目已经存在」。
+ * - `importByName` 会**全量扫一遍**再挑出这个名字 —— 因为它要能处理 `new`
+ *   （条目还不存在，没有任何来源记录可读），也顺带发现「这条在别家也有副本」。
+ *
+ * 返回值里的 `missing` 表示「这次扫不到它了」（源文件被删 / 改名），
+ * 调用方据此提示「源已经不在本机」，**不要**把它当成失败。
+ */
+export function importByName(
+  kind: 'skill' | 'mcp',
+  name: string
+): { outcome: string; reason?: string } {
+  if (kind === 'skill') {
+    const list = scanAllSkills()
+      .filter(s => s.name === name)
+      .sort((a, b) => a.agentId.localeCompare(b.agentId));
+    if (list.length === 0) return { outcome: 'missing', reason: '源文件已不在本机' };
+    const primary = list[0];
+    const payload = skillPayload(primary);
+    const r = importOne(payload);
+    // 其余来源只登记，不改正文（与 runImport 一致）
+    for (const extra of list.slice(1)) {
+      importOne({ ...payload, agentId: extra.agentId, sourcePath: extra.dirPath });
+    }
+    pruneSources(r.itemId, list.map(s => s.dirPath));
+    rebuildTargets(r.itemId, 'skill');
+    return { outcome: r.outcome };
+  }
+
+  const list = scanAllMcp()
+    .filter(m => m.name === name)
+    .sort((a, b) => a.agentId.localeCompare(b.agentId));
+  if (list.length === 0) return { outcome: 'missing', reason: '源配置里已没有这条服务' };
+  const primary = list[0];
+  const payload = mcpPayload(primary);
+  const r = importOne(payload);
+  for (const extra of list.slice(1)) {
+    importOne({ ...payload, agentId: extra.agentId, sourcePath: extra.sourcePath });
+  }
+  pruneSources(r.itemId, list.map(m => m.sourcePath));
+  rebuildTargets(r.itemId, 'mcp');
   return { outcome: r.outcome };
 }
