@@ -17,6 +17,7 @@ import {
 } from '@tencent-ai/agent-sdk';
 import { AsyncQueue, PendingReplies, linkAbort } from '../channel.js';
 import { withMemoryContext } from '../../memory.js';
+import { withExtensionsContext } from '../../extensions/inject.js';
 import { SDK_PERMISSION_OPTIONS } from '../../../shared/permissions.js';
 import { createCanUseToolBridge } from './sdkApproval.js';
 import type {
@@ -124,9 +125,15 @@ interface SessionSlot {
 }
 
 /** 配置键：哪一项变了决定「热更新」还是「重建」，所以必须能按项拆。
- *  导出供验证脚本做纯函数层断言（L1）。 */
-export function configKeyOf(ctx: SendContext): string {
-  const sys = withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd);
+ *  导出供验证脚本做纯函数层断言（L1）。
+ *
+ *  `agentId` 可选（A167）：传了就把技能清单也算进签名 —— 用户在「扩展」里
+ *  改了技能之后，长驻会话必须重建才吃到新清单，否则要等下次重启。
+ *  **不传则完全不碰扩展层**，保持 `verify-a107` 那条纯函数断言（不读库、不碰 fs）
+ *  仍然成立。 */
+export function configKeyOf(ctx: SendContext, agentId?: string): string {
+  const base = withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd);
+  const sys = agentId ? withExtensionsContext(base, agentId) : base;
   return [
     ctx.cwd || process.cwd(),
     ctx.model ?? '',
@@ -492,7 +499,7 @@ export class SdkAdapter implements AgentProvider {
    * SessionImpl 构造不连网，真正的进程 spawn 推迟到第一次 send()/stream()。
    */
   private ensureEntry(slot: SessionSlot, ctx: SendContext): PoolEntry {
-    const cfg = configKeyOf(ctx);
+    const cfg = configKeyOf(ctx, this.descriptor.id);
     const existing = slot.entry;
 
     if (existing) {
@@ -525,7 +532,10 @@ export class SdkAdapter implements AgentProvider {
       model: ctx.model,
       maxTurns: 10,
       // A38/A98：提示词装配与 one-shot 路径完全一致（记忆层在这里注入）
-      systemPrompt: withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd),
+      systemPrompt: withExtensionsContext(
+        withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd),
+        this.descriptor.id
+      ),
       permissionMode: ctx.permissionMode || 'default',
       // 占位 handler：每一轮 send 前都会 setCanUseTool 覆盖掉它。
       // fail-closed —— 万一哪轮忘了覆盖，也不至于放行未知工具。
@@ -547,7 +557,7 @@ export class SdkAdapter implements AgentProvider {
     }
     const entry: PoolEntry = {
       session,
-      configKey: configKeyOf(ctx),
+      configKey: configKeyOf(ctx, this.descriptor.id),
       // SessionImpl 把这个 id 通过 --session-id 递给 CLI，CLI 采纳它 ——
       // 所以它就是 CLI 侧会话 id，不等 init 消息也能当 resume 令牌用
       //（init 流消息可能被 send() 的 discardPendingMessages() 冲掉）。
@@ -691,7 +701,10 @@ export class SdkAdapter implements AgentProvider {
           cwd: ctx.cwd || process.cwd(),
           model: ctx.model,
           maxTurns: 10,
-          systemPrompt: withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd),
+          systemPrompt: withExtensionsContext(
+            withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd),
+            this.descriptor.id
+          ),
           permissionMode: ctx.permissionMode || 'default',
           canUseTool,
           ...(cliOverride() ? { pathToCodebuddyCode: cliOverride() } : {}),

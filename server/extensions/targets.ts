@@ -16,11 +16,11 @@
  *
  * ## 四态的含义
  *
- * | mode | 含义 | P0 是否已接通 |
+ * | mode | 含义 | 接通情况 |
  * |---|---|---|
  * | `native` | 该 Agent 自己就读自己的技能目录，目录里有就等于能用 | 是（事实层面） |
- * | `flag` | 需要我们传启动参数或调用它的官方命令才能挂上 | 否（P2） |
- * | `prompt` | 我们拼系统提示注入（该适配器已有 `withMemoryContext`） | 否（P3） |
+ * | `flag` | 需要我们传启动参数或调用它的官方命令才能挂上 | MCP 是（P2）；技能待 P5 |
+ * | `prompt` | 我们拼系统提示注入（该适配器已有 `withMemoryContext`） | 是（P3，见 `inject.ts`） |
  * | `unsupported` | 既没有目录，也没有挂载接口 | — |
  */
 
@@ -79,7 +79,7 @@ export const TARGETS: readonly TargetSpec[] = [
   { agentId: 'qoder', label: 'qoder', skillsDir: at('.qoder', 'skills'), mode: 'flag', note: '支持 --config-dir / 官方 skills link（P2 接通）' },
   { agentId: 'qoder-cn', label: 'qoder-cn', skillsDir: at('.qoder-cn', 'skills'), mode: 'flag', note: '与 qoder 同构（P2 接通）' },
   { agentId: 'gemini', label: 'gemini', skillsDir: at('.gemini', 'skills'), mode: 'flag', note: '官方 skills link 可用（需你批准后再调用）' },
-  { agentId: 'codex', label: 'codex', skillsDir: at('.codex', 'skills'), mode: 'unsupported', note: '有目录但 codex-sdk 尚未注入（P3 可加）' },
+  { agentId: 'codex', label: 'codex', skillsDir: at('.codex', 'skills'), mode: 'unsupported', note: '有目录；codex-sdk 尚未接提示词注入（需先验证它接受 systemPrompt）' },
   { agentId: 'cursor', label: 'cursor', skillsDir: at('.cursor', 'skills'), mode: 'unsupported', note: '有目录，未查到外部挂载接口' },
   { agentId: 'opencode', label: 'opencode', skillsDir: at('.opencode', 'skills'), mode: 'unsupported', note: '有目录，未查到外部挂载接口' },
   { agentId: 'zcode', label: 'zcode', skillsDir: at('.zcode', 'skills'), mode: 'unsupported', note: '有目录，无 --model 类外部接口' },

@@ -49,6 +49,7 @@ function loadSdk(): Promise<ClaudeSdkModule> {
 import { AsyncQueue, PendingReplies, linkAbort } from '../channel.js';
 import { toUnpackedPath } from '../sdkRuntime.js';
 import { withMemoryContext } from '../../memory.js';
+import { withExtensionsContext } from '../../extensions/inject.js';
 import { SDK_PERMISSION_OPTIONS } from '../../../shared/permissions.js';
 import { createCanUseToolBridge } from './sdkApproval.js';
 import { mapClaudeCodeLine } from '../definitions.js';
@@ -217,7 +218,11 @@ export class ClaudeSdkAdapter implements AgentProvider {
 
     // 人设与记忆：用 preset 而不是替换 systemPrompt ——
     // 替换会把 Claude Code 自己的工具使用规范一起抹掉，模型行为会明显退化。
-    const extraPrompt = withMemoryContext(ctx.systemPrompt ?? '', ctx.memoryCwd);
+    // A167：技能清单叠在记忆之后（P3，只对 prompt 态 Agent 生效）。
+    const extraPrompt = withExtensionsContext(
+      withMemoryContext(ctx.systemPrompt ?? '', ctx.memoryCwd),
+      this.descriptor.id
+    );
 
     void (async () => {
       let tokens = 0;

@@ -34,7 +34,7 @@ interface ExtensionDetailProps {
 }
 
 /** 矩阵里一格的状态。四档，见 `matrixState` 的注释。 */
-type MatrixState = 'ready' | 'local-only' | 'planned' | 'unsupported';
+type MatrixState = 'ready' | 'injected' | 'sealed' | 'local-only' | 'planned' | 'unsupported';
 
 /**
  * 把「事实(present) × 能力(mode)」两两组合成矩阵里的一格。
@@ -45,16 +45,24 @@ type MatrixState = 'ready' | 'local-only' | 'planned' | 'unsupported';
  * |---|---|---|---|
  * | ✅ | 有通道 | `ready` 已就位 | 这份已经在它手里了 |
  * | ✅ | 不支持 | `local-only` 仅本机 | 它自己有，但没法共用给别的 Agent |
- * | ❌ | 有通道 | `planned` 通道已确认 | 将来能送进去（分发在 P2/P3） |
+ * | ❌ | prompt | `injected` 会注入 | 发消息时把清单与路径注入它的提示词（P3 已通） |
+ * | ❌ | flag | `planned` 通道已确认 | 通道在，但技能还得等官方 `link`（P5） |
  * | ❌ | 不支持 | `unsupported` 不支持 | 这个 Agent 没有这条路 |
  *
  * 第二行是最容易被漏掉的：`codex` 有自己的 `~/.codex/skills`，能从里面**读**
  * 出来，但没有把外部技能送进去的通道 —— 它属于「本机已有、不可共享」，
  * 既不是绿的也不是灰的。把它画成绿的会让人以为「codex 也能共享」。
+ *
+ * 第三行是 A167 补的：P3 之前 `prompt` 态也只能画成 `planned`（「将来能送」），
+ * 现在**真的送了**，再画成「将来」就是撒谎。但有一条例外 ——
+ * 正文命中敏感内容（`blocked`）的技能不会被镜像，因此注入不了，
+ * 那种情况单独画成 `sealed`，免得用户以为「它应该能用却没用」。
  */
-function matrixState(present: boolean, mode: ExtensionMountMode): MatrixState {
+function matrixState(present: boolean, mode: ExtensionMountMode, blocked: boolean): MatrixState {
   if (mode === 'unsupported') return present ? 'local-only' : 'unsupported';
-  return present ? 'ready' : 'planned';
+  if (present) return 'ready';
+  if (mode === 'prompt') return blocked ? 'sealed' : 'injected';
+  return 'planned';
 }
 
 const MATRIX_META: Record<MatrixState, { label: string; color: string; hint: string }> = {
@@ -68,10 +76,20 @@ const MATRIX_META: Record<MatrixState, { label: string; color: string; hint: str
     color: 'var(--td-text-color-secondary)',
     hint: '该 Agent 自己有，但它没有把外部技能送进来的通道，因此这份无法共享给它',
   },
+  injected: {
+    label: '会注入',
+    color: 'var(--tc-status-ok)',
+    hint: '该 Agent 目录里没有这一份，但发消息时会把技能清单与路径注入它的提示词（正文镜像在 OPC 自己的数据目录里，不动它的目录）',
+  },
+  sealed: {
+    label: '含敏感内容',
+    color: 'var(--tc-status-warn)',
+    hint: '这份正文命中敏感内容、没有落库，所以不会注入给该 Agent；它自己目录里本来有的话仍可用',
+  },
   planned: {
     label: '通道已确认',
     color: 'var(--td-brand-color)',
-    hint: '该 Agent 有接入通道，但「把内容真送进去」属于 P2/P3，本期只做收集与编辑',
+    hint: '该 Agent 有接入通道，但技能要走它自己的官方 link 命令（P5，需你批准）',
   },
   unsupported: {
     label: '不支持',
@@ -148,15 +166,16 @@ export function ExtensionDetail({
       没写过 target 的 Agent 也要出现，否则「矩阵」会静默漏掉几个。 */
   const matrix = useMemo(() => {
     const byAgent = new Map(targets.map(t => [t.agentId, t]));
+    const blocked = item?.blocked ?? false;
     return allTargets.map(spec => {
       const row = byAgent.get(spec.agentId);
       const present = row?.present ?? false;
       const mode = row?.mode ?? spec.mode;
-      return { spec, row, present, mode, state: matrixState(present, mode) };
+      return { spec, row, present, mode, state: matrixState(present, mode, blocked) };
     });
-  }, [targets, allTargets]);
+  }, [targets, allTargets, item?.blocked]);
 
-  const readyCount = matrix.filter(m => m.state === 'ready').length;
+  const readyCount = matrix.filter(m => m.state === 'ready' || m.state === 'injected').length;
 
   /* 接受归一化：只提交用户勾中的那几条（下标数组）。
      空选择直接不提交 —— 后端对空数组返回 400，前端先挡住，
@@ -421,14 +440,17 @@ export function ExtensionDetail({
             title="挂载能力"
             subtitle={
               readyCount > 0
-                ? `${readyCount} / ${matrix.length} 个 Agent 已经拿到这一份`
-                : '还没有任何 Agent 拿到这一份'
+                ? `${readyCount} / ${matrix.length} 个 Agent 能用上这一份`
+                : '还没有任何 Agent 能用上这一份'
             }
             attr="data-ext-matrix"
           >
             <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
               {matrix.map(({ spec, present, mode, state }) => {
                 const meta = MATRIX_META[state];
+                /* 实心点 = 这一份确实能被该 Agent 用上（自己目录里有，或会被注入）。
+                   空心的三档（含敏感内容 / 通道已确认 / 不支持）都不是「好了」。 */
+                const filled = state === 'ready' || state === 'local-only' || state === 'injected';
                 return (
                   <div
                     key={spec.agentId}
@@ -441,15 +463,10 @@ export function ExtensionDetail({
                       className="h-1.5 w-1.5 shrink-0 rounded-full"
                       style={{
                         backgroundColor: meta.color,
-                        /* 未达成的那两档用空心点：实心点会被读成「好了」，
-                           而 `planned` / `unsupported` 都不是「好了」。 */
-                        boxShadow:
-                          state === 'ready' || state === 'local-only'
-                            ? undefined
-                            : `inset 0 0 0 1.5px ${meta.color}`,
-                        ...(state === 'ready' || state === 'local-only'
-                          ? {}
-                          : { backgroundColor: 'transparent' }),
+                        /* 未达成的那几档用空心点：实心点会被读成「好了」，
+                           而 `sealed` / `planned` / `unsupported` 都不是「好了」。 */
+                        boxShadow: filled ? undefined : `inset 0 0 0 1.5px ${meta.color}`,
+                        ...(filled ? {} : { backgroundColor: 'transparent' }),
                       }}
                     />
                     <span
@@ -486,8 +503,9 @@ export function ExtensionDetail({
               })}
             </div>
             <p className="mt-2 text-caption leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              「通道已确认」≠ 现在就能用：把内容真送进各家 Agent 是 P2/P3，
-              本期只做收集与编辑。四档口径见 PLAN-EXTENSIONS.md §9。
+              「已就位」= 该 Agent 自己的目录里就有；「会注入」= 发消息时把清单与路径
+              注入它的提示词（正文镜像在 OPC 的数据目录，不改它的目录）；
+              「通道已确认」= 只能等各家官方 link 命令（P5）。六档口径见 PLAN-EXTENSIONS.md §9。
             </p>
           </Section>
         )}

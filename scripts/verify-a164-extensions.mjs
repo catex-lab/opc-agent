@@ -17,6 +17,8 @@
  *                         MCP 配置命中 → 值被换成 `***`、结构保留（脱敏而非丢弃）。
  *   [7] 能力矩阵四态  —— ready / planned / local-only / unsupported 都渲染；
  *                         `unsupported` 的颜色**不是**绿色（真鼠标坐标 + 取色）。
+ *                         [7b] A167 补两档：prompt 态没有这一份 = `injected`（会注入），
+ *                         blocked 的 = `sealed`（含敏感内容，不注入）。
  *   [8] 删除即离开    —— 删当前项 → URL 回到 /extensions，右侧不停在幽灵详情。
  *
  * ## 假环境
@@ -339,6 +341,29 @@ try {
         await page.locator('[data-ext-matrix-row="codex"] [data-ext-matrix-present]').isVisible(),
         'local-only 行也显示「确实已就位」的事实标记'
       );
+
+      // ── [7b] A167：prompt 态的两档新状态 ────────────────────────
+      // beta 只在 gemini：claude / workbuddy 是 prompt 态且自己没有这一份
+      // ⇒ P3 之后它**真的会送到**，不能再画成「通道已确认（将来）」。
+      console.log('\n[7b] A167 注入档');
+      await page.goto(`${base}/extensions/skill/beta`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('[data-ext-matrix]', { timeout: 25000 });
+      ok((await rowState('gemini')) === 'ready', 'beta · gemini = ready（自己的目录里有）');
+      ok((await rowState('claude')) === 'injected', 'beta · claude = injected（会注入，不是「将来」）');
+      ok((await rowState('workbuddy')) === 'injected', 'beta · workbuddy = injected');
+      ok(
+        (await rowState('qoder')) === 'planned',
+        'beta · qoder = planned（flag 态仍要等官方 link，不许提前画成能用）'
+      );
+      const injectedLabel = await page.locator(
+        '[data-ext-matrix-row="claude"] [data-ext-matrix-label]'
+      ).innerText();
+      ok(injectedLabel.trim() === '会注入', 'injected 的文案是「会注入」', injectedLabel);
+
+      // leaky：正文含 sk-（blocked）且只在 codex ⇒ 对 claude 不注入（不镜像带密钥的正文）
+      await page.goto(`${base}/extensions/skill/leaky`, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('[data-ext-matrix]', { timeout: 25000 });
+      ok((await rowState('claude')) === 'sealed', 'leaky · claude = sealed（含敏感内容，不注入）');
 
       // ── [8] 删除即离开 ──────────────────────────────────────────
       console.log('\n[8] 删除即离开');

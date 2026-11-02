@@ -37,6 +37,7 @@ import { AsyncQueue, linkAbort } from '../channel.js';
 import type { AgentDefinition, HttpSpec } from '../definitions.js';
 import { chatUrlOf } from '../../../shared/providerUrl.js';
 import { withMemoryContext } from '../../memory.js';
+import { withExtensionsContext } from '../../extensions/inject.js';
 import { checkHostReachable } from '../probe.js';
 import type {
   AgentEvent,
@@ -353,7 +354,12 @@ export class HttpAdapter implements AgentProvider {
         // 所以它是记忆层最自然的注入点。CLI/ACP 类的提示词在人家 harness 里，
         // 塞不进去也不该塞。
         // A98：带上 cwd，让记忆层把「当前项目」那一层也注入进来
-        const systemPrompt = withMemoryContext(ctx.systemPrompt, ctx.memoryCwd);
+        // A167：技能清单叠在记忆之后。HTTP 型 Agent 没有本地技能目录，
+        // 清单里走的是「正文内联」那条路（见 extensions/inject.ts）。
+        const systemPrompt = withExtensionsContext(
+          withMemoryContext(ctx.systemPrompt, ctx.memoryCwd),
+          this.descriptor.id
+        );
 
         if (this.spec.dialect === 'openai') {
           headers.authorization = `Bearer ${key}`;
