@@ -113,6 +113,14 @@ export interface UpdateState {
   error?: UpdateError;
   /** 已下载到本地、待重启的版本号 */
   stagedVersion?: string;
+  /**
+   * true = 当前客户端内置的是旧公钥，无法验证新清单的签名，
+   * 只能手动下载一次完整安装包。
+   *
+   * 只在「验签失败 + 当前版本 ≤ 1.0.0」时置位；网络、哈希、运行时版本
+   * 等其它失败都不能借用这个提示，否则会把真实原因藏掉。
+   */
+  legacyManualUpdate?: boolean;
   /** false = 开发态 / 浏览器态，只能看不能装 */
   supported: boolean;
 }

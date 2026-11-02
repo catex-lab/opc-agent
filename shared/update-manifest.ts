@@ -100,6 +100,32 @@ export function compareVersions(a: string, b: string): number {
   return ra.length - rb.length;
 }
 
+/**
+ * 旧公钥分界：≤ 这个版本的客户端内置的是旧公钥。
+ *
+ * 1.0.0 从未发布过清单（Release 资产为 0），所以它看到的任何新清单
+ * 都必然验签失败。这不是网络问题，而是「你的客户端太旧，认不出新钥匙」。
+ */
+export const LEGACY_PUBKEY_CUTOFF_VERSION = '1.0.0';
+
+/**
+ * 是否属于「旧版客户端 + 验签失败」。
+ *
+ * **判定必须保守**：只有 `code === 'signature'`（清单签名校验失败）且
+ * 当前版本 ≤ 1.0.0 才成立。网络失败、哈希不符、体积不符、运行时版本
+ * 不一致都有自己的 code，绝不能被包装成「手动更新一次」——那会把真实
+ * 原因藏起来，用户下次还会踩同一个坑。
+ */
+export function isLegacyPubkeyFailure(code: string | undefined, currentVersion: string): boolean {
+  if (code !== 'signature') return false;
+  try {
+    return compareVersions(currentVersion, LEGACY_PUBKEY_CUTOFF_VERSION) <= 0;
+  } catch {
+    // 版本号不合法时无法证明「≤ 1.0.0」，按普通失败处理（保守）
+    return false;
+  }
+}
+
 /* ══════════════ 规范化与签名 ══════════════ */
 
 /**

@@ -41,7 +41,7 @@ import {
 import { join } from 'node:path';
 import { once } from 'node:events';
 import type { UpdateAsset, UpdateManifest, UpdateReleaseInfo, UpdateState } from '../../shared/update.js';
-import { checkAssetUrl, evaluateManifest } from '../../shared/update-manifest.js';
+import { checkAssetUrl, evaluateManifest, isLegacyPubkeyFailure, parseManifest } from '../../shared/update-manifest.js';
 import {
   CHECK_DELAY_MS,
   CHECK_INTERVAL_MS,
@@ -271,6 +271,19 @@ async function downloadAsset(
 
 /* ══════════════ 控制器 ══════════════ */
 
+/**
+ * 最新 Release 里的完整包直链。
+ *
+ * 只有 `parseManifest` 通过（版本号已被校验为合法 SemVer）时才拼版本号；
+ * 否则退回 Release 页面 —— 验签失败时清单正文不可信，不能拿它拼出一个
+ * 可能 404 的地址当唯一出口。
+ */
+function fullZipUrl(version?: string): string {
+  return version
+    ? `${releasesPageUrl()}/download/OPC-Agent-${version}-x64-full.zip`
+    : releasesPageUrl();
+}
+
 class UpdateController {
   private state: UpdateState;
   private pending: PendingAsset | null = null;
@@ -309,6 +322,8 @@ class UpdateController {
       progress: undefined,
       error: { code, message, manualUrl: releasesPageUrl() },
       checkedAt: new Date().toISOString(),
+      // 普通失败必须显式清掉旧版提示，避免上一次的标记残留到新错误上
+      legacyManualUpdate: false,
     });
   }
 
@@ -339,6 +354,7 @@ class UpdateController {
     if (marker.state === 'rolled-back') {
       this.set({
         phase: 'error',
+        legacyManualUpdate: false,
         error: {
           code: 'rollback',
           message: `版本 ${marker.version ?? ''} 启动失败，已自动回滚到 ${this.state.currentVersion}`.trim(),
@@ -348,6 +364,7 @@ class UpdateController {
     } else if (marker.state === 'failed') {
       this.set({
         phase: 'error',
+        legacyManualUpdate: false,
         error: {
           code: 'apply-failed',
           message: `上次更新没有装好：${marker.error ?? '未知原因'}`,
@@ -365,7 +382,12 @@ class UpdateController {
       this.set({ phase: 'idle' });
       return this.getState();
     }
-    this.set({ phase: 'checking', error: undefined, progress: undefined });
+    this.set({
+      phase: 'checking',
+      error: undefined,
+      progress: undefined,
+      legacyManualUpdate: false,
+    });
     try {
       const raw = await fetchManifest();
       const decision = evaluateManifest(raw, {
@@ -375,7 +397,24 @@ class UpdateController {
       });
 
       if (decision.status === 'invalid') {
-        this.fail(decision.code, decision.message);
+        // 旧版客户端（≤1.0.0）内置旧公钥，看到新私钥签的清单必然「签名不匹配」。
+        // 这是唯一可以把它解释成「需要手动更新一次」的组合；其余 code 一律照实报错。
+        if (isLegacyPubkeyFailure(decision.code, this.state.currentVersion)) {
+          const parsed = parseManifest(raw);
+          this.set({
+            phase: 'error',
+            progress: undefined,
+            checkedAt: new Date().toISOString(),
+            legacyManualUpdate: true,
+            error: {
+              code: 'signature',
+              message: '此版本需手动更新一次',
+              manualUrl: fullZipUrl(parsed.ok ? parsed.manifest.version : undefined),
+            },
+          });
+        } else {
+          this.fail(decision.code, decision.message);
+        }
         return this.getState();
       }
       if (decision.status === 'latest') {
