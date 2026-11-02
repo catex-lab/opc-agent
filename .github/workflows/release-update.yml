@@ -86,8 +86,26 @@ jobs:
           npm run build
           npm run build:electron
 
+      # 打包前置自检：electron-builder 在 CI 上失败时只会甩一句
+      # "Process completed with exit code 1"，看不出到底缺什么。这里先把
+      # 三个版本号和 electron 运行时目录打出来：electron 版本一旦是 `^` 范围
+      # 而又没装进 node_modules，electron-builder 会在配置加载后立刻失败。
+      - name: 打包前置自检
+        shell: pwsh
+        run: |
+          "node $(node -v) / npm $(npm -v)"
+          "electron $(node -p "require('electron/package.json').version")"
+          "electron-builder $(node -p "require('electron-builder/package.json').version")"
+          if (-not (Test-Path 'node_modules/electron/dist/electron.exe')) {
+            Write-Error 'node_modules/electron/dist 缺失：electron 的 postinstall 没把运行时解出来'
+            exit 1
+          }
+
+      # --publish never 是显式的：CI 下 electron-builder 会打印
+      # "Implicit publishing triggered by CI detection" 并把策略设为
+      # onTagOrDraft，本项目只上传自己的三件套，不需要它的发布链路。
       - name: 打包 unpacked 目录
-        run: node scripts/build-installer.mjs --dir
+        run: node scripts/build-installer.mjs --dir --publish never
 
       - name: 生成发布说明
         shell: pwsh
