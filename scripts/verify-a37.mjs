@@ -146,6 +146,12 @@ const openSettings = async (page, from = '/chat/s1') => {
   await page.waitForTimeout(400);
 };
 
+/** 默认分区是「我的资料」，验其它分区之前先切过去。 */
+const pickSection = async (page, key) => {
+  await page.locator(`[data-settings-section="${key}"]`).first().click();
+  await page.waitForTimeout(350);
+};
+
 // ============= [1] 设置是弹窗 =============
 console.log('\n[1] 设置是弹窗：主界面在下面，关闭回到来路');
 {
@@ -267,6 +273,7 @@ console.log('\n[3] 外观：去说明文字 / 主题按钮只留标签 / 描边 
 {
   const { ctx, page } = await newPage();
   await openSettings(page);
+  await pickSection(page, 'appearance');
 
   const text = await page.evaluate(() => document.querySelector('[data-settings-panel="appearance"]')?.innerText ?? '');
   ok(!text.includes('选择浅色或深色'), '「选择浅色或深色，或跟随系统设置」已删');
@@ -308,6 +315,7 @@ console.log('\n[4] 四个说明收进提示图标');
     localStorage.setItem('opc.glow', JSON.stringify({ enabled: true, size: null, brightness: null }));
   });
   await openSettings(page);
+  await pickSection(page, 'appearance');
 
   const panelText = await page.evaluate(() => document.querySelector('[data-settings-panel="appearance"]')?.innerText ?? '');
   ok(!panelText.includes('数值越大，桌面透出来越明显'), '透明度的长说明不在正文里');

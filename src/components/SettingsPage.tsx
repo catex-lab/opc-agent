@@ -454,9 +454,8 @@ export function SettingsPage({
 
   const customAgents = agents.filter(a => a.id !== 'default');
 
-  // A28：当前所在分区。默认外观 —— 它是唯一「一进来就该看到」的一组，
-  // 且不依赖任何后端数据（登录检查还在转圈时主题已经能改）。
-  const [section, setSection] = useState<SettingsSectionKey>('appearance');
+  // A28：当前所在分区。默认「我的资料」—— 用户要改的默认值就动这里。
+  const [section, setSection] = useState<SettingsSectionKey>('profile');
 
   /**
    * A138：切换分区时内容区回到顶部。

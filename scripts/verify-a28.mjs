@@ -160,6 +160,18 @@ async function open(page, path) {
   await page.waitForTimeout(200);
 }
 
+/**
+ * 打开设置并切到「外观」分区。
+ *
+ * 默认分区已改成「我的资料」，而 [1]~[5] 测的都是外观里的光斑控件 ——
+ * 不先切过去会连 `.t-switch` 都定位不到（失败信息看起来像产品坏了）。
+ */
+async function openAppearance(page) {
+  await open(page, '/settings?glass=1');
+  await page.locator('[data-settings-section="appearance"]').first().click();
+  await page.waitForTimeout(300);
+}
+
 /** 读 <html> 上的内联光斑变量与开关属性（内联才作数，见文件头说明） */
 const glowState = () => {
   const root = document.documentElement;
@@ -197,7 +209,7 @@ console.log('\n[1] 光斑开关：data-opc-glow 与 display 联动');
   const ctx = await newContext(100, false);
   const page = await ctx.newPage();
   watch(page);
-  await open(page, '/settings?glass=1');
+  await openAppearance(page);
 
   // 先证明玻璃模式真的开着：不开的话 .tc-cursor-glow 的效果监听根本不挂，
   // 后面所有断言都只是在测一个死元素。
@@ -240,7 +252,7 @@ console.log('\n[2] 光斑大小：内联值 + 元素实际宽度');
   const ctx = await newContext(100, false);
   const page = await ctx.newPage();
   watch(page);
-  await open(page, '/settings?glass=1');
+  await openAppearance(page);
   await enableGlow(page); // A66：默认关闭，滑杆只在开着时渲染
 
   const before = await page.evaluate(glowState);
@@ -261,7 +273,7 @@ console.log('\n[3] 光斑亮度：倍率而非绝对值');
   const ctx = await newContext(100, false);
   const page = await ctx.newPage();
   watch(page);
-  await open(page, '/settings?glass=1');
+  await openAppearance(page);
   await enableGlow(page); // A66：默认关闭
 
   const before = await page.evaluate(glowState);
@@ -291,7 +303,7 @@ console.log('\n[4] 恢复默认：回到主题设计值，但不动开关');
   const ctx = await newContext(100, false);
   const page = await ctx.newPage();
   watch(page);
-  await open(page, '/settings?glass=1');
+  await openAppearance(page);
   await enableGlow(page); // A66：默认关闭，先打开再调参
 
   // 顺序有讲究：滑杆与「恢复默认」都只在开关开着时渲染（GlowSettings 里
@@ -326,7 +338,7 @@ console.log('\n[5] 持久化：刷新后偏好仍在');
   const ctx = await newContext(100, false);
   const page = await ctx.newPage();
   watch(page);
-  await open(page, '/settings?glass=1');
+  await openAppearance(page);
   await enableGlow(page); // A66：默认关闭
   // 顺序：先调参（滑杆只在开着时渲染），再关开关
   await page.locator('input[aria-label="光斑大小"]').fill('520');
@@ -336,7 +348,7 @@ console.log('\n[5] 持久化：刷新后偏好仍在');
   const off = await page.evaluate(glowState);
   ok(off.glowAttr === '0' && off.inlineSize === '520px', '关掉后参数仍然保存（下次打开就是它）', `attr=${off.glowAttr} size=${off.inlineSize}`);
 
-  await open(page, '/settings?glass=1');                // 刷新（同上下文，localStorage 保留）
+  await openAppearance(page);                // 刷新（同上下文，localStorage 保留）
   await page.waitForTimeout(300);
   const s = await page.evaluate(glowState);
   ok(s.glowAttr === '0', '刷新后仍然是关的', String(s.glowAttr));
@@ -352,6 +364,7 @@ console.log('\n[6] 设置页分区：互斥渲染 + 副标题跟着走');
   const ctx = await newContext(100, false);
   const page = await ctx.newPage();
   watch(page);
+  // [6] 要断言「默认落在哪个分区」，所以这里用 open 而不是 openAppearance
   await open(page, '/settings?glass=1');
 
   // A38/A40 之后设置页 5 个分区；A60 加了「模型清单」→ 6 个；
@@ -369,7 +382,12 @@ console.log('\n[6] 设置页分区：互斥渲染 + 副标题跟着走');
     navCount === NAV_LABELS.length &&
     NAV_LABELS.every((label, i) => navTexts[i]?.trim().startsWith(label));
   ok(navOk, '分区导航为八项且顺序正确（我的资料/记忆/权限门禁/外观/登录配置/模型清单/助手人设/关于）', navTexts.map(t => t.trim()).join(' | '));
-  ok(await page.locator('[data-settings-panel="appearance"]').count() > 0, '默认落在「外观」');
+  // 默认分区改成「我的资料」（用户要求：设置弹窗一打开先看到自己的资料）。
+  ok(await page.locator('[data-settings-panel="profile"]').count() > 0, '默认落在「我的资料」');
+
+  // 外观分区不再默认打开，先切过去再验它的内容
+  await page.locator('[data-settings-section="appearance"]').click();
+  await page.waitForTimeout(300);
   ok(await page.locator('[data-settings-panel="appearance"] .t-switch').count() > 0, '外观分区含光斑开关');
 
   // 切到登录配置：光斑那一套必须整个消失（分类的目的就是别挤在一起）
