@@ -247,21 +247,41 @@ export function UpdateCard() {
             )}
 
             {phase === 'error' && error && (
-              <div className="tc-update-error" data-update-error>
-                <span className="tc-update-text">
-                  <AlertCircle size={14} />
-                  {error.message}
-                </span>
-                <a
-                  href={error.manualUrl || UPDATE_RELEASES_PAGE}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="tc-update-link"
-                  data-update-manual-link
-                >
-                  手动下载
-                </a>
-              </div>
+              state.legacyManualUpdate ? (
+                // 旧版客户端内置旧公钥，验签必然失败 —— 这不是网络问题，
+                // 也不该让它伪装成普通错误。只给一句结论 + 一个动作。
+                <div className="tc-update-error" data-update-error data-update-legacy>
+                  <span className="tc-update-text">
+                    <AlertCircle size={14} />
+                    此版本需手动更新一次
+                  </span>
+                  <a
+                    href={error.manualUrl || UPDATE_RELEASES_PAGE}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="tc-update-link"
+                    data-update-legacy-link
+                  >
+                    下载完整安装包
+                  </a>
+                </div>
+              ) : (
+                <div className="tc-update-error" data-update-error>
+                  <span className="tc-update-text">
+                    <AlertCircle size={14} />
+                    {error.message}
+                  </span>
+                  <a
+                    href={error.manualUrl || UPDATE_RELEASES_PAGE}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="tc-update-link"
+                    data-update-manual-link
+                  >
+                    手动下载
+                  </a>
+                </div>
+              )
             )}
           </div>
 

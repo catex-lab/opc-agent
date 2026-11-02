@@ -30,6 +30,7 @@ import {
   checkAssetUrl,
   compareVersions,
   evaluateManifest,
+  isLegacyPubkeyFailure,
   parseManifest,
   sha512Base64,
   verifyAssetDigest,
@@ -285,6 +286,29 @@ ok(
   '没有内置公钥 → invalid（不降级为「跳过验签」）'
 );
 
+/* ══════════════ 旧版公钥提示 ══════════════ */
+
+section('旧版公钥提示（判定必须保守）');
+
+ok(isLegacyPubkeyFailure('signature', '1.0.0'), '1.0.0 + 验签失败 → 旧版提示');
+ok(isLegacyPubkeyFailure('signature', '1.0.0-beta.1'), '预发布 ≤1.0.0 + 验签失败 → 旧版提示');
+ok(!isLegacyPubkeyFailure('signature', '1.0.1'), '1.0.1 + 验签失败 → 普通失败（不能误报）');
+ok(!isLegacyPubkeyFailure('signature', '2.0.0'), '2.0.0 + 验签失败 → 普通失败');
+ok(!isLegacyPubkeyFailure('digest', '1.0.0'), '哈希失败 → 不显示旧版提示');
+ok(!isLegacyPubkeyFailure('network', '1.0.0'), '网络失败 → 不显示旧版提示');
+ok(!isLegacyPubkeyFailure('version', '1.0.0'), '版本号不合法 → 不显示旧版提示');
+ok(!isLegacyPubkeyFailure(undefined, '1.0.0'), '没有错误码 → 不显示旧版提示');
+ok(!isLegacyPubkeyFailure('signature', 'not-a-version'), '本机版本号不合法 → 不显示旧版提示');
+
+// 端到端：真清单用「另一把钥匙」签（模拟旧客户端验新清单），判定链必须给出 signature
+const stranger = generateKeyPairSync('ed25519');
+const strangerPub = Buffer.from(stranger.publicKey.export({ format: 'der', type: 'spki' })).toString('base64');
+const signedByStranger = signWith(validManifest, stranger.privateKey);
+const strangerDecision = evaluateManifest(signedByStranger, { ...OPT, publicKeyBase64 });
+ok(strangerDecision.status === 'invalid' && strangerDecision.code === 'signature', '其它公钥签的清单 → code=signature', JSON.stringify(strangerDecision));
+ok(isLegacyPubkeyFailure(strangerDecision.code, '1.0.0'), '  且 1.0.0 → 旧版提示');
+ok(!isLegacyPubkeyFailure(strangerDecision.code, '1.0.1'), '  但 1.0.1 → 普通签名错误');
+
 /* ══════════════ 静态接线 ══════════════ */
 
 section('静态接线');
@@ -326,9 +350,16 @@ for (const phase of ['checking', 'latest', 'available', 'downloading', 'ready', 
 }
 ok(stale.includes('data-update-check'), '检查更新按钮带测试锚点');
 ok(stale.includes('data-update-progress'), '下载进度带测试锚点');
+ok(stale.includes('legacyManualUpdate'), '更新卡片根据旧版标记切换文案');
+ok(stale.includes('此版本需手动更新一次'), '旧版提示是一句结论');
+ok(stale.includes('下载完整安装包'), '旧版提示给一个完整包动作');
+ok(stale.includes('data-update-legacy'), '旧版提示带测试锚点');
+ok(stale.includes('data-update-manual-link'), '普通失败仍保留「手动下载」入口');
 
 const updaterSource = read('electron/updater/index.ts');
 ok(!updaterSource.includes('OPC_DATA_DIR'), '更新链路不读写 data/（无 OPC_DATA_DIR）');
+ok(updaterSource.includes('isLegacyPubkeyFailure'), '主进程只在签名失败 + 旧版本时置旧版标记');
+ok(updaterSource.includes("message: '此版本需手动更新一次'"), '旧版错误文案与界面一致');
 ok(updaterSource.includes("app.getPath('temp')"), '暂存目录落在系统 temp');
 ok(updaterSource.includes('checkAssetUrl'), '重定向每一跳都校验域名与协议');
 ok(updaterSource.includes('ELECTRON_RUN_AS_NODE'), '交换 helper 以纯 Node 模式启动');
