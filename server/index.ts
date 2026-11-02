@@ -128,6 +128,9 @@ import {
 } from "./extensions/store.js";
 import { runImport as extRunImport, refreshItem as extRefreshItem } from "./extensions/import.js";
 import { applyHits as extApplyHits, normalizeSkillBody } from "./extensions/normalize.js";
+// P1 跨 Agent 知识库：独立 data/kb.sqlite，后台回填最近 90 天。
+import { bootKnowledgeBase } from "./kb/indexer.js";
+import { registerKbRoutes } from "./kb/routes.js";
 import { buildMcpConfig } from "./extensions/distribute.js";
 import { applyDrift as extApplyDrift, scanDrift as extScanDrift } from "./extensions/drift.js";
 import { MODE_LABEL as EXT_MODE_LABEL, TARGETS as EXT_TARGETS } from "./extensions/targets.js";
@@ -3712,6 +3715,9 @@ app.post("/api/verify/run", async (req, res) => {
   res.end();
 });
 
+// 知识库接口：范围/回填/重建/会话开关。界面在 P1 之外单独做。
+registerKbRoutes(app);
+
 const webDir = process.env.OPC_WEB_DIR
   ? path.resolve(process.env.OPC_WEB_DIR)
   : path.join(process.cwd(), 'dist');
@@ -3801,6 +3807,13 @@ if (fs.existsSync(path.join(webDir, 'index.html'))) {
 const HOST = process.env.OPC_HOST || '127.0.0.1';
 // A38：索引自愈。文件是唯一事实来源，索引随时可重建，失败不阻断启动。
 bootMemory();
+// P1 知识库：建库 + 挂消息落库监听 + 后台回填最近 90 天。
+// 失败只告警，不影响聊天主链路 —— `chat.db` 才是用户数据的唯一事实来源。
+try {
+  bootKnowledgeBase();
+} catch (e) {
+  console.warn('[KB] 知识库初始化失败（不影响启动）:', (e as Error).message);
+}
 // A98：老会话按 cwd 回填项目归属。幂等，失败不阻断启动 ——
 // 回填不上只会退化成「这个会话用全局记忆」，与改造前的行为一致。
 // A131：明细日志挪进 `backfillSessionProjects()` —— 只有它知道跳过了几个已不存在的目录。

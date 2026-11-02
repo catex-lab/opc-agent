@@ -159,7 +159,8 @@
     "verify:a164-extensions": "node scripts/verify-a164-extensions.mjs",
     "verify:a166-normalize": "node scripts/verify-a166-normalize.mjs",
     "verify:a167-inject": "tsx scripts/verify-a167-inject.ts",
-    "verify:a168-drift": "tsx scripts/verify-a168-drift.ts"
+    "verify:a168-drift": "tsx scripts/verify-a168-drift.ts",
+    "verify:kb": "tsx scripts/verify-kb-index.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.316",

@@ -9,6 +9,8 @@ import { normalizeProjectPath, defaultProjectName } from './project-key.js';
 // A131：「最近目录」的忽略清单。它只依赖 paths.ts 与 project-key.ts（两个都不
 // import 本文件），所以这里引它不会绕成环。
 import { isDismissed } from './dismissed-dirs.js';
+// P1 知识库：消息落库后通知索引层。events.ts 零依赖，不会反向 import 本文件。
+import { notifyKbPersist } from './kb/events.js';
 import type {
   CapabilityKey,
   CapabilityProbe,
@@ -930,7 +932,9 @@ export function updateSession(
 export function deleteSession(id: string): boolean {
   const stmt = db.prepare('DELETE FROM sessions WHERE id = ?');
   const result = stmt.run(bind(id));
-  return toNumber(result.changes) > 0;
+  const changed = toNumber(result.changes) > 0;
+  if (changed) notifyKbPersist({ type: 'session-deleted', sessionId: id });
+  return changed;
 }
 
 /**
@@ -944,7 +948,9 @@ export function deleteSession(id: string): boolean {
 export function deleteMessagesBySession(sessionId: string): number {
   const stmt = db.prepare('DELETE FROM messages WHERE session_id = ?');
   const result = stmt.run(bind(sessionId));
-  return toNumber(result.changes);
+  const changed = toNumber(result.changes);
+  if (changed > 0) notifyKbPersist({ type: 'messages-deleted', sessionId });
+  return changed;
 }
 
 // ============= 消息操作 =============
@@ -993,6 +999,13 @@ export function createMessage(message: DbMessageInput): DbMessage {
   const updateStmt = db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
   updateStmt.run(bind(new Date().toISOString()), bind(message.session_id));
 
+  // 知识库增量索引：只在提交成功后通知
+  notifyKbPersist({
+    type: 'messages-upserted',
+    sessionId: message.session_id,
+    messageIds: [message.id],
+  });
+
   // 返回值对齐 DbMessage：三个可选列没传就是 NULL，不是 undefined
   return {
     ...message,
@@ -1009,6 +1022,7 @@ export function updateMessage(
   id: string,
   updates: Partial<Pick<DbMessage, 'content' | 'tool_calls' | 'images' | 'blocks'>>
 ): boolean {
+  const existing = getMessage(id);
   const fields: string[] = [];
   const values: Array<string | null> = [];
 
@@ -1035,14 +1049,25 @@ export function updateMessage(
 
   const stmt = db.prepare(`UPDATE messages SET ${fields.join(', ')} WHERE id = ?`);
   const result = stmt.run(...values.map(bind));
-  return toNumber(result.changes) > 0;
+  const changed = toNumber(result.changes) > 0;
+  // 图片/工具字段不影响正文索引；只有 content / blocks 变了才重建切片
+  const affectsIndex = updates.content !== undefined || updates.blocks !== undefined;
+  if (changed && affectsIndex && existing) {
+    notifyKbPersist({ type: 'message-updated', sessionId: existing.session_id });
+  }
+  return changed;
 }
 
 // 删除消息
 export function deleteMessage(id: string): boolean {
+  const existing = getMessage(id);
   const stmt = db.prepare('DELETE FROM messages WHERE id = ?');
   const result = stmt.run(bind(id));
-  return toNumber(result.changes) > 0;
+  const changed = toNumber(result.changes) > 0;
+  if (changed && existing) {
+    notifyKbPersist({ type: 'message-deleted', sessionId: existing.session_id });
+  }
+  return changed;
 }
 
 // 批量创建消息（用于保存对话）
@@ -1076,12 +1101,24 @@ export function createMessages(messages: DbMessageInput[]): void {
     db.exec('ROLLBACK');
     throw e;
   }
+
+  // 提交成功后按会话增量索引（批写通常是分支/导入，可能跨多个会话）
+  const bySession = new Map<string, string[]>();
+  for (const msg of messages) {
+    const ids = bySession.get(msg.session_id) ?? [];
+    ids.push(msg.id);
+    bySession.set(msg.session_id, ids);
+  }
+  for (const [sessionId, messageIds] of bySession) {
+    notifyKbPersist({ type: 'messages-upserted', sessionId, messageIds });
+  }
 }
 
 // 清空所有数据
 export function clearAllData(): void {
   db.exec('DELETE FROM messages');
   db.exec('DELETE FROM sessions');
+  notifyKbPersist({ type: 'all-cleared' });
 }
 
 // ============= 验证结果（A97）=============
