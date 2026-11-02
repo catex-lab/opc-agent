@@ -409,7 +409,7 @@ class UpdateController {
             error: {
               code: 'signature',
               message: '此版本需手动更新一次',
-              manualUrl: fullZipUrl(parsed.ok ? parsed.manifest.version : undefined),
+              manualUrl: fullZipUrl(parsed.manifest?.version),
             },
           });
         } else {
