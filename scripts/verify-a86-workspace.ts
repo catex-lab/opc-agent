@@ -13,6 +13,11 @@
  *      必须回 409 `no-cwd`（而不是退回进程目录）。
  *   4. **没有新建工作区** —— 建目录在主进程（`opc:create-workspace`），
  *      这里守契约：不许给 `server/fs.ts` 开写接口。
+ *   5. **UTF-16 / BOM 误判 binary** —— PowerShell `>` 重导出（默认 UTF-16LE
+ *      带 BOM）的 txt/md 前 8 KB 全是 0x00，旧 NUL 粗判把它们挡在预览外。
+ *      现在按 BOM + NUL 奇偶分布先认编码再解码。
+ *   6. **md 超 256 KB 静默降级** —— 退回纯文本必须有显式说明
+ *      （`data-markdown-plain-fallback`），不是悄无声息换成等宽字体。
  *
  * 运行：npx tsx scripts/verify-a86-workspace.ts
  */
@@ -44,7 +49,13 @@ function checkContracts() {
   const fsSrc = read('server/fs.ts');
   ok(fsSrc.includes('export function readFileInside'), '契约：fs.ts 导出 readFileInside');
   ok(fsSrc.includes('MAX_TEXT_BYTES'), '契约：文本预览有大小上限');
+  ok(/export const MAX_TEXT_BYTES/.test(fsSrc) && /export const MAX_IMAGE_BYTES/.test(fsSrc), '契约：文本/图片阈值是导出常量（集中、可引）');
   ok(/looksBinary|\\0/.test(fsSrc), '契约：二进制按 NUL 粗判');
+  // UTF-16 修正：先认编码再判二进制，NUL 粗判只管 UTF-8 路径
+  ok(fsSrc.includes('function detectEncoding'), '契约：fs.ts 有编码判定（UTF-16 不被 NUL 粗判误杀）');
+  ok(fsSrc.includes("'utf16le'") && fsSrc.includes("'utf16be'"), '契约：UTF-16 LE/BE 都在判定结果里');
+  ok(fsSrc.includes('0xFEFF'), '契约：UTF-8 BOM（\\uFEFF）会被剥掉');
+  ok(fsSrc.includes('function decodeText'), '契约：按判定出的编码解码');
   // 只读定位不能破：这条是整个面板的安全边界
   ok(!/export function (write|remove|mkdir)/.test(fsSrc), '契约：fs.ts 仍然没有写/删/建目录');
 
@@ -67,6 +78,9 @@ function checkContracts() {
   ok(panel.includes('<ChatMarkdown content='), '契约：预览层真的用 ChatMarkdown 渲染');
   ok(panel.includes('data-markdown-preview'), '契约：富文本预览有标记（便于验证与排查）');
   ok(panel.includes('MAX_MARKDOWN_BYTES'), '契约：超大 md 退回纯文本（有阈值）');
+  ok(/export const MAX_PREVIEW_LINES/.test(panel) && /export const MAX_MARKDOWN_BYTES/.test(panel), '契约：面板两个渲染阈值是导出常量（集中、可引）');
+  // md 超限退回纯文本时必须有一句显式说明，不是静默换成等宽字体
+  ok(panel.includes('data-markdown-plain-fallback'), '契约：md 超限退回纯文本有显式说明标记');
   ok(/'\.\(md\|markdown\)\$/.test(panel) || panel.includes('\\.(md|markdown)$'), '契约：只对 md/markdown 走富文本（mdx 不认）');
 
   const badge = read('src/components/WorkspaceBadge.tsx');
@@ -126,6 +140,17 @@ const PNG_1X1 = Buffer.from(
   'base64'
 );
 
+/** Node 没有 utf16be 编码器：先按 LE 编码再两两交换字节（与 fs.ts 解码互逆）。 */
+function toUtf16be(s: string): Buffer {
+  const le = Buffer.from(s, 'utf16le');
+  const be = Buffer.allocUnsafe(le.length);
+  for (let i = 0; i < le.length; i += 2) {
+    be[i] = le[i + 1];
+    be[i + 1] = le[i];
+  }
+  return be;
+}
+
 async function runServerChecks() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opc-a86-data-'));
   const projDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opc-a86-proj-'));
@@ -142,6 +167,23 @@ async function runServerChecks() {
   fs.writeFileSync(path.join(projDir, 'img.png'), PNG_1X1);
   fs.writeFileSync(path.join(projDir, 'bin.dat'), Buffer.from([0x4d, 0x5a, 0x00, 0x01, 0x02]));
   fs.writeFileSync(path.join(projDir, 'big.txt'), 'a'.repeat(1024 * 1024 + 10), 'utf8');
+  // UTF-16 / BOM 系列：模拟 PowerShell `>` 重导出与各编辑器产物
+  fs.writeFileSync(
+    path.join(projDir, 'u16le.txt'),
+    Buffer.concat([Buffer.from([0xFF, 0xFE]), Buffer.from(`u16le ${MARK} 中文\n`, 'utf16le')])
+  );
+  fs.writeFileSync(
+    path.join(projDir, 'u16be.txt'),
+    Buffer.concat([Buffer.from([0xFE, 0xFF]), toUtf16be(`u16be ${MARK} 中文\n`)])
+  );
+  // 无 BOM 的 UTF-16LE：靠 NUL 奇偶分布认（ASCII 占多数才有分布可言）
+  fs.writeFileSync(path.join(projDir, 'u16nobom.txt'), Buffer.from(`u16 no bom ${MARK} `.repeat(8) + '\n', 'utf16le'));
+  fs.writeFileSync(
+    path.join(projDir, 'u8bom.md'),
+    Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(`# 标题\n\n${MARK}\n`, 'utf8')])
+  );
+  // 超过 md 富渲染阈值（256 KB）但不到文本上限（1 MB）的大 md
+  fs.writeFileSync(path.join(projDir, 'big-md.md'), `# 大文件\n\n${'x'.repeat(300 * 1024)}\n`, 'utf8');
   fs.writeFileSync(path.join(outsideDir, 'secret.txt'), 'outside', 'utf8');
 
   const port = await freePort();
@@ -204,6 +246,21 @@ async function runServerChecks() {
     const big = await (await fetch(`${base}/api/fs/read?${qs('big.txt')}`)).json();
     ok(big?.kind === 'too-large', '预览：超大文件报 too-large（不截断）', JSON.stringify(big).slice(0, 160));
 
+    // ④.5 UTF-16 / BOM：不再被 NUL 粗判误杀，且按对应端序解码
+    const u16le = await (await fetch(`${base}/api/fs/read?${qs('u16le.txt')}`)).json();
+    ok(u16le?.kind === 'text', '预览：UTF-16LE（BOM）判为文本', JSON.stringify(u16le).slice(0, 160));
+    ok(String(u16le?.content ?? '').includes(`u16le ${MARK} 中文`), '预览：UTF-16LE 解码后内容可读（含中文）', String(u16le?.content ?? '').slice(0, 60));
+    const u16be = await (await fetch(`${base}/api/fs/read?${qs('u16be.txt')}`)).json();
+    ok(u16be?.kind === 'text' && String(u16be?.content ?? '').includes(`u16be ${MARK} 中文`), '预览：UTF-16BE（BOM）判为文本且解码正确', JSON.stringify(u16be).slice(0, 160));
+    const u16nobom = await (await fetch(`${base}/api/fs/read?${qs('u16nobom.txt')}`)).json();
+    ok(u16nobom?.kind === 'text' && String(u16nobom?.content ?? '').includes(MARK), '预览：无 BOM 的 UTF-16（NUL 奇偶分布）判为文本', JSON.stringify(u16nobom).slice(0, 160));
+    const u8bom = await (await fetch(`${base}/api/fs/read?${qs('u8bom.md')}`)).json();
+    ok(u8bom?.kind === 'text', '预览：UTF-8 BOM 文件判为文本', JSON.stringify(u8bom).slice(0, 160));
+    ok(!String(u8bom?.content ?? '').startsWith(String.fromCharCode(0xFEFF)), '预览：UTF-8 BOM 被剥掉（首字符不是 U+FEFF）', String(u8bom?.content ?? '').slice(0, 20));
+    // ④.6 大 md（256 KB < size < 1 MB）：kind 仍是 text —— 富渲染降级在前端判断
+    const bigMd = await (await fetch(`${base}/api/fs/read?${qs('big-md.md')}`)).json();
+    ok(bigMd?.kind === 'text' && Number(bigMd?.size) > 256 * 1024, '预览：>256KB 的 md 仍返回 text（富渲染降级由前端提示）', JSON.stringify(bigMd).slice(0, 160));
+
     // ⑤ containment：跳出去必须被拒
     const esc = await fetch(`${base}/api/fs/read?${qs('../secret.txt')}`);
     ok(esc.status === 400 || esc.status === 403, '预览：../ 逃逸被拒', String(esc.status));
@@ -235,7 +292,7 @@ async function runServerChecks() {
       body: JSON.stringify({ cwd: projDir }),
     });
     console.log('[C] 真 Chrome UI 行为');
-    await runUiChecks(base, sid);
+    await runUiChecks(base, sid, MARK);
   } catch (e) {
     ok(false, '服务：验证过程抛错', e instanceof Error ? e.message : String(e));
   } finally {
@@ -265,7 +322,7 @@ async function runServerChecks() {
  * 富文本渲染在 Shadow DOM 里，所以断言要读 `shadowRoot.innerHTML` ——
  * 外层 `document.querySelector('h1')` 永远是 0（A27 的教训）。
  */
-async function runUiChecks(base: string, sid: string) {
+async function runUiChecks(base: string, sid: string, mark: string) {
   if (!fs.existsSync(path.join(root, 'dist', 'index.html'))) {
     ok(false, 'UI：dist 未构建（先 npm run build）');
     return;
@@ -321,6 +378,30 @@ async function runUiChecks(base: string, sid: string) {
     const pre = await page.locator('[data-file-preview] pre').count();
     ok(pre >= 2, 'UI：纯文本预览有两列 <pre>（行号 + 正文）', String(pre));
     await page.screenshot({ path: '.render-check/a87-preview-source.png' });
+
+    // ③ 大 md（>256 KB）→ 纯文本 + 顶部显式降级说明，不走富渲染。
+    //    ② 刚进了 src/ 子目录，先点面包屑根按钮回到项目根（临时目录名带
+    //    opc-a86-proj- 前缀，正好能当定位串）。
+    await page.locator('[data-file-preview-close]').click();
+    await SLEEP(300);
+    await page.getByRole('button', { name: /opc-a86-proj-/ }).first().click();
+    await SLEEP(500);
+    await page.getByRole('button', { name: /big-md\.md/ }).first().click();
+    await page.waitForSelector('[data-markdown-plain-fallback]', { timeout: 10_000 });
+    const bigMdRich = await page.locator('[data-markdown-preview]').count();
+    ok(bigMdRich === 0, 'UI：>256KB 的 md 不走富渲染（无 data-markdown-preview）');
+    const fallbackText = await page.locator('[data-markdown-plain-fallback]').innerText();
+    ok(/纯文本/.test(fallbackText), 'UI：降级说明可见（按纯文本显示）', fallbackText.slice(0, 60));
+    await page.screenshot({ path: '.render-check/a87-preview-bigmd-fallback.png' });
+
+    // ④ UTF-16LE（PowerShell 重导出形态）→ 面板里真的显示出文字
+    await page.locator('[data-file-preview-close]').click();
+    await SLEEP(300);
+    await page.getByRole('button', { name: /u16le\.txt/ }).first().click();
+    await page.waitForSelector('[data-file-preview] pre', { timeout: 10_000 });
+    await SLEEP(300);
+    const u16Text = await page.locator('[data-file-preview] pre').last().innerText();
+    ok(u16Text.includes(mark), 'UI：UTF-16LE 文件内容真的显示在预览里', u16Text.slice(0, 60));
 
     ok(pageErrors.length === 0, 'UI：页面零错误', pageErrors.slice(0, 2).join(' | '));
   } catch (e) {

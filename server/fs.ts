@@ -117,13 +117,82 @@ export function imageMimeOf(file: string): string | null {
   return IMAGE_MIME[path.extname(file).toLowerCase()] ?? null;
 }
 
-/** 前 8 KB 里出现 NUL 就按二进制处理 —— 与 `file(1)` 的粗判口径一致。 */
+/**
+ * 前 8 KB 里出现 NUL 就按二进制处理 —— 与 `file(1)` 的粗判口径一致。
+ *
+ * 注意：这只用于 UTF-8 路径。UTF-16 的 ASCII 文本每隔一个字节就是 0x00，
+ * 会在进入本函数之前被 `detectEncoding` 截走解码（见 readFileInside），
+ * 不会走到这里被误杀。
+ */
 function looksBinary(buf: Buffer): boolean {
   const n = Math.min(buf.length, 8192);
   for (let i = 0; i < n; i++) {
     if (buf[i] === 0) return true;
   }
   return false;
+}
+
+/** 文本编码判定结果。BE 没有原生解码器，解码时字节两两交换按 LE 处理。 */
+type TextEncoding = 'utf8' | 'utf16le' | 'utf16be';
+
+/**
+ * 判定字节流的文本编码。
+ *
+ * 为什么不直接用 NUL 粗判：PowerShell `>` / Out-File 重导出的 txt/md 默认
+ * 是 **UTF-16LE 带 BOM**，它的 ASCII 内容每隔一字节就是 0x00，旧的「有 NUL
+ * 即 binary」会把这类文件全部挡在预览外。所以先认 BOM（含 UTF-8 BOM），
+ * 再按 NUL 的**奇偶分布**认无 BOM 的 UTF-16：
+ *
+ *   - LE 的 ASCII 字符是 `[字符, 0x00]` → NUL 集中在奇数位；
+ *   - BE 是 `[0x00, 字符]` → NUL 集中在偶数位。
+ *
+ * 只有某奇偶位上 NUL 占比高、另一位上**完全没有**时才采信 —— 随机二进制
+ * 很难长出这么干净的分布。覆盖不到的情况（无 BOM 且几乎全 CJK 的 UTF-16）
+ * 会退回 UTF-8 解出乱码文本，但不会被错判成 binary 挡住预览，可接受。
+ */
+function detectEncoding(buf: Buffer): TextEncoding {
+  // BOM：EF BB BF = UTF-8；FF FE = UTF-16LE；FE FF = UTF-16BE
+  if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) return 'utf8';
+  if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE) return 'utf16le';
+  if (buf.length >= 2 && buf[0] === 0xFE && buf[1] === 0xFF) return 'utf16be';
+
+  const n = Math.min(buf.length, 8192);
+  let evenNul = 0;
+  let oddNul = 0;
+  for (let i = 0; i < n; i++) {
+    if (buf[i] !== 0) continue;
+    if (i % 2 === 0) evenNul++;
+    else oddNul++;
+  }
+  const pairs = n / 2;
+  // 样本太小（<8 个双字节）不做奇偶推断，避免把短二进制文件猜成 UTF-16
+  if (pairs >= 8 && oddNul / pairs > 0.3 && evenNul === 0) return 'utf16le';
+  if (pairs >= 8 && evenNul / pairs > 0.3 && oddNul === 0) return 'utf16be';
+  return 'utf8';
+}
+
+/**
+ * 按判定出的编码解码。UTF-16 的 BOM 两字节剥掉；UTF-8 的 BOM 经 toString
+ * 会变成首字符 \uFEFF，也剥掉 —— 不剥的话 md 首行的 `# 标题` 会带着不可见
+ * 字符进渲染器，标题直接不识别。
+ */
+function decodeText(buf: Buffer, encoding: TextEncoding): string {
+  if (encoding === 'utf16le') {
+    const body = buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE ? buf.subarray(2) : buf;
+    return body.toString('utf16le');
+  }
+  if (encoding === 'utf16be') {
+    const body = buf.length >= 2 && buf[0] === 0xFE && buf[1] === 0xFF ? buf.subarray(2) : buf;
+    const even = body.length - (body.length % 2);
+    const swapped = Buffer.allocUnsafe(even);
+    for (let i = 0; i + 1 < body.length; i += 2) {
+      swapped[i] = body[i + 1];
+      swapped[i + 1] = body[i];
+    }
+    return swapped.toString('utf16le');
+  }
+  const s = buf.toString('utf8');
+  return s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s;
 }
 
 /**
@@ -164,9 +233,12 @@ export function readFileInside(root: string, rel: string): FsReadResult | { erro
     return { error: code === 'EACCES' || code === 'EPERM' ? 'denied' : 'not-found' };
   }
 
-  if (looksBinary(buf)) return { ...head, kind: 'binary' };
+  // 先认编码再判二进制：UTF-16 文本的 NUL 是编码产物，不是二进制特征。
+  // 只有 UTF-8 路径才用 NUL 粗判挡真二进制（.pak / .exe / .dat 等）。
+  const encoding = detectEncoding(buf);
+  if (encoding === 'utf8' && looksBinary(buf)) return { ...head, kind: 'binary' };
 
-  const content = buf.toString('utf8');
+  const content = decodeText(buf, encoding);
   return {
     ...head,
     kind: 'text',

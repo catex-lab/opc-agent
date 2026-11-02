@@ -100,7 +100,7 @@ interface PreviewState {
  * 1 MB 的源码能有几万行，一次全铺进 DOM 会让面板滚都滚不动（而这里没有
  * 虚拟列表）。超出部分不静默丢弃 —— 底部如实写「只渲染前 N 行」。
  */
-const MAX_PREVIEW_LINES = 2000;
+export const MAX_PREVIEW_LINES = 2000;
 
 /**
  * 超过这个字节数的 markdown **退回纯文本**（A87）。
@@ -108,7 +108,7 @@ const MAX_PREVIEW_LINES = 2000;
  * cherry-markdown 是完整解析器，几百 KB 的 md 会把面板卡住几秒 —— 而「看一眼
  * README」不需要那种量级。退回去时如实说明，不是静默降级。
  */
-const MAX_MARKDOWN_BYTES = 256 * 1024;
+export const MAX_MARKDOWN_BYTES = 256 * 1024;
 
 /** 只有这两种扩展名走富文本渲染；`.mdx` 不认（里面可能有 JSX，渲染不了）。 */
 function isMarkdownFile(name: string): boolean {
@@ -657,6 +657,15 @@ function FilePreview({
    * 的行为会肉眼可见地不一致。
    */
   const richMarkdown = isMarkdownFile(entry.name) && (data?.size ?? 0) <= MAX_MARKDOWN_BYTES;
+  /**
+   * md 超过 MAX_MARKDOWN_BYTES 退回纯文本时的**显式说明**开关。
+   *
+   * 上面 MAX_MARKDOWN_BYTES 的注释承诺「如实说明，不是静默降级」—— 但原先
+   * 渲染路径里没有任何提示，大 md 悄无声息地变成等宽纯文本。这个标记位
+   * 就是补上那句说明（见下面纯文本分支顶部的提示条）。
+   */
+  const markdownPlainFallback =
+    data?.kind === 'text' && isMarkdownFile(entry.name) && !richMarkdown;
   const mono = {
     fontFamily: 'var(--font-mono)',
     /* A133：原来是裸 12。文件预览是「次级信息」（读而不是写），
@@ -743,21 +752,38 @@ function FilePreview({
           </Suspense>
         </div>
       ) : data.kind === 'text' ? (
-        <div className="min-h-0 flex-1 overflow-auto">
-          <div className="flex min-h-full">
-            <pre
-              className="shrink-0 select-none py-2 pl-2 pr-2 text-right"
-              style={{ ...mono, color: 'var(--td-text-color-placeholder)' }}
-              aria-hidden
+        <div className="flex min-h-0 flex-1 flex-col">
+          {/* md 超限退回纯文本的显式说明：样式沿用底部「只渲染前 N 行」那条
+              （caption + hairline），位置放顶部 —— 它是「这份内容的渲染方式」，
+              用户读第一行之前就该知道，不是弹窗、不占常驻行。 */}
+          {markdownPlainFallback && (
+            <p
+              className="shrink-0 px-3 py-1.5 text-caption"
+              style={{
+                borderBottom: '1px solid var(--tc-hairline)',
+                color: 'var(--td-text-color-placeholder)',
+              }}
+              data-markdown-plain-fallback
             >
-              {shown.map((_, i) => i + 1).join('\n')}
-            </pre>
-            <pre
-              className="min-w-0 flex-1 py-2 pl-1 pr-3"
-              style={{ ...mono, color: 'var(--td-text-color-primary)' }}
-            >
-              {shown.join('\n')}
-            </pre>
+              文件超过 {formatSize(MAX_MARKDOWN_BYTES)}，markdown 按纯文本显示
+            </p>
+          )}
+          <div className="min-h-0 flex-1 overflow-auto">
+            <div className="flex min-h-full">
+              <pre
+                className="shrink-0 select-none py-2 pl-2 pr-2 text-right"
+                style={{ ...mono, color: 'var(--td-text-color-placeholder)' }}
+                aria-hidden
+              >
+                {shown.map((_, i) => i + 1).join('\n')}
+              </pre>
+              <pre
+                className="min-w-0 flex-1 py-2 pl-1 pr-3"
+                style={{ ...mono, color: 'var(--td-text-color-primary)' }}
+              >
+                {shown.join('\n')}
+              </pre>
+            </div>
           </div>
         </div>
       ) : data.kind === 'image' ? (
