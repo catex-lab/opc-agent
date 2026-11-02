@@ -26,6 +26,7 @@ import { registry } from '../server/agents/registry.js';
 import { loadPrefs } from '../server/preferences.js';
 import { runHub } from '../server/run-hub.js';
 import { decideCloseAction } from './close-policy.js';
+import { updater } from './updater/index.js';
 import { browserPanel, runBrowserSmoke } from './browser-view.js';
 import { terminal, type TerminalState } from './terminal.js';
 import {
@@ -322,6 +323,17 @@ function registerIpc() {
     platform: process.platform,
     arch: process.arch,
   }));
+
+  /* ── 应用内检查更新 ──────────────────────────────────────────────
+   *
+   * 主进程是唯一能碰网络与文件系统的一侧。渲染进程只能「请求检查 /
+   * 请求下载 / 请求退出安装」，判定与校验全部在这里完成 ——
+   * 页面拿不到「跳过验签」「指定替换路径」这类能力。
+   */
+  ipcMain.handle('opc:update-state', () => updater.getState());
+  ipcMain.handle('opc:update-check', () => updater.check());
+  ipcMain.handle('opc:update-download', () => updater.download());
+  ipcMain.handle('opc:update-quit-install', () => updater.quitAndInstall());
 
   // A63：工作区 —— 选目录对话框。
   //
@@ -732,6 +744,9 @@ async function createWindow() {
     `[Main] 窗口加载: ${withGlassFlag(url)}（窗口玻璃 ${WINDOW_GLASS ? 'acrylic 开启' : '关闭'}）`
   );
   await loadWithRetry(mainWindow, withGlassFlag(url));
+  // 更新替换后的健康信号：只有窗口真的加载成功，才让退出时那个分离进程
+  // 确认「新版本起来了」，否则它会自动回滚（见 electron/updater/index.ts）。
+  updater.confirmHealthy();
 }
 
 /**
@@ -913,6 +928,8 @@ if (!app.requestSingleInstanceLock()) {
     }
     registerIpc();
     await createWindow();
+    // 更新检查放在窗口之后：5s 延迟 + 每 6h 一次，绝不阻塞首屏
+    updater.start();
     // 窗口起来之后再挂托盘：托盘图标从 dist-electron/ 读，与窗口图标同源
     createTray();
   }).catch(err => {
@@ -936,6 +953,7 @@ app.on('before-quit', () => {
   // 置位后 `close` 拦截全部放行 —— 否则「退出」会被自己的确认框挡住，
   // 系统关机时更会变成关不掉的拒绝关机。
   isQuitting = true;
+  updater.dispose();
   try {
     registry.disposeAll();
   } catch (err) {

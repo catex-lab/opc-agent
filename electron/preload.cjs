@@ -150,6 +150,50 @@ contextBridge.exposeInMainWorld('opc', {
   },
 
   /**
+   * 应用内检查更新。
+   *
+   * 状态机与主进程完全一致：idle / checking / latest / available /
+   * downloading / ready / error。渲染层只负责把它画出来 —— 版本比较、
+   * 验签、哈希、路径校验全在主进程，页面拿不到「跳过校验」的能力。
+   *
+   * `quitAndInstall` 之后应用会退出并重启，不返回成功之外的 UI 承诺；
+   * 若替换失败，主进程在下次启动时以 error 态说明原因。
+   */
+  update: {
+    getState() {
+      return ipcRenderer.invoke('opc:update-state');
+    },
+
+    check() {
+      return ipcRenderer.invoke('opc:update-check');
+    },
+
+    download() {
+      return ipcRenderer.invoke('opc:update-download');
+    },
+
+    quitAndInstall() {
+      return ipcRenderer.invoke('opc:update-quit-install');
+    },
+
+    /**
+     * 订阅状态变化，返回取消订阅函数。
+     * @param {(state: import('../shared/update.js').UpdateState) => void} cb
+     */
+    onStateChange(cb) {
+      const handler = (_e, state) => {
+        try {
+          cb(state);
+        } catch {
+          /* 回调自己炸不该拖垮桥 */
+        }
+      };
+      ipcRenderer.on('opc:update-state', handler);
+      return () => ipcRenderer.removeListener('opc:update-state', handler);
+    },
+  },
+
+  /**
    * P2：浏览器预览视图。
    *
    * 这一组都是「请求」而不是「操作」—— 视图由主进程创建并挂在 contentView 上，

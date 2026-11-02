@@ -1,0 +1,470 @@
+/**
+ * A171 闸门：应用内检查更新的纯逻辑与接线。
+ *
+ * ## 这一层守的是什么
+ *
+ * 更新链路真正的风险不在「下载失败」，而在**通过了不该通过的清单**：
+ * 签名没验、哈希没比、资产名带 `..`、非 HTTPS 也照下、运行时版本不一致
+ * 还硬替换 `app.asar`。这些分支全是纯函数，能在这里穷举，不必等真发布。
+ *
+ * 因此分两组：
+ *
+ *   逻辑组  版本比较（含预发布）、规范化稳定性、验签成功/失败、
+ *           体积与摘要不匹配、路径穿越拒绝、URL 白名单、
+ *           运行时版本不一致 → requiresFull。
+ *   接线组  主进程四个 IPC、preload 桥、关于页渲染、暂存目录不碰 data/、
+ *           发布脚本与 CI 工作流确实存在。
+ *
+ * 接线组是**静态断言**，只证明「线接上了」，不证明「跑起来对」——
+ * 后者需要真机点一次，不属于这道闸门的范围。
+ */
+
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+
+import {
+  canonicalJson,
+  canonicalManifestBody,
+  checkAssetName,
+  checkAssetUrl,
+  compareVersions,
+  evaluateManifest,
+  parseManifest,
+  sha512Base64,
+  verifyAssetDigest,
+  verifyManifestSignature,
+} from '../shared/update-manifest.js';
+import type { UpdateManifest } from '../shared/update.js';
+import { UPDATE_MANIFEST_URL, UPDATE_REPO_SLUG } from '../shared/update.js';
+import { UPDATE_PUBLIC_KEY_BASE64 } from '../electron/updater/config.js';
+
+let pass = 0;
+let fail = 0;
+
+function ok(cond: unknown, msg: string, detail?: unknown): void {
+  if (cond) {
+    pass += 1;
+    console.log('  ✓', msg);
+  } else {
+    fail += 1;
+    console.log('  ✗', msg, detail === undefined ? '' : `[${String(detail)}]`);
+  }
+}
+
+function section(title: string): void {
+  console.log(`\n[${title}]`);
+}
+
+const ROOT = process.cwd();
+const read = (rel: string): string => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+
+/* ══════════════ 版本比较 ══════════════ */
+
+section('版本比较（SemVer 2.0，含预发布）');
+
+const VERSION_CASES: Array<[string, string, number, string]> = [
+  ['1.0.0', '1.0.0', 0, '同版本相等'],
+  ['1.0.1', '1.0.0', 1, '补丁号更大'],
+  ['1.1.0', '1.0.9', 1, '次版本优先于补丁'],
+  ['2.0.0', '1.99.99', 1, '主版本优先'],
+  ['1.0.0-beta.1', '1.0.0', -1, '预发布小于正式版'],
+  ['1.0.0', '1.0.0-beta.1', 1, '正式版大于预发布'],
+  ['1.0.0-beta.2', '1.0.0-beta.1', 1, '预发布序号递增'],
+  ['1.0.0-beta.10', '1.0.0-beta.2', 1, '预发布数字段按数值比（不是字典序）'],
+  ['1.0.0-alpha', '1.0.0-beta', -1, '字母段按字典序'],
+  ['1.0.0-1', '1.0.0-alpha', -1, '数字段小于字母段'],
+  ['1.0.0-alpha', '1.0.0-alpha.1', -1, '前缀更短者更小'],
+  ['1.0.0+build.5', '1.0.0+build.1', 0, '构建元数据不参与比较'],
+  ['v1.2.3', '1.2.3', 0, 'v 前缀可接受'],
+];
+
+for (const [a, b, expected, label] of VERSION_CASES) {
+  let actual = NaN;
+  try {
+    actual = Math.sign(compareVersions(a, b));
+  } catch (e) {
+    actual = e instanceof Error ? -99 : -99;
+  }
+  ok(actual === expected, `${label}：${a} vs ${b}`, `期望 ${expected}，实际 ${actual}`);
+}
+
+ok(
+  (() => {
+    try {
+      compareVersions('1.0', '1.0.0');
+      return false;
+    } catch {
+      return true;
+    }
+  })(),
+  '非法版本号（缺段）会抛错，不会静默当 0',
+  'compareVersions 对非法输入必须抛错'
+);
+
+/* ══════════════ 规范化 ══════════════ */
+
+section('规范化 JSON（签名正文稳定性）');
+
+const left = { b: 2, a: { d: 4, c: 3 }, e: [1, 'x', null] };
+const right = { a: { c: 3, d: 4 }, e: [1, 'x', null], b: 2 };
+ok(canonicalJson(left) === canonicalJson(right), '键顺序不同 → 规范化结果相同', canonicalJson(left));
+ok(!/\s/.test(canonicalJson(left)), '规范化结果不含空白', canonicalJson(left));
+ok(canonicalJson({ a: 1, b: undefined }) === '{"a":1}', 'undefined 字段被丢弃', canonicalJson({ a: 1, b: undefined }));
+
+/* ══════════════ 验签 ══════════════ */
+
+section('清单验签（ed25519）');
+
+const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+const publicKeyBase64 = Buffer.from(publicKey.export({ format: 'der', type: 'spki' })).toString('base64');
+const dummyDigest = sha512Base64(Buffer.from('dummy-asar-bytes'));
+const dummyBytes = Buffer.from('dummy-asar-bytes');
+
+function makeManifest(overrides: Partial<UpdateManifest> = {}, opts: { sign?: boolean } = {}): UpdateManifest {
+  const base: UpdateManifest = {
+    schemaVersion: 1,
+    version: '1.0.1',
+    releasedAt: '2026-11-01T00:00:00.000Z',
+    notes: '修复若干问题',
+    runtimeVersion: '44.7.2',
+    channel: 'stable',
+    assets: {
+      asar: {
+        name: 'app-1.0.1.asar',
+        url: 'https://github.com/catex-lab/opc-agent/releases/download/v1.0.1/app-1.0.1.asar',
+        sha512: dummyDigest,
+        size: dummyBytes.length,
+      },
+      full: {
+        name: 'OPC-Agent-1.0.1-x64-full.zip',
+        url: 'https://github.com/catex-lab/opc-agent/releases/download/v1.0.1/OPC-Agent-1.0.1-x64-full.zip',
+        sha512: dummyDigest,
+        size: dummyBytes.length,
+      },
+    },
+    signature: '',
+  };
+  const merged: UpdateManifest = { ...base, ...overrides };
+  merged.signature = opts.sign === false
+    ? 'AAAA'
+    : sign(null, Buffer.from(canonicalManifestBody(merged), 'utf8'), privateKey).toString('base64');
+  return merged;
+}
+
+const validManifest = makeManifest();
+ok(verifyManifestSignature(validManifest, publicKeyBase64).ok, '正确签名通过');
+
+const tampered = makeManifest({ notes: '被替换的更新说明' }, { sign: false });
+tampered.notes = '被替换的更新说明';
+// 用原签名但改了正文 → 必须失败
+const tamperedKeepSig: UpdateManifest = { ...validManifest, notes: '被替换的更新说明' };
+ok(!verifyManifestSignature(tamperedKeepSig, publicKeyBase64).ok, '正文被改一个字段 → 验签失败', verifyManifestSignature(tamperedKeepSig, publicKeyBase64).error);
+
+const other = generateKeyPairSync('ed25519');
+const otherPub = Buffer.from(other.publicKey.export({ format: 'der', type: 'spki' })).toString('base64');
+ok(!verifyManifestSignature(validManifest, otherPub).ok, '换一把公钥 → 验签失败');
+ok(!verifyManifestSignature({ ...validManifest, signature: '' }, publicKeyBase64).ok, '缺少签名 → 拒绝');
+ok(!verifyManifestSignature(tampered, publicKeyBase64).ok, '伪造签名 → 拒绝');
+
+/* ══════════════ 资产名与 URL ══════════════ */
+
+section('路径穿越与 URL 白名单');
+
+const BAD_NAMES: Array<[string, 'asar' | 'full', string]> = [
+  ['../evil.asar', 'asar', '上级目录'],
+  ['..\\evil.asar', 'asar', '反斜杠上级目录'],
+  ['C:\\evil.asar', 'asar', '盘符绝对路径'],
+  ['/abs.asar', 'asar', 'POSIX 绝对路径'],
+  ['a/b.asar', 'asar', '插入子目录'],
+  ['app-1.0.0.exe', 'asar', '扩展名不属于 asar'],
+  ['app-1.0.0.asar', 'full', 'asar 不能冒充 full'],
+  ['', 'asar', '空名'],
+  ['app 1.0.0.asar', 'asar', '含空格'],
+];
+
+for (const [name, kind, label] of BAD_NAMES) {
+  const err = checkAssetName(name, kind);
+  ok(err !== null, `拒绝${label}：${JSON.stringify(name)}`, err ?? '竟然通过了');
+}
+
+ok(checkAssetName('app-1.0.0.asar', 'asar') === null, '合法 asar 名通过');
+ok(checkAssetName('OPC-Agent-1.0.0-x64-full.zip', 'full') === null, '合法 full 名通过');
+
+ok(checkAssetUrl('https://github.com/a/b/download/x.asar') === null, 'github.com 通过');
+ok(checkAssetUrl('https://objects.githubusercontent.com/x.asar') === null, 'objects 重定向域名通过');
+ok(checkAssetUrl('http://github.com/x.asar') !== null, 'HTTP 被拒绝（fail closed）', checkAssetUrl('http://github.com/x.asar'));
+ok(checkAssetUrl('https://evil.example/x.asar') !== null, '非白名单域名被拒绝', checkAssetUrl('https://evil.example/x.asar'));
+ok(checkAssetUrl('not-a-url') !== null, '非法 URL 被拒绝');
+ok(checkAssetUrl('file:///C:/x.asar') !== null, 'file 协议被拒绝', checkAssetUrl('file:///C:/x.asar'));
+
+/* ══════════════ 摘要 ══════════════ */
+
+section('体积与 sha512 校验');
+
+const bytes = Buffer.from('asar-bytes-for-digest');
+const goodAsset = { sha512: sha512Base64(bytes), size: bytes.length };
+ok(verifyAssetDigest(bytes, goodAsset) === null, '正确体积与摘要通过');
+ok(
+  verifyAssetDigest(bytes, { ...goodAsset, size: bytes.length + 1 }) !== null,
+  '体积不符被拒绝',
+  verifyAssetDigest(bytes, { ...goodAsset, size: bytes.length + 1 })
+);
+ok(
+  verifyAssetDigest(bytes, { ...goodAsset, sha512: sha512Base64(Buffer.from('other')) }) !== null,
+  '摘要不符被拒绝',
+  verifyAssetDigest(bytes, { ...goodAsset, sha512: sha512Base64(Buffer.from('other')) })
+);
+ok(
+  verifyAssetDigest(Buffer.concat([bytes, Buffer.from('x')]), goodAsset) !== null,
+  '被追加字节的下载被拒绝'
+);
+
+/* ══════════════ 清单解析与综合判定 ══════════════ */
+
+section('清单解析与综合判定');
+
+const parsed = parseManifest(validManifest);
+ok(parsed.ok, '完整清单解析通过', parsed.error);
+ok(!parseManifest({ ...validManifest, schemaVersion: 2 }).ok, 'schemaVersion 不支持 → 拒绝');
+ok(!parseManifest({ ...validManifest, version: '1.0' }).ok, '非法版本号 → 拒绝');
+ok(!parseManifest({ ...validManifest, channel: 'Stable' }).ok, '非法 channel → 拒绝');
+ok(!parseManifest({ ...validManifest, signature: '' }).ok, '缺签名 → 拒绝');
+ok(!parseManifest({ ...validManifest, assets: undefined }).ok, '缺 assets → 拒绝');
+
+const OPT = {
+  currentVersion: '1.0.0',
+  runtimeVersion: '44.7.2',
+  publicKeyBase64,
+};
+
+ok(evaluateManifest(validManifest, OPT).status === 'available', '新版本 + 运行时一致 → available');
+const sameVersion = makeManifest({ version: '1.0.0' });
+ok(evaluateManifest(sameVersion, OPT).status === 'latest', '同版本 → latest（不提示更新）');
+const older = makeManifest({ version: '0.9.9' });
+ok(evaluateManifest(older, OPT).status === 'latest', '清单更旧 → latest（不会降级）');
+
+const mismatch = makeManifest({ runtimeVersion: '50.0.0' });
+const decision = evaluateManifest(mismatch, OPT);
+ok(
+  decision.status === 'available' && decision.requiresFull === true,
+  'runtimeVersion 不一致 → available + requiresFull',
+  JSON.stringify(decision)
+);
+const matched = evaluateManifest(validManifest, OPT);
+ok(
+  matched.status === 'available' && matched.requiresFull === false,
+  'runtimeVersion 一致 → available + 可做代码层替换',
+  JSON.stringify(matched)
+);
+
+const tamperedDecision = evaluateManifest(tamperedKeepSig, OPT);
+ok(tamperedDecision.status === 'invalid' && tamperedDecision.code === 'signature', '验签失败即便版本更新也判 invalid', JSON.stringify(tamperedDecision));
+
+const badPath = makeManifest({
+  assets: {
+    ...validManifest.assets,
+    asar: { ...validManifest.assets.asar, name: '../evil.asar' },
+  },
+}, { sign: false });
+const badPathSigned: UpdateManifest = { ...badPath };
+badPathSigned.signature = sign(null, Buffer.from(canonicalManifestBody(badPathSigned), 'utf8'), privateKey).toString('base64');
+ok(evaluateManifest(badPathSigned, OPT).status === 'invalid', '签名有效但资产名含 .. → invalid');
+
+const httpAsset = makeManifest({
+  assets: {
+    ...validManifest.assets,
+    asar: { ...validManifest.assets.asar, url: 'http://github.com/a.asar' },
+  },
+}, { sign: false });
+httpAsset.signature = sign(null, Buffer.from(canonicalManifestBody(httpAsset), 'utf8'), privateKey).toString('base64');
+ok(evaluateManifest(httpAsset, OPT).status === 'invalid', '签名有效但资产是 HTTP → invalid');
+
+ok(
+  evaluateManifest(validManifest, { ...OPT, publicKeyBase64: '' }).status === 'invalid',
+  '没有内置公钥 → invalid（不降级为「跳过验签」）'
+);
+
+/* ══════════════ 静态接线 ══════════════ */
+
+section('静态接线');
+
+const sharedSource = read('shared/update.ts');
+const configSource = read('electron/updater/config.ts');
+ok(sharedSource.includes("'catex-lab/opc-agent'"), '仓库 slug 写死在 shared/update.ts');
+ok(sharedSource.includes('/releases/latest/download/latest.json'), '清单地址是 releases/latest/download 固定地址');
+ok(UPDATE_REPO_SLUG === 'catex-lab/opc-agent', `slug 常量为 catex-lab/opc-agent（实际 ${UPDATE_REPO_SLUG}）`);
+ok(
+  UPDATE_MANIFEST_URL === `https://github.com/${UPDATE_REPO_SLUG}/releases/latest/download/latest.json`,
+  '清单地址由 slug 拼出且大小写一致',
+  UPDATE_MANIFEST_URL
+);
+ok(configSource.includes('OPC_UPDATE_MANIFEST_URL'), '清单地址允许环境变量覆盖');
+ok(configSource.includes('OPC_UPDATE_PUBLIC_KEY'), '公钥允许环境变量覆盖（便于本地联调）');
+ok(/export const UPDATE_PUBLIC_KEY_BASE64[\s\S]*?'[A-Za-z0-9+/=]{40,}'/.test(configSource), '内置了 ed25519 公钥');
+
+const mainSource = read('electron/main.ts');
+for (const channel of ['opc:update-state', 'opc:update-check', 'opc:update-download', 'opc:update-quit-install']) {
+  ok(mainSource.includes(`'${channel}'`), `主进程注册 ${channel}`);
+}
+ok(mainSource.includes('updater.start()'), '启动时调用 updater.start()');
+ok(mainSource.includes('updater.confirmHealthy()'), '窗口加载后写健康标记');
+ok(mainSource.includes('updater.dispose()'), '退出时清理定时器');
+
+const preloadSource = read('electron/preload.cjs');
+for (const key of ['getState', 'check', 'download', 'quitAndInstall', 'onStateChange']) {
+  ok(preloadSource.includes(key), `preload 暴露 update.${key}`);
+}
+
+const aboutSource = read('src/components/AboutPanel.tsx');
+ok(aboutSource.includes("from './UpdateCard'"), '关于页引入 UpdateCard');
+ok(aboutSource.includes('<UpdateCard'), '关于页渲染 UpdateCard');
+
+const stale = read('src/components/UpdateCard.tsx');
+for (const phase of ['checking', 'latest', 'available', 'downloading', 'ready', 'error']) {
+  ok(stale.includes(`'${phase}'`), `更新卡片有 ${phase} 状态`);
+}
+ok(stale.includes('data-update-check'), '检查更新按钮带测试锚点');
+ok(stale.includes('data-update-progress'), '下载进度带测试锚点');
+
+const updaterSource = read('electron/updater/index.ts');
+ok(!updaterSource.includes('OPC_DATA_DIR'), '更新链路不读写 data/（无 OPC_DATA_DIR）');
+ok(updaterSource.includes("app.getPath('temp')"), '暂存目录落在系统 temp');
+ok(updaterSource.includes('checkAssetUrl'), '重定向每一跳都校验域名与协议');
+ok(updaterSource.includes('ELECTRON_RUN_AS_NODE'), '交换 helper 以纯 Node 模式启动');
+ok(updaterSource.includes('timeoutMs'), '下载与清单请求都有超时');
+
+const helperSource = read('electron/updater/swap-helper-source.ts');
+ok(helperSource.includes('.bak'), '交换前把旧 asar 备份为 .bak');
+ok(helperSource.includes('rolled-back'), '启动超时后记录 rolled-back');
+ok(helperSource.includes('health'), '用健康文件确认新版本启动成功');
+
+const buildSource = read('scripts/build-update.ts');
+ok(buildSource.includes('canonicalManifestBody'), '发布脚本与客户端共用签名正文函数');
+ok(buildSource.includes('createPrivateKey'), '发布脚本从 base64 PKCS#8 读私钥');
+
+const pkg = JSON.parse(read('package.json')) as {
+  scripts: Record<string, string>;
+  repository?: { url?: string };
+};
+ok(pkg.scripts['update:keygen'] === 'node scripts/update-keygen.mjs', '注册 update:keygen');
+ok(pkg.scripts['update:build'] === 'tsx scripts/build-update.ts', '注册 update:build');
+ok(pkg.scripts['verify:a171-update'] === 'tsx scripts/verify-a171-update.ts', '注册 verify:a171-update');
+
+const pkgRepo = pkg.repository?.url?.match(/github\.com[/:]([^/]+)\/([^./]+)/);
+ok(
+  pkgRepo != null && `${pkgRepo[1]}/${pkgRepo[2]}` === UPDATE_REPO_SLUG,
+  'package.json 的 repository 与 slug 常量一致（含大小写）',
+  pkg.repository?.url ?? '缺 repository'
+);
+
+const workflowPath = path.join(ROOT, '.github/workflows/release-update.yml');
+ok(fs.existsSync(workflowPath), '存在 release-update 工作流');
+if (fs.existsSync(workflowPath)) {
+  const wf = fs.readFileSync(workflowPath, 'utf8');
+  ok(/tags:\s*\n?\s*-?\s*['"]?v\*/.test(wf) || wf.includes("- 'v*'") || wf.includes('- "v*"'), 'tag v* 触发');
+  ok(wf.includes('OPC_UPDATE_PRIVATE_KEY'), '私钥从 Secrets 注入');
+  ok(wf.includes('gh release'), '用 gh release 上传资产');
+  ok(wf.includes('latest.json'), '上传 latest.json');
+  ok(wf.includes('app-') && wf.includes('.asar'), '上传 asar 资产');
+  ok(wf.includes('.zip'), '上传全量 zip');
+  ok(
+    wf.includes('--repo "${{ github.repository }}"'),
+    'CI 用实际仓库拼资产 URL（不写死 slug，fork 也不会指错）',
+    '缺 --repo github.repository'
+  );
+}
+
+/* ══════════════ 真实密钥联调 ══════════════ */
+
+section('真实密钥联调（本地私钥 → 内置公钥）');
+
+const fingerprintOf = (pub: string): string =>
+  createHash('sha256').update(Buffer.from(pub, 'base64')).digest('hex').slice(0, 16);
+
+ok((() => {
+  try {
+    createPublicKey({
+      key: Buffer.from(UPDATE_PUBLIC_KEY_BASE64.trim(), 'base64'),
+      format: 'der',
+      type: 'spki',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+})(), '内置公钥是可解析的 SPKI DER', `指纹 ${fingerprintOf(UPDATE_PUBLIC_KEY_BASE64)}`);
+
+function signWith(manifest: UpdateManifest, key: ReturnType<typeof createPrivateKey>): UpdateManifest {
+  const body: UpdateManifest = { ...manifest, signature: '' };
+  body.signature = sign(null, Buffer.from(canonicalManifestBody(body), 'utf8'), key).toString('base64');
+  return body;
+}
+
+const LOCAL_KEY = path.join(ROOT, '.tmp', 'update-signing-key.json');
+
+if (fs.existsSync(LOCAL_KEY)) {
+  const raw = JSON.parse(fs.readFileSync(LOCAL_KEY, 'utf8')) as { publicKey?: string; privateKey?: string };
+  ok(typeof raw.privateKey === 'string' && raw.privateKey.length > 0, '本地密钥文件包含私钥');
+
+  if (typeof raw.privateKey === 'string' && raw.privateKey) {
+    const localPriv = createPrivateKey({
+      key: Buffer.from(raw.privateKey, 'base64'),
+      format: 'der',
+      type: 'pkcs8',
+    });
+    const derived = Buffer.from(
+      createPublicKey(localPriv).export({ format: 'der', type: 'spki' })
+    ).toString('base64');
+
+    ok(
+      derived === UPDATE_PUBLIC_KEY_BASE64.trim(),
+      `本地私钥与内置公钥配对（指纹 ${fingerprintOf(derived)}）`,
+      `本地 ${fingerprintOf(derived)} / 内置 ${fingerprintOf(UPDATE_PUBLIC_KEY_BASE64)}`
+    );
+    ok(raw.publicKey === derived, '密钥文件里的公钥与私钥一致');
+
+    // 每次运行都**现签一份**清单，不复用上一轮的夹具
+    const fresh = signWith(
+      makeManifest(
+        { version: `1.0.1-local.${Date.now()}`, notes: `新密钥联调 ${new Date().toISOString()}` },
+        { sign: false }
+      ),
+      localPriv
+    );
+    ok(verifyManifestSignature(fresh, UPDATE_PUBLIC_KEY_BASE64.trim()).ok, '内置公钥能验过新私钥的签名');
+
+    const freshDecision = evaluateManifest(fresh, {
+      currentVersion: '1.0.0',
+      runtimeVersion: '44.7.2',
+      publicKeyBase64: UPDATE_PUBLIC_KEY_BASE64.trim(),
+    });
+    ok(
+      freshDecision.status === 'available',
+      '新私钥签的清单走完整判定 → available',
+      JSON.stringify(freshDecision)
+    );
+
+    const tamperedFresh: UpdateManifest = { ...fresh, notes: '篡改后的说明' };
+    ok(
+      !verifyManifestSignature(tamperedFresh, UPDATE_PUBLIC_KEY_BASE64.trim()).ok,
+      '新私钥签的清单被改一个字段 → 验签失败'
+    );
+
+    // 夹具：上一版公钥（公钥不是秘密，只为验证轮换后旧客户端不再信任新清单）
+    const OLD_PUBLIC_KEY = 'MCowBQYDK2VwAyEAsxogKAgI5zkQIz6mfYBIbj47HsPc1c8tNzeNCW6lfjU='; // secret-scan:ignore
+    ok(
+      !verifyManifestSignature(fresh, OLD_PUBLIC_KEY).ok,
+      '旧公钥不再信任新密钥签的清单（轮换确实生效）'
+    );
+  }
+} else {
+  console.log('  · 未找到 .tmp/update-signing-key.json —— 跳过真实密钥联调（CI 上属预期）');
+}
+
+ok(/^\.tmp\/$/m.test(read('.gitignore')), '.tmp/ 已被 gitignore（私钥文件不会进仓库）');
+
+/* ══════════════ 汇总 ══════════════ */
+
+console.log(`\n结果：${pass} 通过，${fail} 失败`);
+process.exit(fail === 0 ? 0 : 1);

@@ -51,6 +51,7 @@ import {
   Package,
 } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
+import UpdateCard from './UpdateCard';
 
 const REPO_URL = 'https://github.com/catex-lab/opc-agent';
 const ISSUE_URL = `${REPO_URL}/issues`;
@@ -179,6 +180,11 @@ export default function AboutPanel() {
         </div>
         <p className="tc-about-build">{buildLine}</p>
       </header>
+
+      {/* ── 更新 ──────────────────────────────────────────────────
+          放在身份条之后：用户来这一页最常问「我这是不是最新版」。
+          检查/下载/重启的状态机与主进程一致（见 UpdateCard 顶部说明）。 */}
+      <UpdateCard />
 
       {/* ── 隐私：陈述句 + 三段式 ─────────────────────────────────
           废掉 dt/dd 对账表：三段（只存在本机 / 离开本机 / 第三方 Agent）

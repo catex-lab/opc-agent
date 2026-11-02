@@ -1,0 +1,129 @@
+name: 发布更新资产
+
+# 打 tag `vX.Y.Z` 时构建三件套并挂到同一个 Release：
+#   · app-<version>.asar               —— 代码层替换用
+#   · OPC-Agent-<version>-x64-full.zip —— 运行时版本不一致时的完整包
+#   · latest.json                      —— 已签名的更新清单
+#
+# 客户端固定读 `/releases/latest/download/latest.json`，因此这个 Release
+# 必须是「最新」的 —— 打 tag 前确认它确实要比线上版本新。
+#
+# 签名私钥只放仓库 Secrets（OPC_UPDATE_PRIVATE_KEY，base64 PKCS#8）。
+# 私钥一旦泄露，任何人都能签出一份能过验签的清单：轮换时同时更新
+# electron/updater/config.ts 里的公钥并重新发版。
+#
+# 本地复现同一产物：
+#   npm run build && npm run build:electron && node scripts/build-installer.mjs --dir
+#   npx tsx scripts/build-update.ts --version 1.1.0 --notes-file release-notes.md --key .tmp/update-signing-key.json
+# CI 与本地都走 scripts/build-update.ts，清单字段与签名正文由 shared/update-manifest.ts 统一。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: '发布渠道（stable / beta）'
+        required: false
+        default: 'stable'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 构建并发布（windows-latest）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # 这里不能 --ignore-scripts：打包要用真的 Electron 二进制，
+      # node-pty 也需要在 runner 上编译原生模块。
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 更新链路闸门
+        run: npm run verify:a171-update
+
+      - name: 解析版本号
+        shell: pwsh
+        run: |
+          $ref = "${{ github.ref_name }}"
+          $pkgVersion = node -p "require('./package.json').version"
+          if ($ref -like 'v*') {
+            $version = $ref.Substring(1)
+            # tag 与 package.json 必须一致：electron-builder 打出的 asar 里
+            # app.getVersion() 读的是 package.json，两者不一致会让客户端
+            # 永远认为「有新版本」并反复提示。
+            if ($version -ne $pkgVersion) {
+              Write-Error "tag v$version 与 package.json 的 $pkgVersion 不一致，请先对齐版本号"
+              exit 1
+            }
+          } else {
+            $version = $pkgVersion
+          }
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+') {
+            Write-Error "无法从 $ref 解析出版本号"
+            exit 1
+          }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "发布版本：v$version"
+
+      - name: 构建渲染层与主进程
+        run: |
+          npm run build
+          npm run build:electron
+
+      - name: 打包 unpacked 目录
+        run: node scripts/build-installer.mjs --dir
+
+      - name: 生成发布说明
+        shell: pwsh
+        run: |
+          $body = "OPC Agent v$env:VERSION`n`n" + (git log -1 --pretty=format:'- %s')
+          $body | Out-File -FilePath release-notes.md -Encoding utf8
+
+      # 输出 release/update/{latest.json, app-<version>.asar, OPC-Agent-<version>-x64-full.zip}
+      - name: 生成并签名更新清单
+        shell: pwsh
+        env:
+          OPC_UPDATE_PRIVATE_KEY: ${{ secrets.OPC_UPDATE_PRIVATE_KEY }}
+        run: |
+          npm run update:build -- --version $env:VERSION `
+            --notes-file release-notes.md `
+            --channel "${{ github.event.inputs.channel || 'stable' }}" `
+            --repo "${{ github.repository }}" `
+            --out release/update
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 上传到 Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "v$env:VERSION"
+          $assets = @(
+            'release/update/latest.json',
+            "release/update/app-$env:VERSION.asar",
+            "release/update/OPC-Agent-$env:VERSION-x64-full.zip"
+          )
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag 已存在，覆盖上传资产"
+            gh release upload $tag @assets --clobber
+          } else {
+            gh release create $tag --title "OPC Agent v$env:VERSION" --notes-file release-notes.md @assets
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

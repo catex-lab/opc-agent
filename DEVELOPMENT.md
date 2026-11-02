@@ -151,6 +151,42 @@ Windows 上两个必须注意的点：
 
 打包前先关掉正在运行的 `OPC Agent.exe`（单实例锁会挡住文件替换）。
 
+### 更新产物（本地复现 CI）
+
+应用内更新走「只替换 `resources/app.asar`」，资产由同一套脚本生成，本地与
+`.github/workflows/release-update.yml` 的产物一致：
+
+```bash
+npm run update:keygen -- --out .tmp/update-signing-key.json   # 只做一次；公钥写进 electron/updater/config.ts
+npm run build && npm run build:electron
+node scripts/build-installer.mjs --dir                        # 产出 release/win-unpacked/
+npm run update:build -- --version 1.1.0 --notes-file release-notes.md \
+  --key .tmp/update-signing-key.json
+```
+
+产物在 `release/update/`：`app-<版本>.asar`、`OPC-Agent-<版本>-x64-full.zip`、
+已签名的 `latest.json`。CI 把清单签名私钥放在 Secret `OPC_UPDATE_PRIVATE_KEY`
+（base64 PKCS#8），本地则用 `.tmp/` 下的密钥文件 —— `.tmp/` 已被 gitignore，
+私钥不要提交。闸门：`npm run verify:a171-update`。
+
+### 轮换更新签名密钥
+
+```bash
+npm run update:keygen -- --force    # 覆盖 .tmp/update-signing-key.json，终端只打印公钥与指纹
+```
+
+1. 把输出的公钥替换进 `electron/updater/config.ts` 的 `UPDATE_PUBLIC_KEY_BASE64`。
+2. 打开 `.tmp/update-signing-key.json`（已被 gitignore），把 `privateKey` 的值存进
+   GitHub → Settings → Secrets and variables → Actions → `OPC_UPDATE_PRIVATE_KEY`
+   （PKCS#8 DER base64，单行，不加引号）。
+3. 推一个 tag `vX.Y.Z`（必须与 `package.json` 版本一致）触发 `release-update`；
+   在 Actions 日志里确认「生成并签名更新清单」成功、Release 资产里有 `latest.json`，
+   再把安装后的客户端打开确认更新卡片验签通过 —— 这同时证明 Actions 确实读到了 Secret。
+4. 确认测试 release 正常后，删除本地私钥文件（密钥已在 Secrets 里）。
+
+⚠️ 旧客户端只认旧公钥：换密钥等于切断自动更新，必须发一次「带新公钥」的版本；
+否则老版本会一直停在「签名不匹配」。
+
 ### 依赖源（`.npmrc`）
 
 仓库里**提交了一份 `.npmrc`**，把 registry 与 Electron / electron-builder 的二进制源都指到
