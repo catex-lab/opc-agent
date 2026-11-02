@@ -21,7 +21,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { findItem, hashOf, importOne, listItems, listSources, pruneSources, upsertTarget, type ImportPayload } from './store.js';
+import { findItem, hashOf, importOne, listItems, listSources, pruneSources, registerSource, upsertTarget, type ImportPayload } from './store.js';
 import { MODE_LABEL, TARGETS, homeDir, scannableTargets, targetOf } from './targets.js';
 import { blockedReason, scanSensitive } from './safety.js';
 
@@ -87,7 +87,20 @@ export function scanSkillDir(agentId: string, skillsDir: string): ScannedSkill[]
   for (const e of entries) {
     if (e.name.startsWith('.')) continue;
     // 符号链接也要跟（`~/.claude/skills/agently-mail` 就是一条 symlink）
-    const dir = path.join(skillsDir, e.name);
+    //
+    // 重要：Node.js 22 起，Windows 上 junction 在 readdirSync 里返回
+    // isDirectory=false + isSymbolicLink=true。此时 path.join(junction, 'SKILL.md')
+    // 不会被当作「跟到 junction 目录里再拼 SKILL.md」，而是直接把 junction 当文件处理，
+    // readFileSync 抛 ENOENT —— 于是整条链接技能从清单里**静默消失**。
+    // 修：遇到 symlink/junction 时先用 realpathSync 解析到真实目录再继续。
+    let dir = path.join(skillsDir, e.name);
+    if (e.isSymbolicLink()) {
+      try {
+        dir = fs.realpathSync.native?.(dir) ?? fs.realpathSync(dir);
+      } catch {
+        continue; // 坏链接（目标不存在）：跳过，不要崩
+      }
+    }
     const file = path.join(dir, 'SKILL.md');
     let raw: string;
     try {
@@ -289,13 +302,29 @@ export function scanAllMcp(): ScannedMcp[] {
   return out;
 }
 
-/** env 里的值命中敏感规则就换成 `***`，保留键名（用户才知道这条服务要哪些变量） */
+/**
+ * 深度脱敏：递归遍历对象与数组，所有字符串值过 `scanSensitive`。
+ * 数组**不只是**递归子元素，数组里的字符串本身也要扫——旧实现只走了 `forEach(walk)`，
+ * 字符串类型的元素到 `walk` 里直接被 `typeof node !== 'object'` 挡掉，导致
+ * `args: ['--api-key','sk-xxx']` 这种数组形式的密钥原样入库（A 安全缺陷 #2）。
+ */
 export function redactConfig(config: Record<string, unknown>): { config: Record<string, unknown>; hits: string[] } {
   const clone = JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
   const hits = new Set<string>();
   const walk = (node: unknown): void => {
     if (Array.isArray(node)) {
-      node.forEach(walk);
+      for (let i = 0; i < node.length; i++) {
+        const v = node[i];
+        if (typeof v === 'string') {
+          const found = scanSensitive(v);
+          if (found.length > 0) {
+            found.forEach(f => hits.add(f));
+            node[i] = '***';
+          }
+        } else {
+          walk(v);
+        }
+      }
       return;
     }
     if (!node || typeof node !== 'object') return;
@@ -353,34 +382,44 @@ export function mcpContentHash(m: { config: Record<string, unknown> }): string {
  */
 function skillPayload(s: ScannedSkill): ImportPayload {
   const hits = scanSensitive(s.raw);
+  const blocked = hits.length > 0;
   return {
     kind: 'skill',
     name: s.name,
-    title: s.title,
-    description: s.description,
+    /* blocked 时 title/description 也脱敏：它们可能从 frontmatter 原样带进密钥
+       （比如某条技能的 description 是 `sk-xxx 专用`）。旧实现只把 body 置空，
+       标题和描述仍按原文落库，详情页/接口响应就会露出密钥。 */
+    title: blocked ? null : s.title,
+    description: blocked ? null : s.description,
     // 命中敏感内容 ⇒ 正文不落库
-    body: hits.length > 0 ? null : s.body,
+    body: blocked ? null : s.body,
     configJson: null,
     contentHash: skillContentHash(s),
-    blocked: hits.length > 0,
-    blockedReason: hits.length > 0 ? blockedReason(hits) : null,
+    blocked,
+    blockedReason: blocked ? blockedReason(hits) : null,
     agentId: s.agentId,
     sourcePath: s.dirPath,
   };
 }
 
-/** 一条扫描到的 MCP → 落库载荷。脱敏（值换 `***`）而不是整条丢弃，理由见 `redactConfig`。 */
+/**
+ * 一条扫描到的 MCP → 落库载荷。脱敏（值换 `***`）而不是整条丢弃。
+ * description 必须从**脱敏后的 config** 取 command/url——旧实现直接读 m.config，
+ * 等于把我们为 config_json 做的脱敏绕开了，接口响应和详情页能看到密钥原文。
+ */
 function mcpPayload(m: ScannedMcp): ImportPayload {
   const { config, hits } = redactConfig(m.config);
+  const descCmd = typeof config.command === 'string' ? config.command : null;
+  const descUrl = typeof config.url === 'string' ? config.url : null;
   return {
     kind: 'mcp',
     name: m.name,
     title: m.name,
     description:
-      typeof m.config.command === 'string'
-        ? `stdio: ${m.config.command}`
-        : typeof m.config.url === 'string'
-          ? `http: ${m.config.url}`
+      descCmd && !scanSensitive(descCmd).length
+        ? `stdio: ${descCmd}`
+        : descUrl && !scanSensitive(descUrl).length
+          ? `http: ${descUrl}`
           : null,
     body: null,
     configJson: JSON.stringify(config, null, 2),
@@ -433,9 +472,9 @@ export function runImport(): ImportReport {
     else if (r.outcome === 'conflict') report.conflicts.push({ kind: 'skill', name });
     if (payload.blocked) report.blocked.push({ kind: 'skill', name, reason: payload.blockedReason ?? '' });
 
-    // 其余来源只登记，不改正文
+    // 其余来源只登记，不改正文；**存它们自己的指纹**，否则差异检测看不出副本变了
     for (const extra of list.slice(1)) {
-      importOne({ ...payload, agentId: extra.agentId, sourcePath: extra.dirPath });
+      registerSource('skill', name, extra.agentId, extra.dirPath, skillContentHash(extra));
     }
     touchedItems.set(name, list.map(s => s.dirPath));
   }
@@ -461,7 +500,7 @@ export function runImport(): ImportReport {
     if (payload.blocked) report.blocked.push({ kind: 'mcp', name, reason: payload.blockedReason ?? '' });
 
     for (const extra of list.slice(1)) {
-      importOne({ ...payload, agentId: extra.agentId, sourcePath: extra.sourcePath });
+      registerSource('mcp', name, extra.agentId, extra.sourcePath, mcpContentHash(extra));
     }
     touchedItems.set(`mcp:${name}`, list.map(m => m.sourcePath));
   }
@@ -581,9 +620,9 @@ export function importByName(
     const primary = list[0];
     const payload = skillPayload(primary);
     const r = importOne(payload);
-    // 其余来源只登记，不改正文（与 runImport 一致）
+    // 其余来源只登记，不改正文（与 runImport 一致；存各自的指纹）
     for (const extra of list.slice(1)) {
-      importOne({ ...payload, agentId: extra.agentId, sourcePath: extra.dirPath });
+      registerSource('skill', name, extra.agentId, extra.dirPath, skillContentHash(extra));
     }
     pruneSources(r.itemId, list.map(s => s.dirPath));
     rebuildTargets(r.itemId, 'skill');
@@ -598,7 +637,7 @@ export function importByName(
   const payload = mcpPayload(primary);
   const r = importOne(payload);
   for (const extra of list.slice(1)) {
-    importOne({ ...payload, agentId: extra.agentId, sourcePath: extra.sourcePath });
+    registerSource('mcp', name, extra.agentId, extra.sourcePath, mcpContentHash(extra));
   }
   pruneSources(r.itemId, list.map(m => m.sourcePath));
   rebuildTargets(r.itemId, 'mcp');

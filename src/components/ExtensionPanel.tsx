@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Boxes, Download, RefreshCw, Search, Sparkles, Plug, ShieldAlert, Pencil } from 'lucide-react';
+import { ExtensionSwitch } from './ExtensionSwitch';
+import { InfoHint, type InfoHintItem } from './InfoHint';
 import {
   EXT_DRIFT_LABEL,
   type ExtensionDriftState,
@@ -33,6 +35,8 @@ interface ExtensionPanelProps {
   onSelect: (kind: ExtensionKind, name: string) => void;
   onImport: () => void;
   onRefresh: () => void;
+  onToggleEnabled: (kind: ExtensionKind, name: string, enabled: boolean) => void;
+  onToggleKindEnabled: (kind: ExtensionKind, enabled: boolean) => void;
   compact?: boolean;
 }
 
@@ -68,6 +72,8 @@ export function ExtensionPanel({
   onSelect,
   onImport,
   onRefresh,
+  onToggleEnabled,
+  onToggleKindEnabled,
   compact = false,
 }: ExtensionPanelProps) {
   const [keyword, setKeyword] = useState('');
@@ -135,15 +141,51 @@ export function ExtensionPanel({
   const mcps = visible.filter(it => it.kind === 'mcp');
   const total = items.length;
 
+  /* 页脚常驻的长句收进 ⓘ；标题行只留「N 个技能 · M 个 MCP」这一句摘要。 */
+  const statHintItems: InfoHintItem[] = stats
+    ? [
+        {
+          term: '条目',
+          definition: `${stats.skillCount} 条 Agent 技能、${stats.mcpCount} 条 MCP 服务。`,
+        },
+        ...(stats.duplicateCount > 0
+          ? [
+              {
+                term: '已合并多份',
+                definition: `${stats.duplicateCount} 条：同一份内容出现在多个 Agent 目录里，已按内容去重成一条。`,
+              },
+            ]
+          : []),
+        ...(stats.blockedCount > 0
+          ? [
+              {
+                term: '含敏感内容',
+                definition: `${stats.blockedCount} 条：正文命中疑似密钥或本机用户路径，OPC 不保存正文，也不会分发或注入。`,
+              },
+            ]
+          : []),
+        {
+          term: '开关',
+          definition: '关闭后这条不再参与分发或提示词注入，随时可以开回来。',
+        },
+      ]
+    : [];
+
   const renderRow = (it: ExtensionListItem) => {
     const active = selected?.kind === it.kind && selected.name === it.name;
     const Icon = it.kind === 'skill' ? Sparkles : Plug;
+    /* disabled 的条目让视觉退化：文字灰 30%、图标轮廓，告诉用户「这条不参与
+       分发/注入」但它还在库里（一键能开回来）。不是删除，只是停用。 */
+    const rowDisabled = !it.enabled;
+    /* 老后端不下发 `distributable` 时按「可分发」处理，避免把开关误锁死。 */
+    const noTargets = it.distributable === false;
     return (
       <button
         key={`${it.kind}:${it.name}`}
         type="button"
         onClick={() => onSelect(it.kind, it.name)}
         aria-current={active ? 'page' : undefined}
+        aria-disabled={rowDisabled || undefined}
         className="mb-0.5 flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-[var(--tc-hover-chrome)]"
         /* A75 的同一条教训：未选中项不能写内联 transparent 底色，否则
            Tailwind 的 hover:bg 被内联样式压死，整栏只有当前项会变色。 */
@@ -153,21 +195,35 @@ export function ExtensionPanel({
         <span
           className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
           style={{
-            backgroundColor: active ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-component)',
-            color: active ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)',
+            backgroundColor: active
+              ? 'var(--td-brand-color-light)'
+              : rowDisabled
+                ? 'var(--td-bg-color-component)'
+                : 'var(--td-bg-color-component)',
+            color: active
+              ? 'var(--td-brand-color)'
+              : rowDisabled
+                ? 'var(--td-text-color-placeholder)'
+                : 'var(--td-text-color-secondary)',
           }}
         >
-          <Icon size={16} />
+          <Icon size={16} style={rowDisabled ? { opacity: 0.6 } : undefined} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
             <span
               className="truncate text-body"
-              style={{ color: active ? 'var(--td-brand-color)' : 'var(--td-text-color-primary)' }}
+              style={{
+                color: rowDisabled
+                  ? 'var(--td-text-color-placeholder)'
+                  : active
+                    ? 'var(--td-brand-color)'
+                    : 'var(--td-text-color-primary)',
+              }}
             >
               {it.title || it.name}
             </span>
-            {it.locallyModified && (
+            {it.locallyModified && !rowDisabled && (
               <Pencil
                 size={11}
                 className="shrink-0"
@@ -175,18 +231,23 @@ export function ExtensionPanel({
                 data-ext-badge-local
               />
             )}
+            {/* 敏感内容：图标 + 行内「敏感」短标记。风险告知不能只说一个图标，
+                更不能只藏在 hover 里 —— 详情收进页脚的 ⓘ 浮层。 */}
             {it.blocked && (
-              <ShieldAlert
-                size={11}
-                className="shrink-0"
+              <span
+                className="flex shrink-0 items-center gap-0.5"
                 style={{ color: 'var(--tc-status-warn)' }}
-                data-ext-badge-blocked
-              />
+              >
+                <ShieldAlert size={11} data-ext-badge-blocked />
+                <span className="text-caption" data-ext-badge-blocked-text>
+                  敏感
+                </span>
+              </span>
             )}
           </span>
           <span
             className="mt-0.5 block truncate text-caption"
-            style={{ color: 'var(--td-text-color-secondary)' }}
+            style={{ color: rowDisabled ? 'var(--td-text-color-placeholder)' : 'var(--td-text-color-secondary)' }}
             title={it.description ?? it.name}
           >
             {it.description || it.name}
@@ -206,6 +267,37 @@ export function ExtensionPanel({
             ×{it.sourceCount}
           </span>
         )}
+        {/* 单条开关：统一到 ExtensionSwitch（绿色开启 / 敏感条目琥珀）。
+            `distributable === false` 时置灰 —— 这条没有任何 Agent 能收到，
+            置灰比「点了没反应」诚实；两种禁用语义分开说（见下方短标记）。 */}
+        <span className="mt-0.5 flex shrink-0 flex-col items-end gap-0.5">
+          <ExtensionSwitch
+            checked={it.enabled}
+            onClick={() => onToggleEnabled(it.kind, it.name, !it.enabled)}
+            label={noTargets ? '无可分发目标，开关不可用' : it.enabled ? '关闭此条扩展' : '启用此条扩展'}
+            title={
+              noTargets
+                ? '无可分发目标：本机没有能接收这一条的 Agent（目标目录不存在或没有挂载通道），或这些 Agent 自己已经有了'
+                : it.enabled
+                  ? '关闭后此条扩展不再参与分发或提示词注入，节省 token'
+                  : '重新启用此条扩展'
+            }
+            tone={it.blocked ? 'warn' : 'on'}
+            disabled={noTargets}
+            dataAttrs={{ 'data-ext-row-toggle': '', 'data-enabled': it.enabled ? '1' : '0' }}
+          />
+          {/* 短标记常驻：说明「不是开关坏了」。口径（为什么没有目标）在 title / 详情浮层。 */}
+          {noTargets && (
+            <span
+              className="text-caption leading-none"
+              style={{ color: 'var(--td-text-color-placeholder)' }}
+              title="本机没有能接收这一条的 Agent（目标目录不存在或没有挂载通道）"
+              data-ext-no-target
+            >
+              无可分发
+            </span>
+          )}
+        </span>
       </button>
     );
   };
@@ -444,13 +536,33 @@ export function ExtensionPanel({
           <>
             {skills.length > 0 && (
               <div data-ext-group="skill">
-                <GroupLabel label="Agent 技能" count={skills.length} />
+                <GroupLabel
+                  label="Agent 技能"
+                  count={skills.length}
+                  disabledCount={skills.filter(s => !s.enabled).length}
+                  distributableCount={skills.filter(s => s.distributable !== false).length}
+                  distributableDisabledCount={
+                    skills.filter(s => s.distributable !== false && !s.enabled).length
+                  }
+                  kind="skill"
+                  onToggleKindEnabled={onToggleKindEnabled}
+                />
                 {skills.map(renderRow)}
               </div>
             )}
             {mcps.length > 0 && (
               <div data-ext-group="mcp">
-                <GroupLabel label="MCP 服务" count={mcps.length} />
+                <GroupLabel
+                  label="MCP 服务"
+                  count={mcps.length}
+                  disabledCount={mcps.filter(s => !s.enabled).length}
+                  distributableCount={mcps.filter(s => s.distributable !== false).length}
+                  distributableDisabledCount={
+                    mcps.filter(s => s.distributable !== false && !s.enabled).length
+                  }
+                  kind="mcp"
+                  onToggleKindEnabled={onToggleKindEnabled}
+                />
                 {mcps.map(renderRow)}
               </div>
             )}
@@ -458,19 +570,18 @@ export function ExtensionPanel({
         )}
       </div>
 
-      {/* 页脚：把「一共多少、合并了多少、几条没落正文」一次说清。
-          这三个数就是这一栏存在的理由，不该只藏在详情页里。 */}
+      {/* 页脚：标题行只留精简摘要，明细（合并 / 敏感 / 开关）收进右侧 ⓘ 浮层。
+          摘要仍在，统计不会「整行消失」。 */}
       {total > 0 && (
         <div
-          className="shrink-0 px-4 py-2 text-caption"
+          className="flex shrink-0 items-center gap-1 px-4 py-2 text-caption"
           style={{ color: 'var(--td-text-color-placeholder)', borderTop: '1px solid var(--tc-divider)' }}
           data-ext-footer
         >
-          {stats
-            ? `${stats.skillCount} 个技能 · ${stats.mcpCount} 个 MCP${
-                stats.duplicateCount > 0 ? ` · ${stats.duplicateCount} 条已合并多份` : ''
-              }${stats.blockedCount > 0 ? ` · ${stats.blockedCount} 条含敏感内容` : ''}`
-            : `${total} 条`}
+          <span className="min-w-0 flex-1 truncate" data-ext-footer-summary>
+            {stats ? `${stats.skillCount} 个技能 · ${stats.mcpCount} 个 MCP` : `${total} 条`}
+          </span>
+          {stats && <InfoHint label="扩展统计说明" title="扩展统计" items={statHintItems} />}
         </div>
       )}
     </div>
@@ -478,20 +589,88 @@ export function ExtensionPanel({
 }
 
 /**
- * 分组标题。
+ * 分组标题 + kind 级整批开关。
  *
- * 不用可折叠：两组各自最多几十行，折叠省下的滚动量抵不上「用户以为列表空了」
- * 的风险 —— 折叠状态不持久化，下次进来又展开，反而像抽风。
+ * 开关的三态：
+ * - 全部启用 → 正常色
+ * - 部分停用 → 绿色描边 + 半填充（mixed）+ `disabledCount/N` 徽章
+ * - 全部停用 → 占位色
+ *
+ * **三态只按「可分发」的那几条算**：批量操作会跳过零目标条目，
+ * 拿全组算会让组头显示 mixed（还有几条没开），可点下去却什么都变不了。
+ * `· 关 N` 徽章仍报全组真实关闭数，不隐藏任何一条的状态。
+ *
+ * 点击开关 = 反向：可分发条目全部启用时关掉；否则全部打开（零目标自动跳过并提示）。
  */
-function GroupLabel({ label, count }: { label: string; count: number }) {
+function GroupLabel({
+  label,
+  count,
+  disabledCount,
+  distributableCount,
+  distributableDisabledCount,
+  kind,
+  onToggleKindEnabled,
+}: {
+  label: string;
+  count: number;
+  /** 全组已关闭条数（含零目标条目，只用于徽章） */
+  disabledCount: number;
+  /** 这一组里还有分发目标的条目数；整组为 0 时组头开关置灰（不是 mixed） */
+  distributableCount: number;
+  /** 可分发条目里已关闭的条数 —— 组头三态只看它 */
+  distributableDisabledCount: number;
+  kind: ExtensionKind;
+  onToggleKindEnabled: (kind: ExtensionKind, enabled: boolean) => void;
+}) {
+  const allEnabled = distributableDisabledCount === 0;
+  const someDisabled = disabledCount > 0 && disabledCount < count;
+  const allDisabled = distributableDisabledCount === distributableCount;
+  /* 整组都没有可接收的 Agent：一键开关同样没有对象，置灰而不是半填充 ——
+     半填充读作「部分启用」，会让人以为点点就能生效。 */
+  const noneDistributable = distributableCount === 0;
   return (
-    <div className="flex items-baseline gap-1.5 px-2.5 pb-1 pt-3">
-      <span className="text-caption font-semibold" style={{ color: 'var(--td-text-color-secondary)' }}>
-        {label}
-      </span>
-      <span className="text-caption tabular-nums" style={{ color: 'var(--td-text-color-placeholder)' }}>
-        {count}
-      </span>
+    <div className="flex items-baseline justify-between gap-2 px-2.5 pb-1 pt-3">
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-caption font-semibold" style={{ color: 'var(--td-text-color-secondary)' }}>
+          {label}
+        </span>
+        <span className="text-caption tabular-nums" style={{ color: 'var(--td-text-color-placeholder)' }}>
+          {count}
+        </span>
+        {someDisabled && (
+          <span
+            className="text-caption tabular-nums"
+            style={{ color: 'var(--td-text-color-secondary)' }}
+            title={`${disabledCount} 条已关闭，不参与分发或注入`}
+            data-ext-group-disabled
+          >
+            · 关 {disabledCount}
+          </span>
+        )}
+      </div>
+      {/* 部分启用 = mixed：绿色描边 + 图标半填充，不新增第三种颜色。
+          整组无可分发目标 ⇒ 关闭态 + disabled（灰描边），不给 mixed。 */}
+      <ExtensionSwitch
+        checked={noneDistributable ? false : allEnabled ? true : allDisabled ? false : 'mixed'}
+        onClick={() => onToggleKindEnabled(kind, !allEnabled)}
+        label={
+          noneDistributable
+            ? `${label}整组无可分发目标，开关不可用`
+            : allEnabled
+              ? `关闭全部${label}`
+              : `启用全部${label}`
+        }
+        title={
+          noneDistributable
+            ? `整组都没有能接收的 Agent（目标目录不存在或没有挂载通道），一键开关暂不可用`
+            : allEnabled
+              ? `一键关闭全部${label}（共 ${distributableCount} 条可分发，零目标的跳过）`
+              : `一键启用全部${label}（共 ${distributableCount} 条可分发，零目标的跳过）`
+        }
+        disabled={noneDistributable}
+        size={13}
+        dataAttrs={{ 'data-ext-group-toggle': '', 'data-enabled': allEnabled ? '1' : '0' }}
+      />
     </div>
   );
 }

@@ -123,17 +123,25 @@ import {
   listTargets as extListTargets,
   revertNormalized as extRevertNormalized,
   stats as extStats,
+  toggleEnabled as extToggleEnabled,
+  toggleKindEnabled as extToggleKindEnabled,
   updateLocal as extUpdateLocal,
   type ExtensionKind,
 } from "./extensions/store.js";
-import { runImport as extRunImport, refreshItem as extRefreshItem } from "./extensions/import.js";
+import { runImport as extRunImport, refreshItem as extRefreshItem, redactConfig, scanAllMcp } from "./extensions/import.js";
+import { scanSensitive } from "./extensions/safety.js";
 import { applyHits as extApplyHits, normalizeSkillBody } from "./extensions/normalize.js";
 // P1 跨 Agent 知识库：独立 data/kb.sqlite，后台回填最近 90 天。
 import { bootKnowledgeBase } from "./kb/indexer.js";
 import { registerKbRoutes } from "./kb/routes.js";
-import { buildMcpConfig } from "./extensions/distribute.js";
+import { buildMcpConfig, safeAgentId } from "./extensions/distribute.js";
 import { applyDrift as extApplyDrift, scanDrift as extScanDrift } from "./extensions/drift.js";
-import { MODE_LABEL as EXT_MODE_LABEL, TARGETS as EXT_TARGETS } from "./extensions/targets.js";
+import {
+  distributableTargetCount as extDistributableTargetCount,
+  MATRIX_STATES as EXT_MATRIX_STATES,
+  MODE_LABEL as EXT_MODE_LABEL,
+  TARGETS as EXT_TARGETS,
+} from "./extensions/targets.js";
 import { legacyToBlocks, textOfBlocks, toolCallsOfBlocks } from "../shared/blocks.js";
 import type { CapabilityProfile } from "../shared/capabilities.js";
 import type { RunEvent } from "../shared/blocks.js";
@@ -2397,7 +2405,19 @@ function parseExtKind(raw: string): ExtensionKind | null {
 app.get("/api/extensions", (_req, res) => {
   const items = extListItems().map(it => {
     const sources = extListSources(it.id);
-    return { ...it, sources, sourceCount: sources.length };
+    /* 「还有几个 Agent 真的能收到」：通道 × 本机实存目录 × 差集（不由自己持有）。
+       0 ⇒ 开关置灰。口径见 server/extensions/targets.ts 的 distributableTargetCount。 */
+    const targetCount = extDistributableTargetCount({
+      kind: it.kind,
+      presentAgentIds: sources.map(s => s.agentId),
+    });
+    return {
+      ...it,
+      sources,
+      sourceCount: sources.length,
+      targetCount,
+      distributable: targetCount > 0,
+    };
   });
   res.json({
     items,
@@ -2405,6 +2425,9 @@ app.get("/api/extensions", (_req, res) => {
     // 15 个 Agent 的完整清单（含没有技能目录的），前端按它渲染矩阵
     targets: EXT_TARGETS,
     modeLabel: EXT_MODE_LABEL,
+    /* 六档状态的 label / rank / available / tone / hint。
+       **排序键只在数据层定义一处**：前端按 rank 分组，不自己写状态顺序。 */
+    matrixStates: EXT_MATRIX_STATES,
   });
 });
 
@@ -2414,13 +2437,17 @@ app.get("/api/extensions", (_req, res) => {
    ⚠️ 必须注册在 `/api/extensions/:kind/:name` **之前**：否则 Express 会把它
    当成 kind='distribute' / name='preview' 匹配走，parseExtKind 直接 400。 */
 app.get("/api/extensions/distribute/preview", (req, res) => {
-  const agentId = typeof req.query.agentId === "string" ? req.query.agentId : "";
+  const agentId = safeAgentId(req.query.agentId);
   if (!agentId) {
-    res.status(400).json({ error: "缺少 agentId" });
+    res.status(400).json({ error: "缺少或非法 agentId" });
     return;
   }
   try {
-    res.json(buildMcpConfig(agentId));
+    /* 预览会实际生成 `data/extensions/mcp-<agentId>.json` —— 调用方（qoder 启动）
+       需要这个文件路径，而不仅仅是 servers 映射。写盘路径由 `safeAgentId` 约束
+       只能落在 dataDir 内（原来的路径穿越缺陷已修）。 */
+    const r = buildMcpConfig(agentId);
+    res.json(r);
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "生成分发预览失败" });
   }
@@ -2501,18 +2528,46 @@ app.put("/api/extensions/:kind/:name", (req, res) => {
   const b = req.body ?? {};
   const patch: { body?: string; title?: string; description?: string; configJson?: string } = {};
   // 逐字段判存在：`undefined` = 不动，传空串 = 明确清空（与 updateSession 同一口径）
-  if (typeof b.body === "string") patch.body = b.body;
+  if (typeof b.body === "string") {
+    /* 正文（技能）过敏感扫描：命中则置空并带 blockedReason，与导入时的口径一致。
+       PUT 编辑是用户主动写副本，但副本也不能存密钥 —— 否则本地数据库就是密钥库。
+       接口响应里也必须把命中情况告诉用户，不然他会以为保存成功、实则内容被清了。 */
+    const hits = scanSensitive(b.body);
+    if (hits.length > 0) {
+      patch.body = ""; // 置空，不存原文
+      // 同时 title/description 如果也带敏感内容一并清（与 skillPayload blocked 口径对齐）
+      if (typeof b.title === "string" && scanSensitive(b.title).length > 0) patch.title = "";
+      if (typeof b.description === "string" && scanSensitive(b.description).length > 0) patch.description = "";
+      const updated = extUpdateLocal(kind, req.params.name, patch);
+      res.status(400).json({
+        error: "正文命中敏感内容，已拒绝落库",
+        hits,
+        item: updated,
+      });
+      return;
+    }
+    patch.body = b.body;
+  }
   if (typeof b.title === "string") patch.title = b.title;
   if (typeof b.description === "string") patch.description = b.description;
   if (typeof b.configJson === "string") {
     // MCP 配置必须是合法 JSON，否则存进去界面就打不开了
+    let parsed: Record<string, unknown>;
     try {
-      JSON.parse(b.configJson);
+      parsed = JSON.parse(b.configJson);
     } catch {
       res.status(400).json({ error: "configJson 不是合法 JSON" });
       return;
     }
-    patch.configJson = b.configJson;
+    /* MCP 配置走 redactConfig 深度脱敏：value 命中敏感规则换成 `***`（不是拒绝），
+       与导入口径一致——MCP 结构需要保留才能用，只是密钥不能明文存库。 */
+    const { config, hits } = redactConfig(parsed);
+    patch.configJson = JSON.stringify(config, null, 2);
+    if (hits.length > 0) {
+      const updated = extUpdateLocal(kind, req.params.name, patch);
+      res.json({ ok: true, item: updated, redacted: true, hits });
+      return;
+    }
   }
   if (Object.keys(patch).length === 0) {
     res.status(400).json({ error: "没有可更新的字段" });
@@ -2537,6 +2592,43 @@ app.delete("/api/extensions/:kind/:name", (req, res) => {
     return;
   }
   res.json({ ok: true, stats: extStats() });
+});
+
+/* ══════════ B：enabled 开关（单条 + 整批）══════════
+ *
+ * 关闭后：
+ * - 技能：`skillsForAgent()` 遍历条目时会跳过 `!enabled` 的（注入层已实现）
+ * - MCP：`buildMcpConfig()` 遍历条目时会跳过 `!enabled` 的（分发层已实现）
+ * - 会话启动时 argv / systemPrompt 里不会出现这条，省 token、省运行开销
+ *
+ * 两个路由同时支持 `PATCH /.../enabled`（单条）和 `PATCH /.../kind-enabled`（整批），
+ * 前者在详情页的单条开关触发，后者在列表页的 kind 级开关触发。 */
+app.patch("/api/extensions/:kind/:name/enabled", (req, res) => {
+  const kind = parseExtKind(req.params.kind);
+  if (!kind) {
+    res.status(400).json({ error: "kind 只能是 skill 或 mcp" });
+    return;
+  }
+  const on = !!(req.body && req.body.enabled);
+  const updated = extToggleEnabled(kind, req.params.name, on);
+  if (!updated) {
+    res.status(404).json({ error: "扩展不存在" });
+    return;
+  }
+  res.json({ ok: true, item: updated });
+});
+
+app.patch("/api/extensions/:kind/kind-enabled", (req, res) => {
+  const kind = parseExtKind(req.params.kind);
+  if (!kind) {
+    res.status(400).json({ error: "kind 只能是 skill 或 mcp" });
+    return;
+  }
+  const on = !!(req.body && req.body.enabled);
+  /* 只改有分发目标的条目；`skipped` 是无目标被跳过的数量，
+     由前端翻译成「已跳过 N 条无可分发」——静默跳过等于假装改过了。 */
+  const { changed, skipped } = extToggleKindEnabled(kind, on);
+  res.json({ ok: true, kind, enabled: on, changed, skipped, stats: extStats() });
 });
 
 app.post("/api/extensions/import", (_req, res) => {
@@ -2565,13 +2657,49 @@ app.post("/api/extensions/:kind/:name/accept-source", (req, res) => {
     res.status(400).json({ error: "kind 只能是 skill 或 mcp" });
     return;
   }
+  /* 顺序：先**只读**确认源还在磁盘上 → 清 locally_modified → refreshItem。
+     旧顺序是 accept → refresh：accept 先清标志，refresh 再换正文。但如果 refresh
+     因「源没了」返回 missing，用户的本地编辑已经丢了。
+     新顺序必须分三步：
+     1. 先只查源文件在不在（读盘，不写库）；
+     2. 源不在 → 409，保留本地编辑让用户自己决定；
+     3. 源在 → 清 locally_modified → refreshItem 把正文换成源的样子。
+     这样 importOne 就不会因 locally_modified=1 返回 conflict 了。 */
+  const item = extFindItem(kind, req.params.name);
+  if (!item) {
+    res.status(404).json({ error: "扩展不存在" });
+    return;
+  }
+  const sources = extListSources(item.id);
+  if (sources.length === 0) {
+    res.status(409).json({ ok: false, error: '没有来源记录' });
+    return;
+  }
+  // 只读验证源还在（不碰库）
+  let sourcePresent = false;
+  try {
+    if (kind === 'skill') {
+      for (const s of sources) {
+        const fp = path.join(s.path, 'SKILL.md');
+        if (fs.existsSync(fp)) { sourcePresent = true; break; }
+      }
+    } else {
+      // MCP：重扫一遍配置文件看这条名字还在不在
+      const all = scanAllMcp();
+      sourcePresent = all.some(m => m.name === req.params.name);
+    }
+  } catch { /* 异常算源不在，保守点 */ }
+  if (!sourcePresent) {
+    res.status(409).json({ ok: false, error: '源文件已不在磁盘上，无法接受源覆盖' });
+    return;
+  }
   if (!extAcceptSource(kind, req.params.name)) {
     res.status(404).json({ error: "扩展不存在" });
     return;
   }
-  // 接受之后立刻按源刷新一次，把正文换成源的样子
   const r = extRefreshItem(kind, req.params.name);
-  res.json({ ok: true, ...r });
+  const updated = extFindItem(kind, req.params.name);
+  res.json({ ok: true, ...r, item: updated });
 });
 
 /* ══════════ A166 / P1：归一化（预览 → 逐条确认 → 回滚）══════════

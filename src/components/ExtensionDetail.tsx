@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ChevronLeft, Sparkles, Plug, Save, RotateCw, Trash2, Copy, ShieldAlert,
+  ChevronLeft, ChevronRight, Sparkles, Plug, Save, RotateCw, Trash2, Copy, ShieldAlert,
   Info, Pencil, FolderOpen, Check, Undo2,
 } from 'lucide-react';
 import { MessagePlugin } from 'tdesign-react';
 import type {
   ExtensionListItem,
+  ExtensionMatrixState,
+  ExtensionMatrixStateMeta,
   ExtensionMountMode,
   ExtensionSourceRef,
   ExtensionTargetSpec,
@@ -14,6 +16,7 @@ import type {
 import { EXT_MOUNT_LABEL, EXT_NORMALIZE_RULE_LABEL } from '../types';
 import { useExtensionNormalize } from '../hooks/useExtensions';
 import { ConfirmDialog } from './ConfirmDialog';
+import { InfoHint } from './InfoHint';
 import { copyText } from '../clipboard';
 import { revealInFolder, hasNativeDialogs } from '../workspace';
 
@@ -22,6 +25,8 @@ interface ExtensionDetailProps {
   targets: ExtensionTargetState[];
   /** 15 个 Agent 的完整名册（含没有技能目录的），矩阵按它排 */
   allTargets: ExtensionTargetSpec[];
+  /** 六档状态的顺序/文案/可用性 —— 由服务端下发，UI 不硬编码状态顺序 */
+  matrixStates: ExtensionMatrixStateMeta[];
   loading: boolean;
   error: string | null;
   onReload: () => void;
@@ -33,8 +38,8 @@ interface ExtensionDetailProps {
   onDelete: (kind: string, name: string) => Promise<boolean>;
 }
 
-/** 矩阵里一格的状态。四档，见 `matrixState` 的注释。 */
-type MatrixState = 'ready' | 'injected' | 'sealed' | 'local-only' | 'planned' | 'unsupported';
+/** 矩阵里一格的状态。六档，见 `matrixState` 的注释。 */
+type MatrixState = ExtensionMatrixState;
 
 /**
  * 把「事实(present) × 能力(mode)」两两组合成矩阵里的一格。
@@ -46,7 +51,7 @@ type MatrixState = 'ready' | 'injected' | 'sealed' | 'local-only' | 'planned' | 
  * | ✅ | 有通道 | `ready` 已就位 | 这份已经在它手里了 |
  * | ✅ | 不支持 | `local-only` 仅本机 | 它自己有，但没法共用给别的 Agent |
  * | ❌ | prompt | `injected` 会注入 | 发消息时把清单与路径注入它的提示词（P3 已通） |
- * | ❌ | flag | `planned` 通道已确认 | 通道在，但技能还得等官方 `link`（P5） |
+ * | ❌ | flag | `planned` 通道已确认 | 通道在，启动时由 OPC 传参挂上（P5-D 的 `--plugin-dir`） |
  * | ❌ | 不支持 | `unsupported` 不支持 | 这个 Agent 没有这条路 |
  *
  * 第二行是最容易被漏掉的：`codex` 有自己的 `~/.codex/skills`，能从里面**读**
@@ -65,37 +70,26 @@ function matrixState(present: boolean, mode: ExtensionMountMode, blocked: boolea
   return 'planned';
 }
 
-const MATRIX_META: Record<MatrixState, { label: string; color: string; hint: string }> = {
-  ready: {
-    label: '已就位',
-    color: 'var(--tc-status-ok)',
-    hint: '该 Agent 自己的目录里就有这一份',
-  },
-  'local-only': {
-    label: '仅本机',
-    color: 'var(--td-text-color-secondary)',
-    hint: '该 Agent 自己有，但它没有把外部技能送进来的通道，因此这份无法共享给它',
-  },
-  injected: {
-    label: '会注入',
-    color: 'var(--tc-status-ok)',
-    hint: '该 Agent 目录里没有这一份，但发消息时会把技能清单与路径注入它的提示词（正文镜像在 OPC 自己的数据目录里，不动它的目录）',
-  },
-  sealed: {
-    label: '含敏感内容',
-    color: 'var(--tc-status-warn)',
-    hint: '这份正文命中敏感内容、没有落库，所以不会注入给该 Agent；它自己目录里本来有的话仍可用',
-  },
-  planned: {
-    label: '通道已确认',
-    color: 'var(--td-brand-color)',
-    hint: '该 Agent 有接入通道，但技能要走它自己的官方 link 命令（P5，需你批准）',
-  },
-  unsupported: {
-    label: '不支持',
-    color: 'var(--td-text-color-placeholder)',
-    hint: '该 Agent 没有接入外部技能的通道',
-  },
+/**
+ * 状态点 / 状态徽标的颜色。
+ *
+ * `tone` 由服务端 `MATRIX_STATES` 给出，这里只负责把语义档落到 CSS 令牌 ——
+ * 文案、顺序、可用性都在数据层，前端不复制一份。
+ */
+const TONE_COLOR: Record<ExtensionMatrixStateMeta['tone'], string> = {
+  ok: 'var(--tc-status-ok)',
+  warn: 'var(--tc-status-warn)',
+  brand: 'var(--td-brand-color)',
+  muted: 'var(--td-text-color-placeholder)',
+};
+
+/** 挂载能力的视图筛选。只影响分组里的行，不改变顶部摘要（摘要说的是全量事实）。 */
+type MatrixFilter = 'all' | 'available' | 'unavailable';
+
+const MATRIX_FILTER_LABEL: Record<MatrixFilter, string> = {
+  all: '全部',
+  available: '可用',
+  unavailable: '不可用',
 };
 
 /**
@@ -117,6 +111,7 @@ export function ExtensionDetail({
   item,
   targets,
   allTargets,
+  matrixStates,
   loading,
   error,
   onReload,
@@ -129,6 +124,18 @@ export function ExtensionDetail({
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /* 分组折叠：默认只收起「不支持」。折叠时组头仍在（计数 + 灰点），
+     行留在 DOM 里（`hidden`）—— 既有验证锚点不因折叠而消失。 */
+  const [collapsed, setCollapsed] = useState<Set<MatrixState>>(
+    () => new Set<MatrixState>(['unsupported'])
+  );
+  const [matrixFilter, setMatrixFilter] = useState<MatrixFilter>('all');
+
+  /* 换条目时回到默认视图：展开前四组、只折叠「不支持」、筛选回「全部」。 */
+  useEffect(() => {
+    setCollapsed(new Set<MatrixState>(['unsupported']));
+    setMatrixFilter('all');
+  }, [item?.id]);
 
   const kind = item?.kind ?? null;
   const name = item?.name ?? null;
@@ -175,7 +182,53 @@ export function ExtensionDetail({
     });
   }, [targets, allTargets, item?.blocked]);
 
-  const readyCount = matrix.filter(m => m.state === 'ready' || m.state === 'injected').length;
+  /* ── 摘要 / 分布 / 分组，全部从同一份 matrix + 数据层 meta 算 ───────── */
+
+  /** 状态 meta：按 state 建索引，同时保留 rank 以便排序 */
+  const stateMeta = useMemo(() => {
+    const byState = new Map<MatrixState, ExtensionMatrixStateMeta>();
+    for (const meta of matrixStates) byState.set(meta.state, meta);
+    return byState;
+  }, [matrixStates]);
+
+  /** 按 rank 排好的状态表（UI 只认 rank，不认自己的顺序） */
+  const orderedStates = useMemo(
+    () => [...matrixStates].sort((a, b) => a.rank - b.rank),
+    [matrixStates]
+  );
+
+  /** 每档多少格 —— 摘要、分布、组头计数都从这里取 */
+  const stateCounts = useMemo(() => {
+    const counts = new Map<MatrixState, number>();
+    for (const row of matrix) counts.set(row.state, (counts.get(row.state) ?? 0) + 1);
+    return counts;
+  }, [matrix]);
+
+  const availableCount = useMemo(
+    () => matrix.filter(row => stateMeta.get(row.state)?.available).length,
+    [matrix, stateMeta]
+  );
+  const unavailableCount = matrix.length - availableCount;
+
+  /**
+   * 分组：先按筛选过滤，再按状态 rank 分组，组内按 Agent 名排序。
+   * 组头的计数用**筛选后**的行数 —— 筛选是一个视图，组头说的应是眼前这几行。
+   */
+  const groups = useMemo(() => {
+    const visible = matrix.filter(row => {
+      if (matrixFilter === 'all') return true;
+      const available = stateMeta.get(row.state)?.available ?? false;
+      return matrixFilter === 'available' ? available : !available;
+    });
+    return orderedStates
+      .map(meta => ({
+        meta,
+        rows: visible
+          .filter(row => row.state === meta.state)
+          .sort((a, b) => a.spec.label.localeCompare(b.spec.label, 'zh-Hans-CN')),
+      }))
+      .filter(group => group.rows.length > 0);
+  }, [matrix, matrixFilter, orderedStates, stateMeta]);
 
   /* 接受归一化：只提交用户勾中的那几条（下标数组）。
      空选择直接不提交 —— 后端对空数组返回 400，前端先挡住，
@@ -439,74 +492,210 @@ export function ExtensionDetail({
           <Section
             title="挂载能力"
             subtitle={
-              readyCount > 0
-                ? `${readyCount} / ${matrix.length} 个 Agent 能用上这一份`
-                : '还没有任何 Agent 能用上这一份'
+              matrix.length > 0
+                ? `${availableCount} 可用 · ${unavailableCount} 不可用`
+                : undefined
             }
+            subtitleAttr="data-ext-matrix-summary"
             attr="data-ext-matrix"
+            action={
+              /* 原来占三行的图例收进这一枚 ⓘ：悬停/点击展开，键盘可聚焦。
+                 文案全部来自服务端 MATRIX_STATES，与分组/摘要同一事实源。 */
+              <InfoHint
+                label="挂载能力说明"
+                title="六档状态"
+                items={orderedStates.map(meta => ({ term: meta.label, definition: meta.hint }))}
+                note="六档口径见 PLAN-EXTENSIONS.md §9。"
+              />
+            }
           >
-            <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
-              {matrix.map(({ spec, present, mode, state }) => {
-                const meta = MATRIX_META[state];
-                /* 实心点 = 这一份确实能被该 Agent 用上（自己目录里有，或会被注入）。
-                   空心的三档（含敏感内容 / 通道已确认 / 不支持）都不是「好了」。 */
-                const filled = state === 'ready' || state === 'local-only' || state === 'injected';
+            {/* 状态分布：与组头、摘要同一份 stateCounts */}
+            <div
+              className="mb-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-caption"
+              data-ext-matrix-dist
+            >
+              {orderedStates.map(meta => {
+                const count = stateCounts.get(meta.state) ?? 0;
+                /* 「含敏感内容」只在真有被拦的条目时出现，否则它会把普通的
+                   「会注入」挤出视线。其余五档常驻，0 也如实显示。 */
+                if (meta.state === 'sealed' && count === 0) return null;
                 return (
-                  <div
-                    key={spec.agentId}
-                    className="flex items-center gap-2 py-1.5"
-                    title={`${meta.hint}${spec.note ? `（${spec.note}）` : ''}`}
-                    data-ext-matrix-row={spec.agentId}
-                    data-ext-matrix-state={state}
+                  <span
+                    key={meta.state}
+                    className="flex items-center gap-1"
+                    title={meta.hint}
+                    data-ext-matrix-dist-state={meta.state}
+                    data-count={count}
                   >
                     <span
                       className="h-1.5 w-1.5 shrink-0 rounded-full"
-                      style={{
-                        backgroundColor: meta.color,
-                        /* 未达成的那几档用空心点：实心点会被读成「好了」，
-                           而 `sealed` / `planned` / `unsupported` 都不是「好了」。 */
-                        boxShadow: filled ? undefined : `inset 0 0 0 1.5px ${meta.color}`,
-                        ...(filled ? {} : { backgroundColor: 'transparent' }),
-                      }}
+                      style={{ backgroundColor: TONE_COLOR[meta.tone] }}
                     />
-                    <span
-                      className="min-w-0 flex-1 truncate text-body"
-                      style={{ color: 'var(--td-text-color-primary)' }}
-                    >
-                      {spec.label}
+                    <span style={{ color: 'var(--td-text-color-secondary)' }}>{meta.label}</span>
+                    <span className="tabular-nums" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                      {count}
                     </span>
-                    <span
-                      className="shrink-0 text-caption"
-                      style={{ color: 'var(--td-text-color-placeholder)' }}
+                  </span>
+                );
+              })}
+            </div>
+
+            {/* 筛选 chip：只过滤分组里的行；摘要仍说全量事实 */}
+            <div className="mb-1 flex items-center gap-1.5" data-ext-matrix-filter-bar>
+              {(['all', 'available', 'unavailable'] as const).map(key => {
+                const active = matrixFilter === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setMatrixFilter(key)}
+                    className="rounded-full px-2.5 py-1 text-caption transition-colors"
+                    style={{
+                      color: active ? 'var(--td-text-color-primary)' : 'var(--td-text-color-secondary)',
+                      backgroundColor: active ? 'var(--tc-fill-selected)' : 'var(--td-bg-color-component)',
+                      border: '1px solid var(--tc-edge)',
+                    }}
+                    data-ext-matrix-filter={key}
+                  >
+                    {MATRIX_FILTER_LABEL[key]}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 分组：顺序 = 数据层 rank；组内按 Agent 名；两列按列优先读 */}
+            <div className="flex flex-col" data-ext-matrix-groups>
+              {groups.map(({ meta, rows }) => {
+                const isCollapsed = collapsed.has(meta.state);
+                const color = TONE_COLOR[meta.tone];
+                const half = Math.ceil(rows.length / 2);
+                const columns = [rows.slice(0, half), rows.slice(half)];
+                return (
+                  <div key={meta.state} data-ext-matrix-group={meta.state}>
+                    <button
+                      type="button"
+                      aria-expanded={!isCollapsed}
+                      onClick={() =>
+                        setCollapsed(prev => {
+                          const next = new Set(prev);
+                          if (next.has(meta.state)) next.delete(meta.state);
+                          else next.add(meta.state);
+                          return next;
+                        })
+                      }
+                      title={meta.hint}
+                      className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                      data-ext-matrix-group-toggle
                     >
-                      {EXT_MOUNT_LABEL[mode]}
-                    </span>
-                    <span
-                      className="w-[68px] shrink-0 text-right text-caption"
-                      style={{ color: meta.color }}
-                      data-ext-matrix-label
-                    >
-                      {meta.label}
-                    </span>
-                    {/* 事实标记：该 Agent 目录里真的有这一份。与状态列分开，
-                        因为 `local-only` 那一档也要显示它。 */}
-                    {present && (
-                      <Check
+                      <ChevronRight
                         size={12}
-                        className="shrink-0"
+                        className={isCollapsed ? undefined : 'rotate-90'}
                         style={{ color: 'var(--td-text-color-placeholder)' }}
-                        data-ext-matrix-present
                       />
-                    )}
+                      <span
+                        className="h-1.5 w-1.5 shrink-0 rounded-full"
+                        /* 折叠时统一变灰点 —— 表示这一组还在，只是被收起了 */
+                        style={{
+                          backgroundColor: isCollapsed
+                            ? 'var(--td-text-color-placeholder)'
+                            : color,
+                        }}
+                      />
+                      <span
+                        className="text-caption font-semibold"
+                        style={{ color: 'var(--td-text-color-primary)' }}
+                      >
+                        {meta.label}
+                      </span>
+                      <span
+                        className="text-caption tabular-nums"
+                        style={{ color: 'var(--td-text-color-placeholder)' }}
+                        data-ext-matrix-group-count
+                      >
+                        {rows.length}
+                      </span>
+                    </button>
+
+                    {/* 行留在 DOM 里（折叠时 hidden），既有 data-ext-matrix-row 锚点
+                        不会因为默认折叠而消失。 */}
+                    <div
+                      className={
+                        isCollapsed
+                          ? 'hidden'
+                          : 'grid grid-cols-1 gap-x-6 pb-1 sm:grid-cols-2'
+                      }
+                      data-ext-matrix-rows
+                    >
+                      {columns.map((column, index) => (
+                        <div key={index} className="flex min-w-0 flex-col">
+                          {column.map(({ spec, present, mode, state }) => {
+                            const rowMeta = stateMeta.get(state);
+                            const rowColor = rowMeta
+                              ? TONE_COLOR[rowMeta.tone]
+                              : 'var(--td-text-color-placeholder)';
+                            /* 实心点 = 这一份确实已经在该 Agent 手里（自己目录里有，
+                               或被注入）。`sealed` / `planned` / `unsupported` 用空心。 */
+                            const filled =
+                              state === 'ready' || state === 'local-only' || state === 'injected';
+                            return (
+                              <div
+                                key={spec.agentId}
+                                className="flex items-center gap-2 py-1.5"
+                                title={`${rowMeta?.hint ?? ''}${spec.note ? `（${spec.note}）` : ''}`}
+                                data-ext-matrix-row={spec.agentId}
+                                data-ext-matrix-state={state}
+                              >
+                                <span
+                                  className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                  style={{
+                                    backgroundColor: rowColor,
+                                    boxShadow: filled ? undefined : `inset 0 0 0 1.5px ${rowColor}`,
+                                    ...(filled ? {} : { backgroundColor: 'transparent' }),
+                                  }}
+                                />
+                                <span
+                                  className="min-w-0 flex-1 truncate text-body"
+                                  style={{ color: 'var(--td-text-color-primary)' }}
+                                >
+                                  {spec.label}
+                                </span>
+                                {/* 通道说明：中性灰，不参与状态配色 */}
+                                <span
+                                  className="shrink-0 text-caption"
+                                  style={{ color: 'var(--td-text-color-placeholder)' }}
+                                  data-ext-matrix-channel
+                                >
+                                  {EXT_MOUNT_LABEL[mode]}
+                                </span>
+                                {/* 状态徽标：与通道列分开 */}
+                                <span
+                                  className="w-[68px] shrink-0 text-right text-caption"
+                                  style={{ color: rowColor }}
+                                  data-ext-matrix-label
+                                >
+                                  {rowMeta?.label ?? state}
+                                </span>
+                                {/* 事实标记：该 Agent 目录里真的有这一份。与状态列分开，
+                                    因为 `local-only` 那一档也要显示它。 */}
+                                {present && (
+                                  <Check
+                                    size={12}
+                                    className="shrink-0"
+                                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                                    data-ext-matrix-present
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 );
               })}
             </div>
-            <p className="mt-2 text-caption leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              「已就位」= 该 Agent 自己的目录里就有；「会注入」= 发消息时把清单与路径
-              注入它的提示词（正文镜像在 OPC 的数据目录，不改它的目录）；
-              「通道已确认」= 只能等各家官方 link 命令（P5）。六档口径见 PLAN-EXTENSIONS.md §9。
-            </p>
           </Section>
         )}
 
@@ -707,10 +896,35 @@ export function ExtensionDetail({
           </div>
 
           {item.blocked && (
-            <p className="mb-2 text-caption leading-5" style={{ color: 'var(--tc-status-warn)' }}>
-              正文因命中敏感内容而未落库。你在这里编辑的是 OPC 侧的新副本 ——
-              保存前请确认里面没有密钥。
-            </p>
+            /* 风险告知不藏进 hover：行内保留「敏感」短标记，详情收进 ⓘ。 */
+            <div className="mb-2 flex items-center gap-1.5" data-ext-sensitive-note>
+              <span
+                className="text-caption font-semibold"
+                style={{ color: 'var(--tc-status-warn)' }}
+              >
+                敏感
+              </span>
+              <span className="text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
+                正文未落库
+              </span>
+              <InfoHint
+                label="敏感内容的处理说明"
+                items={[
+                  {
+                    term: '为什么拦',
+                    definition: '正文命中疑似密钥或本机用户路径，OPC 不把它存进库。',
+                  },
+                  {
+                    term: '还能用吗',
+                    definition: '该 Agent 自己目录里本来有这一份的话仍可用；OPC 不会注入未落库的正文。',
+                  },
+                  {
+                    term: '编辑后保存',
+                    definition: '你在这里编辑的是 OPC 侧的新副本，保存前请确认里面没有密钥。',
+                  },
+                ]}
+              />
+            </div>
           )}
 
           <textarea
@@ -797,12 +1011,15 @@ function Shell({ children, dataAttr }: { children: React.ReactNode; dataAttr?: s
 function Section({
   title,
   subtitle,
+  subtitleAttr,
   action,
   children,
   attr,
 }: {
   title: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
+  /** 给副标题加锚点，便于验证脚本按名字定位（如 data-ext-matrix-summary） */
+  subtitleAttr?: string;
   action?: React.ReactNode;
   children: React.ReactNode;
   attr?: string;
@@ -815,7 +1032,11 @@ function Section({
             {title}
           </h2>
           {subtitle && (
-            <span className="min-w-0 truncate text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
+            <span
+              className="min-w-0 truncate text-caption"
+              style={{ color: 'var(--td-text-color-secondary)' }}
+              {...(subtitleAttr ? { [subtitleAttr]: '' } : {})}
+            >
               {subtitle}
             </span>
           )}

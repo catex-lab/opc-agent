@@ -198,6 +198,8 @@ function AppContent() {
   const reloadExtList = ext.load;
   const removeExtension = ext.remove;
   const runExtImport = ext.runImport;
+  const toggleExtEnabled = ext.toggleEnabled;
+  const toggleExtKindEnabled = ext.toggleKindEnabled;
 
   /**
    * A77：右侧工作区文件面板是否展开。
@@ -1592,6 +1594,8 @@ function AppContent() {
                 onSelect={handleSelectExtension}
                 onImport={() => void handleImportExtensions()}
                 onRefresh={() => void reloadExtList()}
+                onToggleEnabled={(kind, name, enabled) => void toggleExtEnabled(kind, name, enabled)}
+                onToggleKindEnabled={(kind, enabled) => void toggleExtKindEnabled(kind, enabled)}
                 compact={compact}
               />
             ) : (
@@ -1670,6 +1674,7 @@ function AppContent() {
                     item={extDetail.item}
                     targets={extDetail.targets}
                     allTargets={ext.targets}
+                    matrixStates={ext.matrixStates}
                     loading={extDetail.loading}
                     error={extDetail.error}
                     onReload={() => void reloadExtDetail()}

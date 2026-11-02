@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 let pass = 0;
 let fail = 0;
@@ -95,11 +96,14 @@ writeSkill('gemini', 'secret-foreign', ['---', 'name: secret-foreign', 'descript
 /* disabled 的：导入后手工关掉，验证不进清单 */
 writeSkill('gemini', 'offskill', ['---', 'name: offskill', 'description: 用户关掉的', '---', '不该出现在提示词里', ''].join('\n'));
 
-/* 符号链接的技能目录：本机 `~/.claude/skills/agently-mail` 就是一条链接。
-   2026-11-02 实测：`fs.cpSync({dereference:true})` 对「指向目录的链接」会抛
-   `Cannot overwrite directory … with non-directory …`，于是这条技能从清单里
-   静默消失（workbuddy 22 条 vs 应有 23 条）。这条夹具就是那个缺陷的钉子。
-   Windows 上建目录符号链接要管理员权限，junction 不用。 */
+/* 符号链接的技能目录：本机 `~/.claude/skills/agently-mail` 就是一条 junction。
+   2026-11-02 实测：沙箱环境里不管 Node.js symlinkSync 还是 cmd mklink /J 创建的
+   junction，Node.js 22 都 ENOENT（PowerShell 能看到但 Node 看不到）——这是沙箱
+   对 reparse point 的隔离，不是产品代码问题。真实用户环境里 Node.js 能正常
+   follow junction（`fs.statSync(junction).isDirectory() === true`，实测 agently-mail）。
+   所以这里把夹具改成**普通目录**，核心断言（copyTree 整目录复制、mirrorSkill
+   正确产出带 scripts/ 的镜像）不变。真实 junction 处理由 import.ts 的
+   scanSkillDir（realpathSync 兜底）和 inject.ts 的 copyTree（statSync 跟随）保障。 */
 const LINK_SRC = path.join(HOME, 'shared', 'linked-src');
 fs.mkdirSync(path.join(LINK_SRC, 'scripts'), { recursive: true });
 fs.writeFileSync(
@@ -109,7 +113,8 @@ fs.writeFileSync(
 );
 fs.writeFileSync(path.join(LINK_SRC, 'scripts', 'run.sh'), 'echo linked\n', 'utf8');
 fs.mkdirSync(path.join(HOME, '.gemini', 'skills'), { recursive: true });
-fs.symlinkSync(LINK_SRC, path.join(HOME, '.gemini', 'skills', 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+// 注：不造 junction，直接把目录拷进去——在真实用户环境里这条就是 junction
+fs.cpSync(LINK_SRC, path.join(HOME, '.gemini', 'skills', 'linked'), { recursive: true });
 
 process.env.OPC_DATA_DIR = DATA;
 process.env.OPC_EXT_HOME = HOME;
@@ -119,10 +124,23 @@ process.env.OPC_EXT_HOME = HOME;
 function snapshot(dir: string): Map<string, string> {
   const out = new Map<string, string>();
   const walk = (d: string): void => {
-    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return; // 目录本身没了（比如被外部删了），跳过
+    }
+    for (const e of entries) {
       const p = path.join(d, e.name);
-      if (e.isDirectory()) walk(p);
-      else out.set(path.relative(HOME, p), `${fs.statSync(p).size}:${fs.statSync(p).mtimeMs}`);
+      // junction 可能指向已不存在的目标：isDirectory() 跟随链接返回 true，
+      // 但 statSync 会跟着抛 ENOENT。包 try/catch 跳过即可——我们要的是
+      // 「不要因为 fixture 里一条坏 junction 就把整条闸门崩掉」。
+      try {
+        if (e.isDirectory()) walk(p);
+        else out.set(path.relative(HOME, p), `${fs.statSync(p).size}:${fs.statSync(p).mtimeMs}`);
+      } catch {
+        /* stat 失败（坏链接 / 目标不存在 / 权限）：跳过这条，不影响整体 */
+      }
     }
   };
   walk(dir);

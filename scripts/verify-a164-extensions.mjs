@@ -290,6 +290,87 @@ try {
   );
   ok(JSON.parse(filesystem.configJson || '{}').command === 'npx', 'MCP 脱敏后结构保留（command 仍在）');
 
+  // ── [6b] 可分发目标：有目标 vs 零目标 ──────────────────────────
+  // 口径 = 通道（技能 prompt/flag、MCP flag）× 本机实存目录 × 差集（不由自己持有）。
+  console.log('\n[6b] 可分发目标');
+  ok(
+    alpha.distributable === false && alpha.targetCount === 0,
+    'alpha（claude+qoder 已各自持有，其余 Agent 无通道/目录）targetCount=0、不可分发',
+    `targetCount=${alpha.targetCount}`
+  );
+  ok(
+    beta.distributable === true && beta.targetCount === 2,
+    'beta（仅 gemini 有；claude 提示词注入 + qoder 启动参数各算一个）targetCount=2、可分发',
+    `targetCount=${beta.targetCount}`
+  );
+  ok(
+    filesystem.distributable === false && filesystem.targetCount === 0,
+    'filesystem（来源 qoder，本机没有 qoder-cn 目录）MCP targetCount=0、不可分发',
+    `targetCount=${filesystem.targetCount}`
+  );
+  ok(
+    list.items.every(i => typeof i.distributable === 'boolean' && typeof i.targetCount === 'number'),
+    '每条都同时下发 distributable（布尔）与 targetCount（数字）'
+  );
+
+  // ── [6c] 批量开关跳过零目标条目 ────────────────────────────────
+  // alpha 零目标（claude+qoder 已各自持有）；beta/leaky/codexlocal 各有 2 个目标。
+  console.log('\n[6c] 批量开关跳过零目标');
+  const bulkToggle = async (kind, enabled) => {
+    const r = await fetch(`${base}/api/extensions/${kind}/kind-enabled`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    return json(r);
+  };
+  const reload = async () => {
+    const r = await fetch(`${base}/api/extensions`);
+    return json(r);
+  };
+
+  let bulk = await bulkToggle('skill', false);
+  ok(
+    bulk.changed === 3 && bulk.skipped === 1,
+    '全关：改写 3 条可分发，跳过 alpha 1 条零目标',
+    `changed=${bulk.changed} skipped=${bulk.skipped}`
+  );
+  let after = await reload();
+  ok(
+    after.items.find(i => i.name === 'alpha').enabled === true,
+    '零目标 alpha 的 enabled 保持 true，未被批量写成 false'
+  );
+  ok(
+    ['beta', 'leaky', 'codexlocal'].every(n => after.items.find(i => i.name === n).enabled === false),
+    '三条可分发条目全部关掉'
+  );
+
+  bulk = await bulkToggle('skill', true);
+  ok(
+    bulk.changed === 3 && bulk.skipped === 1,
+    '全开：改写 3 条可分发，跳过 alpha 1 条',
+    `changed=${bulk.changed} skipped=${bulk.skipped}`
+  );
+  after = await reload();
+  ok(
+    after.items.find(i => i.name === 'alpha').enabled === true &&
+      ['beta', 'leaky', 'codexlocal'].every(n => after.items.find(i => i.name === n).enabled === true),
+    '全开后零目标仍是原值 true（没有被打成「看着开着、实际无效」的死配置）'
+  );
+
+  // no-op：MCP 整组零目标（来源 qoder，本机无 qoder-cn 目录）
+  bulk = await bulkToggle('mcp', false);
+  ok(
+    bulk.changed === 0 && bulk.skipped === 1,
+    'MCP 整组无可分发：批量动作为 no-op，回传 changed=0 / skipped=1（界面据此给提示，不静默）',
+    `changed=${bulk.changed} skipped=${bulk.skipped}`
+  );
+  after = await reload();
+  ok(
+    after.items.find(i => i.kind === 'mcp' && i.name === 'filesystem').enabled === true,
+    'no-op 后 filesystem 保持 enabled=true'
+  );
+
   // ── [7]+[8] 真浏览器 ────────────────────────────────────────────
   const exe = resolveChrome();
   if (!exe) {
@@ -304,6 +385,34 @@ try {
       await page.waitForSelector('[data-ext-source-count]', { timeout: 25000 });
       const badge = await page.getAttribute('[data-ext-source-count]', 'data-ext-source-count');
       ok(badge === '2', '[3] 列表里 alpha 的徽章显示 ×2', `badge=${badge}`);
+
+      // [6b UI] 无可分发 ⇒ 置灰不可点；有目标 ⇒ 正常可点
+      const alphaToggle = page.locator('[data-ext-row="skill:alpha"] [data-ext-row-toggle]');
+      const betaToggle = page.locator('[data-ext-row="skill:beta"] [data-ext-row-toggle]');
+      ok((await alphaToggle.getAttribute('aria-disabled')) === 'true', 'alpha（无可分发）开关 aria-disabled=true');
+      ok((await alphaToggle.isDisabled()) === true, 'alpha 开关真的不可点（原生 disabled）');
+      ok((await betaToggle.getAttribute('aria-disabled')) === null, 'beta（有目标）开关没有 aria-disabled');
+      ok((await betaToggle.isDisabled()) === false, 'beta 开关可点');
+      ok(
+        (await page.locator('[data-ext-row="skill:alpha"] [data-ext-no-target]').count()) === 1,
+        'alpha 行有常驻「无可分发」短标记（不是开关坏了）'
+      );
+      ok(
+        (await page.locator('[data-ext-row="skill:beta"] [data-ext-no-target]').count()) === 0,
+        'beta 行没有「无可分发」标记'
+      );
+      ok(
+        (await page.getAttribute('[data-ext-group="mcp"] [data-ext-group-toggle]', 'aria-disabled')) === 'true',
+        'MCP 组整组无可分发 ⇒ 组头开关置灰'
+      );
+      ok(
+        (await page.getAttribute('[data-ext-group="mcp"] [data-ext-group-toggle]', 'aria-checked')) === 'false',
+        'MCP 组头是关闭态（灰描边），不是 mixed 半填充'
+      );
+      ok(
+        (await page.getAttribute('[data-ext-group="skill"] [data-ext-group-toggle]', 'aria-disabled')) === null,
+        '技能组有可分发条目 ⇒ 组头开关不置灰'
+      );
 
       // ── [7] 能力矩阵四态 ────────────────────────────────────────
       console.log('\n[7] 能力矩阵四态');
@@ -320,7 +429,8 @@ try {
         }, agentId);
 
       ok((await rowState('claude')) === 'ready', 'alpha · claude = ready（已就位）');
-      ok((await rowState('gemini')) === 'planned', 'alpha · gemini = planned（通道已确认）');
+      // gemini 改为 unsupported：官方 skills link 会写 ~/.gemini，违反零写入（2026-11-02 真机 help 也没有技能目录参数）
+      ok((await rowState('gemini')) === 'unsupported', 'alpha · gemini = unsupported（无零写入通道）');
       ok((await rowState('codex')) === 'unsupported', 'alpha · codex = unsupported（不支持）');
 
       const claudeColor = await rowColor('claude');
@@ -350,12 +460,12 @@ try {
       console.log('\n[7b] A167 注入档');
       await page.goto(`${base}/extensions/skill/beta`, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('[data-ext-matrix]', { timeout: 25000 });
-      ok((await rowState('gemini')) === 'ready', 'beta · gemini = ready（自己的目录里有）');
+      ok((await rowState('gemini')) === 'local-only', 'beta · gemini = local-only（自己有，但送不进去）');
       ok((await rowState('claude')) === 'injected', 'beta · claude = injected（会注入，不是「将来」）');
       ok((await rowState('workbuddy')) === 'injected', 'beta · workbuddy = injected');
       ok(
         (await rowState('qoder')) === 'planned',
-        'beta · qoder = planned（flag 态仍要等官方 link，不许提前画成能用）'
+        'beta · qoder = planned（flag 态，启动时由 --plugin-dir 挂载）'
       );
       const injectedLabel = await page.locator(
         '[data-ext-matrix-row="claude"] [data-ext-matrix-label]'

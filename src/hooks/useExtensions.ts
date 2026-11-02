@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { MessagePlugin } from 'tdesign-react';
 import type {
   ExtensionDriftApplyResult,
   ExtensionDriftReport,
   ExtensionImportReport,
   ExtensionListItem,
+  ExtensionMatrixStateMeta,
   ExtensionNormalizePreview,
   ExtensionSourceRef,
   ExtensionStats,
@@ -36,6 +38,8 @@ export function useExtensions() {
   const [stats, setStats] = useState<ExtensionStats | null>(null);
   /** 15 个 Agent 的完整清单（含没有技能目录的），详情页的能力矩阵按它渲染 */
   const [targets, setTargets] = useState<ExtensionTargetSpec[]>([]);
+  /** 六档状态的顺序/文案/可用性，由服务端下发（UI 不硬编码状态顺序） */
+  const [matrixStates, setMatrixStates] = useState<ExtensionMatrixStateMeta[]>([]);
   const [loading, setLoading] = useState(false);
   /**
    * 「列表真的拉过一轮了」。
@@ -70,10 +74,12 @@ export function useExtensions() {
         items?: ExtensionListItem[];
         stats?: ExtensionStats;
         targets?: ExtensionTargetSpec[];
+        matrixStates?: ExtensionMatrixStateMeta[];
       };
       setItems(Array.isArray(body.items) ? body.items : []);
       setStats(body.stats ?? null);
       setTargets(Array.isArray(body.targets) ? body.targets : []);
+      setMatrixStates(Array.isArray(body.matrixStates) ? body.matrixStates : []);
       setLoaded(true);
     } catch (e) {
       if (seq !== seqRef.current) return;
@@ -133,6 +139,72 @@ export function useExtensions() {
     [load]
   );
 
+  /** 单条开关：让这条扩展参与分发/注入还是彻底跳过。 */
+  const toggleEnabled = useCallback(
+    async (kind: string, name: string, enabled: boolean): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/enabled`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+        }
+        await load();
+        return true;
+      } catch (e) {
+        setError((e as Error).message || '开关失败');
+        return false;
+      }
+    },
+    [load]
+  );
+
+  /**
+   * kind 级整批开关：只改**有分发目标**的条目，零目标的保持原值。
+   *
+   * 后端返回 `skipped`，这里必须把它说出来：用户点了「全部关闭」却有一条
+   * 纹丝不动，没有解释就会被读成开关坏了。三种结果分开说：
+   * 有改动 + 有跳过 / 只有跳过（no-op）/ 无需改动（本来就是目标态）。
+   */
+  const toggleKindEnabled = useCallback(
+    async (kind: string, enabled: boolean): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/extensions/${encodeURIComponent(kind)}/kind-enabled`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled }),
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          changed?: number;
+          skipped?: number;
+        };
+        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        const changed = Number(body.changed ?? 0);
+        const skipped = Number(body.skipped ?? 0);
+        await load();
+        const verb = enabled ? '启用' : '停用';
+        if (skipped > 0 && changed > 0) {
+          MessagePlugin.info(`已${verb} ${changed} 条，跳过 ${skipped} 条无可分发`);
+        } else if (skipped > 0) {
+          MessagePlugin.info(`没有可改动的条目：${skipped} 条无可分发，已跳过`);
+        } else if (changed > 0) {
+          MessagePlugin.success(`已${verb} ${changed} 条`);
+        } else {
+          MessagePlugin.info(`没有需要改动的条目（已经是${enabled ? '启用' : '停用'}状态）`);
+        }
+        return true;
+      } catch (e) {
+        setError((e as Error).message || '开关失败');
+        return false;
+      }
+    },
+    [load]
+  );
+
   /** 首次挂载不拉 —— 由「切到扩展栏」的 effect 触发（见文件头） */
   const ensureLoaded = useCallback(() => {
     void load();
@@ -142,6 +214,7 @@ export function useExtensions() {
     items,
     stats,
     targets,
+    matrixStates,
     loading,
     loaded,
     importing,
@@ -150,6 +223,8 @@ export function useExtensions() {
     load,
     runImport,
     remove,
+    toggleEnabled,
+    toggleKindEnabled,
     ensureLoaded,
   };
 }
@@ -172,6 +247,8 @@ export function useExtensionDetail(kind: string | null, name: string | null) {
 
   const load = useCallback(async () => {
     if (!kind || !name) {
+      // 作废所有在飞请求：清空选中时不能让之前那条晚到的详情把空态盖回旧数据
+      seqRef.current++;
       setItem(null);
       setTargets([]);
       setError(null);
@@ -242,6 +319,8 @@ export function useExtensionNormalize(kind: string | null, name: string | null) 
 
   const load = useCallback(async () => {
     if (!kind || !name || kind !== 'skill') {
+      // 作废所有在飞请求：清空选中时不能让之前那条晚到的归一化预览把空态盖回旧数据
+      seqRef.current++;
       setPreview(null);
       setError(null);
       return;

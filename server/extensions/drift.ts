@@ -28,6 +28,16 @@
  * `conflict` 与 `updated` 必须分开：前者应用了会**丢掉用户的编辑**，
  * 后者不会。混成一个「有更新」的提示，用户点「全部应用」就会静默毁掉自己的改动。
  *
+ * ## 逐来源比，而不是只比主来源
+ *
+ * 同一条 `(kind, name)` 可能在多个 Agent 里都有副本。以前只拿字典序第一个
+ * （主来源）跟库里的指纹比，于是「主来源没变、第二个 Agent 里的那份变了」会
+ * 被报成「没变」。现在每个来源都登记自己的 `content_hash`，逐个比 —— 副本变了
+ * 也报 `updated`，但 detail 说清「正文仍以谁为准」（应用副本差异不会改正文）。
+ *
+ * 只有**主来源**变了才可能是 `conflict`：正文跟的是主来源，副本变从来不会
+ * 覆盖用户的编辑。
+ *
  * ## 为什么不做服务端定时器 / 不缓存
  *
  * 一次扫描 = 读 54 个 SKILL.md + 9 个 MCP 配置文件，实测**几十毫秒**。
@@ -40,7 +50,7 @@
  * `useExtensionDrift`），面板关掉就停。
  */
 
-import { findItem, listItems } from './store.js';
+import { findItem, listItems, listSources } from './store.js';
 import { mcpContentHash, importByName, scanAllMcp, scanAllSkills, skillContentHash } from './import.js';
 
 export type DriftState = 'new' | 'updated' | 'conflict' | 'gone';
@@ -72,6 +82,24 @@ function label(kind: 'skill' | 'mcp'): string {
   return kind === 'skill' ? '技能' : 'MCP';
 }
 
+/** 库里登记的「来源路径 → 指纹」 */
+function sourceHashes(itemId: string): Map<string, string> {
+  return new Map(listSources(itemId).map(s => [s.path, s.contentHash]));
+}
+
+/**
+ * 某个来源相对库里登记的那份是否变了。
+ *
+ * **逐来源比，不是只比主来源**：同一条 `(kind, name)` 可能在两个 Agent 里都有
+ * 副本，主来源没变、副本变了，同样是「本机有什么变了」，只比主来源会漏报。
+ *
+ * 「库里没登记过这个路径」也当变了：要么是刚出现的新副本（应用一次就归位），
+ * 要么是旧版本把主来源指纹冒充进了副本行 —— 两种情况都该让它重新登记。
+ */
+function hashChanged(stored: Map<string, string>, sourcePath: string, hash: string): boolean {
+  return stored.get(sourcePath) !== hash;
+}
+
 /**
  * 扫描并比较。**纯读**。
  *
@@ -86,12 +114,16 @@ export function scanDrift(): DriftReport {
   const skills = scanAllSkills().sort(
     (a, b) => a.agentId.localeCompare(b.agentId) || a.name.localeCompare(b.name)
   );
-  const skillPrimary = new Map<string, (typeof skills)[number]>();
+  const skillByName = new Map<string, (typeof skills)[number][]>();
   for (const s of skills) {
     seen.add(`skill:${s.name}`);
-    if (!skillPrimary.has(s.name)) skillPrimary.set(s.name, s);
+    const arr = skillByName.get(s.name) ?? [];
+    arr.push(s);
+    skillByName.set(s.name, arr);
   }
-  for (const [name, primary] of skillPrimary) {
+  for (const [name, list] of skillByName) {
+    // 主来源 = 字典序第一个（与 runImport 同口径），正文以它为准
+    const primary = list[0];
     const item = findItem('skill', name);
     if (!item) {
       entries.push({
@@ -105,17 +137,31 @@ export function scanDrift(): DriftReport {
       });
       continue;
     }
-    if (item.contentHash === skillContentHash(primary)) continue; // 源没变
+    const stored = sourceHashes(item.id);
+    /* 主来源拿 `item.contentHash` 比 —— 它才是「正文是哪份源」的权威值。
+       不能拿 extension_source 里主来源那一行的指纹比：`importOne` 在
+       冲突分支也会把来源指纹刷成新值（正文却没换），用它判会让「冲突」
+       被一次应用静默抹掉（A168 §5）。副本行则用它自己登记的指纹。 */
+    const changed =
+      item.contentHash !== skillContentHash(primary)
+        ? primary
+        : list.slice(1).find(s => hashChanged(stored, s.dirPath, skillContentHash(s)));
+    if (!changed) continue; // 所有来源都没变
+    /* 副本变了不会覆盖正文（正文只跟主来源），所以它与 `locallyModified`
+       无关 —— 只有当变的是主来源时，应用才会真的替换正文，才可能是 conflict。 */
+    const isPrimary = changed === primary;
     entries.push({
       kind: 'skill',
       name,
       title: item.title ?? primary.title,
-      state: item.locallyModified ? 'conflict' : 'updated',
-      agentId: primary.agentId,
-      sourcePath: primary.dirPath,
-      detail: item.locallyModified
-        ? `${primary.agentId} 里的源变了，但你在 OPC 里改过这条`
-        : `${primary.agentId} 里的源文件变了`,
+      state: isPrimary && item.locallyModified ? 'conflict' : 'updated',
+      agentId: changed.agentId,
+      sourcePath: changed.dirPath,
+      detail: !isPrimary
+        ? `${changed.agentId} 里的副本变了（正文仍以 ${primary.agentId} 为准）`
+        : item.locallyModified
+          ? `${changed.agentId} 里的源变了，但你在 OPC 里改过这条`
+          : `${changed.agentId} 里的源文件变了`,
     });
   }
 
@@ -123,12 +169,15 @@ export function scanDrift(): DriftReport {
   const mcps = scanAllMcp().sort(
     (a, b) => a.agentId.localeCompare(b.agentId) || a.name.localeCompare(b.name)
   );
-  const mcpPrimary = new Map<string, (typeof mcps)[number]>();
+  const mcpByName = new Map<string, (typeof mcps)[number][]>();
   for (const m of mcps) {
     seen.add(`mcp:${m.name}`);
-    if (!mcpPrimary.has(m.name)) mcpPrimary.set(m.name, m);
+    const arr = mcpByName.get(m.name) ?? [];
+    arr.push(m);
+    mcpByName.set(m.name, arr);
   }
-  for (const [name, primary] of mcpPrimary) {
+  for (const [name, list] of mcpByName) {
+    const primary = list[0];
     const item = findItem('mcp', name);
     if (!item) {
       entries.push({
@@ -142,17 +191,25 @@ export function scanDrift(): DriftReport {
       });
       continue;
     }
-    if (item.contentHash === mcpContentHash(primary)) continue;
+    const stored = sourceHashes(item.id);
+    const changed =
+      item.contentHash !== mcpContentHash(primary)
+        ? primary
+        : list.slice(1).find(m => hashChanged(stored, m.sourcePath, mcpContentHash(m)));
+    if (!changed) continue;
+    const isPrimary = changed === primary;
     entries.push({
       kind: 'mcp',
       name,
       title: item.title ?? name,
-      state: item.locallyModified ? 'conflict' : 'updated',
-      agentId: primary.agentId,
-      sourcePath: primary.sourcePath,
-      detail: item.locallyModified
-        ? `${primary.agentId} 的配置变了，但你在 OPC 里改过这条`
-        : `${primary.agentId} 的配置里这条变了`,
+      state: isPrimary && item.locallyModified ? 'conflict' : 'updated',
+      agentId: changed.agentId,
+      sourcePath: changed.sourcePath,
+      detail: !isPrimary
+        ? `${changed.agentId} 的配置里这份副本变了（正文仍以 ${primary.agentId} 为准）`
+        : item.locallyModified
+          ? `${changed.agentId} 的配置变了，但你在 OPC 里改过这条`
+          : `${changed.agentId} 的配置里这条变了`,
     });
   }
 

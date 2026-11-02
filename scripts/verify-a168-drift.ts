@@ -285,16 +285,64 @@ ok(
 );
 ok(d10.counts.total === d10.entries.length, 'counts.total 与 entries 长度一致');
 
-section('11 零写入（拿文件树快照比）');
+section('11 副本（非主来源）变了也要报');
+/* 同一条技能在两个 Agent 里各有一份副本，内容不同（更接近真实：各自演化了）。
+   主来源 = 字典序第一个 = claude。改**gemini** 那份，差异检测必须发现。 */
+writeSkill('claude', 'delta', '# delta v1');
+const DELTA_GEMINI = writeSkill('gemini', 'delta', '# delta gemini');
+const deltaApplied = drift.applyDrift([{ kind: 'skill', name: 'delta' }]);
+ok(deltaApplied.results[0]?.outcome === 'added', 'delta 首次导入 → added', deltaApplied.results[0]?.outcome);
+const deltaItem = store.findItem('skill', 'delta');
+ok(deltaItem?.body?.includes('# delta v1') === true, '正文取的是主来源（claude）', deltaItem?.body);
+/* 关键：副本行的指纹必须是**它自己的**，不是主来源的。
+   以前这里靠 `{ ...payload }` 把主来源指纹套在副本上，这条断言就会红。 */
+const deltaGeminiSource = store.listSources(deltaItem!.id).find(s => s.agentId === 'gemini');
+ok(
+  deltaGeminiSource != null && deltaGeminiSource.contentHash !== deltaItem!.contentHash,
+  '副本来源存的是自己的指纹（不是主来源的）',
+  deltaGeminiSource?.contentHash?.slice(0, 12)
+);
+ok(
+  !drift.scanDrift().entries.some(e => e.name === 'delta'),
+  '刚导入完 delta 没有差异（逐来源口径下也一致）'
+);
+
+fs.writeFileSync(path.join(DELTA_GEMINI, 'SKILL.md'), skillText('delta', 'delta 的描述', '# delta gemini v2'), 'utf8');
+const d11 = drift.scanDrift();
+const deltaDrift = d11.entries.find(e => e.name === 'delta');
+ok(deltaDrift?.state === 'updated', '副本变了 → updated', deltaDrift?.state);
+ok(deltaDrift?.agentId === 'gemini', '报的是真正变了的那个来源（gemini）', deltaDrift?.agentId);
+ok(String(deltaDrift?.detail).includes('gemini'), 'detail 指明了哪个来源变了', deltaDrift?.detail);
+ok(
+  store.findItem('skill', 'delta')?.body?.includes('# delta v1') === true,
+  '扫描没有改正文（副本变不影响正文）',
+  store.findItem('skill', 'delta')?.body
+);
+/* 副本变化应用后应当只是「重新登记」，不改正文、也不再报差异。
+   `updated` 是可能的（若 importOne 认为需更新），但正文必须还是主来源那份。 */
+const applied11 = drift.applyDrift([{ kind: 'skill', name: 'delta' }]);
+ok(
+  !applied11.report.entries.some(e => e.name === 'delta'),
+  '应用副本差异后 delta 的差异清空'
+);
+ok(
+  store.findItem('skill', 'delta')?.body?.includes('# delta v1') === true,
+  '**正文仍然以主来源为准**（副本不会覆盖它）',
+  store.findItem('skill', 'delta')?.body
+);
+
+section('12 零写入（拿文件树快照比）');
 const after = snapshot(HOME);
 const added = [...after.keys()].filter(k => !before.has(k));
 const changed = [...after.keys()].filter(k => before.has(k) && before.get(k) !== after.get(k));
 const removed = [...before.keys()].filter(k => !after.has(k));
 /* 我们自己在夹具里增删过文件，所以这里只断言「扫描/应用没有碰**别的**文件」：
-   gamma 是我们新写的、beta 是我们删的，除此之外不该有任何变化。 */
-const unexpectedAdded = added.filter(k => !k.includes('gamma'));
+   gamma / delta 是我们新写的、beta 是我们删的，除此之外不该有任何变化。 */
+const unexpectedAdded = added.filter(k => !k.includes('gamma') && !k.includes('delta'));
 const unexpectedRemoved = removed.filter(k => !k.includes('beta'));
-const unexpectedChanged = changed.filter(k => !k.includes('alpha') && !k.includes('mcp.json'));
+const unexpectedChanged = changed.filter(
+  k => !k.includes('alpha') && !k.includes('mcp.json') && !k.includes('delta')
+);
 ok(unexpectedAdded.length === 0, '除了我们自己的夹具，没有新增文件', unexpectedAdded.join(', '));
 ok(unexpectedRemoved.length === 0, '除了我们删的 beta，没有文件消失', unexpectedRemoved.join(', '));
 ok(unexpectedChanged.length === 0, '除了我们改的 alpha / mcp.json，没有文件被改写', unexpectedChanged.join(', '));

@@ -858,6 +858,13 @@ export interface ExtensionItem {
 export interface ExtensionListItem extends ExtensionItem {
   sources: ExtensionSourceRef[];
   sourceCount: number;
+  /**
+   * 还有几个 Agent 真能收到这一份（通道 × 本机实存目录 × 不由自己持有）。
+   * 0 = 无可分发目标，开关置灰；口径见 `server/extensions/targets.ts`。
+   */
+  targetCount: number;
+  /** `targetCount > 0` 的便捷布尔；老后端缺这个字段时按「可分发」处理 */
+  distributable: boolean;
 }
 
 export interface ExtensionStats {
@@ -874,6 +881,34 @@ export interface ExtensionTargetSpec {
   skillsDir: string | null;
   mode: ExtensionMountMode;
   note: string;
+}
+
+/**
+ * 能力矩阵的六档状态（A164 方案 A）。
+ *
+ * 与 `server/extensions/targets.ts` 的 `MatrixState` 一一对应 —— 但**顺序、
+ * 文案、是否可用全部由后端下发**（`matrixStates`），前端只按 `rank` 渲染。
+ * 这里只声明形状，不复制那一份常量。
+ */
+export type ExtensionMatrixState =
+  | 'ready'
+  | 'injected'
+  | 'sealed'
+  | 'planned'
+  | 'local-only'
+  | 'unsupported';
+
+export interface ExtensionMatrixStateMeta {
+  state: ExtensionMatrixState;
+  label: string;
+  /** 组顺序的唯一来源：越小越靠前 */
+  rank: number;
+  /** 这一份能不能被该 Agent 用上 */
+  available: boolean;
+  /** 状态点取哪一类语义色（具体色值由 CSS 令牌决定） */
+  tone: 'ok' | 'warn' | 'brand' | 'muted';
+  /** 说明浮层里的定义 */
+  hint: string;
 }
 
 export interface ExtensionImportReport {

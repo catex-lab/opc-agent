@@ -898,6 +898,16 @@ select:focus-visible {
   --tc-status-danger: #C0392B;   /* 4.99:1 */
   --tc-status-muted: #6E6E6E;    /* 4.68:1（比 secondary 深一档：secondary 对 chrome 只有 4.35） */
 
+  /* ── 扩展开关（用户确认的绿色方案）──
+   *
+   * 这两条只服务「开关」这一种控件：开启 = --ext-on，含敏感内容的条目开启 =
+   * --ext-warn。淡染底一律用 color-mix 从这里算，**规则里不写死色值** ——
+   * 深色主题换一个提亮值，底衬跟着变。
+   * 其余图标（刷新 / 搜索 / 条目图标）仍保持单色，不借用这两个令牌。
+   */
+  --ext-on: #2ea043;
+  --ext-warn: #9a6700;
+
   /* ── A159：能力标签 / 场景标签的文字色 ─────────────────────────────
    *
    * 这两组原先都是**裸 hex**，并且直接当「文字色」写在 chip 上：
@@ -949,6 +959,10 @@ select:focus-visible {
   --tc-status-warn: #E89B4A;
   --tc-status-danger: #F0716B;
   --tc-status-muted: #a3a3a3;
+
+  /* 扩展开关：深色下把绿提亮，淡染底仍由 color-mix 生成 */
+  --ext-on: color-mix(in oklab, #2ea043 78%, white 22%);
+  --ext-warn: #d29922;
 
   /* A159：能力 / 场景标签的深色档。不是把浅色值提亮一点，而是重算过
      对比度（对 10% / 12% 同色底，背景含 #1b1b1b / #1c1c1c / #262626）。 */
@@ -5273,3 +5287,253 @@ html[data-opc-glass='1'] t-chat-sender {
   line-height: 1.7;
   color: var(--td-text-color-placeholder);
 }
+
+/* ===== 扩展开关 =====
+ *
+ * 全站唯一的一种「电源开关」：列表单条、分组头、以后详情页总开关都复用它。
+ * 颜色只走 --ext-on / --ext-warn，淡染底一律 color-mix（不写死 rgba/hex）。
+ *
+ * 状态：
+ *   aria-checked=false  描边电源图标 + 中性灰，无背景
+ *   aria-checked=true   实心图标 + 绿色，12% 绿淡染底（hover 18%）
+ *   aria-checked=mixed  绿色描边 + 图标半填充（分组头部分启用）
+ *   data-tone=warn      含敏感内容条目开启态 → 琥珀
+ *   aria-disabled=true  中性灰 + 40% 透明，明显不可点
+ *
+ * 过渡只做 color / background-color / box-shadow，120ms —— 不缩放、不弹跳。
+ */
+.ext-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background-color: transparent;
+  color: var(--td-text-color-secondary);
+  transition: color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.ext-switch:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.ext-switch[aria-checked='true'] {
+  color: var(--ext-on);
+  background-color: color-mix(in srgb, var(--ext-on) 12%, transparent);
+}
+
+.ext-switch[aria-checked='true']:hover {
+  background-color: color-mix(in srgb, var(--ext-on) 18%, transparent);
+}
+
+.ext-switch[aria-checked='mixed'] {
+  color: var(--ext-on);
+  border-color: color-mix(in srgb, var(--ext-on) 65%, transparent);
+  background-color: transparent;
+}
+
+.ext-switch[aria-checked='mixed']:hover {
+  background-color: color-mix(in srgb, var(--ext-on) 10%, transparent);
+}
+
+/* 内部半填充：图标 svg 的 fill 由这里给出，避免在组件里拼颜色字符串 */
+.ext-switch[aria-checked='mixed'] svg {
+  fill: color-mix(in srgb, var(--ext-on) 45%, transparent);
+}
+
+.ext-switch[data-tone='warn'][aria-checked='true'] {
+  color: var(--ext-warn);
+  background-color: color-mix(in srgb, var(--ext-warn) 12%, transparent);
+}
+
+.ext-switch[data-tone='warn'][aria-checked='true']:hover {
+  background-color: color-mix(in srgb, var(--ext-warn) 18%, transparent);
+}
+
+/* 不可分发 / 不可用：中性灰 + 40%，不保留任何绿色描边或半填充 ——
+   置灰代表「没有对象可切换」，不能看起来像 mixed（那会被读成部分启用）。 */
+.ext-switch[aria-disabled='true'] {
+  color: var(--td-text-color-placeholder);
+  background-color: transparent;
+  border-color: transparent;
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ext-switch[aria-disabled='true'] svg {
+  fill: none;
+}
+
+.ext-switch[aria-disabled='true']:hover {
+  background-color: transparent;
+}
+
+.ext-switch:focus-visible {
+  outline: 2px solid var(--ext-on);
+  outline-offset: 2px;
+}
+
+/* ── 关于页 · 更新（与 .tc-about-* 同一套文档流）─────────────────────
+ *
+ * 更新区是「关于」的一部分，不另起卡片：沿用分区眉标 + 发丝线，
+ * 状态文字与风险说明都走正文/次级两档字号，不引入第三套层级。
+ */
+.tc-update-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.tc-update-version {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.tc-update-label {
+  font-size: var(--text-secondary);
+  color: var(--td-text-color-secondary);
+}
+
+.tc-update-checked {
+  font-size: var(--text-caption);
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-update-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.tc-update-status {
+  margin-top: 12px;
+}
+
+.tc-update-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-body);
+  line-height: 1.6;
+  color: var(--td-text-color-primary);
+}
+
+.tc-update-text svg {
+  flex: none;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-update-text--busy {
+  color: var(--td-text-color-secondary);
+}
+
+.tc-update-spin {
+  animation: tc-spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-update-spin {
+    animation: none;
+  }
+}
+
+.tc-update-dim {
+  font-size: var(--text-secondary);
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-update-notes {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: var(--text-secondary);
+  line-height: 1.7;
+  color: var(--td-text-color-secondary);
+  white-space: pre-wrap;
+}
+
+.tc-update-note {
+  margin: 8px 0 0;
+  font-size: var(--text-secondary);
+  line-height: 1.7;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-update-note code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-update-note--error {
+  color: var(--td-error-color);
+}
+
+.tc-update-risk {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--tc-edge);
+}
+
+.tc-update-incompatible {
+  margin-top: 10px;
+}
+
+.tc-update-available,
+.tc-update-ready {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tc-update-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tc-update-error .tc-update-text {
+  color: var(--td-error-color);
+}
+
+.tc-update-error .tc-update-text svg {
+  color: var(--td-error-color);
+}
+
+.tc-update-link {
+  font-size: var(--text-secondary);
+  color: var(--td-brand-color);
+  text-decoration: underline;
+}
+
+.tc-update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tc-update-bar {
+  position: relative;
+  width: 100%;
+  max-width: 340px;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background-color: var(--td-bg-color-component);
+}
+
+.tc-update-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background-color: var(--td-brand-color);
+  transition: width 120ms linear;
+}
+

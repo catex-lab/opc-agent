@@ -18,9 +18,27 @@
 
 import crypto from 'node:crypto';
 import db from '../db.js';
-import type { MountMode } from './targets.js';
+import { distributableTargetCount, type MountMode } from './targets.js';
 
 export type ExtensionKind = 'skill' | 'mcp';
+
+/**
+ * 事务包裹：node:sqlite 的 DatabaseSync 在当前 @types/node 里没有 `.transaction()`
+ * 方法（db.ts 里也是手写 `BEGIN/COMMIT`），所以这里直接 exec 两段 SQL。
+ * 所有写多张表的操作都应该走这里，否则异常会留下半套数据（importOne 插了 item
+ * 但 source 没登记、deleteItem 删了 item 但 source 还在等）。
+ */
+function tx<T>(fn: () => T): T {
+  db.exec('BEGIN');
+  try {
+    const r = fn();
+    db.exec('COMMIT');
+    return r;
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+}
 
 export interface ExtensionItem {
   id: string;
@@ -167,6 +185,31 @@ function upsertSource(itemId: string, agentId: string, sourcePath: string, conte
   ).run(crypto.randomUUID(), itemId, agentId, sourcePath, contentHash, at);
 }
 
+/**
+ * 单独登记一个来源，**不改正文**。
+ *
+ * 为什么不用 `importOne`：`importOne` 拿传入的 `contentHash` 跟库里的指纹比，
+ * 不同就当作「源变了」并覆盖正文。而副本来源（同一条 `(kind, name)` 在第二个
+ * Agent 里的那份）**永远不该改正文** —— 正文以主来源为准，副本只是「这条在
+ * 别处也有」的证据。以前这里是靠「把主来源的指纹冒充副本指纹」蒙混过去的，
+ * 副作用是 `extension_source.content_hash` 记的根本不是它自己的指纹，
+ * 差异检测也就看不出「主来源没变、副本变了」（A168 / P4 遗留缺陷）。
+ *
+ * 返回 false 表示条目还没进库（正常流程里主来源已经先 importOne 过了）。
+ */
+export function registerSource(
+  kind: ExtensionKind,
+  name: string,
+  agentId: string,
+  sourcePath: string,
+  contentHash: string
+): boolean {
+  const item = findItem(kind, name);
+  if (!item) return false;
+  upsertSource(item.id, agentId, sourcePath, contentHash);
+  return true;
+}
+
 /** 本次扫描没见到的来源要清掉，否则「N 处重复」会永远显示旧数字 */
 export function pruneSources(itemId: string, seenPaths: readonly string[]): void {
   const keep = new Set(seenPaths);
@@ -225,30 +268,34 @@ export function importOne(p: ImportPayload): { outcome: ImportOutcome; itemId: s
   const at = nowIso();
 
   if (!existing) {
-    const id = crypto.randomUUID();
-    const bodyHash = hashOf(p.body ?? '');
-    db.prepare(
-      `INSERT INTO extension_item
-         (id, kind, name, title, description, body, config_json, content_hash, body_hash,
-          revision, locally_modified, blocked, blocked_reason, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, 1, ?, ?)`
-    ).run(
-      id,
-      p.kind,
-      p.name,
-      p.title,
-      p.description,
-      p.body,
-      p.configJson,
-      p.contentHash,
-      bodyHash,
-      p.blocked ? 1 : 0,
-      p.blockedReason,
-      at,
-      at
-    );
-    upsertSource(id, p.agentId, p.sourcePath, p.contentHash);
-    return { outcome: 'added', itemId: id };
+    // 新增：插 item + 登记 source，必须同事务（插了 item 但 source 没登记会导致
+    // 这条永远显示「没有来源」，重扫也不能自动修复）。
+    return tx(() => {
+      const id = crypto.randomUUID();
+      const bodyHash = hashOf(p.body ?? '');
+      db.prepare(
+        `INSERT INTO extension_item
+           (id, kind, name, title, description, body, config_json, content_hash, body_hash,
+            revision, locally_modified, blocked, blocked_reason, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, 1, ?, ?)`
+      ).run(
+        id,
+        p.kind,
+        p.name,
+        p.title,
+        p.description,
+        p.body,
+        p.configJson,
+        p.contentHash,
+        bodyHash,
+        p.blocked ? 1 : 0,
+        p.blockedReason,
+        at,
+        at
+      );
+      upsertSource(id, p.agentId, p.sourcePath, p.contentHash);
+      return { outcome: 'added' as const, itemId: id };
+    });
   }
 
   // 源没变：只刷新 seen_at（由 upsertSource 做），正文一律不动
@@ -263,28 +310,30 @@ export function importOne(p: ImportPayload): { outcome: ImportOutcome; itemId: s
     return { outcome: 'conflict', itemId: existing.id };
   }
 
-  // 源变了，本地没改过 ⇒ 跟上
-  const bodyHash = hashOf(p.body ?? '');
-  db.prepare(
-    `UPDATE extension_item
-        SET title = ?, description = ?, body = ?, config_json = ?,
-            content_hash = ?, body_hash = ?, revision = revision + 1,
-            blocked = ?, blocked_reason = ?, updated_at = ?
-      WHERE id = ?`
-  ).run(
-    p.title,
-    p.description,
-    p.body,
-    p.configJson,
-    p.contentHash,
-    bodyHash,
-    p.blocked ? 1 : 0,
-    p.blockedReason,
-    at,
-    existing.id
-  );
-  upsertSource(existing.id, p.agentId, p.sourcePath, p.contentHash);
-  return { outcome: 'updated', itemId: existing.id };
+  // 源变了，本地没改过 ⇒ 跟上。UPDATE + upsertSource 同事务。
+  return tx(() => {
+    const bodyHash = hashOf(p.body ?? '');
+    db.prepare(
+      `UPDATE extension_item
+          SET title = ?, description = ?, body = ?, config_json = ?,
+              content_hash = ?, body_hash = ?, revision = revision + 1,
+              blocked = ?, blocked_reason = ?, updated_at = ?
+        WHERE id = ?`
+    ).run(
+      p.title,
+      p.description,
+      p.body,
+      p.configJson,
+      p.contentHash,
+      bodyHash,
+      p.blocked ? 1 : 0,
+      p.blockedReason,
+      at,
+      existing.id
+    );
+    upsertSource(existing.id, p.agentId, p.sourcePath, p.contentHash);
+    return { outcome: 'updated' as const, itemId: existing.id };
+  });
 }
 
 /**
@@ -371,17 +420,31 @@ export function revertNormalized(kind: ExtensionKind, name: string): ExtensionIt
   return findItem(kind, name);
 }
 
-/** 删 OPC 副本。**只删库里的行，不碰源文件。** */
+/** 删 OPC 副本。**只删库里的行，不碰源文件。** 三张表 DELETE 同事务。 */
 export function deleteItem(kind: ExtensionKind, name: string): boolean {
   const existing = findItem(kind, name);
   if (!existing) return false;
-  db.prepare('DELETE FROM extension_source WHERE item_id = ?').run(existing.id);
-  db.prepare('DELETE FROM extension_target WHERE item_id = ?').run(existing.id);
-  db.prepare('DELETE FROM extension_item WHERE id = ?').run(existing.id);
+  tx(() => {
+    db.prepare('DELETE FROM extension_source WHERE item_id = ?').run(existing.id);
+    db.prepare('DELETE FROM extension_target WHERE item_id = ?').run(existing.id);
+    db.prepare('DELETE FROM extension_item WHERE id = ?').run(existing.id);
+  });
   return true;
 }
 
-/** 冲突三选一：用源的覆盖（把 locally_modified 清掉） */
+/** 冲突三选一：用源的覆盖（把 locally_modified 清掉）。
+ *
+ * 接受之后调 `refreshItem` 才会真正把正文换成源的样子 —— **调用顺序很重要**：
+ * 必须先 refresh（确认源还在磁盘上、能正常读回），再清标志。否则 refresh 失败
+ * 时，用户本地编辑已经丢了。index.ts 的路由已经按这个顺序调：先 acceptSource
+ * 再 refreshItem —— 但如果 refreshItem 在 importOne 阶段碰到 `locally_modified=1`
+ * 会直接返回 conflict，所以 acceptSource **必须先清标志**。
+ *
+ * 解：acceptSource 调了之后，后续 refreshItem 的 importOne 就不会因 locally_modified
+ * 挡下来。如果 refreshItem 还是 missing，那说明源真的没了；此时 locally_modified
+ * 已经是 0，但内容还是之前那份（refresh 失败不会动正文）。总比「源没了但本地
+ * 内容先被清再被覆盖」好。
+ */
 export function acceptSource(kind: ExtensionKind, name: string): boolean {
   const existing = findItem(kind, name);
   if (!existing) return false;
@@ -390,6 +453,59 @@ export function acceptSource(kind: ExtensionKind, name: string): boolean {
     existing.id
   );
   return true;
+}
+
+/** 单条开关：让这条扩展参与分发/注入（enabled=true）还是彻底跳过（false）。 */
+export function toggleEnabled(kind: ExtensionKind, name: string, enabled: boolean): ExtensionItem | undefined {
+  const existing = findItem(kind, name);
+  if (!existing) return undefined;
+  db.prepare('UPDATE extension_item SET enabled = ?, updated_at = ? WHERE kind = ? AND name = ?').run(
+    enabled ? 1 : 0,
+    nowIso(),
+    kind,
+    name
+  );
+  return findItem(kind, name);
+}
+
+/** kind 级整批开关的结果：改了几条、因无可分发跳过几条。 */
+export interface KindToggleResult {
+  /** 真的被改写的条数（已处于目标值的不算） */
+  changed: number;
+  /** 因为没有分发目标而被跳过的条数 */
+  skipped: number;
+}
+
+/**
+ * kind 级整批开关：**只作用于有分发目标的条目**。
+ *
+ * 为什么不能一把 UPDATE 全改：`enabled` 对「无可分发」的条目没有任何效果
+ * （没有任何 Agent 会收到它），批量把它写成 1 只会留下一堆看着开着、
+ * 实际无效的死配置；写成 0 又会被误读成「用户主动关了一条」。
+ * 所以这类条目**保持原值**，只把跳过的数量回报给界面去解释。
+ *
+ * 已处于目标值的可分发条目也不重复写入（`updated_at` 不因一次无效点击而变）。
+ */
+export function toggleKindEnabled(kind: ExtensionKind, enabled: boolean): KindToggleResult {
+  const at = nowIso();
+  const items = listItems().filter(it => it.kind === kind);
+  const update = db.prepare('UPDATE extension_item SET enabled = ?, updated_at = ? WHERE id = ?');
+  let changed = 0;
+  let skipped = 0;
+  for (const it of items) {
+    const targetCount = distributableTargetCount({
+      kind: it.kind,
+      presentAgentIds: listSources(it.id).map(s => s.agentId),
+    });
+    if (targetCount === 0) {
+      skipped += 1;
+      continue;
+    }
+    if (it.enabled === enabled) continue;
+    update.run(enabled ? 1 : 0, at, it.id);
+    changed += 1;
+  }
+  return { changed, skipped };
 }
 
 export interface ExtensionStats {
