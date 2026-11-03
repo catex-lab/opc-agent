@@ -233,7 +233,7 @@ console.log('\n[1] 红框1：原生事件行不再出现在消息流里');
 }
 
 // ============= [2] 红框2：过程与答案同一平面，各自折叠 =============
-console.log('\n[2] 红框2：无总条/导轨/分隔线，过程块各自收起，旁白留在原地');
+console.log('\n[2] 红框2：无总条/导轨/分隔线，整轮收成一条轨迹，旁白随轨迹收起');
 {
   const { ctx, page } = await newPage();
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
@@ -245,18 +245,19 @@ console.log('\n[2] 红框2：无总条/导轨/分隔线，过程块各自收起�
   ok((await page.locator('.tc-answer-divider').count()) === 0, '答案前没有分隔线');
   ok((await page.locator('.tc-proc-note').count()) === 0, '旁白不再降档（无 .tc-proc-note）');
 
-  // 过程块各自管自己的折叠：思考收起、轨迹收起，但节点都在 DOM 里
-  const think = page.locator('.tc-thinking').first();
-  ok((await think.count()) > 0, '思考块在 DOM 里（没有被卸载）');
-  ok((await think.evaluate(el => el.open).catch(() => null)) === false, '有答案 → 思考块默认收起');
+  // 新语义：答案前的思考/旁白/工具全部归入同一条轨迹，整轮收成一行摘要。
+  // 依据：src/trace/rows.ts 的 canGroupProcess/buildTraceRows + ChatMessages.tsx
+  // 的整轮归并分支；AgentTrace 收起态直接卸载步骤子树。
+  ok((await page.locator('[data-trace]').count()) === 1, '整轮只有一条轨迹（不再按工具段拆成多条）');
   const traceBar = page.locator('[data-steps-bar]').first();
   ok((await traceBar.count()) > 0, '轨迹汇总行在 DOM 里');
   ok((await traceBar.getAttribute('aria-expanded')) === 'false', '有答案 → 轨迹默认收起');
   ok((await page.locator('[data-trace-scroll]').count()) === 0, '收起时步骤不渲染');
+  ok((await page.locator('.tc-thinking').count()) === 0, '思考并入轨迹后，收起态不在消息流里单独占版面');
 
-  // 旁白不再被收走：它是正文的一部分，直接可见（Trae 同一平面）
+  // 旁白属于过程：收起态不可见，展开后才随步骤一起出现（见 [3]）。
   const body = await page.evaluate(DEEP_TEXT);
-  ok(body.includes(NARRATION_2), '中途旁白直接可见（不再被总条收走）');
+  ok(!body.includes(NARRATION_2), '收起态不直接铺开中途旁白（已随轨迹收走）');
   ok(body.includes('GPT-6.1 Terra'), '答案正文可见', `${body.length} 字`);
 
   await page.screenshot({ path: join(OUT, 'a149-collapsed.png'), fullPage: false });
@@ -277,23 +278,32 @@ console.log('\n[3] 红框2：旁白 14px 与答案同档；思考正文是浅灰
   });
   ok(answerSize === '14px', '答案正文 14px（--text-body-lg）', String(answerSize));
 
-  // 旁白与答案都经 AnswerMarkdown 渲染：逐块读 [data-answer-markdown] 的字号，
-  // 全部必须同档（14px）—— A152 那套「旁白降 13px」的分支已删。
-  const noteSize = await page.evaluate(() =>
-    [...document.querySelectorAll('[data-answer-markdown]')].map(el => getComputedStyle(el).fontSize)
-  );
-  ok(noteSize.length >= 4, `过程旁白 + 答案共 ${noteSize.length} 个文本块`, String(noteSize.length));
+  // 新语义：旁白已并入轨迹，答案仍走 AnswerMarkdown。
+  // 依据：src/trace/rows.ts 把 text 块转成 narration 行，AgentTrace 用
+  // .tc-trace-narration 渲染；traceFold.css 让它继承 .tc-trace 的 14px。
+  await page.click('[data-steps-bar]');
+  await page.waitForTimeout(400);
+  const foldThinkOpen = await page.evaluate(() => document.querySelector('.tc-think-note')?.open ?? null);
+  ok(foldThinkOpen === false, '正文已出现 → 轨迹内思考默认收起（点开才看正文）', String(foldThinkOpen));
+  const noteSize = await page.evaluate(() => {
+    const answer = [...document.querySelectorAll('[data-answer-markdown]')].map(el => getComputedStyle(el).fontSize);
+    const narr = [...document.querySelectorAll('.tc-trace-narration')].map(el => getComputedStyle(el).fontSize);
+    return { answer, narr };
+  });
+  ok(noteSize.answer.length === 1, `答案正文 1 块（旁白不再占用正文块）`, String(noteSize.answer.length));
+  ok(noteSize.narr.length === 3, `轨迹内 3 段旁白全部渲染`, String(noteSize.narr.length));
   ok(
-    noteSize.every(s => s === '14px'),
+    [...noteSize.answer, ...noteSize.narr].every(s => s === '14px'),
     '旁白与答案全部 14px 同档（不再有 13px 降档）',
-    noteSize.join(',')
+    [...noteSize.answer, ...noteSize.narr].join(',')
   );
 
-  // 思考正文：展开后是浅灰圆角卡片，不是左细线
-  await page.locator('.tc-thinking > summary').first().click();
+  // 思考正文：展开轨迹后展开轨迹内思考，仍是浅灰圆角卡片，不是左细线。
+  // 依据：AgentTrace 的 ThinkingNode 用 .tc-think-note-body 渲染同一灰卡。
+  await page.locator('[data-trace-thinking] summary').first().click();
   await page.waitForTimeout(300);
   const thinkCard = await page.evaluate(() => {
-    const el = document.querySelector('.tc-think-body');
+    const el = document.querySelector('.tc-think-note-body');
     if (!el) return null;
     const cs = getComputedStyle(el);
     const probe = document.createElement('span');

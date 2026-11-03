@@ -293,37 +293,50 @@ console.log('\n[2] 完成态默认收起，点开才出现步骤');
   const totalDiff = await page.locator('[data-diff-total]').first().getAttribute('data-diff-total');
   ok(totalDiff === '+139 -16', '汇总行是各步骤之和（+109+30）', String(totalDiff));
 
-  // ---- [5] 嵌套思考 ----
-  const nest = await page.evaluate(() => {
+  // ---- [5] 思考归并 ----
+  // 依据：src/trace/rows.ts 的 buildTraceRows 把答案前的 thinking 也压进同一条行序列；
+  // 首条 thinking 没有父级 → AgentTrace 渲染成 .tc-trace-solo 独立行；
+  // 紧跟工具的 thinking → 由 AgentTrace 的 ThinkingNode 挂在步骤下面。
+  const thinkRows = await page.evaluate(() => {
     const nodes = [...document.querySelectorAll('[data-trace-thinking]')];
-    if (nodes.length !== 1) return { count: nodes.length };
-    const n = nodes[0];
-    const step = n.closest('[data-tool-step]');
-    const summaryEl = n.querySelector('.tc-thinking > summary');
-    const nestedBox = n.getBoundingClientRect();
-    const headBox = step?.querySelector('.tc-step-head')?.getBoundingClientRect();
-    return {
-      count: 1,
-      parentVerb: step?.getAttribute('data-trace-verb') ?? null,
-      text: summaryEl?.textContent ?? '',
-      indent: headBox ? nestedBox.left - headBox.left : null,
-      border: n ? getComputedStyle(n).borderLeftStyle : '',
-    };
+    return nodes.map(n => {
+      const step = n.closest('[data-tool-step]');
+      const summaryEl = n.querySelector('summary');
+      const nestedBox = n.getBoundingClientRect();
+      const headBox = step?.querySelector('.tc-step-head')?.getBoundingClientRect();
+      return {
+        id: n.getAttribute('data-trace-thinking'),
+        parentVerb: step?.getAttribute('data-trace-verb') ?? null,
+        text: summaryEl?.textContent ?? '',
+        indent: headBox ? nestedBox.left - headBox.left : 0,
+        border: getComputedStyle(n).borderLeftStyle,
+        solo: !!n.closest('.tc-trace-solo'),
+      };
+    });
   });
-  ok(nest.count === 1, '开头的思考不进轨迹，只有紧跟工具的那条嵌套', String(nest.count));
-  ok(nest.parentVerb === '检查', '思考挂在对应步骤（构建）下面', String(nest.parentVerb));
-  ok((nest.text ?? '').includes('深度思考'), '嵌套节点标题是「深度思考」', nest.text ?? '');
-  ok((nest.text ?? '').includes('字'), '保留字数（用户口径：保留）', nest.text ?? '');
-  ok((nest.text ?? '').includes('s'), '保留秒数', nest.text ?? '');
-  ok((nest.indent ?? 0) > 8, '嵌套节点有缩进', `${Math.round(nest.indent ?? 0)}px`);
-  ok(nest.border === 'solid', '嵌套节点带连接线', nest.border);
+  ok(thinkRows.length === 2, '两条思考都在同一条轨迹里（开头一条 + 构建后一条）', String(thinkRows.length));
 
-  // 开头的思考仍在轨迹之外（老观感不变）
+  const nested = thinkRows.find(r => r.parentVerb === '检查');
+  ok(!!nested, '构建后的思考挂在对应步骤（检查）下面', thinkRows.map(r => r.parentVerb).join(','));
+  ok((nested?.text ?? '').includes('深度思考'), '嵌套节点标题是「深度思考」', nested?.text ?? '');
+  ok((nested?.text ?? '').includes('字'), '保留字数（用户口径：保留）', nested?.text ?? '');
+  ok((nested?.text ?? '').includes('s'), '保留秒数', nested?.text ?? '');
+  ok((nested?.indent ?? 0) > 8, '嵌套节点有缩进', `${Math.round(nested?.indent ?? 0)}px`);
+  ok(nested?.border === 'solid', '嵌套节点带连接线', String(nested?.border));
+
+  const leading = thinkRows.find(r => !r.parentVerb);
+  ok(
+    !!leading && leading.solo,
+    '开头的思考作为轨迹内独立行（不再游离在轨迹外）',
+    leading ? `solo=${leading.solo}` : 'missing'
+  );
+
+  // 整轮归并后，轨迹之外不应再有游离的思考块
   const outsideThinking = await page.evaluate(() => {
     const all = [...document.querySelectorAll('.tc-thinking')];
     return all.filter(el => !el.closest('[data-trace]')).length;
   });
-  ok(outsideThinking === 1, '开头的思考仍在轨迹之外单独渲染', String(outsideThinking));
+  ok(outsideThinking === 0, '轨迹之外不再有游离的思考块', String(outsideThinking));
 
   await page.screenshot({ path: join(OUT, 'a36-trace.png'), fullPage: false });
   await ctx.close();

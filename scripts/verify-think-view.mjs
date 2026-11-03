@@ -262,24 +262,26 @@ const states = await page.evaluate(() => {
     noteCount: document.querySelectorAll('.tc-think-note').length,
   };
 });
-ok(states.count === 4, '消息级思考 4 条（无 thinking 块的那条不留空壳）', String(states.count));
-ok(states.formats.join(',') === 'raw,summary,raw,raw', '格式标记如实透传', states.formats.join(','));
+// 依据：src/trace/rows.ts + ChatMessages.tsx 的整轮归并——
+// m5 同时有思考/工具/正文，它的两条思考已并入轨迹，不再是消息级 .tc-think。
+ok(states.count === 3, '消息级思考 3 条（轨迹内的思考不再单独成块，无 thinking 块的消息不留空壳）', String(states.count));
+ok(states.formats.join(',') === 'raw,summary,raw', '格式标记如实透传', states.formats.join(','));
 ok(states.badges[0] === null, 'raw 不挂角标', String(states.badges[0]));
 ok(states.badges[1] === '摘要', 'summary 挂「摘要」角标', String(states.badges[1]));
 ok(/思考/.test(states.heads[0]), '头部是「思考」', states.heads[0]);
 ok(states.metaTexts.some(t => /^\d+\s*字$/.test(t)), '头部保留字数（用户口径：保留）', states.metaTexts.join(' / '));
 ok(states.metaTexts.some(t => /^\d+\s*s$/.test(t)), '头部保留耗时（数字 + s）', states.metaTexts.join(' / '));
-ok(states.bodyCount === 4, '每个消息级思考块有正文容器', String(states.bodyCount));
+ok(states.bodyCount === 3, '每个消息级思考块有正文容器', String(states.bodyCount));
 
 // ── [2] 展开策略矩阵 ─────────────────────────────────────────────────
 console.log('\n[2] 展开策略：正文出现就折叠上面的');
 const openState = await page.evaluate(() =>
   [...document.querySelectorAll('.tc-think')].map(n => n.open)
 );
+ok(openState.length === 3, '只剩 3 条消息级思考（m5 的思考已并入轨迹）', String(openState.length));
 ok(openState[0] === false, '历史消息（有正文）的思考折叠', String(openState[0]));
-ok(openState[1] === false, '最新一条「已完成且有正文」也折叠（覆盖 A 的默认展开）', String(openState[1]));
-ok(openState[2] === false, '正文已出现的消息，上方思考折叠', String(openState[2]));
-ok(openState[3] === true, '最新一条「还没有正文」的思考展开（过程此刻就是内容）', String(openState[3]));
+ok(openState[1] === false, '「已完成且有正文」也折叠（覆盖 A 的默认展开）', String(openState[1]));
+ok(openState[2] === true, '最新一条「还没有正文」的思考展开（过程此刻就是内容）', String(openState[2]));
 
 // ── [3] 正文视觉契约（灰卡，2026-10-30 改版）──────────────────────
 console.log('\n[3] 正文视觉契约：浅灰圆角卡片 + 14px secondary + 正体');
@@ -423,8 +425,8 @@ await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(1200);
 const afterReload = await page.evaluate(() => [...document.querySelectorAll('.tc-think')].map(n => n.open));
 ok(
-  JSON.stringify(afterReload) === JSON.stringify([false, false, false, true]),
-  '刷新后回到默认策略（只有「正在思考且无正文」那条展开），不靠持久化状态',
+  JSON.stringify(afterReload) === JSON.stringify([false, false, true]),
+  '刷新后回到默认策略（只剩消息级 3 条，只有「正在思考且无正文」那条展开），不靠持久化状态',
   JSON.stringify(afterReload)
 );
 
@@ -449,15 +451,17 @@ await page.waitForTimeout(500);
 const expandedFold = await page.evaluate(() => ({
   fold: document.querySelector('[data-trace-fold]')?.getAttribute('data-fold') ?? null,
   noteOpen: document.querySelector('.tc-think-note')?.open ?? null,
-  // 轨迹内思考是独立一类，不能被数进 `.tc-think`（否则消息级的两条断言会串味）
+  // 轨迹内思考是独立一类，不能被数进 `.tc-think`（否则消息级断言会串味）。
+  // 依据：src/trace/rows.ts buildTraceRows 把 m5 的开头思考与工具后思考都压进轨迹，
+  // AgentTrace 用 .tc-think-note 渲染；消息级只剩 m1 / m4 / m6 三条。
   noteCount: document.querySelectorAll('.tc-think-note').length,
   messageThinkCount: document.querySelectorAll('.tc-think').length,
 }));
 ok(expandedFold.fold === '1', '展开后 data-fold=1（过渡动画的状态锚点）', String(expandedFold.fold));
 ok(expandedFold.noteOpen === false, '正文已出现 → 轨迹内思考也收起（不再自动铺开）', String(expandedFold.noteOpen));
 ok(
-  expandedFold.noteCount === 1 && expandedFold.messageThinkCount === 4,
-  '轨迹内思考单独一类（不混进 .tc-think）',
+  expandedFold.noteCount === 2 && expandedFold.messageThinkCount === 3,
+  '轨迹内思考单独一类（2 条在轨迹内，消息级剩 3 条）',
   `${expandedFold.noteCount} / ${expandedFold.messageThinkCount}`
 );
 const note = await page.evaluate(() => {
@@ -620,10 +624,20 @@ ok(
   '正文一出字，上方思考立即折叠',
   afterText.map(s => s.thinkOpen).join(',')
 );
+// 依据：AgentTrace 的收拢判定在「正文出现」那一刻翻转，但 DOM 状态要等
+// 这一次 React 提交落地；80ms 采样有概率抓到翻转前的一帧。
+// 新语义要求：翻转最迟在下一次采样完成，且收起后没有新工具事件时不得再自动展开。
+const firstFolded = afterText.findIndex(s => s.traceAria === null || s.traceAria === 'false');
 ok(
-  afterText.length > 0 && afterText.every(s => s.traceAria === null || s.traceAria === 'false'),
-  '正文一出字，上方轨迹同时折叠',
-  afterText.map(s => s.traceAria).join(',')
+  firstFolded >= 0 && firstFolded <= 1,
+  '正文出字后最多 1 个采样（80ms）内上方轨迹收起',
+  `${firstFolded}：${afterText.map(s => s.traceAria).join(',')}`
+);
+ok(
+  firstFolded >= 0 &&
+    afterText.slice(firstFolded).every(s => s.traceAria === null || s.traceAria === 'false'),
+  '收起后没有新工具事件时不再自动展开',
+  afterText.slice(Math.max(firstFolded, 0)).map(s => s.traceAria).join(',')
 );
 
 // 揭示：单调不减、过程中确实落后于全文、结束后补齐
