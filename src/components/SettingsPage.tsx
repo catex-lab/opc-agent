@@ -19,6 +19,7 @@ import { PanelHeader } from './PanelHeader';
 import { HintTip } from './HintTip';
 import { AgentCredentialSettings } from './AgentCredentialSettings';
 import { type CloseBehavior, readCloseBehavior, saveCloseBehavior } from '../closeBehavior';
+import { type LinkOpenMode, readLinkOpenMode, saveLinkOpenMode } from '../answer/linkRouter';
 import { ProviderSettings } from './ProviderSettings';
 import { ModelCatalogSettings } from './ModelCatalogSettings';
 import { MemoryPanel } from './MemoryPanel';
@@ -707,6 +708,8 @@ export function SettingsPage({
           <AppearanceSliders />
 
           <CloseBehaviorSetting />
+
+          <LinkOpenModeSetting />
         </div>
         )}
 
@@ -1346,6 +1349,73 @@ function CloseBehaviorSetting() {
       </div>
       <p className="mt-2 text-sm" style={{ color: 'var(--td-text-color-placeholder)' }}>
         最小化到托盘后应用仍在后台运行，托盘右键菜单可以退出。
+      </p>
+    </div>
+  );
+}
+
+/**
+ * 正文外链的默认打开方式（A174）。
+ *
+ * 两档，默认**系统浏览器** —— 这是加这个设置之前唯一的行为，不能借
+ * 「加个选项」把老用户的习惯改掉。
+ *
+ * 选中态**不用品牌色**：这一项表达的是「同一件事的两种打开位置」，
+ * 没有一个比另一个更「主推」；用描边 + 微底色表达足以说明，也避免和
+ * 上面的关闭行为三档在视觉上抢注意力。
+ */
+const LINK_OPEN_OPTIONS: Array<{
+  value: LinkOpenMode;
+  label: string;
+  hint: string;
+  Icon: typeof Globe;
+}> = [
+  { value: 'system', label: '系统浏览器', hint: '交给操作系统默认浏览器打开（默认）', Icon: Globe },
+  { value: 'in-app', label: '应用内打开', hint: '在右侧工作区的浏览标签页里打开', Icon: Layers },
+];
+
+function LinkOpenModeSetting() {
+  const [mode, setMode] = useState<LinkOpenMode>(readLinkOpenMode);
+  return (
+    <div className="mt-6" data-link-open-setting>
+      <div className="mb-3 flex items-center gap-1.5">
+        <span className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+          链接打开方式
+        </span>
+        <HintTip
+          label="链接打开方式说明"
+          text="正文里的 http(s) 链接点击时用哪种方式打开。悬停链接时会有完整地址提示，里面也能临时改用另一种方式打开。"
+        />
+      </div>
+      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="链接打开方式">
+        {LINK_OPEN_OPTIONS.map(({ value, label, hint, Icon }) => {
+          const selected = mode === value;
+          return (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              title={hint}
+              data-link-open-option={value}
+              onClick={() => setMode(saveLinkOpenMode(value))}
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-body transition-colors"
+              style={{
+                backgroundColor: selected ? 'var(--tc-hover-chrome)' : 'transparent',
+                border: `1px solid ${selected ? 'var(--tc-edge-strong, var(--tc-edge))' : 'var(--tc-edge)'}`,
+                color: selected
+                  ? 'var(--td-text-color-primary)'
+                  : 'var(--td-text-color-secondary)',
+              }}
+            >
+              <Icon size={15} aria-hidden="true" />
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-sm" style={{ color: 'var(--td-text-color-placeholder)' }}>
+        应用内打开会占用右侧工作区；窄屏或群聊里会自动改用系统浏览器。
       </p>
     </div>
   );

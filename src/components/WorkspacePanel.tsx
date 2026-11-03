@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
 import { WorkspaceBrowser } from './WorkspaceBrowser';
+import { loadUrl } from '../browserPanel';
+import { takePendingWorkspaceUrl, WORKSPACE_OPEN_URL_EVENT } from '../answer/linkRouter';
 import { WorkspaceResizer } from './WorkspaceResizer';
 import { WorkspaceTerminal } from './WorkspaceTerminal';
 
@@ -244,6 +246,29 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
   /** 每次请求的序号：慢请求回来时如果已经不是最新一次，直接丢弃 */
   const requestSeq = useRef(0);
   const previewSeq = useRef(0);
+
+  /**
+   * A174：正文外链「在应用内打开」的落地端。
+   *
+   * 链接在消息里、浏览视图在这里，中间靠 `linkRouter` 的 pending + 事件接。
+   * 两个入口都要接：
+   *   · 挂载时先捞一次 —— 面板是**因这次点击才被打开**的，事件已经发过了；
+   *   · 常驻监听 —— 面板本来就开着的情况。
+   * 取走 pending 之后切到浏览标签，并直接往主进程的视图里 load（不依赖
+   * `WorkspaceBrowser` 已经挂载：它挂载后会从 navState 里读回当前地址）。
+   */
+  useEffect(() => {
+    const consume = () => {
+      const url = takePendingWorkspaceUrl();
+      if (!url) return;
+      setTab('browser');
+      setPreview(null);
+      void loadUrl(url);
+    };
+    window.addEventListener(WORKSPACE_OPEN_URL_EVENT, consume);
+    consume();
+    return () => window.removeEventListener(WORKSPACE_OPEN_URL_EVENT, consume);
+  }, []);
 
   // 换会话就回到根目录：把上一个项目的路径带到新会话里，只会得到
   // 一句「路径不存在」，用户还得自己点回根 —— 不如一开始就在根。

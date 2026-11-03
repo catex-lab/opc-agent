@@ -5539,3 +5539,331 @@ html[data-opc-glass='1'] t-chat-sender {
   transition: width 120ms linear;
 }
 
+/* ===== A174：回答内容分级渲染 ==========================================
+ *
+ * 只描述「长什么样」，不含判定逻辑（判定在 `src/answer/renderPlan.ts`、
+ * 装饰在 `src/answer/linkDecor.ts`）。全部使用既有令牌，浅深两套主题同一份
+ * 样式；**没有一处彩色** —— 层级靠底色深浅、边框粗细和字重表达。
+ *
+ * 顺序：① 行内链接 ② 链接卡网格 ③ 证据块 ④ 代码改动卡 ⑤ 悬浮提示
+ * ⑥ 推测标签（行内样式在 linkDecor，这里只是兜底色）。
+ */
+
+/* ① 行内链接：前景色文字 + 1px 下划线 + 3px offset。
+ *    原来这里是品牌色（`var(--td-brand-color)`），在一屏全是链接的回答里
+ *    会变成一片蓝色噪声。现在只靠「下划线 + 外链图标」说明可点，hover 时
+ *    下划线颜色加深（不用换文字颜色，避免整行都在闪）。 */
+.chat-markdown t-chat-md-content::part(md_a) {
+  color: var(--td-text-color-primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--tc-edge-strong);
+  cursor: pointer;
+}
+
+.chat-markdown t-chat-md-content::part(md_a):hover {
+  text-decoration-color: var(--td-text-color-secondary);
+}
+
+/* ② 链接卡网格：连续 ≥3 条同类链接时整块换成 2×2 等宽格。
+ *    等宽是关键 —— 域名长度差异很大，按内容撑开会让四张卡宽度参差。 */
+.tc-answer-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+@media (max-width: 520px) {
+  .tc-answer-links {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.tc-answer-linkcard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 11px;
+  border: 1px solid var(--tc-edge);
+  border-radius: 10px;
+  background-color: transparent;
+  text-decoration: none;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.tc-answer-linkcard:hover {
+  background-color: var(--tc-fill-hover);
+  border-color: var(--tc-edge-strong);
+}
+
+.tc-answer-linkcard-host {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--td-text-color-placeholder);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tc-answer-linkcard-title {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--td-text-color-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tc-answer-linkcard-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--td-text-color-secondary);
+}
+
+/* ③ 证据块：单行摘要（命令 + 时间 + 行数），点开是等宽正文。
+ *    底色只比表面深一档（`--tc-layer-2`），不另起一块「黑框终端」。 */
+.tc-answer-evidence {
+  margin: 10px 0 12px;
+  border: 1px solid var(--tc-edge);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.tc-answer-evidence-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+  background-color: transparent;
+  cursor: pointer;
+}
+
+.tc-answer-evidence-head:hover {
+  background-color: var(--tc-fill-hover);
+}
+
+.tc-answer-evidence-caret {
+  flex: none;
+  color: var(--td-text-color-placeholder);
+  transition: transform 150ms ease;
+}
+
+.tc-answer-evidence[data-open='1'] .tc-answer-evidence-caret {
+  transform: rotate(-180deg);
+}
+
+.tc-answer-evidence-kicker {
+  flex: none;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-answer-evidence-cmd {
+  min-width: 0;
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--td-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tc-answer-evidence-meta {
+  flex: none;
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+.tc-answer-evidence-pre {
+  margin: 0;
+  padding: 9px 11px;
+  background-color: var(--tc-layer-2);
+  border-top: 1px solid var(--tc-edge);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--td-text-color-primary);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* ④ 代码改动卡：整卡可点，但**不做按钮感** —— 无填充、无阴影、无强调色，
+ *    只有一条发丝边；hover 才浮起底色，说明「有动作」而不是「这是按钮」。 */
+.tc-answer-codecard {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin: 10px 0 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--tc-edge);
+  border-radius: 10px;
+  background-color: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.tc-answer-codecard:hover {
+  background-color: var(--tc-fill-hover);
+  border-color: var(--tc-edge-strong);
+}
+
+.tc-answer-codecard[data-code-inert='1'],
+.tc-answer-codecard[data-code-inert='1']:hover {
+  cursor: default;
+  background-color: transparent;
+  border-color: var(--tc-edge);
+}
+
+.tc-answer-codecard-icon {
+  flex: none;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-answer-codecard-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.tc-answer-codecard-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--td-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tc-answer-codecard-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-answer-codecard-range {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tc-answer-codecard-diff {
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 增删行数**不用红绿**：靠符号与浓度区分（+ 是主文色，− 是次要色） */
+.tc-answer-diff-add {
+  color: var(--td-text-color-primary);
+}
+
+.tc-answer-diff-del {
+  color: var(--td-text-color-secondary);
+}
+
+.tc-answer-codecard-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tc-answer-codecard-arrow {
+  flex: none;
+  color: var(--td-text-color-placeholder);
+}
+
+/* ⑤ 悬浮提示：完整地址 + 两个次要动作。挂在 light DOM（body）上，
+ *    不被气泡的 overflow 裁掉，也让位置计算（getBoundingClientRect）简单。 */
+.tc-answer-linktip {
+  position: fixed;
+  z-index: 9998;
+  min-width: 220px;
+  max-width: 420px;
+  padding: 9px 10px;
+  border: 1px solid var(--tc-edge-strong);
+  border-radius: 9px;
+  background-color: var(--td-bg-color-container);
+  box-shadow: var(--shadow-subtle, 0 6px 20px rgb(0 0 0 / 0.14));
+  animation: tc-linktip-in 120ms ease both;
+}
+
+.tc-answer-linktip[data-show='0'] {
+  display: none;
+}
+
+@keyframes tc-linktip-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.tc-answer-linktip-url {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--td-text-color-secondary);
+  word-break: break-all;
+}
+
+.tc-answer-linktip-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--tc-edge);
+}
+
+.tc-answer-linktip-btn {
+  padding: 3px 8px;
+  border: 1px solid var(--tc-edge);
+  border-radius: 6px;
+  background-color: transparent;
+  font-size: 11px;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.tc-answer-linktip-btn:hover {
+  background-color: var(--tc-fill-hover);
+  color: var(--td-text-color-primary);
+}
+
+/* ⑥ 推测标签：只留标签本身（细边框文字），不加虚线框。
+ *    行内样式由 linkDecor 写入（节点在 shadow DOM 里），这里只兜一层
+ *    字号与行高，保证浅深主题下都不撑破行距。 */
+.chat-markdown [data-guess-tag] {
+  font-size: 10px;
+  line-height: 16px;
+}

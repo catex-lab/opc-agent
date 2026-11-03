@@ -27,7 +27,7 @@ import { loadPrefs } from '../server/preferences.js';
 import { runHub } from '../server/run-hub.js';
 import { decideCloseAction } from './close-policy.js';
 import { updater } from './updater/index.js';
-import { browserPanel, runBrowserSmoke } from './browser-view.js';
+import { browserPanel, normalizeBrowserUrl, runBrowserSmoke } from './browser-view.js';
 import { terminal, type TerminalState } from './terminal.js';
 import {
   enableCdp,
@@ -464,6 +464,24 @@ function registerIpc() {
       return await shell.openPath(p);
     } catch (e) {
       return e instanceof Error ? e.message : '打开失败';
+    }
+  });
+
+  // A174：正文外链的「系统浏览器」打开方式。
+  //
+  // 主进程侧再收敛一次协议：渲染层只挑 http/https，但渲染层可能被绕过
+  // （插件注入 / 粘贴内容），而 `shell.openExternal` 对 `file:`、自定义
+  // 协议是直接交给系统的 —— 那是任意程序启动面。这里用浏览器面板同款
+  // `normalizeBrowserUrl`（只放行 http/https），非法一律 false。
+  ipcMain.handle('opc:open-external', async (_e, raw: unknown) => {
+    if (typeof raw !== 'string') return false;
+    const url = normalizeBrowserUrl(raw);
+    if (!url) return false;
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
     }
   });
 

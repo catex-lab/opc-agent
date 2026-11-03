@@ -12,6 +12,7 @@ import { VerifyPanel } from './VerifyPanel';
 import { FileEvidencePanel } from './FileEvidencePanel';
 import { useVerifications } from '../hooks/useVerifications';
 import { installCherryCodeIconFix } from './cherryCodeIcon';
+import { installAnswerLinkDecor } from '../answer/linkDecor';
 import { AgentAvatar } from './AgentAvatar';
 import { UserAvatar } from './UserAvatar';
 import { useUserProfile } from '../userProfile';
@@ -985,6 +986,16 @@ export function ChatMessages({
     if (!root) return;
     return installCherryCodeIconFix(root);
   }, []);
+  /**
+   * A174：正文外链的行内装饰（11px 外链图标 + 行内「推测」标签）。
+   * 与上面同一套机制 —— 目标节点在 Cherry 的 shadow DOM 里，且每次重渲染
+   * 都会重建，只能靠 MutationObserver 持续补。
+   */
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    return installAnswerLinkDecor(root);
+  }, []);
   /** 后台任务（A36）：别的会话还在跑的轮次 */
   const backgroundTasks = useBackgroundTasks(currentSessionId);
   /**
@@ -1092,7 +1103,8 @@ export function ChatMessages({
     isStreaming?: boolean,
     isLast?: boolean,
     defaultOpen?: boolean,
-    collapse?: boolean
+    collapse?: boolean,
+    at?: string
   ): React.ReactNode => {
     if (block.type === 'text') {
       return (
@@ -1101,7 +1113,12 @@ export function ChatMessages({
           className="tc-bubble-assistant tc-answer min-w-0 max-w-full leading-relaxed break-words"
         >
           {/* 只有「正在增长的这一块」才做匀速揭示；历史正文直接出全文 */}
-          <AnswerMarkdown text={block.text} streaming={!!isStreaming && !!isLast} />
+          <AnswerMarkdown
+            text={block.text}
+            streaming={!!isStreaming && !!isLast}
+            cwd={sessionCwd}
+            at={at}
+          />
           {isStreaming && isLast && (
             <span className="animate-cursor-blink ml-0.5" style={{ color: 'var(--td-brand-color)' }}>
               |
@@ -1269,6 +1286,12 @@ export function ChatMessages({
    * 分隔线；旁白与答案同字号同档，过程块各自管自己的折叠。
    */
   const renderAssistantContent = (message: Message, defaultOpen = false) => {
+    /** A174：证据块摘要里的时间（消息时间，取到分钟；没有就不显示） */
+    const messageClock = (() => {
+      const ts = message.timestamp;
+      if (!(ts instanceof Date) || Number.isNaN(ts.getTime())) return undefined;
+      return `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}`;
+    })();
     // 失败原因。后端会把真实错误（未登录 / 网络不可达 / 退出码）带上来，
     // 这里原样展示，不用「发生错误请重试」这种无信息量的文案盖掉它。
     const errorBlock = message.error ? (
@@ -1353,7 +1376,8 @@ export function ChatMessages({
             message.isStreaming,
             i === blocks.length - 1,
             defaultOpen,
-            hasAnswer
+            hasAnswer,
+            messageClock
           )
         );
         i++;

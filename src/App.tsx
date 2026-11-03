@@ -42,6 +42,11 @@ import { SettingsPage } from './components/SettingsPage';
 import { PermissionDock } from './components/PermissionDock';
 import { setSessionTitleResolver } from './permissions/permissionStore';
 import { bootPref, pushPrefs } from './prefs';
+import {
+  clearPendingWorkspaceUrl,
+  openInSystemBrowser,
+  WORKSPACE_OPEN_URL_EVENT,
+} from './answer/linkRouter';
 import type { Message } from './types';
 
 /**
@@ -1485,6 +1490,40 @@ function AppContent() {
    */
   const showWorkspace =
     workspaceOpen && !compact && !!currentSession && currentSession.kind !== 'group';
+
+  /**
+   * A174：正文外链「在应用内打开」的**面板开关**这一半。
+   *
+   * 链接本身由 `WorkspacePanel` 加载（它取走 pending），这里只决定要不要
+   * 把面板打开 —— 以及**打不开时**退回去用系统浏览器：
+   * 窄屏（工作区与列表二选一）和群聊（没有共同工作目录，见上文
+   * `showWorkspace`）都不渲染面板，硬切过去就是「点了没反应」。
+   */
+  useEffect(() => {
+    const onOpenRequest = (ev: Event) => {
+      const url = (ev as CustomEvent<{ url?: string }>).detail?.url;
+      if (!url) return;
+      /* 面板打不开的两种现实：窄屏单列（工作区与列表二选一）、群聊（没有
+         共同工作目录）。这里**不能**用 `showWorkspace` 判 —— 它要求
+         `workspaceOpen` 已经为真，而面板通常正是被这次点击才打开的，
+         用当前值判等于自己否掉自己。 */
+      const canOpenPanel = !compact && !!currentSession && currentSession.kind !== 'group';
+      if (!canOpenPanel) {
+        clearPendingWorkspaceUrl();
+        void openInSystemBrowser(url);
+        return;
+      }
+      setWorkspaceOpen(true);
+      try {
+        localStorage.setItem('opc.workspace-open', '1');
+      } catch {
+        /* 同 toggleWorkspace：存不进去只影响下次启动 */
+      }
+      pushPrefs({ workspaceOpen: true });
+    };
+    window.addEventListener(WORKSPACE_OPEN_URL_EVENT, onOpenRequest);
+    return () => window.removeEventListener(WORKSPACE_OPEN_URL_EVENT, onOpenRequest);
+  }, [compact, currentSession]);
 
   /** 单栏模式的返回：回到列表（清掉会话与资料页） */
   const handleBackToList = useCallback(() => {

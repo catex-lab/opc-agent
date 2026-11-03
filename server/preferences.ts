@@ -62,7 +62,18 @@ export interface Prefs {
    * `loadPrefs()` 读到的就是设置页刚 PATCH 进来的那份缓存。
    */
   closeBehavior?: CloseBehavior;
+  /**
+   * 正文外链的默认打开方式（A174）。
+   *
+   * `system` = 系统浏览器（主进程 `shell.openExternal`）；
+   * `in-app` = 右侧工作区里的浏览标签页。缺键 = 没设过，前端回落到 `system`。
+   */
+  linkOpenMode?: LinkOpenMode;
 }
+
+export type LinkOpenMode = 'system' | 'in-app';
+
+const isLinkOpenMode = (v: unknown): v is LinkOpenMode => v === 'system' || v === 'in-app';
 
 /** `null` 在补丁里表示**清空这一项**（回到「没设过」），与 `undefined`（不动）不同 */
 export type PrefsPatch = { [K in keyof Prefs]?: Prefs[K] | null };
@@ -111,6 +122,7 @@ export function normalizePrefs(input: unknown): Prefs {
     out.defaultModel = o.defaultModel.trim().slice(0, MAX_MODEL_ID_LEN);
   }
   if (isCloseBehavior(o.closeBehavior)) out.closeBehavior = o.closeBehavior;
+  if (isLinkOpenMode(o.linkOpenMode)) out.linkOpenMode = o.linkOpenMode;
   const g = o.glow as Record<string, unknown> | undefined;
   if (g && typeof g === 'object') {
     const size = isIntIn(g.size, PREFS_LIMITS.glowSize) ? g.size : null;
@@ -206,6 +218,16 @@ export function validatePrefsPatch(input: unknown): PrefsValidation {
           return {
             ok: false,
             error: `closeBehavior 只能是 quit / tray / ask，收到 ${JSON.stringify(v)}`,
+          };
+        }
+        break;
+      case 'linkOpenMode':
+        if (v === null) patch.linkOpenMode = null;
+        else if (isLinkOpenMode(v)) patch.linkOpenMode = v;
+        else {
+          return {
+            ok: false,
+            error: `linkOpenMode 只能是 system / in-app，收到 ${JSON.stringify(v)}`,
           };
         }
         break;

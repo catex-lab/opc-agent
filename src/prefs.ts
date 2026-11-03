@@ -28,6 +28,7 @@
  */
 import type { GlowPrefs } from './uiPrefs';
 import type { CloseBehavior } from '../shared/close-behavior';
+import type { LinkOpenMode } from './answer/linkRouter';
 
 /** 与 `server/preferences.ts` 的 `Prefs` 一一对应（那边是事实来源） */
 export interface Prefs {
@@ -40,6 +41,8 @@ export interface Prefs {
   defaultModel?: string;
   /** 关闭窗口的行为（A154），三档见 `shared/close-behavior.ts` */
   closeBehavior?: CloseBehavior;
+  /** 正文外链的默认打开方式（A174）：系统浏览器 / 应用内浏览 */
+  linkOpenMode?: LinkOpenMode;
 }
 
 export type PrefsPatch = { [K in keyof Prefs]?: Prefs[K] | null };

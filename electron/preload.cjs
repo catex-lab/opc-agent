@@ -138,6 +138,21 @@ contextBridge.exposeInMainWorld('opc', {
   },
 
   /**
+   * A174：用系统浏览器打开正文里的外链。
+   *
+   * 协议白名单在**两端各做一次**：渲染进程挑出 http/https 才发起，主进程
+   * 再做一遍 `normalizeBrowserUrl` 收敛 —— 前端可以被绕过（插件、粘贴的
+   * HTML），主进程不能。
+   *
+   * @param {string} url 只接受 http/https
+   * @returns {Promise<boolean>} false = 协议不在白名单 / 打开失败
+   */
+  externalOpen(url) {
+    if (typeof url !== 'string') return Promise.resolve(false);
+    return ipcRenderer.invoke('opc:open-external', url);
+  },
+
+  /**
    * 关于页：应用版本与构建信息。
    *
    * 版本号来自主进程的 app.getVersion()，读的是**打包后**的 package.json ——
