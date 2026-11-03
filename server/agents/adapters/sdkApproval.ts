@@ -35,6 +35,7 @@ import {
   type PermissionOption,
 } from '../../../shared/permissions.js';
 import type { AgentEvent, PermissionDecision, SendContext } from '../types.js';
+import { isKbMcpTool } from '../../kb/tool.js';
 
 /** 两家 SDK 都认的最小审批结果 */
 export type ToolApproval =
@@ -71,6 +72,18 @@ export function createCanUseToolBridge(
   const { queue, replies, memory, ctx, sessionId, options, expiresInMs } = deps;
 
   return async (toolName, input, toolOptions) => {
+    // ---- A176 知识库只读例外：先于场景白名单 ----
+    //
+    // `mcp__kb__*` 是系统级只读检索，不是用户任务工具：
+    //   - 范围由宿主按 sessionId 在服务端收口（workspace 默认，project/all 需显式开启）；
+    //   - 入参只允许 query/scope/topK，禁止 sessionId 与路径；
+    //   - 没有写盘/命令执行能力。
+    // 所以即使场景白名单为空（「问答」场景承诺不调用工具），也允许它 ——
+    // 否则所有问答场景都会退化成「看不到知识库」。
+    if (isKbMcpTool(toolName)) {
+      return { behavior: 'allow', updatedInput: input };
+    }
+
     // ---- P4-5 工具白名单：先于任何放行判断 ----
     //
     // 顺序很关键：白名单是**场景约束**，`bypassPermissions` 只是「不弹审批」。

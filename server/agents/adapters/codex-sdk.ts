@@ -23,6 +23,10 @@
  *     用 `on-request` 只会把一轮对话挂死；
  *   - **没有**「本会话始终允许」与逐次门禁回调，这一点不假装支持。
  *
+ * A176：`@openai/codex-sdk` 没有 MCP 注入面（ThreadOptions 里没有
+ * `mcpServers`），所以 Codex SDK **不接 `kb.search` 工具**，只享受首轮
+ * 知识库自动注入。不要在 prompt 里宣称它能调用 kb.search。
+ *
  * ## 二进制
  *
  * SDK 依赖 `@openai/codex`，后者按平台分发自带 `codex` 可执行文件；

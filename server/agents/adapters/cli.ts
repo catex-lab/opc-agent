@@ -506,7 +506,12 @@ export class CliAdapter implements AgentProvider {
         // target.env 是启动目标的一部分（如 Trae 的 ELECTRON_RUN_AS_NODE=1），
         // 必须垫在子进程环境之上 —— 少了它 Electron 会以 GUI 模式启动，
         // 挂一个看不见的窗口，stdout 永远不出东西。
-        env: { ...childEnv(), ...(target.env ?? {}) },
+        // A176：会话 id 由宿主注入，MCP 配置里不写死；kb.search 只信任这个环境变量。
+        env: {
+          ...childEnv(),
+          ...(ctx.sessionId ? { OPC_KB_SESSION_ID: ctx.sessionId } : {}),
+          ...(target.env ?? {}),
+        },
         shell: false,           // ★ 关键：不经过 shell
         windowsHide: true,
         // A106：双向模式 stdin 走管道（写用户消息 / 收尾时 EOF）；

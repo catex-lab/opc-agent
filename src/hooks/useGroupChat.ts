@@ -9,6 +9,7 @@ import {
   thinkingOfBlocks,
   toolCallsOfBlocks,
   type Block,
+  type KbCitationRef,
   type RunEvent,
 } from '../../shared/blocks';
 
@@ -49,6 +50,8 @@ interface RunState {
   blocks: Block[];
   streaming: boolean;
   error?: string;
+  /** A175：首轮知识库引用；undefined = 本轮没注入，UI 不显示 */
+  kbRefs?: KbCitationRef[];
 }
 
 /** 五种编排模式。group_init 里的值必须落在这里面才算合法 */
@@ -113,6 +116,7 @@ function createEventStreamSession(opts: {
       toolCalls: toolCallsOfBlocks(r.blocks),
       thinking: thinkingOfBlocks(r.blocks) || undefined,
       error: r.error,
+      kbRefs: r.kbRefs,
     });
   };
 
@@ -173,6 +177,16 @@ function createEventStreamSession(opts: {
         openRun(data);
         break;
 
+      case 'kb_refs': {
+        // A175：知识库引用挂在气泡上，不进 blocks（不影响折叠/快照）
+        if (typeof data.seq === 'number' && data.runId) lastSeq.set(data.runId, data.seq);
+        const r = runs.get(data.runId);
+        if (!r) break;
+        r.kbRefs = Array.isArray(data.citations) ? data.citations : [];
+        schedule(r.messageId);
+        break;
+      }
+
       case 'block_open':
       case 'block_delta':
       case 'block_patch':
@@ -201,6 +215,7 @@ function createEventStreamSession(opts: {
           durationMs: typeof data.duration === 'number' ? data.duration : undefined,
           cost: typeof data.cost === 'number' ? data.cost : undefined,
           tokens: typeof data.tokens === 'number' ? data.tokens : undefined,
+          kbRefs: r.kbRefs,
         });
         break;
       }

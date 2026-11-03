@@ -223,6 +223,24 @@ interface Seq {
   runId: string;
 }
 
+/**
+ * 首轮知识库注入的引用条目（只读展示用）。
+ *
+ * 只在「本轮确实注入了上下文」时下发。`citations` 为空数组表示注入了
+ * 「未检索到」状态行，不是「没注入」—— 没注入时压根不会有 kb_refs 事件。
+ */
+export interface KbCitationRef {
+  citationId: string;
+  sessionId: string;
+  sessionTitle?: string;
+  sourceType: 'direct' | 'group';
+  role: string;
+  agentId?: string | null;
+  timeEnd: string;
+  snippet: string;
+  messageIds?: string[];
+}
+
 export type RunEvent = Seq &
   (
     | {
@@ -281,6 +299,13 @@ export type RunEvent = Seq &
      * 收到它意味着「丢掉本地这轮的所有块，以我为准」，然后接着收增量。
      */
     | { type: 'snapshot'; blocks: Block[] }
+    /**
+     * 首轮知识库注入的引用清单。
+     *
+     * 不参与块状态（不进 snapshot、不改变折叠），只供回答区展示
+     * 「引用了 N 条历史会话」；断线重连时客户端保留已有值。
+     */
+    | { type: 'kb_refs'; count: number; citations: KbCitationRef[] }
   );
 
 /** 事件类型的判别联合，供 reducer 使用 */
@@ -299,6 +324,9 @@ export type RunEventType = RunEvent['type'];
  */
 export function applyRunEvent(blocks: Block[], ev: RunEvent): boolean {
   switch (ev.type) {
+    case 'kb_refs':
+      // 引用清单不驱动块数组，交由前端挂在消息上
+      return false;
     case 'block_open': {
       // 重放时可能重复收到同一个块：按 id 去重，避免出现两份
       const idx = blocks.findIndex(b => b.id === ev.block.id);

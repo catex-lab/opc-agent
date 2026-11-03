@@ -28,6 +28,7 @@ import {
   type LaunchTarget,
 } from '../probe.js';
 import type { AgentDefinition } from '../definitions.js';
+import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 import type {
   AgentDescriptor,
   AgentEvent,
@@ -458,7 +459,18 @@ export class AcpAdapter implements AgentProvider {
 
     if (!acpSessionId) {
       try {
-        const res = (await rpc.request('session/new', { cwd, mcpServers: [] })) as Json;
+        // A176：ACP 的 stdio MCP 配置（env 必须是 [{name,value}] 数组）。
+        // 会话 id 随进程环境注入，工具侧不接受调用方传 sessionId。
+        const kbSpec = kbMcpServerSpec(ctx.sessionId);
+        const mcpServers = [
+          {
+            name: KB_MCP_SERVER_NAME,
+            command: kbSpec.command,
+            args: kbSpec.args,
+            env: Object.entries(kbSpec.env).map(([name, value]) => ({ name, value })),
+          },
+        ];
+        const res = (await rpc.request('session/new', { cwd, mcpServers })) as Json;
         acpSessionId = res.sessionId as string;
         this.acpSessions.set(ctx.sessionId, acpSessionId);
 

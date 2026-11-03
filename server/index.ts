@@ -133,6 +133,7 @@ import { scanSensitive } from "./extensions/safety.js";
 import { applyHits as extApplyHits, normalizeSkillBody } from "./extensions/normalize.js";
 // P1 跨 Agent 知识库：独立 data/kb.sqlite，后台回填最近 90 天。
 import { bootKnowledgeBase } from "./kb/indexer.js";
+import { buildKbInjection } from "./kb/inject.js";
 import { registerKbRoutes } from "./kb/routes.js";
 import { buildMcpConfig, safeAgentId } from "./extensions/distribute.js";
 import { applyDrift as extApplyDrift, scanDrift as extScanDrift } from "./extensions/drift.js";
@@ -1988,6 +1989,14 @@ app.post("/api/chat", async (req, res) => {
 
   const userMessageId = uuidv4();
   const assistantMessageId = uuidv4();
+  // 首轮判定必须在落 user 消息之前取：落库后再数，本轮提问会被算进去。
+  // regenerate 一律不注入 —— 那条提问已有历史，注入会让「重试」变成另一问。
+  let isFirstTurn = false;
+  try {
+    isFirstTurn = !regenerate && db.getMessagesBySession(session.id).length === 0;
+  } catch {
+    isFirstTurn = false;
+  }
 
   try {
     // 重新生成不重复落 user 消息：那条提问已在库里，再写一条会让刷新后的
@@ -2100,6 +2109,15 @@ app.post("/api/chat", async (req, res) => {
   // 那几秒里界面会停在「发送中」且无法挂载任何块。
   writeEvents(projector.push({ type: 'init', sessionId: session.id, model: selectedModel }));
 
+  // A175：会话首轮把知识库 top-k 检索结果前置到这一轮的 prompt。
+  // 只影响发给适配器的输入，**不改 message**（它已经在上面落库了）；
+  // 失败/无库/无命中都不阻断对话，零命中只注入一行状态。
+  const kbInjection = isFirstTurn ? buildKbInjection(session.id, message) : null;
+  if (kbInjection) {
+    writeEvent(projector.kbRefs(kbInjection.citations));
+  }
+  const promptForAgent = kbInjection ? `${kbInjection.promptPrefix}\n\n${message}` : message;
+
   let newResumeToken: string | null = null;
   // done 事件的载荷先攒着，等落库之后再发：客户端收到 run_end 常会立刻
   // 刷新会话，句子还没落库就会在这一瞬丢一条（与群聊 turn_done 同窗口）
@@ -2108,7 +2126,7 @@ app.post("/api/chat", async (req, res) => {
 
   const stream = registry.stream(agentId, {
     sessionId: session.id,
-    prompt: message,
+    prompt: promptForAgent,
     systemPrompt,
     // A63：生效顺序 请求体 > 会话里存的值 > 后端进程目录。
     // 中间那一级是这轮补上的：前端每轮都会带 session.cwd，但万一哪个客户端

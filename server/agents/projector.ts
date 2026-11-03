@@ -31,6 +31,7 @@ import type {
   Block,
   BlockState,
   EventSource,
+  KbCitationRef,
   RunEvent,
   RunStatus,
   TextBlock,
@@ -600,5 +601,15 @@ export class RunProjector {
   /** 断线重连用的全量快照 */
   snapshot(): RunEvent {
     return this.make({ type: 'snapshot', blocks: this.blocks.map(b => ({ ...b })) });
+  }
+
+  /**
+   * 首轮知识库注入的引用清单。
+   *
+   * 放在 run_start 之后立刻发：与块事件共用一个 seq 序列，客户端能按顺序
+   * 把它挂到同一条助手消息上；它不改变任何块状态，也不进 snapshot。
+   */
+  kbRefs(citations: KbCitationRef[]): RunEvent {
+    return this.make({ type: 'kb_refs', count: citations.length, citations });
   }
 }

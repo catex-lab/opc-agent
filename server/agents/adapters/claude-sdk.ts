@@ -30,6 +30,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import type { CanUseTool, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 
 /**
  * 惰性动态加载 SDK。
@@ -239,6 +240,9 @@ export class ClaudeSdkAdapter implements AgentProvider {
             ...(binary ? { pathToClaudeCodeExecutable: binary } : {}),
             abortController: controller,
             canUseTool,
+            // A176：知识库检索是只读能力，sessionId 由宿主塞进子进程环境；
+            // 工具的权限放行在 sdkApproval 里按 mcp__kb__ 前缀单独处理。
+            mcpServers: { [KB_MCP_SERVER_NAME]: kbMcpServerSpec(ctx.sessionId) },
             systemPrompt: extraPrompt
               ? { type: 'preset', preset: 'claude_code', append: extraPrompt }
               : { type: 'preset', preset: 'claude_code' },

@@ -227,6 +227,15 @@ export interface Message {
    * 刷新后重放反而会让用户以为是新发生的事。落库只存各 Agent 的实质发言。
    */
   note?: boolean;
+  /**
+   * A175：本轮首轮注入的跨 Agent 知识库引用（只在内存，不落库）。
+   *
+   * - 有值时才有 `kb_refs` 事件，因此「没注入」= undefined，UI 不显示；
+   * - 空数组表示**注入了「未检索到」状态行**，不是没注入 —— UI 会显示
+   *   「本次未检索到相关历史会话」；
+   * - 刷新后丢失是预期行为：它描述的是「这一轮看过什么」，不是消息内容。
+   */
+  kbRefs?: import('../shared/blocks').KbCitationRef[];
 }
 
 export interface Session {

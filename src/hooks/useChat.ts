@@ -507,6 +507,12 @@ export function useChat(options: UseChatOptions) {
             applyInit(data.sessionId, data.messageId, data.model);
             break;
 
+          case 'kb_refs':
+            // A175：知识库引用只挂在消息上，不参与块状态
+            if (typeof data.seq === 'number') lastSeq = data.seq;
+            patchAssistant({ kbRefs: Array.isArray(data.citations) ? data.citations : [] });
+            break;
+
           case 'block_open':
           case 'block_delta':
           case 'block_patch':

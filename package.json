@@ -162,6 +162,7 @@
     "verify:a168-drift": "tsx scripts/verify-a168-drift.ts",
     "verify:a169-skill-plugin": "tsx scripts/verify-a169-skill-plugin.ts",
     "verify:kb": "tsx scripts/verify-kb-index.ts",
+    "verify:a175-kb-inject": "tsx scripts/verify-kb-inject.ts",
     "update:keygen": "node scripts/update-keygen.mjs",
     "update:build": "tsx scripts/build-update.ts",
     "verify:a171-update": "tsx scripts/verify-a171-update.ts",

@@ -26,6 +26,7 @@ import type { PermissionMode } from './agents/definitions.js';
 import { publishRunEvent, runHub } from './run-hub.js';
 import { isInternalPhase, type AgentTurnResult, type TurnPhase } from './orchestrator.js';
 import { distillSkill } from './skill-distill.js';
+import { buildKbInjection, type KbInjection } from './kb/inject.js';
 import { getScenario } from '../shared/scenarios.js';
 import { textOfBlocks, toolCallsOfBlocks, type RunEvent } from '../shared/blocks.js';
 
@@ -94,6 +95,18 @@ function allowedToolsFor(scenarioId: string | undefined, sessionScenarioId?: str
 export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
   const activeRuns = new Set<string>();
   const { session } = deps;
+  /**
+   * A175：同一请求的首轮只检索一次。
+   *
+   * broadcast / relay 会在首轮派给多个成员 —— 每个成员都需要同一份上下文，
+   * 但没必要对同一个 query 重复查库。这里用惰性 memo：第一次算出来之后
+   * 后续成员直接复用（`null` 也要记住，避免失败时反复重试拖慢派发）。
+   */
+  let kbMemo: KbInjection | null | undefined;
+  const kbFor = (query: string): KbInjection | null => {
+    if (kbMemo === undefined) kbMemo = buildKbInjection(session.id, query);
+    return kbMemo;
+  };
 
   const runAgent = async (
     agentId: string,
@@ -159,9 +172,17 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
       }
     };
 
+    // A175：群聊/工作流的首轮同样注入知识库；内部阶段（route 等）不注入，
+    // 否则编排决策会读到与最终发言不一致的上下文。
+    const kbInjection =
+      !internal && (round === undefined || round <= 1)
+        ? kbFor(deps.triggerPrompt || prompt)
+        : null;
+    const promptForAgent = kbInjection ? `${kbInjection.promptPrefix}\n\n${prompt}` : prompt;
+
     const stream = registry.stream(agentId, {
       sessionId: session.id,
-      prompt,
+      prompt: promptForAgent,
       // 逐个成员解析模型：每个 Agent 的模型命名空间都不同，
       // 统一塞一个全局值必然把其中一部分成员直接打挂
       model: resolvedModel,
@@ -191,6 +212,7 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
           .push({ type: 'init', sessionId: session.id, model: resolvedModel })
           .map(e => (e.type === 'run_start' ? { ...e, phase, round } : e))
       );
+      if (kbInjection) emit([projector.kbRefs(kbInjection.citations)]);
 
       try {
         for await (const ev of stream) {

@@ -10,6 +10,7 @@ import type { ScenarioTool } from '../../shared/scenarios.js';
 import type { EventSource } from '../../shared/blocks.js';
 import { codexSandboxFor } from './permissions.js';
 import { mcpArgsFor, skillArgsFor } from '../extensions/distribute.js';
+import { kbMcpArgsFor, KB_MCP_ALLOWED_TOOL_IDS } from '../kb/tool.js';
 
 /**
  * Claude Code 系（claude / cursor-agent）的 stream-json 行映射。
@@ -464,6 +465,10 @@ function makeQoderCliArgs(agentId: string) {
        没有可共享的条目时 `mcpArgsFor` 返回空数组，argv 与改动前完全一致。
        不加 `--strict-mcp-config`：那会忽略用户自己配的、还没导入 OPC 的 MCP。 */
     args.push(...mcpArgsFor(agentId));
+    /* A176：知识库 kb.search。与扩展分发同机制（`--mcp-config`），
+       但配置文件单独命名，避免两条线程互相覆盖；sessionId 由 CLI 子进程
+       继承的环境变量注入，不落盘。 */
+    args.push(...kbMcpArgsFor(agentId));
     /* P5-D：OPC 共享技能。同样零写入 —— 聚合 plugin 壳 + 把镜像**拷贝**进
        `data/extensions/opc-skill-plugin/skills/`，经 `--plugin-dir` 传入。
        qoder-cli 会自动扫描 plugin 内的 skills/ 子目录。 */
@@ -1424,6 +1429,9 @@ const RAW_DEFS: AgentDefinition[] = [
         // 位置有讲究：必须在 --allowedTools **之前** —— 那是 variadic，
         // 会把后面的参数全当成工具名吃掉。
         if (ctx.resumeToken) args.push('--resume', ctx.resumeToken);
+        /* A176：知识库 MCP。双向模式下靠 can_use_tool 放行；非双向靠
+           --allowedTools，见下面的追加。 */
+        args.push(...kbMcpArgsFor('claude'));
         if (bidi) {
           // 双向模式下**不能再发** --allowedTools：预授权通过的工具不会触发
           // can_use_tool 控制请求，场景白名单与高危门禁就被绕过了
@@ -1433,7 +1441,9 @@ const RAW_DEFS: AgentDefinition[] = [
         // 工具白名单落到 --allowedTools（variadic，必须放在最后，
         // 否则会把后面的参数也当成工具名吃掉）。
         const allow = claudeAllowedTools(ctx.allowedTools);
-        if (allow) args.push('--allowedTools', ...allow);
+        // 只白名单非空时才追加：null 表示「不限制」，此时再传 --allowedTools
+        // 会把范围意外收窄到只剩知识库。
+        if (allow) args.push('--allowedTools', ...allow, ...KB_MCP_ALLOWED_TOOL_IDS);
         return args;
       },
       parse: 'jsonl',

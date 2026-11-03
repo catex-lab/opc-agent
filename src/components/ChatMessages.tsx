@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Loading, MessagePlugin } from 'tdesign-react';
 import { Brain, Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, TextSelect, Image as ImageIcon } from 'lucide-react';
 import { Message, Model, RegisteredAgent, Block, ThinkingBlock, ToolBlock } from '../types';
-import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks } from '../../shared/blocks';
+import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks, type KbCitationRef } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
 import { canGroupProcess } from '../trace/rows';
 import { shouldFoldProcess } from '../trace/fold';
@@ -1421,10 +1421,52 @@ export function ChatMessages({
       <>
         {processNodes}
         {answerNodes}
+        {message.kbRefs ? renderKbRefs(message.kbRefs) : null}
         {errorBlock}
       </>
     );
   };
+
+  /**
+   * A175：首轮知识库注入提示。
+   *
+   * 刻意做成一行可展开的弱化文字，而不是新卡片：
+   *   - 有引用 →「引用了 N 条历史会话」，点开看 citationId / 来源会话 / 片段；
+   *   - 零命中 →「本次未检索到相关历史会话」；
+   *   - 没注入（kbRefs === undefined）→ 整行不渲染。
+   */
+  const renderKbRefs = (refs: KbCitationRef[]) => (
+    <details
+      className="mt-3 rounded-lg px-3 py-2 text-caption"
+      data-kb-refs
+      data-kb-count={refs.length}
+      style={{
+        backgroundColor: 'var(--td-bg-color-container-hover)',
+        color: 'var(--td-text-color-secondary)',
+      }}
+    >
+      <summary className="cursor-pointer select-none">
+        {refs.length > 0 ? `引用了 ${refs.length} 条历史会话` : '本次未检索到相关历史会话'}
+      </summary>
+      {refs.length > 0 ? (
+        <div className="mt-1.5 flex flex-col gap-1.5">
+          {refs.map(ref => (
+            <div key={ref.citationId} className="rounded-md px-2 py-1.5" data-kb-citation={ref.citationId}>
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+                  {ref.sessionTitle || '未命名会话'}
+                </span>
+                <span>{ref.sourceType === 'group' ? '群聊' : '单聊'}</span>
+                <span>{String(ref.timeEnd ?? '').slice(0, 16).replace('T', ' ')}</span>
+                <span className="font-mono opacity-70">{ref.citationId.slice(0, 8)}</span>
+              </div>
+              {ref.snippet ? <div className="mt-0.5 leading-relaxed">{ref.snippet}</div> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </details>
+  );
   /**
    * 编排叙述行（group_note）。
    *

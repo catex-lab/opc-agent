@@ -30,6 +30,7 @@ import type {
 } from '../types.js';
 import type { AgentDefinition } from '../definitions.js';
 import { resolveSdkRuntime, type SdkRuntime } from '../sdkRuntime.js';
+import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 
 /** 权限请求等待上限，与前端提示一致 */
 const PERMISSION_TIMEOUT = 5 * 60 * 1000;
@@ -537,6 +538,9 @@ export class SdkAdapter implements AgentProvider {
         this.descriptor.id
       ),
       permissionMode: ctx.permissionMode || 'default',
+      // A176：腾讯 SDK 同样按 mcpServers 起知识库 stdio server，
+      // 会话 id 由宿主注入；权限桥按 mcp__kb__ 前缀放行只读检索。
+      mcpServers: { [KB_MCP_SERVER_NAME]: kbMcpServerSpec(ctx.sessionId) },
       // 占位 handler：每一轮 send 前都会 setCanUseTool 覆盖掉它。
       // fail-closed —— 万一哪轮忘了覆盖，也不至于放行未知工具。
       canUseTool: (async () => ({
@@ -707,6 +711,8 @@ export class SdkAdapter implements AgentProvider {
           ),
           permissionMode: ctx.permissionMode || 'default',
           canUseTool,
+          // A176：one-shot 回退路径与池路径保持同一套工具面
+          mcpServers: { [KB_MCP_SERVER_NAME]: kbMcpServerSpec(ctx.sessionId) },
           ...(cliOverride() ? { pathToCodebuddyCode: cliOverride() } : {}),
           ...(ctx.resumeToken ? { resume: ctx.resumeToken } : {}),
         },

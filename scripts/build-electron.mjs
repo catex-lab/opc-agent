@@ -34,6 +34,25 @@ await build({
   logLevel: 'info',
 });
 
+/**
+ * A176：知识库 `kb.search` 的 stdio MCP server 单独打一份。
+ *
+ * 它由各 Agent（Claude/腾讯 SDK、CLI、ACP）当子进程拉起，不能和主服务
+ * 共用入口 —— 主入口会起 Express、开窗口，MCP 只需要一根 stdin/stdout。
+ * 同一套 `packages: 'external'`，运行时由 electron-builder 的 node_modules 兜底。
+ */
+await build({
+  entryPoints: ['server/kb/mcp-main.ts'],
+  outfile: `${OUT_DIR}/kb-mcp.cjs`,
+  bundle: true,
+  platform: 'node',
+  target: 'node22',
+  format: 'cjs',
+  packages: 'external',
+  sourcemap: true,
+  logLevel: 'info',
+});
+
 // 入口本身保持手写：它必须在任何模块初始化之前设好环境变量（详见文件头注释），
 // 所以不能参与打包，直接原样拷过去。
 await cp('electron/bootstrap.cjs', `${OUT_DIR}/bootstrap.cjs`);
