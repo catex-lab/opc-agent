@@ -31,7 +31,27 @@ export interface KbRetrievalMeta {
 /** 向量层开关（排障/对比用）；缺省开启，`off` 时完全退化到 BM25。 */
 export const KB_VECTOR_ENV = 'OPC_KB_VECTOR';
 
-/** 当前 provider 的标识；写进 `kb_vectors.provider`，用于灰度切换。 */
+/**
+ * 当前 provider 的标识；写进 `kb_vectors.provider`，用于灰度切换。
+ *
+ * ## 决策（2026-11-04，已与产品确认）：暂时维持 `local-ngram-v1`
+ *
+ * 不换真模型的理由：
+ *   - 约束是「不加依赖、不联网、不下载模型文件」，而语义模型三者至少占一样；
+ *   - 现有召回盲区主要来自中文近义改写，字符 2/3-gram 已能覆盖标点/空白差异、
+ *     同一内容的重复表述，先补 FTS5 trigram 的召回面足够；
+ *   - 128 维向量约 512B/片，5 万片约 25MB，索引与查询开销都可控。
+ *
+ * 触发重新评估的条件（满足任意一条再考虑换本地小模型，仍不走外部 API）：
+ *   - 真实使用中出现「BM25 命中数为 0 且 hybrid 新增候选也为 0」的同义查询，
+ *     且人工核对确认该内容确实存在于库中（可先用 `retrieval='hybrid'` 与
+ *     `vectorCandidates=0` 的日志筛样本）；
+ *   - 用户明确反馈「换个说法搜不到」，且样本量足以形成评测集；
+ *   - 需要跨语言或长文档语义匹配，字符 n-gram 结构上做不到。
+ *
+ * 切换方式：换 provider id 并回填即可，`kb_vectors.provider` 隔离新旧向量，
+ * 检索层无需改动；旧 provider 的向量在回填完成前继续可用（灰度）。
+ */
 export const KB_VECTOR_PROVIDER_ID = 'local-ngram-v1';
 
 /** 维度：128 × 4B ≈ 512B/片，5 万片约 25MB，体积可控。 */

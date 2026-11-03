@@ -380,8 +380,26 @@ export function searchKnowledge(options: KbSearchOptions): KbSearchResponse {
 
   // P3：群聊切片（source_only）从「仅本群可见」放开到「用户可见的群聊内容」。
   // 本地库里的群会话都是当前用户创建的，因此 workspace/project/all 也允许
-  // 读到群内容；真正的越权边界仍由范围策略（project/all 需显式 allow）负责。
-  // 单聊会话不再因为「群里说过」而检索不到；跨工作区仍由 where.sql 拦住。
+  // 读到群内容；真正的越权边界仍由范围策略（project/all 需显式 allow）负责：
+  // 未开启时 `buildScopeWhere` 照旧抛 KbScopeDeniedError
+  // （code=knowledge_base_scope_denied），这里只是放宽「可见性」不是放宽「授权」。
+  //
+  // ## 决策（2026-11-04，已与产品确认）：维持「本工作区可见」，不收回到单群会话
+  //
+  // 不收紧的理由：
+  //   - 群聊内容同样是当前用户自己的对话，只是多 Agent 参与；按群隔离会让
+  //     用户在同一工作区的单聊里「明明说过却搜不到」，与知识库的目的相悖；
+  //   - 现有隔离粒度已经是「工作区/项目/全部 + 显式授权」，再加一层群维度
+  //     收益低、规则复杂（跨群成员关系无法在本地库里可靠判定）。
+  //
+  // 触发重新评估的条件（满足任意一条再收紧到「同一群会话/群成员可见」）：
+  //   - 出现多用户/多租户共用同一个 `kb.sqlite`（当前设计假设单用户本地库）；
+  //   - 群聊里出现「用户明确不希望在其他会话被引用」的内容（如第三方隐私、
+  //     跨团队敏感信息），且现有范围开关无法表达这种诉求；
+  //   - 产品要求按群成员身份做检索授权，而不是按工作区边界。
+  //
+  // 收紧方式：在该 WHERE 再加 `OR c.session_id = 当前会话` 之类的群成员判定，
+  // 越权语义保持不变（仍由 buildScopeWhere 抛 knowledge_base_scope_denied）。
   const visibilitySql = `(c.visibility = 'normal' OR (c.source_kind = 'group' AND c.visibility = 'source_only'))`;
 
   const terms = termsOf(query);
