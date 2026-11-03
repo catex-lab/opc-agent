@@ -15,7 +15,7 @@ import {
   rebuildKnowledgeBase,
   setSessionIndexed,
 } from './indexer.js';
-import { setScopePolicy, getScopePolicy, getSessionState } from './store.js';
+import { setScopePolicy, getScopePolicy, getSessionState, pruneKnowledgeBase } from './store.js';
 import { allAgentDefs, findDef } from '../agents/definitions.js';
 import { listKbToolEnabled, setKbToolEnabled, KB_TOOL_MAX_PER_TURN } from './optout.js';
 import { kbToolSupported } from './tool.js';
@@ -177,6 +177,33 @@ export function registerKbRoutes(app: Express): void {
       res.json(kbToolPolicyPayload());
     } catch (err) {
       res.status(500).json({ error: '保存工具策略失败', detail: String(err) });
+    }
+  });
+
+  /**
+   * 体积清理（P3）：按会话 / 按时间 / 按大小三种口径，可 dryRun 预演。
+   * 阈值说明见 `store.ts` 的 `KB_MAX_CHUNKS` / `KB_MAX_DB_BYTES`。
+   */
+  app.post('/api/kb/prune', (req, res) => {
+    const sessionIds = Array.isArray(req.body?.sessionIds)
+      ? req.body.sessionIds.filter((v: unknown): v is string => typeof v === 'string')
+      : undefined;
+    const olderThanDays =
+      typeof req.body?.olderThanDays === 'number' ? req.body.olderThanDays : undefined;
+    const maxBytes = typeof req.body?.maxBytes === 'number' ? req.body.maxBytes : undefined;
+    const maxChunks = typeof req.body?.maxChunks === 'number' ? req.body.maxChunks : undefined;
+    try {
+      res.json(
+        pruneKnowledgeBase({
+          sessionIds,
+          olderThanDays,
+          maxBytes,
+          maxChunks,
+          dryRun: req.body?.dryRun === true,
+        })
+      );
+    } catch (err) {
+      res.status(500).json({ error: '清理失败', detail: String(err) });
     }
   });
 

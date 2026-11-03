@@ -10,8 +10,17 @@
 
 import * as chatDb from '../db.js';
 import { normalizeProjectPath } from '../project-key.js';
-import { getKbDb, getScopePolicy, type KbScopePolicy } from './store.js';
+import { getKbDb, getScopePolicy, countChunkVectors, type KbScopePolicy } from './store.js';
 import { findRedactionResidue, redactForStorage } from './redact.js';
+import {
+  KB_VECTOR_MIN_SIMILARITY,
+  KB_VECTOR_PROVIDER_ID,
+  KB_VECTOR_SCAN_LIMIT,
+  cosineSimilarity,
+  deserializeVector,
+  embedText,
+  isVectorLayerEnabled,
+} from './embedding.js';
 
 export type KbScope = 'session' | 'workspace' | 'project' | 'all';
 
@@ -159,11 +168,14 @@ export interface KbSearchHit {
   timeEnd: string;
   score: number;
   redactedCount: number;
+  /** P3 去重：被合并进来的近似重复 citationId（保留的那条才带此字段）。 */
+  mergedCitationIds?: string[];
 }
 
 export interface KbSearchResponse {
   query: string;
   scope: KbScope;
+  /** 词法通道的模式；P3 起与 `retrieval` 分开，避免改变老调用方的判断。 */
   mode: 'fts' | 'like';
   scopeApplied: KbScope;
   hits: KbSearchHit[];
@@ -172,6 +184,12 @@ export interface KbSearchResponse {
   filteredOut: number;
   topK: number;
   maxTokens: number;
+  /** P3：'bm25' 表示纯词法（含自动降级），'hybrid' 表示向量参与 RRF 融合。 */
+  retrieval: 'bm25' | 'hybrid';
+  /** 进入融合的向量候选数；0 表示本次没有向量召回。 */
+  vectorCandidates: number;
+  /** 近似去重合并掉的条数。 */
+  dedupedCount: number;
 }
 
 interface ChunkSearchRow {
@@ -255,6 +273,99 @@ function sanitizeOutbound(value: string): string | null {
   return result.text;
 }
 
+/* ══════════════ P3：近似去重 ══════════════ */
+
+/**
+ * 去重口径（写死在这里，改阈值必须同步改闸门）：
+ *   - 3-gram Jaccard ≥ 0.82 → 判为近似重复；
+ *   - 或「短文本几乎完全被长文本包含」（containment ≥ 0.9 且长度比 ≤ 0.75）
+ *     → 判为同一内容的截断版本。
+ *
+ * 保留规则：长度差 ≥ 1.2 倍时保留更全的一条；否则保留时间更新的那条
+ * （同一条内容在不同会话/多轮被重复索引时，新的通常代表用户最后的表述）。
+ */
+const KB_DEDUP_JACCARD = 0.82;
+const KB_DEDUP_CONTAINMENT = 0.9;
+const KB_DEDUP_SUBSET_RATIO = 0.75;
+
+interface PreparedHit {
+  hit: KbSearchHit;
+  grams: Set<string>;
+  length: number;
+}
+
+function shinglesOf(text: string): Set<string> {
+  const plain = text.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+  const chars = Array.from(plain);
+  const out = new Set<string>();
+  if (chars.length <= 3) {
+    if (plain) out.add(plain);
+    return out;
+  }
+  for (let i = 0; i + 3 <= chars.length; i += 1) {
+    out.add(chars.slice(i, i + 3).join(''));
+  }
+  return out;
+}
+
+/**
+ * 向量通道只负责「补召回」，不负责「猜主题」。
+ *
+ * 本地向量是字符 n-gram 投影，没有真语义；如果不要求与查询有任何字符片段
+ * 重叠，纯哈希相似度会把同工作区里完全无关的会话（甚至跨主题）拉进 topK。
+ * 因此**向量新增候选**必须与查询共享至少一个 3-gram；已经是 BM25 命中的
+ * 候选不受此限（它们本来就有词法相关性）。
+ */
+function sharesQueryGram(query: string, content: string): boolean {
+  const queryGrams = shinglesOf(query);
+  if (!queryGrams.size) return false;
+  const contentGrams = shinglesOf(content);
+  for (const gram of queryGrams) if (contentGrams.has(gram)) return true;
+  return false;
+}
+
+function isNearDuplicate(a: PreparedHit, b: PreparedHit): boolean {
+  if (!a.grams.size || !b.grams.size) return false;
+  let intersection = 0;
+  const [small, large] = a.grams.size <= b.grams.size ? [a.grams, b.grams] : [b.grams, a.grams];
+  for (const gram of small) if (large.has(gram)) intersection += 1;
+
+  const union = a.grams.size + b.grams.size - intersection;
+  if (union > 0 && intersection / union >= KB_DEDUP_JACCARD) return true;
+
+  const containment = intersection / Math.min(a.grams.size, b.grams.size);
+  const ratio = Math.min(a.length, b.length) / Math.max(a.length, b.length);
+  return containment >= KB_DEDUP_CONTAINMENT && ratio <= KB_DEDUP_SUBSET_RATIO;
+}
+
+/** 两条近似重复里选保留项：更全优先，其次更新。 */
+function preferNewerOrFuller(candidate: PreparedHit, kept: PreparedHit): boolean {
+  if (candidate.length >= kept.length * 1.2) return true;
+  if (kept.length >= candidate.length * 1.2) return true;
+  return candidate.hit.timeEnd >= kept.hit.timeEnd;
+}
+
+/** 把 drop 的引用信息并进 keep（citationId 与 messageIds 都保留）。 */
+function mergeDuplicate(keep: PreparedHit, drop: PreparedHit): void {
+  const merged = keep.hit.mergedCitationIds ?? [];
+  merged.push(drop.hit.citationId);
+  if (drop.hit.mergedCitationIds) merged.push(...drop.hit.mergedCitationIds);
+  keep.hit.mergedCitationIds = [...new Set(merged)];
+  keep.hit.messageIds = [...new Set([...keep.hit.messageIds, ...drop.hit.messageIds])];
+}
+
+interface RankedChunkRow {
+  row: ChunkSearchRow;
+  lexRank?: number;
+  vecRank?: number;
+  similarity?: number;
+}
+
+interface VectorSearchRow extends ChunkSearchRow {
+  vec: unknown;
+  dim: number;
+}
+
 export function searchKnowledge(options: KbSearchOptions): KbSearchResponse {
   const query = String(options.query ?? '').trim();
   if (!query) throw new KbSearchError('empty_query', '查询不能为空');
@@ -267,12 +378,11 @@ export function searchKnowledge(options: KbSearchOptions): KbSearchResponse {
   const context = resolveScopeContext(options.sessionId);
   const where = buildScopeWhere(scope, context, policy);
 
-  // 群聊切片默认 visibility=source_only；只有「查自己」（session 范围）时
-  // 才可见。workspace / project / all 一律保持不可见，避免群聊内容外溢。
-  const visibilitySql =
-    scope === 'session' && context.sourceKind === 'group'
-      ? `(c.visibility = 'normal' OR c.visibility = 'source_only')`
-      : `c.visibility = 'normal'`;
+  // P3：群聊切片（source_only）从「仅本群可见」放开到「用户可见的群聊内容」。
+  // 本地库里的群会话都是当前用户创建的，因此 workspace/project/all 也允许
+  // 读到群内容；真正的越权边界仍由范围策略（project/all 需显式 allow）负责。
+  // 单聊会话不再因为「群里说过」而检索不到；跨工作区仍由 where.sql 拦住。
+  const visibilitySql = `(c.visibility = 'normal' OR (c.source_kind = 'group' AND c.visibility = 'source_only'))`;
 
   const terms = termsOf(query);
   const useLike = Array.from(query).length < 3 || hasShortTerm(terms);
@@ -320,11 +430,86 @@ export function searchKnowledge(options: KbSearchOptions): KbSearchResponse {
       .all(ftsExpression(terms), ...where.params, topK + 4) as unknown as ChunkSearchRow[];
   }
 
-  const hits: KbSearchHit[] = [];
-  let tokensUsed = 0;
+  /* ── P3：向量召回 + RRF 融合 ── */
+  const candidates = new Map<string, RankedChunkRow>();
+  rows.forEach((row, index) => candidates.set(row.id, { row, lexRank: index }));
+
+  let vectorCandidatesCount = 0;
+  if (isVectorLayerEnabled() && countChunkVectors(KB_VECTOR_PROVIDER_ID) > 0) {
+    const queryVector = embedText(query);
+    const vectorRows = db
+      .prepare(`
+        SELECT c.*, v.vec AS vec, v.dim AS dim
+        FROM kb_vectors v
+        JOIN kb_chunks c ON c.id = v.chunk_id
+        LEFT JOIN kb_sessions s ON s.session_id = c.session_id
+        WHERE v.provider = ?
+          AND ${visibilitySql}
+          AND c.is_excluded = 0
+          AND COALESCE(s.index_enabled, 1) = 1
+          AND (${where.sql})
+        ORDER BY c.time_end DESC
+        LIMIT ?
+      `)
+      .all(
+        KB_VECTOR_PROVIDER_ID,
+        ...where.params,
+        KB_VECTOR_SCAN_LIMIT
+      ) as unknown as VectorSearchRow[];
+
+    const lexicalIds = new Set(rows.map(row => row.id));
+    const scored = vectorRows
+      .map(row => {
+        const vec = deserializeVector(row.vec, Number(row.dim));
+        return vec ? { row, similarity: cosineSimilarity(queryVector, vec) } : null;
+      })
+      .filter(
+        (item): item is { row: VectorSearchRow; similarity: number } =>
+          item !== null &&
+          item.similarity >= KB_VECTOR_MIN_SIMILARITY &&
+          (lexicalIds.has(item.row.id) || sharesQueryGram(query, item.row.content))
+      )
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, topK + 8);
+
+    vectorCandidatesCount = scored.length;
+    scored.forEach((item, index) => {
+      const existing = candidates.get(item.row.id);
+      if (existing) {
+        existing.vecRank = index;
+        existing.similarity = item.similarity;
+      } else {
+        candidates.set(item.row.id, {
+          row: item.row,
+          vecRank: index,
+          similarity: item.similarity,
+        });
+      }
+    });
+  }
+
+  const retrieval: 'bm25' | 'hybrid' = vectorCandidatesCount > 0 ? 'hybrid' : 'bm25';
+
+  // RRF：两路排名各自贡献 1/(k+rank)，不比较 BM25 与余弦的原始分值。
+  const RRF_K = 60;
+  const fused = [...candidates.values()]
+    .map(item => ({
+      item,
+      score:
+        (item.lexRank !== undefined ? 1 / (RRF_K + item.lexRank + 1) : 0) +
+        (item.vecRank !== undefined ? 1 / (RRF_K + item.vecRank + 1) : 0),
+    }))
+    .sort(
+      (a, b) =>
+        b.score - a.score || b.item.row.time_end.localeCompare(a.item.row.time_end)
+    );
+
+  /* ── 出库脱敏 + 近似去重 ── */
+  const prepared: PreparedHit[] = [];
   let filteredOut = 0;
 
-  for (const row of rows) {
+  for (const { item } of fused) {
+    const row = item.row;
     const safeContent = sanitizeOutbound(row.content);
     const safeSummary = sanitizeOutbound(row.summary);
     const safeSnippet = sanitizeOutbound(
@@ -338,10 +523,6 @@ export function searchKnowledge(options: KbSearchOptions): KbSearchResponse {
       continue;
     }
 
-    const tokenCount = Number(row.token_count ?? 0);
-    if (hits.length > 0 && tokensUsed + tokenCount > maxTokens) break;
-    if (hits.length >= topK) break;
-
     let messageIds: string[] = [];
     try {
       const parsed = JSON.parse(row.message_ids) as unknown;
@@ -350,27 +531,64 @@ export function searchKnowledge(options: KbSearchOptions): KbSearchResponse {
       messageIds = [];
     }
 
-    hits.push({
-      citationId: row.id,
-      sessionId: row.session_id,
-      agentId: row.agent_id,
-      authorAgentId: row.author_agent_id,
-      workspaceKey: row.workspace_key,
-      projectId: row.project_id,
-      role: row.role,
-      sourceType: row.source_kind === 'group' ? 'group' : 'direct',
-      visibility: row.visibility === 'source_only' ? 'source_only' : 'normal',
-      summary: safeSummary,
-      snippet: safeSnippet,
-      content: safeContent,
-      messageIds,
-      tokenCount,
-      timeStart: row.time_start,
-      timeEnd: row.time_end,
-      score: mode === 'fts' ? -(row.rank ?? 0) : 1,
-      redactedCount: Number(row.redacted_count ?? 0),
+    prepared.push({
+      hit: {
+        citationId: row.id,
+        sessionId: row.session_id,
+        agentId: row.agent_id,
+        authorAgentId: row.author_agent_id,
+        workspaceKey: row.workspace_key,
+        projectId: row.project_id,
+        role: row.role,
+        sourceType: row.source_kind === 'group' ? 'group' : 'direct',
+        visibility: row.visibility === 'source_only' ? 'source_only' : 'normal',
+        summary: safeSummary,
+        snippet: safeSnippet,
+        content: safeContent,
+        messageIds,
+        tokenCount: Number(row.token_count ?? 0),
+        timeStart: row.time_start,
+        timeEnd: row.time_end,
+        score:
+          mode === 'fts' && row.rank !== undefined
+            ? -(row.rank ?? 0)
+            : (item.similarity ?? 1),
+        redactedCount: Number(row.redacted_count ?? 0),
+      },
+      grams: shinglesOf(safeContent),
+      length: safeContent.length,
     });
-    tokensUsed += tokenCount;
+  }
+
+  let dedupedCount = 0;
+  const kept: PreparedHit[] = [];
+  for (const candidate of prepared) {
+    let merged = false;
+    for (let i = 0; i < kept.length; i += 1) {
+      const rep = kept[i]!;
+      if (!isNearDuplicate(candidate, rep)) continue;
+
+      if (preferNewerOrFuller(candidate, rep)) {
+        // 新来的更全/更新：吸收旧代表后原位替换。
+        mergeDuplicate(candidate, rep);
+        kept[i] = candidate;
+      } else {
+        mergeDuplicate(rep, candidate);
+      }
+      dedupedCount += 1;
+      merged = true;
+      break;
+    }
+    if (!merged) kept.push(candidate);
+  }
+
+  const hits: KbSearchHit[] = [];
+  let tokensUsed = 0;
+  for (const item of kept) {
+    if (hits.length >= topK) break;
+    if (hits.length > 0 && tokensUsed + item.hit.tokenCount > maxTokens) break;
+    hits.push(item.hit);
+    tokensUsed += item.hit.tokenCount;
   }
 
   return {
@@ -383,5 +601,8 @@ export function searchKnowledge(options: KbSearchOptions): KbSearchResponse {
     filteredOut,
     topK,
     maxTokens,
+    retrieval,
+    vectorCandidates: vectorCandidatesCount,
+    dedupedCount,
   };
 }

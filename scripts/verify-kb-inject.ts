@@ -6,9 +6,10 @@
  *   2. 零命中只注入一行状态，不出现任何 `[KB:` 标记；
  *   3. 索引层/会话异常时不抛出（调用方按原 prompt 继续）；
  *   4. 注入固定 workspace：project/all 即使已开启也不会被注入吃掉；
- *      群聊 source_only 不会进入 workspace 注入；
+ *      P3 起群聊内容对同工作区可见，但跨工作区仍不可见；
  *   5. 工具入参拒绝 sessionId / 路径；scope 越权被 service 层拒绝；
- *   6. CLI 参数生成含 `--mcp-config` 与 `mcp__kb__search`。
+ *   6. CLI 参数生成含 `--mcp-config` 与 `mcp__kb__search`；
+ *   7. P3：向量混合检索（无向量自动降级 BM25）、近似去重、体积治理。
  *
  * 全部在临时 OPC_DATA_DIR 里跑，不碰真实 data/。
  */
@@ -60,6 +61,7 @@ async function main(): Promise<void> {
   const inject = await import('../server/kb/inject.js');
   const tool = await import('../server/kb/tool.js');
   const optout = await import('../server/kb/optout.js');
+  const search = await import('../server/kb/search.js');
   const definitions = await import('../server/agents/definitions.js');
 
   const nowIso = new Date().toISOString();
@@ -181,12 +183,37 @@ async function main(): Promise<void> {
   ok('workspace 注入不跨工作区', Boolean(crossWorkspace && crossWorkspace.count === 0));
 
   const groupOnlyFromA = inject.buildKbInjection(sA.id, '群组秘钥XYZ');
-  ok('群聊 source_only 不进入工作区注入', Boolean(groupOnlyFromA && groupOnlyFromA.count === 0));
+  ok('P3：群聊内容对同工作区的会话可见', Boolean(groupOnlyFromA && groupOnlyFromA.count > 0));
+  ok(
+    '命中的群聊切片标记 sourceType=group',
+    groupOnlyFromA?.citations[0]?.sourceType === 'group',
+    JSON.stringify(groupOnlyFromA?.citations[0])
+  );
 
-  // 群聊首轮注入同样走 workspace：source_only 只在「显式 session 范围」可见，
-  // 所以这里连本群自己的内容也不该被注入 —— 隐私口径优先于召回率。
+  // 跨工作区仍是硬边界：群聊在 workspace B 不可见。
+  const groupCrossWorkspace = inject.buildKbInjection(sB.id, '群组秘钥XYZ');
+  ok(
+    '群聊内容不跨工作区',
+    Boolean(groupCrossWorkspace && groupCrossWorkspace.count === 0),
+    JSON.stringify(
+      groupCrossWorkspace?.citations.map(c => ({
+        sessionId: c.sessionId,
+        workspaceKey: c.workspaceKey,
+      }))
+    )
+  );
+
+  // session 范围只看本会话：单聊不能借 session 读到群聊内容。
+  const directSession = search.searchKnowledge({
+    sessionId: sA.id,
+    query: '群组秘钥XYZ',
+    scope: 'session',
+  });
+  ok('单聊 session 范围看不到群聊消息', directSession.hits.length === 0);
+
+  // 群聊自己的首轮注入（workspace）同样能看到自己。
   const groupOwn = inject.buildKbInjection(sGroup.id, '群组秘钥XYZ');
-  ok('群聊首轮注入（workspace）不注入 source_only', Boolean(groupOwn && groupOwn.count === 0));
+  ok('群聊首轮注入（workspace）可见自己的内容', Boolean(groupOwn && groupOwn.count > 0));
   const groupToolSession = tool.executeKbSearchTool(
     { query: '群组秘钥XYZ', scope: 'session' },
     sGroup.id,
@@ -305,7 +332,121 @@ async function main(): Promise<void> {
   ok('SDK spec 注入 OPC_KB_AGENT_ID', sdkSpec.env.OPC_KB_AGENT_ID === 'claude', JSON.stringify(sdkSpec.env));
   ok('SDK spec 注入 OPC_KB_SESSION_ID', sdkSpec.env.OPC_KB_SESSION_ID === sA.id);
 
-  /* ═══════════ 8. 前端接线与诚实边界 ═══════════ */
+  /* ═══════════ 8. P3：混合检索 / 降级 / 去重 / 治理 ═══════════ */
+  section('P3 混合检索与降级');
+  const hybrid = search.searchKnowledge({
+    sessionId: sA.id,
+    query: '并发写冲突',
+    scope: 'workspace',
+  });
+  ok('索引后默认走向量混合检索', hybrid.retrieval === 'hybrid', hybrid.retrieval);
+  ok('向量候选参与融合', hybrid.vectorCandidates > 0, String(hybrid.vectorCandidates));
+  ok('混合检索仍返回原有 hits 结构', hybrid.hits.length > 0 && Boolean(hybrid.hits[0]!.citationId));
+
+  process.env.OPC_KB_VECTOR = 'off';
+  const vectorOff = search.searchKnowledge({
+    sessionId: sA.id,
+    query: '并发写冲突',
+    scope: 'workspace',
+  });
+  ok('关闭向量层自动降级为纯 BM25', vectorOff.retrieval === 'bm25', vectorOff.retrieval);
+  ok('降级后仍有 BM25 命中', vectorOff.hits.length > 0);
+  delete process.env.OPC_KB_VECTOR;
+
+  // 无向量（老库/回填未完成）也必须能查：这是契约里的自动降级。
+  store.deleteAllChunkVectors();
+  const noVectors = search.searchKnowledge({
+    sessionId: sA.id,
+    query: '并发写冲突',
+    scope: 'workspace',
+  });
+  ok('无向量时自动降级为纯 BM25', noVectors.retrieval === 'bm25', noVectors.retrieval);
+  ok('无向量时 BM25 结果不受影响', noVectors.hits.length > 0);
+  const restoredVectors = kb.backfillMissingVectors();
+  ok(
+    '缺失向量可增量回填',
+    restoredVectors > 0 && store.countChunkVectors() >= restoredVectors,
+    `${restoredVectors} / ${store.countChunkVectors()}`
+  );
+
+  section('P3 近似去重');
+  const sDupA = makeSession({
+    id: 's-dup-a',
+    cwd: 'E:/tmp/opc-kb-inject-ws-a',
+    projectId: projectA.id,
+  });
+  const sDupB = makeSession({
+    id: 's-dup-b',
+    cwd: 'E:/tmp/opc-kb-inject-ws-a',
+    projectId: projectA.id,
+  });
+  const dupText =
+    '缓存击穿会导致大量请求同时回源数据库，需要加互斥锁与短期空值缓存，避免把数据库打垮。';
+  msg('dup-a', sDupA.id, 'user', dupText);
+  msg('dup-b', sDupB.id, 'user', dupText);
+  kb.indexSession(sDupA.id, { force: true });
+  kb.indexSession(sDupB.id, { force: true });
+
+  const dedup = search.searchKnowledge({
+    sessionId: sA.id,
+    query: '缓存击穿',
+    scope: 'workspace',
+    topK: 4,
+  });
+  const dupHits = dedup.hits.filter(h => h.sessionId === sDupA.id || h.sessionId === sDupB.id);
+  ok('近似重复在结果里合并为一条', dupHits.length === 1, String(dupHits.length));
+  ok('合并计数大于 0', dedup.dedupedCount >= 1, String(dedup.dedupedCount));
+  ok(
+    '被合并的来源仍可追溯',
+    Boolean(dupHits[0]?.mergedCitationIds && dupHits[0].mergedCitationIds.length >= 1),
+    JSON.stringify(dupHits[0]?.mergedCitationIds)
+  );
+
+  section('P3 体积治理与可观测指标');
+  const stats = store.getStats();
+  console.log(
+    `[metrics] db=${(stats.sizeBytes / 1024).toFixed(1)}KB chunks=${stats.chunkCount} ` +
+      `vectors=${stats.vectorCount} sessions=${stats.sessionCount} failed=${stats.failedSessionCount}`
+  );
+  ok('状态暴露体积与 chunk 数', stats.sizeBytes > 0 && stats.chunkCount > 0);
+  ok('状态暴露向量条数', stats.vectorCount > 0);
+  ok('状态暴露失败会话数', typeof stats.failedSessionCount === 'number');
+  ok(
+    '状态暴露治理阈值',
+    stats.limits.maxBytes > 0 && stats.limits.maxChunks > 0,
+    JSON.stringify(stats.limits)
+  );
+
+  const beforeChunks = store.countChunks();
+  const dry = store.pruneKnowledgeBase({
+    maxChunks: Math.max(1, beforeChunks - 2),
+    dryRun: true,
+  });
+  ok('dryRun 只估算不删除', dry.deletedChunks > 0 && store.countChunks() === beforeChunks);
+
+  const bySession = store.pruneKnowledgeBase({ sessionIds: [sDupB.id] });
+  ok('按会话清理删除该会话切片', bySession.deletedChunks > 0, String(bySession.deletedChunks));
+  ok('按会话清理同时移除会话状态', bySession.deletedSessions === 1, String(bySession.deletedSessions));
+
+  const beforeSizePrune = store.countChunks();
+  const bySize = store.pruneKnowledgeBase({ maxChunks: Math.max(1, beforeSizePrune - 2) });
+  ok('按大小上限从最旧切片开始删除', bySize.deletedChunks > 0, String(bySize.deletedChunks));
+  ok('清理后 chunk 数下降', bySize.chunkCount < beforeSizePrune, `${beforeSizePrune} → ${bySize.chunkCount}`);
+  ok(
+    '清理后向量随切片一起减少',
+    bySize.vectorCount <= stats.vectorCount,
+    `${stats.vectorCount} → ${bySize.vectorCount}`
+  );
+
+  // 检索延迟实测（混合检索 + 去重，20 次平均，仅打印供回报）。
+  const t0 = performance.now();
+  for (let i = 0; i < 20; i += 1) {
+    search.searchKnowledge({ sessionId: sA.id, query: '并发写冲突', scope: 'workspace' });
+  }
+  const avgMs = (performance.now() - t0) / 20;
+  console.log(`[metrics] 混合检索平均 ${avgMs.toFixed(2)}ms/次（含去重，20 次平均）`);
+
+  /* ═══════════ 9. 前端接线与诚实边界 ═══════════ */
   section('前端提示与能力边界');
   const repoRoot = path.resolve(import.meta.dirname, '..');
   const read = (rel: string) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');

@@ -358,15 +358,28 @@ async function main(): Promise<void> {
     JSON.stringify(groupSearch.hits.map(h => ({ sourceType: h.sourceType, visibility: h.visibility })))
   );
 
-  // 跨会话范围仍不可见：同上项目/工作区也不能把群聊内容带出去
+  // P3：群聊内容按「用户可见」放开到 workspace/project/all（本地库里的群会话
+  // 都是同一用户创建的）；但别的会话仍不能借 session 范围读到它。
   for (const [label, opts] of [
-    ['本会话（别的会话）', { sessionId: sA.id, scope: 'session' as const }],
-    ['本工作区', { sessionId: sA.id, scope: 'workspace' as const }],
-    ['本项目', { sessionId: sA.id, scope: 'project' as const }],
-    ['全部', { sessionId: sA.id, scope: 'all' as const }],
+    ['本会话（别的会话）', { sessionId: sA.id, scope: 'session' as const, expectVisible: false }],
+    ['本工作区', { sessionId: sA.id, scope: 'workspace' as const, expectVisible: true }],
+    ['本项目', { sessionId: sA.id, scope: 'project' as const, expectVisible: true }],
+    ['全部', { sessionId: sA.id, scope: 'all' as const, expectVisible: true }],
   ] as const) {
     const outside = searchMod.searchKnowledge({ query: '群组秘钥XYZ', ...opts });
-    ok(`群聊内容不进入${label}范围`, outside.hits.length === 0, JSON.stringify(outside.hits.map(h => h.sessionId)));
+    if (opts.expectVisible) {
+      ok(
+        `群聊内容进入${label}范围（P3 用户可见）`,
+        outside.hits.length > 0 && outside.hits.every(h => h.sessionId === sGroup.id),
+        JSON.stringify(outside.hits.map(h => h.sessionId))
+      );
+    } else {
+      ok(
+        `群聊内容不进入${label}范围`,
+        outside.hits.length === 0,
+        JSON.stringify(outside.hits.map(h => h.sessionId))
+      );
+    }
   }
 
   const groupRows = store

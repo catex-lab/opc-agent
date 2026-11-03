@@ -5,7 +5,9 @@
  * 索引失败只记告警，不反向影响聊天落库。
  *
  * 群聊规则：入库但 `visibility=source_only`，`agent_id` 置空，发言人写
- * `author_agent_id`。P1 检索只读 normal，所以群聊不会自动/主动进入回答。
+ * `author_agent_id`。P1 只有「查本群」（session 范围）能读；P3 按「用户可见
+ * 的群聊内容」放开到 workspace/project/all —— 这些会话本来就是同一用户
+ * 创建的，隐私边界改为由范围策略（`policy.allow_*`）负责。
  *
  * 「不索引」标记落在 `data/kb-optout.json`，不落在索引库里 —— 索引库损坏
  * 重建时这条隐私选择必须还在，否则敏感会话会被重新索引。
@@ -25,9 +27,16 @@ import { KbRedactionError, assertRedactionClean, redactOrFail } from './redact.j
 import { setKbPersistSink, type KbPersistEvent } from './events.js';
 import { readOptOutStore, writeOptOutStore } from './optout.js';
 import {
+  KB_VECTOR_PROVIDER_ID,
+  embedText,
+  isVectorLayerEnabled,
+  serializeVector,
+} from './embedding.js';
+import {
   countChunks,
   deleteAllChunks,
   deleteSessionChunks,
+  enforceKbLimits,
   getKbDb,
   getLastChunk,
   getScopePolicy,
@@ -35,6 +44,7 @@ import {
   getStats,
   inKbTransaction,
   insertChunk,
+  listChunksMissingVector,
   listSessionStates,
   markSessionError,
   markSessionIndexed,
@@ -42,6 +52,7 @@ import {
   setMeta,
   setSessionIndexEnabled,
   sha256,
+  upsertChunkVector,
   type KbChunkRow,
 } from './store.js';
 
@@ -212,11 +223,16 @@ function writeWindows(
   const projectId = chatDb.getSessionProject(session.id)?.id ?? null;
   const rows = windows.map(window => rowOf(session, window, indexedAt, projectId));
 
-  return inKbTransaction(() => {
+  const inserted = inKbTransaction(() => {
     if (replace) deleteSessionChunks(session.id);
     let inserted = 0;
     for (const row of rows) {
       if (insertChunk(row)) inserted += 1;
+      // 向量按 chunk 存；已存在的切片也补一次（升级后首次索引即可自愈）。
+      if (isVectorLayerEnabled()) {
+        const vec = embedText(`${row.summary}\n${row.content}`);
+        upsertChunkVector(row.id, serializeVector(vec));
+      }
     }
     markSessionIndexed(session.id, {
       sourceKind: session.kind === 'group' ? 'group' : 'direct',
@@ -226,6 +242,14 @@ function writeWindows(
     });
     return inserted;
   });
+
+  // P3 体积治理：每小时最多检查一次；超限时从最旧的切片开始清理。
+  try {
+    enforceKbLimits();
+  } catch (err) {
+    console.warn('[KB] 体积治理检查失败（不影响本次索引）:', err);
+  }
+  return inserted;
 }
 
 /* ══════════════ 单会话索引 ══════════════ */
@@ -482,6 +506,32 @@ function attachPersistSink(): void {
 }
 
 /**
+ * 补齐缺失向量（P3）。
+ *
+ * 老库升级后 `kb_vectors` 为空，启动回填时按批补算；`limit` 是单次启动的
+ * 上限，避免几万片一次性算完把启动拖住。没补完的会在下一次启动继续。
+ */
+export function backfillMissingVectors(limit = 2000): number {
+  if (!isVectorLayerEnabled()) return 0;
+  let done = 0;
+  while (done < limit) {
+    const rows = listChunksMissingVector(
+      KB_VECTOR_PROVIDER_ID,
+      Math.min(500, limit - done)
+    );
+    if (rows.length === 0) break;
+    inKbTransaction(() => {
+      for (const row of rows) {
+        const vec = embedText(`${row.summary}\n${row.content}`);
+        upsertChunkVector(row.id, serializeVector(vec));
+      }
+    });
+    done += rows.length;
+  }
+  return done;
+}
+
+/**
  * 启动入口。默认后台跑一次最近 90 天回填；测试可 `{ backfill: false }`
  * 后自己控制时序。
  */
@@ -498,6 +548,9 @@ export function bootKnowledgeBase(options: { backfill?: boolean } = {}): ReturnT
           `[KB] 启动回填完成：${result.indexedSessions}/${result.sessions} 个会话，` +
             `${result.chunks} 片，错误 ${result.errors}`
         );
+        // 老库升级到 P3 时补齐向量；按批处理，避免启动卡住。
+        const vectors = backfillMissingVectors();
+        if (vectors > 0) console.log(`[KB] 向量回填完成：${vectors} 片`);
       } catch (err) {
         console.warn('[KB] 启动回填失败:', err);
       }
