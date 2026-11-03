@@ -65,6 +65,50 @@ function ensureStagingDir(): string {
   return dir;
 }
 
+/**
+ * 暂存目录里算「更新资产」的文件后缀。
+ *
+ * `.asar` 那一档是**历史遗留**：1.0.2–1.0.4 的客户端把下载完的包直接存成
+ * `app-<ver>.asar`，正是它引出了「退出并重启」时的 ENOENT（见 `stagedFile`
+ * 的注释）。留着它只为在下一次下载时把旧残留清掉。
+ */
+const STAGED_SUFFIXES = ['.download', '.part', '.asar'] as const;
+
+/**
+ * 暂存文件的**唯一定义点**：下载写它、交接前校验它、传给 helper 也用它。
+ * 任何一处再手写文件名都会重新长出这次的 bug。
+ *
+ * ⚠️ 结尾**绝不能**是 `.asar`。Electron 会把以 `.asar` 结尾的路径当成 asar
+ * 归档交给 asar 层：`statSync` 返回 0、`createReadStream` 直接抛
+ * `ENOENT, not found in <path>`。1.0.2 真机上就是这么失败的 —— 包好好躺在
+ * temp 里（42,129,728 B），读它的主进程却报「不存在」。
+ *
+ * 命名成 `<asset>.download`（而不是裸 `<asset>`）还能顺带区分「下载完的」
+ * 与 `.part`（半成品）。
+ */
+function stagedFile(dir: string, assetName: string): string {
+  return join(dir, `${assetName}.download`);
+}
+
+/**
+ * 清掉暂存目录里的更新资产（半成品、旧版本残留、历史 `.asar`）。
+ *
+ * `keep` 传本次要保留的绝对路径。删除一律 `force` + 吞错：清残留失败
+ * 不该把一次本来可用的更新变成失败。
+ */
+function sweepStaging(dir: string, keep?: string): void {
+  for (const name of readdirSafe(dir)) {
+    if (!STAGED_SUFFIXES.some(suffix => name.endsWith(suffix))) continue;
+    const full = join(dir, name);
+    if (keep && full === keep) continue;
+    try {
+      rmSync(full, { force: true });
+    } catch {
+      /* 尽力而为：被别的进程占着就留给下次 */
+    }
+  }
+}
+
 interface PendingAsset {
   version: string;
   asset: UpdateAsset;
@@ -217,7 +261,8 @@ async function downloadAsset(
   onProgress: (received: number, total: number) => void
 ): Promise<string> {
   const dir = ensureStagingDir();
-  const part = join(dir, `${asset.name}.part`);
+  const staged = stagedFile(dir, asset.name);
+  const part = `${staged}.part`;
   rmSync(part, { force: true });
 
   const res = await fetchChecked(asset.url, 10 * 60_000);
@@ -262,8 +307,7 @@ async function downloadAsset(
     throw new UpdateFailed('digest', '摘要不符（下载内容与清单不一致）');
   }
 
-  // 同目录改名：目标文件要么不存在、要么是完整内容，不会出现半截 asar
-  const staged = join(dir, asset.name);
+  // 同目录改名：目标文件要么不存在、要么是完整内容，不会出现半截包
   rmSync(staged, { force: true });
   renameSync(part, staged);
   return staged;
@@ -479,12 +523,8 @@ class UpdateController {
         });
       });
       this.pending.stagedPath = staged;
-      // 清掉旧版本残留，只保留本次待安装的 asar
-      for (const name of readdirSafe(dir)) {
-        if (name.endsWith('.asar') && name !== this.pending.asset.name) {
-          rmSync(join(dir, name), { force: true });
-        }
-      }
+      // 清掉旧版本残留与半成品，只保留本次待安装的那一个
+      sweepStaging(dir, staged);
       this.set({
         phase: 'ready',
         progress: undefined,
@@ -502,22 +542,36 @@ class UpdateController {
    *
    * 替换前再算一次摘要 —— 暂存文件可能在这期间被别的东西动过；只信
    * 清单，不信「上次下载时是对的」。
+   *
+   * 这一段**不允许抛异常**：它由 `opc:update-quit-install` 直连按钮，
+   * 抛出去会被 Electron 包成 `Error invoking remote method ...`，用户只
+   * 能看到一串英文。任何读不出来 / 对不上都得转成一句中文 + 可重试状态。
    */
   async quitAndInstall(): Promise<{ ok: boolean; error?: string }> {
     if (!this.state.supported) return { ok: false, error: '当前不是打包版，不能替换 app.asar' };
-    if (this.state.phase !== 'ready' || !this.pending?.stagedPath) {
+    if (this.state.phase !== 'ready' || !this.pending) {
       return { ok: false, error: '没有已下载好的更新' };
     }
-    const { asset, stagedPath, version } = this.pending;
+    const { asset, version } = this.pending;
+    const dir = ensureStagingDir();
+    // 路径必须走同一个函数：下载时写哪儿、交接时读哪儿，不允许各写一遍
+    const stagedPath = stagedFile(dir, asset.name);
+
     if (!existsSync(stagedPath)) {
-      this.fail('io', '暂存的更新文件不见了，请重新下载');
-      return { ok: false, error: '暂存文件不存在' };
+      return this.abandonStaged('io', '暂存的更新文件不见了（可能被系统清理），请重新下载');
     }
-    const digest = await fileDigest(stagedPath);
-    if (!sameBase64(digest.sha512, asset.sha512) || digest.size !== asset.size) {
-      rmSync(stagedPath, { force: true });
-      this.fail('digest', '暂存文件与清单不一致，已删除，请重新下载');
-      return { ok: false, error: '摘要校验失败' };
+
+    let digest: { size: number; sha512: string };
+    try {
+      digest = await fileDigest(stagedPath);
+    } catch (e) {
+      return this.abandonStaged(
+        'io',
+        `暂存的更新文件读不出来（${e instanceof Error ? e.message : String(e)}），请重新下载`
+      );
+    }
+    if (digest.size !== asset.size || !sameBase64(digest.sha512, asset.sha512)) {
+      return this.abandonStaged('digest', '暂存文件与清单不一致，已删除，请重新下载');
     }
 
     const targetAsar = join(process.resourcesPath, 'app.asar');
@@ -525,7 +579,6 @@ class UpdateController {
       return { ok: false, error: '找不到 resources/app.asar（不是打包形态）' };
     }
 
-    const dir = ensureStagingDir();
     const helperPath = join(dir, 'update-swap.cjs');
     const jobPath = join(dir, 'apply-job.json');
     writeFileSync(helperPath, SWAP_HELPER_SOURCE, 'utf8');
@@ -537,6 +590,7 @@ class UpdateController {
           version,
           targetAsar,
           stagedAsar: stagedPath,
+          stagedSize: asset.size,
           backupPath: `${targetAsar}.bak`,
           markerPath: markerPath(),
           healthPath: healthPath(),
@@ -562,11 +616,38 @@ class UpdateController {
       if (!child.pid) throw new Error('helper 进程没有启动');
       child.unref();
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return this.abandonStaged(
+        'io',
+        `替换进程没有启动（${e instanceof Error ? e.message : String(e)}），请重新下载`
+      );
     }
 
     setTimeout(() => app.quit(), 120);
     return { ok: true };
+  }
+
+  /**
+   * 暂存包缺失 / 读不出来 / 摘要不符 / helper 没起来：清掉半成品与交接触点，
+   * 回到可重试的错误态。
+   *
+   * 「可重试」的意思是：状态机不再是 `ready`（不会让用户反复点「退出并重启」），
+   * 且这一版仍能从「检查更新」重新走一遍下载；暂存目录里不会留下半个包。
+   */
+  private abandonStaged(code: string, message: string): { ok: false; error: string } {
+    this.pending = null;
+    try {
+      const dir = ensureStagingDir();
+      sweepStaging(dir);
+      rmSync(join(dir, 'update-swap.cjs'), { force: true });
+      rmSync(join(dir, 'apply-job.json'), { force: true });
+      rmSync(markerPath(), { force: true });
+      rmSync(healthPath(), { force: true });
+    } catch {
+      /* 清理失败不改变结论：那份文件已经不可信 */
+    }
+    this.set({ stagedVersion: undefined });
+    this.fail(code, message);
+    return { ok: false, error: message };
   }
 
   /**
@@ -589,11 +670,7 @@ class UpdateController {
       );
       writeMarker({ state: 'confirmed', version });
       rmSync(`${join(process.resourcesPath, 'app.asar')}.bak`, { force: true });
-      for (const name of readdirSync(dir)) {
-        if (name.endsWith('.asar') || name.endsWith('.part')) {
-          rmSync(join(dir, name), { force: true });
-        }
-      }
+      sweepStaging(dir);
     } catch {
       /* 健康检查写失败不该影响启动 */
     }

@@ -365,10 +365,46 @@ ok(updaterSource.includes('checkAssetUrl'), '重定向每一跳都校验域名�
 ok(updaterSource.includes('ELECTRON_RUN_AS_NODE'), '交换 helper 以纯 Node 模式启动');
 ok(updaterSource.includes('timeoutMs'), '下载与清单请求都有超时');
 
+// v1.0.2 真机事故：暂存包按 `asset.name` 存成 `app-<ver>.asar`，Electron 的 asar
+// 层把它当归档 —— 交接前二次摘要的 createReadStream 抛
+// `ENOENT, not found in <path>`，用户点「退出并重启」只看到一串英文。
+// 暂存名必须单点定义、且结尾不能是 `.asar`。
+ok(
+  !/join\(dir,\s*asset\.name\)/.test(updaterSource),
+  '暂存文件名不再直接用 asset.name（否则以 .asar 结尾）',
+  '仍有 join(dir, asset.name)'
+);
+ok(
+  /function stagedFile\(dir: string, assetName: string\): string \{[\s\S]{0,160}\$\{assetName\}\.download/.test(updaterSource),
+  '暂存文件名单点定义在 stagedFile()，且以 .download 结尾',
+  '缺 stagedFile() 或结尾不是 .download'
+);
+ok(
+  (updaterSource.match(/stagedFile\(/g) ?? []).length >= 3,
+  '下载与交接共用 stagedFile()（不存在第二处路径硬编码）',
+  `实际 ${(updaterSource.match(/stagedFile\(/g) ?? []).length} 处`
+);
+ok(
+  /try \{[\s\S]{0,160}await fileDigest\(stagedPath\)[\s\S]{0,240}\} catch/.test(updaterSource),
+  '二次摘要读不出来 → catch 成可读错误（不把 ENOENT 抛给 IPC）',
+  'fileDigest 仍可能直接抛出'
+);
+ok(
+  updaterSource.includes('abandonStaged') && updaterSource.includes('请重新下载'),
+  '缺失 / 不可读 / 摘要不符 → 中文错误 + 回到可重试状态',
+  '缺 abandonStaged 或重试文案'
+);
+ok(
+  updaterSource.includes("'.download'") && updaterSource.includes("'.part'") && updaterSource.includes("'.asar'"),
+  '清理覆盖半成品、暂存包与历史 .asar 残留',
+  '缺 sweepStaging 的后缀集合'
+);
+
 const helperSource = read('electron/updater/swap-helper-source.ts');
 ok(helperSource.includes('.bak'), '交换前把旧 asar 备份为 .bak');
 ok(helperSource.includes('rolled-back'), '启动超时后记录 rolled-back');
 ok(helperSource.includes('health'), '用健康文件确认新版本启动成功');
+ok(helperSource.includes('stagedSize'), 'helper 动旧 asar 之前先确认暂存包在且体积一致');
 
 const buildSource = read('scripts/build-update.ts');
 ok(buildSource.includes('canonicalManifestBody'), '发布脚本与客户端共用签名正文函数');

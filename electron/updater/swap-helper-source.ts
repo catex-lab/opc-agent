@@ -70,6 +70,17 @@ function cleanup() {
     return;
   }
 
+  // 0) 交接前最后一道检查：暂存文件必须还在、体积必须与清单一致。
+  //    主进程已经算过 sha512；这里防的是「旧的 app.asar 已被改名，暂存包却没了」
+  //    —— 那种情况下继续走下去只会把用户装成打不开的状态。
+  let stagedSize = -1;
+  try { stagedSize = fs.statSync(job.stagedAsar).size; } catch { stagedSize = -1; }
+  if (stagedSize !== job.stagedSize) {
+    writeMarker({ state: 'failed', error: '暂存的新版本文件缺失或体积不符' });
+    cleanup();
+    return;
+  }
+
   // 1) 备份旧 asar，放入新 asar（同目录临时名再 rename，避免半截文件被加载）
   rm(job.backupPath);
   if (fs.existsSync(job.targetAsar)) fs.renameSync(job.targetAsar, job.backupPath);
