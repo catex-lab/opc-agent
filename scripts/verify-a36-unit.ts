@@ -22,6 +22,8 @@ import {
   toolPathOf,
 } from '../shared/trace.js';
 import type { Block, ThinkingBlock, ToolBlock } from '../shared/blocks.js';
+// 折叠口径（真实结束优先 / 下一条事件兜底 / 不假装完成）的纯函数层
+import { resolveTraceItems } from '../src/trace/fold.js';
 
 let total = 0;
 const failures: string[] = [];
@@ -193,6 +195,112 @@ console.log('\n[6] lingeringToolBlocks：本轮结束仍在跑的工具');
   );
   ok(toolItem(interrupted).status === 'interrupted', 'toolItem：interrupted 不落进 done / error');
   ok(toolItem(tool('Bash', { command: 'x' })).status === 'done', '对照组：completed 仍是 done');
+}
+
+// ============= [7] 折叠口径：真实结束优先，其次兜底，不假装完成 =============
+console.log('\n[7] resolveTraceItems：完成判定与关键步骤');
+{
+  const runningRead = () =>
+    tool('Read', { file_path: '/a.ts' }, { status: 'running', endedAt: undefined });
+
+  // 1) 真实结束事件优先
+  const real = resolveTraceItems(buildTrace([tool('Read', { file_path: '/a.ts' })]), {
+    streaming: true,
+    contentStarted: false,
+  });
+  ok(
+    real[0].completion === 'real' && real[0].status === 'done',
+    '有 endedAt → 直接采信真实结束事件',
+    `${real[0].completion}/${real[0].status}`
+  );
+
+  // 2) 缺少结束事件，但同组下一条事件已经到了 → 兜底完成
+  const inferred = resolveTraceItems(
+    buildTrace([runningRead(), tool('Read', { file_path: '/b.ts' })]),
+    { streaming: true, contentStarted: false }
+  );
+  ok(
+    inferred[0].completion === 'next-event' && inferred[0].status === 'done',
+    '缺结束事件 + 下一条工具事件 → 按上一步完成',
+    `${inferred[0].completion}/${inferred[0].status}`
+  );
+
+  // 3) 缺少结束事件，后面也没有任何事件 → 保持 running
+  const open = resolveTraceItems(buildTrace([runningRead()]), {
+    streaming: true,
+    contentStarted: false,
+  });
+  ok(
+    open[0].completion === 'open' && open[0].status === 'running',
+    '长耗时步骤没有后续事件 → 不得假装完成',
+    `${open[0].completion}/${open[0].status}`
+  );
+
+  // 4) 正文 token 就是最后一步的「下一条事件」→ 兜底完成
+  const body = resolveTraceItems(buildTrace([runningRead()]), {
+    streaming: true,
+    contentStarted: true,
+  });
+  ok(
+    body[0].completion === 'next-event' && body[0].status === 'done',
+    '正文已开始 → 缺失结束事件的最后一步按已完成兜底',
+    `${body[0].completion}/${body[0].status}`
+  );
+
+  // 5) 本轮已结束仍无结束事件 → missing，不是完成
+  const missing = resolveTraceItems(buildTrace([runningRead()]), {
+    streaming: false,
+    contentStarted: true,
+  });
+  ok(
+    missing[0].completion === 'missing' && missing[0].status === 'interrupted',
+    '本轮结束仍无结束事件 → 结果未回传（不画成完成）',
+    `${missing[0].completion}/${missing[0].status}`
+  );
+
+  // 6) 老数据（startedAt=0）不二次加工
+  const legacy = resolveTraceItems(
+    buildTrace([{ ...runningRead(), startedAt: 0 }]),
+    { streaming: false, contentStarted: true }
+  );
+  ok(
+    legacy[0].completion === 'missing' && legacy[0].status === 'running',
+    '老数据保持原状态，不伪造 interrupted',
+    `${legacy[0].completion}/${legacy[0].status}`
+  );
+
+  // 7) 四类关键步骤：完成后仍保持展开
+  const kinds = [
+    ['Write', 'write'],
+    ['Edit', 'write'],
+    ['Delete', 'delete'],
+    ['Permission', 'permission'],
+  ] as const;
+  for (const [name, reason] of kinds) {
+    const r = resolveTraceItems(buildTrace([tool(name, { file_path: '/a.ts' })]), {
+      streaming: false,
+      contentStarted: true,
+    });
+    ok(
+      r[0].critical && r[0].criticalReason === reason,
+      `${name} → 关键步骤（${reason}）常驻展开`,
+      String(r[0].criticalReason)
+    );
+  }
+  const failed = resolveTraceItems(
+    buildTrace([tool('Bash', { command: 'x' }, { status: 'failed', endedAt: 2000 })]),
+    { streaming: false, contentStarted: true }
+  );
+  ok(
+    failed[0].status === 'error' && failed[0].critical && failed[0].criticalReason === 'error',
+    '失败 → error + 关键步骤常驻展开',
+    `${failed[0].status}/${failed[0].criticalReason}`
+  );
+  const read = resolveTraceItems(buildTrace([tool('Read', { file_path: '/a.ts' })]), {
+    streaming: false,
+    contentStarted: true,
+  });
+  ok(!read[0].critical, '普通读取不是关键步骤，完成后照常折叠');
 }
 
 // ============= 汇总 =============

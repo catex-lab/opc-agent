@@ -1,0 +1,105 @@
+/**
+ * 过程流折叠（生产落地）—— 只补 AgentTrace 需要、而 `index.css` 里
+ * 尚未具备的三件事。刻意不覆盖字号 / 行距 / 颜色体系：
+ *
+ *   1. 单步明细的高度过渡（120–200ms），让「每步完成即折叠」不是硬切；
+ *   2. 状态点收敛为**形状**（空心=运行中、实心圆=完成、实心方=报错、
+ *      空心空心圈=结果未回传），不再用绿/红/品牌色；
+ *   3. 关键步骤的「常驻」标记与摘要条的「已收拢」出口。
+ *
+ * 选择器都带 `.tc-trace` 前缀：`index.css` 在 main.tsx 里晚于组件导入，
+ * 同特异性会被它压回去，必须提高一档才能稳定生效。
+ */
+
+/* ---------- 单步明细折叠 ---------- */
+
+.tc-step-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: tc-step-body-in 180ms var(--ease-tencent) both;
+}
+
+.tc-step-body[data-open='0'] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  animation: none;
+  transition:
+    grid-template-rows 180ms var(--ease-tencent),
+    opacity 120ms linear;
+}
+
+.tc-step-body-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@keyframes tc-step-body-in {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+
+/* 滚动锚定保持浏览器默认的 auto —— 明细在视口上方收起时，
+   Chromium 会自己补偿 scrollTop，内容不会往上跳。
+   这里显式写出来是给后来者一个「不要改成 none」的路标。 */
+.tc-trace .tc-trace-scroll {
+  overflow-anchor: auto;
+}
+
+/* ---------- 状态只用形状区分（单色） ---------- */
+
+.tc-trace .tc-step.is-running .tc-step-dot {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--td-text-color-secondary);
+  animation: tc-step-pulse 1.4s ease-in-out infinite;
+}
+
+.tc-trace .tc-step.is-done .tc-step-dot {
+  background-color: var(--td-text-color-placeholder);
+  box-shadow: none;
+}
+
+/* 方点 = 报错。形状本身就是区分，不借红色。 */
+.tc-trace .tc-step.is-error .tc-step-dot {
+  background-color: var(--td-text-color-primary);
+  border-radius: 1.5px;
+  box-shadow: none;
+}
+
+/* 空心圈 = 结果未回传；与运行中的区别是静止。 */
+.tc-trace .tc-step.is-interrupted .tc-step-dot {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--td-text-color-placeholder);
+  animation: none;
+}
+
+/* ---------- 关键步骤与收拢出口 ---------- */
+
+.tc-trace .tc-trace-pin {
+  flex-shrink: 0;
+  color: var(--td-text-color-placeholder);
+  letter-spacing: 0.01em;
+}
+
+.tc-trace .tc-trace-foldtag {
+  flex-shrink: 0;
+  color: var(--td-text-color-placeholder);
+  letter-spacing: 0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-step-body,
+  .tc-step-body[data-open='0'] {
+    animation: none;
+    transition: none;
+  }
+
+  .tc-trace .tc-step.is-running .tc-step-dot {
+    animation: none;
+  }
+}

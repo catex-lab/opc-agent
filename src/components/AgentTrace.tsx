@@ -22,7 +22,15 @@
  * 但流式过程中默认展开 —— 用户此刻正在盯着它干活。
  * 手动切过之后就不再自动干预。
  *
+ * 正文收拢（2026-11-03 生产口径）：`collapse` 只在「最后一个工具之后出现
+ * 非空正文」时为真，因此它等价于**首个正文内容 token**，而不是任意首 token。
+ * 它变真即收拢；之后若又有工具事件（`collapse` 回落），重新展开，
+ * 等正文再次出现或新步骤结束后再收拢。摘要条始终保留，就是展开出口。
+ *
  * 单步明细（2026-10-30）：执行中默认展开，**执行完立即收起**；
+ * 写入/编辑、删除、权限、报错四类关键步骤完成后仍保持展开。
+ * 完成判定见 `src/trace/fold.ts`：真实结束事件优先，缺失时才用
+ * 「下一条事件视为上一步完成」兜底，没有后续事件的长耗时步骤不会假装完成。
  * 整条过程流的字号/行高统一为 14px / 1.7（见 index.css `.tc-trace`）。
  */
 
@@ -57,6 +65,8 @@ import {
 } from '../../shared/trace';
 import { DiffView } from './DiffView';
 import { useOverflowY } from '../hooks/useOverflowY';
+import { resolveTraceItems, type ResolvedTraceItem } from '../trace/fold';
+import '../trace/traceFold.css';
 
 /**
  * 工具 → 图标 + 颜色。
@@ -287,9 +297,28 @@ function detailOf(item: TraceItem): ReactNode {
   );
 }
 
+/** 折叠过渡时长（ms）。改这里必须同步 traceFold.css 与 index.css 的 `.tc-trace-fold`。 */
+const FOLD_MS = 220;
+
+/** 关键步骤的 tooltip —— 说明它为什么不像别的步骤那样收起 */
+const CRITICAL_TITLE: Record<string, string> = {
+  write: '写入/编辑步骤：完成后仍保持展开',
+  delete: '删除步骤：完成后仍保持展开',
+  permission: '权限请求步骤：完成后仍保持展开',
+  error: '报错步骤：完成后仍保持展开',
+};
+
 /** 单步 */
-function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boolean }) {
+function StepRow({
+  item,
+  collapse = false,
+}: {
+  item: ResolvedTraceItem;
+  collapse?: boolean;
+}) {
   const running = item.status === 'running';
+  /** 写入、删除、权限、报错四类：完成后不折叠，始终摊在过程流里 */
+  const critical = item.critical;
   /**
    * 「每执行完一步就自动折叠」（2026-10-30 用户口径）。
    *
@@ -297,19 +326,41 @@ function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boole
    * 一旦状态离开 running（completed / error / interrupted），这一格立即收起，
    * 整条轨迹回到「一行一步」的密度，不会因为跑过的步骤全都摊开而变成一堵墙。
    *
-   * 不用 `touched` 放过手动展开：口径是「执行完就折叠」，用户中途点开是为了
-   * 看当下那一眼，跑完再挂着反而是旧内容占位。想再看就再点一次，明细还在。
+   * 关键步骤例外：它们的明细在完成后常驻，不再提供手动收起 ——
+   * 写入/删除一旦出错，事后回看必须还能看到当时改了什么、报了什么。
    */
-  const [open, setOpen] = useState(running && !collapse);
+  const [open, setOpen] = useState(running || critical);
   const prevRunning = useRef(running);
   useEffect(() => {
+    if (critical) {
+      setOpen(true);
+      return;
+    }
     if (prevRunning.current && !running) setOpen(false);
     prevRunning.current = running;
-  }, [running]);
-  // 这一轮已经出答案 → 过程让位，明细一并收起
+  }, [running, critical]);
+  // 这一轮已经出答案 → 过程让位，明细一并收起；关键步骤与仍在跑的步骤除外
+  // （用户手动展开轨迹时，正在跑的那一步必须还能看到实时输出）
   useEffect(() => {
-    if (collapse) setOpen(false);
-  }, [collapse]);
+    if (critical) {
+      setOpen(true);
+      return;
+    }
+    if (collapse && !running) setOpen(false);
+  }, [collapse, critical, running]);
+  /**
+   * 明细的「先挂住再卸」：与整条轨迹同一套做法。
+   * 收起时先留着播 180ms 高度过渡，播完再卸载，避免隐藏时白养一棵子树。
+   */
+  const [showBody, setShowBody] = useState(open);
+  useEffect(() => {
+    if (open) {
+      setShowBody(true);
+      return;
+    }
+    const timer = setTimeout(() => setShowBody(false), FOLD_MS);
+    return () => clearTimeout(timer);
+  }, [open]);
   const Icon = iconOf(item.toolName);
   const detail = item.kind === 'tool' ? detailOf(item) : null;
   // A96：文件类工具优先给行级 diff。没有 diff 数据（read / delete / 未知工具）
@@ -320,6 +371,7 @@ function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boole
     [item.kind, item.toolName, item.block]
   );
   const hasDetail = hunks != null || detail != null || !!item.block?.output;
+  const canToggle = hasDetail && !critical;
 
   const meta =
     item.status === 'running'
@@ -344,18 +396,20 @@ function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boole
       className={`tc-step is-${stepState}`}
       data-tool-step={item.id}
       data-trace-verb={item.verb}
+      data-trace-completion={item.completion}
+      data-trace-critical={item.criticalReason}
     >
       <span className="tc-step-dot" aria-hidden="true" />
       <div
         className="tc-step-head"
-        data-clickable={hasDetail ? '1' : undefined}
-        data-expanded={hasDetail ? (open ? '1' : '0') : undefined}
-        onClick={hasDetail ? () => setOpen(v => !v) : undefined}
-        role={hasDetail ? 'button' : undefined}
-        tabIndex={hasDetail ? 0 : undefined}
-        aria-expanded={hasDetail ? open : undefined}
+        data-clickable={canToggle ? '1' : undefined}
+        data-expanded={canToggle ? (open ? '1' : '0') : undefined}
+        onClick={canToggle ? () => setOpen(v => !v) : undefined}
+        role={canToggle ? 'button' : undefined}
+        tabIndex={canToggle ? 0 : undefined}
+        aria-expanded={canToggle ? open : undefined}
         onKeyDown={
-          hasDetail
+          canToggle
             ? e => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
@@ -364,12 +418,17 @@ function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boole
               }
             : undefined
         }
-        title={item.path}
+        title={critical ? CRITICAL_TITLE[item.criticalReason ?? ''] : item.path}
       >
         <Icon size={14} style={{ color: 'var(--td-text-color-secondary)', flexShrink: 0 }} />
         <span className="tc-trace-verb">{item.verb}</span>
         {item.target && <span className="tc-trace-target">{item.target}</span>}
         {item.diff && <DiffTag diff={item.diff} />}
+        {critical && (
+          <span className="tc-trace-pin" data-trace-pin={item.criticalReason}>
+            常驻
+          </span>
+        )}
         {/* A100：事件来源标签。**只标纯文本解析那一种** —— 原生 / 结构化
             输出是绝大多数，逐条标出来反而把轨迹刷满噪音；而「解析出来的」
             是少数且可信度低一档，值得让人一眼看见。
@@ -392,16 +451,18 @@ function StepRow({ item, collapse = false }: { item: TraceItem; collapse?: boole
           </span>
         )}
       </div>
-      {open && (
-        <>
-          {hunks ? <DiffView hunks={hunks} /> : detail}
-          <OutputBox
-            label="输出"
-            text={item.block?.output ?? ''}
-            running={item.status === 'running'}
-            isError={item.status === 'error'}
-          />
-        </>
+      {showBody && (
+        <div className="tc-step-body" data-step-body data-open={open ? '1' : '0'}>
+          <div className="tc-step-body-inner">
+            {hunks ? <DiffView hunks={hunks} /> : detail}
+            <OutputBox
+              label="输出"
+              text={item.block?.output ?? ''}
+              running={item.status === 'running'}
+              isError={item.status === 'error'}
+            />
+          </div>
+        </div>
       )}
       {item.nested.length > 0 && (
         <div className="tc-trace-nest">
@@ -423,11 +484,21 @@ export interface AgentTraceProps {
   collapse?: boolean;
 }
 
-/** 折叠过渡时长（ms）。改这里必须同步 index.css 的 `.tc-trace-fold`。 */
-const FOLD_MS = 220;
-
 export function AgentTrace({ blocks, isStreaming = false, collapse = false }: AgentTraceProps) {
-  const items = useMemo(() => buildTrace(blocks), [blocks]);
+  const rawItems = useMemo(() => buildTrace(blocks), [blocks]);
+  /**
+   * 生产口径的完成判定（见 src/trace/fold.ts）：
+   * 真实结束事件优先；缺失时才用「下一条事件」兜底；没有后续事件的
+   * 长耗时步骤保持 running，本轮结束仍无结束事件的标为 missing。
+   */
+  const items = useMemo(
+    () =>
+      resolveTraceItems(rawItems, {
+        streaming: !!isStreaming,
+        contentStarted: !!collapse,
+      }),
+    [rawItems, isStreaming, collapse]
+  );
   const summary = useMemo(() => summarizeTrace(items), [items]);
 
   // 既定口径：完成态默认收起；流式中默认展开。
@@ -435,15 +506,80 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
   const [expanded, setExpanded] = useState(!!isStreaming);
   const touched = useRef(false);
   const prevStreaming = useRef(!!isStreaming);
-  useEffect(() => {
-    if (prevStreaming.current && !isStreaming && !touched.current) setExpanded(false);
-    prevStreaming.current = !!isStreaming;
-  }, [isStreaming]);
+  /** 正文是否已经开始（一旦成立就保持；后续工具到达只是临时展开） */
+  const contentStartedRef = useRef(!!collapse);
+  /** 上一次因正文收拢时的步骤数：之后的步骤才算「新事件」 */
+  const foldedAtRef = useRef(0);
+  const [foldReason, setFoldReason] = useState<'content' | 'done' | 'manual' | null>(null);
+  const prevCollapse = useRef(!!collapse);
 
-  // 正文开始输出 → 收起。同样尊重手动选择：用户自己点开过就不再抢。
   useEffect(() => {
-    if (collapse && !touched.current) setExpanded(false);
-  }, [collapse]);
+    const wasStreaming = prevStreaming.current;
+    prevStreaming.current = !!isStreaming;
+
+    // 本轮结束：完成态收起（手动展开过就尊重手动）
+    if (wasStreaming && !isStreaming) {
+      if (!touched.current) {
+        setExpanded(false);
+        setFoldReason('done');
+      }
+      return;
+    }
+    if (!isStreaming) return;
+
+    const wasCollapse = prevCollapse.current;
+    prevCollapse.current = !!collapse;
+
+    // collapse 只在「最后一个工具之后出现非空正文」时为真 ——
+    // 它就是用户要的「首个正文内容 token」，不是思考 token / 工具 token。
+    // 每次它由假变真都收拢一次：正文恢复输出后，过程重新让位。
+    if (collapse && !wasCollapse) {
+      contentStartedRef.current = true;
+      foldedAtRef.current = items.length;
+      if (!touched.current) {
+        setExpanded(false);
+        setFoldReason('content');
+      }
+      return;
+    }
+
+    // 正文之后又来了工具事件：ChatMessages 的 hasAnswer 会暂时回落。
+    // 但那条工具可能落在**下一段轨迹**（正文把轨迹切成多段），本段没有新行，
+    // 就不能跟着重开 —— 旧过程已经完成，重新展开只会把正文往下推。
+    // 只有本段真的多了步骤（items.length > 收拢时的长度）才重新展开。
+    if (
+      !collapse &&
+      wasCollapse &&
+      contentStartedRef.current &&
+      !touched.current &&
+      items.length > foldedAtRef.current
+    ) {
+      setExpanded(true);
+      setFoldReason(null);
+    }
+  }, [collapse, isStreaming, items.length]);
+
+  /**
+   * 收拢后仍有新工具事件：重新展开；等正文重新出现（collapse 由假变真）
+   * 或正文已经在这些步骤之后（collapse 仍为真）且它们都结束时，再次收拢。
+   *
+   * 展开期间如果新步骤一直没结束（没有后续事件），它会一直是 running，
+   * 这里也就不会把它折掉 —— 不会假装完成。
+   */
+  useEffect(() => {
+    if (!isStreaming || touched.current || !contentStartedRef.current) return;
+    const fresh = items.slice(foldedAtRef.current);
+    if (fresh.length === 0) return;
+    if (fresh.some(i => i.status === 'running')) {
+      setExpanded(true);
+      setFoldReason(null);
+    } else if (collapse) {
+      // collapse 为假说明这些步骤后面还没有正文：此时收拢只是白占版面，
+      // 保持展开，等正文重新出现时由上面的 collapse 变真来收。
+      setExpanded(false);
+      setFoldReason('content');
+    }
+  }, [items, isStreaming, collapse]);
 
   /**
    * 折叠动画要「先挂住再卸」。
@@ -464,7 +600,9 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
 
   const toggle = () => {
     touched.current = true;
-    setExpanded(v => !v);
+    const next = !expanded;
+    setExpanded(next);
+    setFoldReason(next ? null : 'manual');
   };
 
   const running = items.some(i => i.status === 'running');
@@ -475,11 +613,25 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
   // 渐隐遮罩：只有真的溢出时才淡出，否则短轨迹末尾会莫名其妙变虚
   const { ref: scrollRef, el: scrollEl, overflowing } = useOverflowY<HTMLDivElement>();
 
-  // 流式中贴底：新步骤永远在末尾，不贴底就看不到它
+  /**
+   * 流式中贴底：新步骤永远在末尾，不贴底就看不到它。
+   *
+   * 不能只拍一次：新步骤的明细是 180ms 高度动画，拍第一帧时它还没长出来，
+   * 等到动画结束又没有依赖变化可触发 —— 结果就是「当前步被顶到折叠线以下」。
+   * 这里连续跟约 200ms（12 帧）直到高度稳定；依赖用 `items`（而不是
+   * `items.length`），输出持续追加时也会重新贴底。
+   */
   useEffect(() => {
-    if (!running || !expanded) return;
-    if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
-  }, [running, expanded, showBody, items.length, scrollEl]);
+    if (!running || !expanded || !scrollEl) return;
+    let frame = 0;
+    let raf = 0;
+    const pin = () => {
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+      if (frame++ < 12) raf = requestAnimationFrame(pin);
+    };
+    pin();
+    return () => cancelAnimationFrame(raf);
+  }, [running, expanded, showBody, items, scrollEl]);
 
   if (items.length === 0) return null;
 
@@ -493,14 +645,30 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
   const barLabel = summary.text || (expanded ? '收起步骤' : '查看步骤');
   const showTotalDiff = summary.diff.added > 0 || summary.diff.removed > 0;
 
+  /**
+   * 收拢原因：content = 首个正文 token 到达；done = 本轮结束；
+   * manual = 用户自己收的。摘要条始终保留，点击即可展开 —— 这就是「展开出口」。
+   */
+  const foldedReason = expanded ? null : (foldReason ?? (isStreaming ? 'content' : 'done'));
+  const foldTitle =
+    foldedReason === 'content'
+      ? '正文已开始，过程已收拢 · 点击展开完整轨迹'
+      : foldedReason === 'manual'
+        ? '已手动收起 · 点击展开完整轨迹'
+        : foldedReason === 'done'
+          ? '过程已完成 · 点击展开完整轨迹'
+          : undefined;
+
   return (
     <div className="tc-trace" data-trace data-trace-state={running ? 'running' : 'done'}>
       <div
         className="tc-steps-bar"
         data-steps-bar
+        data-trace-fold-reason={foldedReason ?? undefined}
         role="button"
         tabIndex={0}
         aria-expanded={expanded}
+        title={foldTitle}
         onClick={toggle}
         onKeyDown={e => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -518,6 +686,12 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
         <span className="tc-trace-count" data-trace-count>
           {stepCount} 步
         </span>
+        {/* 首个正文 token 收拢时给一个可见出口；摘要条本身始终可点 */}
+        {foldedReason === 'content' && (
+          <span className="tc-trace-foldtag" data-trace-foldtag>
+            已收拢
+          </span>
+        )}
         {expanded ? (
           <ChevronUp size={13} style={{ color: 'var(--td-text-color-placeholder)', flexShrink: 0 }} />
         ) : (
