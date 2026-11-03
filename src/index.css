@@ -5378,6 +5378,64 @@ html[data-opc-glass='1'] t-chat-sender {
   outline-offset: 2px;
 }
 
+/* ── 挂载能力矩阵：三列模板只定义一次，所有 lane / 分组共用 ──────────
+ *
+ * 为什么必须是 grid 而不是 flex + space-between：
+ *   「通道」与「状态」原先各是一段内容宽度自适应的 flex 子项，状态列
+ *   还带一个可选的 ✓ —— 于是同一 lane 内，通道文案长的行把状态列往右推，
+ *   有 ✓ 的行又把状态列往左推。用户看到的 x≈578 / x≈606 漂移就是这么来的。
+ *
+ * 现在三列宽度全部由模板决定，与内容无关：
+ *   1fr          Agent 名（吃掉剩余宽度，超长 truncate，不挤别的列）
+ *   80px         通道（最长「提示词注入」5 字 ≈ 60px，留余量，nowrap）
+ *   120px        状态（点 6 + gap 6 + 最长「含敏感内容」60 + gap 6 + ✓ 12）
+ *   column-gap   12px
+ * 两个 lane 共用同一模板，且外层两列等宽 ⇒ 同一列相对 lane 左缘的 x 相同。
+ *
+ * 行高 32px 固定，状态点 align-items:center，跨 lane 基线一致。
+ * padding-left 34px = 组头「chevron 12 + gap 8 + 点 6 + gap 8」，
+ * 于是组内 Agent 名与组头组名的文字起点对齐；组头自身不再额外缩进，
+ * 两者 border-box 左边界都贴在 lane 左缘。
+ */
+.ext-matrix-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px 120px;
+  column-gap: 12px;
+  align-items: center;
+  min-height: 32px;
+  padding-left: 34px;
+  line-height: 20px;
+}
+
+/* 组头：与行同高、同左边界（去掉了原先的 px-1.5 额外缩进） */
+.ext-matrix-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0;
+  line-height: 20px;
+}
+
+/* 通道 / 状态不换行：窄宽下宁可整块降为单列，也不把列内容压成两行 */
+.ext-matrix-channel,
+.ext-matrix-status {
+  white-space: nowrap;
+}
+
+.ext-matrix-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ext-matrix-status > [data-ext-matrix-label] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── 关于页 · 更新（与 .tc-about-* 同一套文档流）─────────────────────
  *
  * 更新区是「关于」的一部分，不另起卡片：沿用分区眉标 + 发丝线，

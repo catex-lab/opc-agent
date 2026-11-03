@@ -444,6 +444,116 @@ try {
       );
       ok(codexColor !== null && codexColor !== claudeColor, 'codex（unsupported）颜色 ≠ 绿色', codexColor);
 
+      // ── [7c] 矩阵列网格几何：真 grid，不随内容漂移 ──────────────
+      // 断言三件事：同一 lane 内状态列 left 相同；两条 lane 的同一列
+      // 相对 x 相同；组头与组内行左边界一致。另附行高与 nowrap。
+      const geom = await page.evaluate(() => {
+        const visible = el => !!el && el.getBoundingClientRect().width > 0;
+        const rows = [...document.querySelectorAll('[data-ext-matrix-row]')]
+          .filter(visible)
+          .map(row => {
+            const lane = row.closest('[data-ext-matrix-lane]');
+            const laneRect = lane.getBoundingClientRect();
+            const rect = row.getBoundingClientRect();
+            const agent = row.querySelector('[data-ext-matrix-agent]').getBoundingClientRect();
+            const channel = row.querySelector('[data-ext-matrix-channel]');
+            const status = row.querySelector('[data-ext-matrix-status]');
+            return {
+              agent: row.getAttribute('data-ext-matrix-row'),
+              lane: Number(lane.getAttribute('data-ext-matrix-lane')),
+              laneLeft: laneRect.left,
+              rowLeft: rect.left,
+              rowHeight: rect.height,
+              agentOffset: agent.left - laneRect.left,
+              channelOffset: channel.getBoundingClientRect().left - laneRect.left,
+              statusLeft: status.getBoundingClientRect().left,
+              statusOffset: status.getBoundingClientRect().left - laneRect.left,
+              channelNowrap: getComputedStyle(channel).whiteSpace === 'nowrap',
+              statusNowrap: getComputedStyle(status).whiteSpace === 'nowrap',
+            };
+          });
+        const heads = [...document.querySelectorAll('[data-ext-matrix-group-toggle]')]
+          .filter(visible)
+          .map(head => {
+            const group = head.closest('[data-ext-matrix-group]');
+            const rowsEl = group.querySelector('[data-ext-matrix-rows]');
+            // 折叠组的 lane 是 display:none，rect 为 0；只量展开的组
+            if (!rowsEl || getComputedStyle(rowsEl).display === 'none') return null;
+            const rect = head.getBoundingClientRect();
+            const lane = group.querySelector('[data-ext-matrix-lane]');
+            return {
+              left: rect.left,
+              height: rect.height,
+              laneLeft: lane ? lane.getBoundingClientRect().left : null,
+            };
+          })
+          .filter(Boolean);
+        return { rows, heads };
+      });
+
+      const near = (a, b) => Math.abs(a - b) < 0.6;
+      const uniqueNear = values => {
+        const out = [];
+        for (const v of values) if (!out.some(u => near(u, v))) out.push(v);
+        return out;
+      };
+      const laneIds = [...new Set(geom.rows.map(r => r.lane))].sort();
+      const perLaneStatus = laneIds.map(id =>
+        uniqueNear(geom.rows.filter(r => r.lane === id).map(r => r.statusLeft))
+      );
+      ok(geom.rows.length >= 3, '[7c] 量到足够多的可见行', `rows=${geom.rows.length} lanes=${laneIds.join('/')}`);
+      ok(
+        laneIds.length === 2,
+        '[7c] 1440 宽下确实是两条 lane（xl 断点生效）',
+        `lanes=${laneIds.join('/')}`
+      );
+      ok(
+        perLaneStatus.every(u => u.length === 1),
+        '[7c] 同一 lane 内所有状态列 getBoundingClientRect().left 相同',
+        JSON.stringify(perLaneStatus)
+      );
+      ok(
+        uniqueNear(geom.rows.map(r => r.channelOffset)).length === 1,
+        '[7c] 两条 lane 的通道列相对 x 相同（不随「提示词注入」等文案漂移）',
+        JSON.stringify(uniqueNear(geom.rows.map(r => r.channelOffset)))
+      );
+      ok(
+        uniqueNear(geom.rows.map(r => r.statusOffset)).length === 1,
+        '[7c] 两条 lane 的状态列相对 x 相同',
+        JSON.stringify(uniqueNear(geom.rows.map(r => r.statusOffset)))
+      );
+      ok(
+        uniqueNear(geom.rows.map(r => r.agentOffset)).length === 1,
+        '[7c] Agent 名列起点一致（行内统一缩进 34px）',
+        JSON.stringify(uniqueNear(geom.rows.map(r => r.agentOffset)))
+      );
+      ok(
+        uniqueNear(geom.rows.map(r => r.rowLeft)).length === laneIds.length,
+        '[7c] 每行左边界贴 lane 左缘（每个 lane 一个 x）',
+        JSON.stringify(uniqueNear(geom.rows.map(r => r.rowLeft)))
+      );
+      const heights = geom.rows.map(r => r.rowHeight);
+      ok(
+        Math.max(...heights) - Math.min(...heights) < 1,
+        '[7c] 所有行行高一致（状态点基线不抖）',
+        `min=${Math.min(...heights)} max=${Math.max(...heights)}`
+      );
+      ok(
+        geom.heads.every(h => h.laneLeft != null && near(h.left, h.laneLeft)),
+        '[7c] 组头左边界 = 组内 lane 左边界（组头不额外缩进）',
+        JSON.stringify(geom.heads.map(h => [h.left, h.laneLeft]))
+      );
+      ok(
+        geom.heads.every(h => near(h.height, heights[0])),
+        '[7c] 组头高度 = 行高（组头与行同一基线）',
+        `head=${geom.heads[0]?.height} row=${heights[0]}`
+      );
+      ok(
+        geom.rows.every(r => r.channelNowrap && r.statusNowrap),
+        '[7c] 通道 / 状态列 nowrap —— 窄宽下换列宽不换行',
+        JSON.stringify(geom.rows.filter(r => !r.channelNowrap || !r.statusNowrap).map(r => r.agent))
+      );
+
       // local-only：只在 codex 的技能
       await page.goto(`${base}/extensions/skill/codexlocal`, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('[data-ext-matrix]', { timeout: 25000 });

@@ -564,8 +564,10 @@ export function ExtensionDetail({
               })}
             </div>
 
-            {/* 分组：顺序 = 数据层 rank；组内按 Agent 名；两列按列优先读 */}
-            <div className="flex flex-col" data-ext-matrix-groups>
+            {/* 分组：顺序 = 数据层 rank；组内按 Agent 名；两列按列优先读。
+                xl 起才分两条 lane —— 1024 一带内容宽度放不下两条 lane 的
+                固定通道/状态列，此时降为单列（不压窄列宽）。 */}
+            <div className="flex flex-col gap-2" data-ext-matrix-groups>
               {groups.map(({ meta, rows }) => {
                 const isCollapsed = collapsed.has(meta.state);
                 const color = TONE_COLOR[meta.tone];
@@ -585,7 +587,7 @@ export function ExtensionDetail({
                         })
                       }
                       title={meta.hint}
-                      className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                      className="ext-matrix-head w-full rounded-lg text-left transition-colors hover:bg-[var(--tc-hover-chrome)]"
                       data-ext-matrix-group-toggle
                     >
                       <ChevronRight
@@ -623,12 +625,16 @@ export function ExtensionDetail({
                       className={
                         isCollapsed
                           ? 'hidden'
-                          : 'grid grid-cols-1 gap-x-6 pb-1 sm:grid-cols-2'
+                          : 'grid grid-cols-1 gap-x-6 xl:grid-cols-2'
                       }
                       data-ext-matrix-rows
                     >
                       {columns.map((column, index) => (
-                        <div key={index} className="flex min-w-0 flex-col">
+                        <div
+                          key={index}
+                          className="flex min-w-0 flex-col"
+                          data-ext-matrix-lane={index}
+                        >
                           {column.map(({ spec, present, mode, state }) => {
                             const rowMeta = stateMeta.get(state);
                             const rowColor = rowMeta
@@ -641,51 +647,53 @@ export function ExtensionDetail({
                             return (
                               <div
                                 key={spec.agentId}
-                                className="flex items-center gap-2 py-1.5"
+                                className="ext-matrix-row"
                                 title={`${rowMeta?.hint ?? ''}${spec.note ? `（${spec.note}）` : ''}`}
                                 data-ext-matrix-row={spec.agentId}
                                 data-ext-matrix-state={state}
                               >
+                                {/* 第 1 列：Agent 名。吃掉剩余宽度，超长省略 */}
                                 <span
-                                  className="h-1.5 w-1.5 shrink-0 rounded-full"
-                                  style={{
-                                    backgroundColor: rowColor,
-                                    boxShadow: filled ? undefined : `inset 0 0 0 1.5px ${rowColor}`,
-                                    ...(filled ? {} : { backgroundColor: 'transparent' }),
-                                  }}
-                                />
-                                <span
-                                  className="min-w-0 flex-1 truncate text-body"
+                                  className="min-w-0 truncate text-body"
                                   style={{ color: 'var(--td-text-color-primary)' }}
+                                  data-ext-matrix-agent
                                 >
                                   {spec.label}
                                 </span>
-                                {/* 通道说明：中性灰，不参与状态配色 */}
+                                {/* 第 2 列：通道说明。固定 80px，中性灰，不参与状态配色 */}
                                 <span
-                                  className="shrink-0 text-caption"
+                                  className="ext-matrix-channel text-caption"
                                   style={{ color: 'var(--td-text-color-placeholder)' }}
                                   data-ext-matrix-channel
                                 >
                                   {EXT_MOUNT_LABEL[mode]}
                                 </span>
-                                {/* 状态徽标：与通道列分开 */}
+                                {/* 第 3 列：状态。固定 120px、左对齐同一起点 ——
+                                    状态点 + 文案 + 可选的事实 ✓ 都在这一列内，
+                                    ✓ 不再把状态文案往左推。 */}
                                 <span
-                                  className="w-[68px] shrink-0 text-right text-caption"
+                                  className="ext-matrix-status text-caption"
                                   style={{ color: rowColor }}
-                                  data-ext-matrix-label
+                                  data-ext-matrix-status
                                 >
-                                  {rowMeta?.label ?? state}
-                                </span>
-                                {/* 事实标记：该 Agent 目录里真的有这一份。与状态列分开，
-                                    因为 `local-only` 那一档也要显示它。 */}
-                                {present && (
-                                  <Check
-                                    size={12}
-                                    className="shrink-0"
-                                    style={{ color: 'var(--td-text-color-placeholder)' }}
-                                    data-ext-matrix-present
+                                  <span
+                                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                    style={{
+                                      backgroundColor: rowColor,
+                                      boxShadow: filled ? undefined : `inset 0 0 0 1.5px ${rowColor}`,
+                                      ...(filled ? {} : { backgroundColor: 'transparent' }),
+                                    }}
                                   />
-                                )}
+                                  <span data-ext-matrix-label>{rowMeta?.label ?? state}</span>
+                                  {present && (
+                                    <Check
+                                      size={12}
+                                      className="shrink-0"
+                                      style={{ color: 'var(--td-text-color-placeholder)' }}
+                                      data-ext-matrix-present
+                                    />
+                                  )}
+                                </span>
                               </div>
                             );
                           })}
