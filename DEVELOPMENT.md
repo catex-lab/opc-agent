@@ -216,3 +216,21 @@ rm -rf node_modules && npm install
 `data/` 整个目录被 `.gitignore` 挡住：`chat.db`（真实对话）、`agent-credentials.json`（API Key）、`permission-rules.json`、`images/`。
 
 新增任何写磁盘的功能，先确认落点在 `data/` 下或用户明确指定的路径，**不要**顺手写进仓库目录。
+
+## 十一、发版：说明必须是人写的
+
+GitHub Release 的正文由 CI 生成，来源按优先级取：
+
+1. `release-notes/<tag>.md`（例如 `release-notes/v1.0.4.md`）—— 想单独控制某一版说明就放这个文件；
+2. 仓库根部的 `CHANGELOG.md` —— 按 `## [<version>]` 段落自动抽取，日常只需要改这里。
+
+发版三步：
+
+1. 更新 `CHANGELOG.md`（或新建 `release-notes/<tag>.md`），写清用户能感知的变化；
+2. `npm version <x.y.z> --no-git-tag-version` 提交后，打 annotated tag 并推送；
+3. CI 的 `release-update` 会自动把说明写进 Release 正文。
+
+**反例**：不要只写「版本升到 1.0.4」当说明。`release-update` 在两者都缺失时会退回提交
+标题，一旦标题只是版本号、或正文不足两行，工作流会直接失败并提示补 CHANGELOG —— 这是
+刻意设计的红灯，不要用改标题的方式绕过去。
+

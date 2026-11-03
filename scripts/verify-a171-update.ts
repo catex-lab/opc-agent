@@ -419,6 +419,24 @@ if (fs.existsSync(workflowPath)) {
     'CI 用实际仓库拼资产 URL（不写死 slug，fork 也不会指错）',
     '缺 --repo github.repository'
   );
+
+  // 发布说明不能退化成一行提交标题（v1.0.3 之前就是这样，Release 页只有版本号）。
+  ok(wf.includes('release-notes/$tag.md'), '发布说明优先读 release-notes/<tag>.md', '缺 release-notes 分支');
+  ok(wf.includes('CHANGELOG.md'), '发布说明可回退到 CHANGELOG.md 的版本段落', '缺 CHANGELOG 分支');
+  ok(
+    !/git log -1 --pretty=format:'- %s'\s*\n\s*\$body/.test(wf),
+    '不再把「提交标题」直接当发布说明',
+    '仍存在 git log 标题直出'
+  );
+  ok(wf.includes('发布说明过短') && wf.includes('Write-Error'), '发布说明为空/只有版本号时 CI 失败而不是静默', '缺长度或版本号守卫');
+  const changelog = read('CHANGELOG.md');
+  ok(changelog.includes('## [1.0.4]'), 'CHANGELOG 收录 1.0.4 段落', '缺 1.0.4');
+  ok(/## \[1\.0\.0\]/.test(changelog) && /## \[1\.0\.1\]/.test(changelog), 'CHANGELOG 覆盖 1.0.0 起的历史版本', '缺早期版本');
+  ok(
+    read('release-notes/v1.0.4.md').trim().length > 200,
+    'release-notes/v1.0.4.md 是完整说明而不是占位',
+    '说明过短'
+  );
 }
 
 /* ══════════════ 真实密钥联调 ══════════════ */

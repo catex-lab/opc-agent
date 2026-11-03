@@ -140,11 +140,75 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # 发布说明必须是「人写的文本」，不能退化成一行提交标题：
+      #   1) 优先 release-notes/<tag>.md（这个文件就是 GitHub Release 的正文）
+      #   2) 其次从仓库内 CHANGELOG.md 抽该版本段落
+      #   3) 两者都没有时打 annotation 警告、用提交标题兜底；若标题本身只是
+      #      「版本升到 x.y.z」这类无信息文本，或正文不足两行，直接失败。
       - name: 生成发布说明
         shell: pwsh
         run: |
-          $body = "OPC Agent v$env:VERSION`n`n" + (git log -1 --pretty=format:'- %s')
+          $tag = "v$env:VERSION"
+          $notes = $null
+          $source = $null
+
+          $candidate = "release-notes/$tag.md"
+          if (Test-Path $candidate) {
+            $notes = (Get-Content $candidate -Raw -Encoding utf8).Trim()
+            $source = $candidate
+          }
+
+          if (-not $notes -and (Test-Path 'CHANGELOG.md')) {
+            $lines = Get-Content 'CHANGELOG.md'
+            $start = -1
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -match '^##\s' -and $lines[$i] -match [regex]::Escape($env:VERSION)) {
+                $start = $i
+                break
+              }
+            }
+            if ($start -ge 0) {
+              $end = $lines.Count
+              for ($j = $start + 1; $j -lt $lines.Count; $j++) {
+                if ($lines[$j] -match '^##\s') { $end = $j; break }
+              }
+              if ($end -gt $start + 1) {
+                $notes = (($lines[($start + 1)..($end - 1)]) -join "`n").Trim()
+                $source = "CHANGELOG.md#$($env:VERSION)"
+              }
+            }
+          }
+
+          if (-not $notes) {
+            $subject = (git log -1 --pretty=format:'%s')
+            Write-Host "::warning::没有 release-notes/$tag.md，CHANGELOG.md 里也没有 $($env:VERSION) 段落，退回提交标题：$subject"
+            if ($subject -match '^(版本升到|release:)\s*v?\d+\.\d+\.\d+$') {
+              Write-Error "发布说明缺失：提交标题只有版本号。请补 release-notes/$tag.md 或 CHANGELOG.md 的 $($env:VERSION) 段落"
+              exit 1
+            }
+            $notes = "（发布说明缺失，以下仅为提交标题；请补 CHANGELOG.md 或 release-notes/$tag.md）`n`n- $subject"
+            $source = 'git log subject (fallback)'
+          }
+
+          $realLines = @($notes -split "`n" | Where-Object { $_.Trim() -ne '' })
+          if ($realLines.Count -lt 2) {
+            Write-Error "发布说明过短（不足两行），请补 release-notes/$tag.md 或 CHANGELOG.md 的 $($env:VERSION) 段落"
+            exit 1
+          }
+
+          # release-notes/<tag>.md 常带一级标题（如 `# OPC Agent v1.0.4`），
+          # 而下面还会加 `OPC Agent v<version>` 前缀，去掉重复的那一行。
+          $noteLines = $notes -split "`n"
+          if ($noteLines.Count -gt 1 -and $noteLines[0] -match '^#\s' -and $noteLines[0] -match [regex]::Escape($env:VERSION)) {
+            $notes = (($noteLines[1..($noteLines.Count - 1)]) -join "`n").Trim()
+          }
+
+          Write-Host "发布说明来源：$source"
+          $body = "OPC Agent v$($env:VERSION)`n`n" + $notes
           $body | Out-File -FilePath release-notes.md -Encoding utf8
+          Write-Host '::group::发布说明'
+          Get-Content release-notes.md
+          Write-Host '::endgroup::'
 
       # 输出 release/update/{latest.json, app-<version>.asar, OPC-Agent-<version>-x64-full.zip}
       - name: 生成并签名更新清单
