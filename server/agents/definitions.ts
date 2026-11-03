@@ -1635,6 +1635,9 @@ const RAW_DEFS: AgentDefinition[] = [
       parse: 'jsonl',
       mapLine: mapQoderLine,
       extractResumeToken: qoderResumeToken,
+      // A205：Qoder 的长任务（大仓扫描、构建）经常超过默认 8 分钟。
+      // 只放宽这一家，DEFAULT_TIMEOUT_MS 保持 480 秒不动。
+      timeoutMs: 20 * 60 * 1000,
     },
     // 只走 CLI 通道。曾经这里有 `sdk: { flavor: 'qoder-intl' }`（A76），
     // 2026-10-30 因授权依据不足移除，理由见上面 `SdkSpec` 那段注释。
@@ -1719,6 +1722,8 @@ const RAW_DEFS: AgentDefinition[] = [
       parse: 'jsonl',
       mapLine: mapQoderLine,
       extractResumeToken: qoderResumeToken,
+      // A205：与国际版同口径放宽到 20 分钟（默认 480 秒仍适用于其它 CLI Agent）
+      timeoutMs: 20 * 60 * 1000,
     },
     // 只走 CLI 通道（理由同国际版，见 `SdkSpec` 那段注释）。
     // 两个候选目录都搜：`~/.qoder-cn/bin/qoderclicn`（与 `~/.qoder/bin/qodercli`

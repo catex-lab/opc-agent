@@ -135,6 +135,29 @@ export interface ToolBlock {
   source?: EventSource;
 }
 
+/**
+ * A205：bash 的「引号没配对」报错归类提示。
+ *
+ * 这一类失败几乎都不是脚本本身的问题，而是 CLI 自己的 shell 包装层把
+ * 内层引号打乱了（Windows 路径 + 双引号最容易触发）。提示必须落在轨迹里，
+ * 否则用户只会看到一句 bash EOF，误以为脚本坏了。
+ *
+ * 真机取证（qoder-cn，2026-11-03）：Qoder 的 Bash 工具用 `/usr/bin/bash eval`
+ * 执行命令，`"C:\Users\..."` 的双引号会被这一层打乱；命令里的 `$_` 也会被
+ * bash 展开（真机上 `$_.Length` 变成了 `extglob.Length`）。所以示例用**单引号**：
+ * bash 不展开单引号内容，PowerShell 仍能收到原始 Windows 路径。
+ */
+const CLI_SHELL_QUOTE_ERR_RE = /unexpected EOF(?: while)? looking for matching/i;
+export const CLI_SHELL_QUOTE_HINT =
+  `[提示] 这是 CLI 的 shell 引号解析问题（bash: unexpected EOF looking for matching "），不是脚本本身出错。可改用单引号路径重试：powershell -NoProfile -ExecutionPolicy Bypass -File 'C:\\path\\to\\your-script.ps1'`;
+
+/** 命中引号类报错时追加一行可复制提示；幂等，重复调用不会叠多行 */
+export function withCliShellQuoteHint(output: string): string {
+  if (!CLI_SHELL_QUOTE_ERR_RE.test(output)) return output;
+  if (output.includes(CLI_SHELL_QUOTE_HINT)) return output;
+  return `${output.trimEnd()}\n\n${CLI_SHELL_QUOTE_HINT}`;
+}
+
 /** 图片块的数据部分，字段与 src/types.ts 的 ImageBlock 保持结构兼容 */
 export interface BlockImage {
   url: string;

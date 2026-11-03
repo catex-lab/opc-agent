@@ -41,6 +41,7 @@ import type {
   RawBlock,
   RawEntry,
 } from '../../shared/blocks.js';
+import { withCliShellQuoteHint } from '../../shared/blocks.js';
 import type {
   CapabilityProfile,
   EventCapability,
@@ -347,15 +348,17 @@ export class RunProjector {
         const block = this.findTool(ev.toolId);
         if (!block) return [];
         const status = ev.isError ? 'failed' : 'completed';
+        // A205：bash 引号类报错在轨迹里补一行可复制提示（不改执行链、不改命令）
+        const output = withCliShellQuoteHint(ev.content);
         const patch: Record<string, unknown> = {
           status,
           isError: !!ev.isError,
-          output: ev.content,
+          output,
           endedAt: this.now(),
         };
         block.status = status;
         block.isError = !!ev.isError;
-        block.output = ev.content;
+        block.output = output;
         block.endedAt = this.now();
         return [
           this.make({ type: 'block_patch', blockId: block.id, patch }),

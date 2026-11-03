@@ -57,14 +57,28 @@ import {
 /** 去掉终端颜色 / 光标控制序列 */
 const ANSI_RE = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
 
-/** 单次 CLI 调用的默认上限 */
-const DEFAULT_TIMEOUT_MS = 8 * 60 * 1000;
+/** 单次 CLI 调用的默认上限（导出给闸门断言「未覆盖的 Agent 仍是 480 秒」） */
+export const DEFAULT_TIMEOUT_MS = 8 * 60 * 1000;
 
 /**
  * A106：优雅中止的宽限窗（毫秒）。
  * 先 SIGTERM 让 CLI 自己收尾，宽限到头仍不退才 SIGKILL。
  */
 const TERM_GRACE_MS = 3000;
+
+/**
+ * A205：终止后的有界收尾窗（毫秒）。
+ *
+ * 为什么必须有它：Windows 上只杀直接子进程时，它拉起的 bash/PowerShell
+ * 孙进程会继承 stdout/stderr 句柄。孙进程不死，Node 的 `close` 就永远不触发
+ * —— 这一轮会一直挂着不结算，而超时后工具还在后台跑。
+ * 终止后最多等这么久，等不到 `close` 就主动断开读端并结算，账必须当场结掉。
+ *
+ * 注：2026-11-03 的真机取证（qoder-cn）显示，用户看到的「14m5s」是
+ * 两个并行工具各自 ~7 分钟、时长求和得到，墙钟其实正好 480 秒；
+ * 这一层是防御性兜底，不是那次现象的直接原因。
+ */
+const KILL_SETTLE_MS = 5000;
 
 /**
  * A106：双向模式下权限请求的等待上限。
@@ -90,17 +104,68 @@ function stripAnsi(text: string): string {
  * macOS/Linux 实际生效；Windows 上行为与直接 kill 一致，但升级计时器
  * 保证了不会留下退不掉的进程。
  *
+ * A205（Windows）：只杀直接子进程收不干净 —— CLI 拉起的 bash/PowerShell
+ * 孙进程会继续跑，并继承 stdout/stderr 句柄（`close` 因此永不触发）。
+ * Windows 上改用 `taskkill /pid <pid> /T /F` 杀整棵树；taskkill 本身失败
+ * （进程已退、命令缺失、权限不足）再回退到 `child.kill()`。
+ * 注意：这是尽力而为 —— taskkill 与 child.kill 都失败时，孙进程仍可能残留。
+ *
  * @returns 取消升级的函数（进程自己退了就调它，省一次 SIGKILL）
  */
+type TerminateTimers = { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout };
+type TerminateDeps = {
+  /** 测试注入：默认取 process.platform */
+  platform?: NodeJS.Platform;
+  /** 测试注入：默认 node:child_process 的 spawn */
+  spawnProc?: typeof spawn;
+};
+
 export function terminateGracefully(
   child: ChildProcess,
   graceMs: number,
-  timers: { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout } = {
-    setTimeout,
-    clearTimeout,
-  }
+  timers: TerminateTimers = { setTimeout, clearTimeout },
+  deps: TerminateDeps = {}
 ): () => void {
   if (child.killed) return () => {};
+  const platform = deps.platform ?? process.platform;
+  const spawnProc = deps.spawnProc ?? spawn;
+  const fallback = () => {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* 已经退了，忽略 */
+    }
+  };
+
+  if (platform === 'win32') {
+    const pid = child.pid;
+    if (!pid) {
+      fallback();
+      return () => {};
+    }
+    let fellBack = false;
+    const onFail = () => {
+      if (fellBack) return;
+      fellBack = true;
+      fallback();
+    };
+    try {
+      const tk = spawnProc('taskkill', ['/pid', String(pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      tk.on('error', onFail);
+      tk.on('exit', code => {
+        // 128 = 进程已不存在；其它非 0 也说明树没杀干净
+        if (code !== 0) onFail();
+      });
+    } catch {
+      onFail();
+    }
+    // taskkill /F 已是终态，无需再排 SIGKILL 升级
+    return () => {};
+  }
+
   try {
     child.kill('SIGTERM');
   } catch {
@@ -192,6 +257,11 @@ export class CliAdapter implements AgentProvider {
   private status: AgentStatus | null = null;
   /** 正在运行的子进程：sessionId → child */
   private running = new Map<string, CliChild | BidiChild>();
+  /**
+   * A205：终止后的有界收尾钩子：sessionId → 挂计时器的函数。
+   * send() 之外调用 abort() 时也要能挂上，否则残留管道照样把会话挂住。
+   */
+  private armSettlers = new Map<string, () => void>();
   /**
    * A106：双向模式下待答复的权限请求（requestId → 决定）。
    * 一次性模式不产生 permission_request 事件，这张表始终是空的。
@@ -561,6 +631,18 @@ export class CliAdapter implements AgentProvider {
     let fatalDetail = '';
     /** A106：取消 SIGKILL 升级的函数；进程退出时调用 */
     let cancelKill: (() => void) | null = null;
+    /** A205：本次 send() 是否已经结算；`close` 与有界兜底只允许结算一次 */
+    let settled = false;
+    /** A205：终止后的有界收尾计时器 */
+    let settleTimer: NodeJS.Timeout | null = null;
+
+    /** A205：挂上「终止后最多等 KILL_SETTLE_MS」的兜底；已结算则不挂 */
+    const armSettleTimer = () => {
+      if (settled) return;
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => settle(null, true), KILL_SETTLE_MS);
+      settleTimer.unref?.();
+    };
 
     const timeoutMs = this.spec.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const timer = setTimeout(() => {
@@ -570,11 +652,14 @@ export class CliAdapter implements AgentProvider {
 
     /**
      * 终止子进程。
-     * 注意：这里**不**关闭队列 —— 交给 close 处理器统一收尾，
+     * 注意：这里**不**关闭队列 —— 交给 settle() 统一收尾，
      * 否则「超时/致命错误」的原因就来不及写进事件流了（push 到已关闭队列会被丢弃）。
      *
      * A106：终止走 terminateGracefully（先 SIGTERM，宽限后 SIGKILL）。
      * 宽限期内 stdout 照常解析（队列没关），已产出的增量不会丢。
+     *
+     * A205：终止后挂有界收尾 —— 孙进程若还攥着 stdout/stderr 句柄，
+     * `close` 可能永远不来；到点就断开读端并结算，不能把这一轮无限挂住。
      */
     const stopAll = (reason: NonNullable<typeof killed>, detail = '') => {
       // 先到先得：超时之后 stderr 又命中判死模式时，原因保持第一次的那个
@@ -584,8 +669,8 @@ export class CliAdapter implements AgentProvider {
       clearTimeout(timer);
       cancelKill?.();
       cancelKill = null;
-      if (child.killed) return;
-      cancelKill = terminateGracefully(child, TERM_GRACE_MS);
+      if (!child.killed) cancelKill = terminateGracefully(child, TERM_GRACE_MS);
+      armSettleTimer();
     };
 
     // 中止信号 → 杀子进程（linkAbort 会处理「信号已中止」的情况）
@@ -742,6 +827,8 @@ export class CliAdapter implements AgentProvider {
     // ---- 输出解析 ----
 
     const handleText = (chunk: string) => {
+      // A205：用户已经中止，迟到的输出不再投影（否则中止后还可能弹权限请求）
+      if (killed === 'abort') return;
       const clean = stripAnsi(chunk);
       if (!clean) return;
       sawText = true;
@@ -749,6 +836,8 @@ export class CliAdapter implements AgentProvider {
     };
 
     const handleJsonLine = (line: string) => {
+      // A205：同上 —— 已中止就不再解析迟到的事件
+      if (killed === 'abort') return;
       const trimmed = line.trim();
       if (!trimmed) return;
       let obj: unknown;
@@ -851,12 +940,42 @@ export class CliAdapter implements AgentProvider {
       queue.fail(new Error(`子进程错误：${err.message}`));
     });
 
-    child.on('close', (code: number | null) => {
+    /**
+     * A205：结算本次 send()。
+     *
+     * 两条路都会进来：子进程真的 `close` 了，或「终止后 KILL_SETTLE_MS 内
+     * `close` 没来」（孙进程攥着 stdout/stderr 句柄）。幂等 —— 只结算一次，
+     * `done` / `error` 绝不重复。
+     *
+     * forced 时主动 destroy 读端：账已经记了，不再等残留管道施舍 `close`。
+     */
+    const settle = (code: number | null, forced = false): void => {
+      if (settled) return;
+      settled = true;
+      if (settleTimer) {
+        clearTimeout(settleTimer);
+        settleTimer = null;
+      }
       unlinkAbort();
       clearTimeout(timer);
       // A106：进程已经退了，SIGKILL 升级没必要再执行
       cancelKill?.();
+      cancelKill = null;
       this.running.delete(ctx.sessionId);
+      this.armSettlers.delete(ctx.sessionId);
+
+      if (forced) {
+        try {
+          child.stdout.destroy();
+        } catch {
+          /* 已关闭，忽略 */
+        }
+        try {
+          child.stderr.destroy();
+        } catch {
+          /* 已关闭，忽略 */
+        }
+      }
 
       // 冲刷 jsonl 残留
       if (this.spec.parse === 'jsonl' && lineBuf.trim()) handleJsonLine(lineBuf);
@@ -925,7 +1044,13 @@ export class CliAdapter implements AgentProvider {
         queue.push({ type: 'done', durationMs: elapsed, ...lastUsage });
       }
       queue.close();
-    });
+    };
+
+    // A205：abort() 在 send() 之外被调用时也要能挂上同一道有界收尾
+    this.armSettlers.set(ctx.sessionId, armSettleTimer);
+
+    child.on('close', (code: number | null) => settle(code));
+
 
     try {
       for await (const ev of queue) yield ev;
@@ -936,6 +1061,9 @@ export class CliAdapter implements AgentProvider {
       if (!child.killed && this.running.has(ctx.sessionId)) {
         terminateGracefully(child, TERM_GRACE_MS);
       }
+      // A205：消费方提前走了也要保证「kill 之后不被残留管道拖住」
+      armSettleTimer();
+      this.armSettlers.delete(ctx.sessionId);
       this.running.delete(ctx.sessionId);
       // A106：双向模式的待答复权限请求随之作废（前端不等了）。
       // A108：只作废本会话的 —— 同一 Agent 可能同时在别的会话里等答复
@@ -949,6 +1077,8 @@ export class CliAdapter implements AgentProvider {
       // A106：与 send() 内同一条终止链（先 SIGTERM 再 SIGKILL）——
       // 不各写一份，两份必然漂移。
       terminateGracefully(child, TERM_GRACE_MS);
+      // A205：挂上有界收尾，避免孙进程攥着管道导致 send() 永不结束
+      this.armSettlers.get(sessionId)?.();
       this.running.delete(sessionId);
     }
   }

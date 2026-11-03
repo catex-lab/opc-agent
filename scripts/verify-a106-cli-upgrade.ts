@@ -22,9 +22,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { once, EventEmitter } from 'node:events';
 import { AGENT_DEFS } from '../server/agents/definitions.js';
-import { CliAdapter, terminateGracefully } from '../server/agents/adapters/cli.js';
+import { CliAdapter, terminateGracefully, DEFAULT_TIMEOUT_MS } from '../server/agents/adapters/cli.js';
+import { withCliShellQuoteHint } from '../shared/blocks.js';
 import {
   buildStdinUserMessage,
   classifyControlMessage,
@@ -233,7 +234,7 @@ try {
     // 场景 1：SIGTERM 先发，宽限到头才升级
     const f1 = makeFake();
     const c1 = { killed: false, kill: (sig?: string) => { f1.fake.calls.push(sig ?? 'SIGTERM'); return true; } };
-    const cancel1 = terminateGracefully(c1 as never, 1000, f1.timers);
+    const cancel1 = terminateGracefully(c1 as never, 1000, f1.timers, { platform: 'linux' });
     eq(f1.fake.calls, ['SIGTERM'], '先发 SIGTERM');
     f1.fake.advance(999);
     eq(f1.fake.calls, ['SIGTERM'], '宽限内不升级');
@@ -244,7 +245,7 @@ try {
     // 场景 2：进程自己退了 → cancel 阻止 SIGKILL
     const f2 = makeFake();
     const c2 = { killed: false, kill: (sig?: string) => { f2.fake.calls.push(sig ?? 'SIGTERM'); return true; } };
-    const cancel2 = terminateGracefully(c2 as never, 1000, f2.timers);
+    const cancel2 = terminateGracefully(c2 as never, 1000, f2.timers, { platform: 'linux' });
     cancel2();
     f2.fake.advance(10_000);
     eq(f2.fake.calls, ['SIGTERM'], 'cancel 之后不再补 SIGKILL');
@@ -252,9 +253,52 @@ try {
     // 场景 3：已经死了 → 一个信号都不发
     const f3 = makeFake();
     const c3 = { killed: true, kill: (sig?: string) => { f3.fake.calls.push(sig ?? 'SIGTERM'); return true; } };
-    terminateGracefully(c3 as never, 1000, f3.timers);
+    terminateGracefully(c3 as never, 1000, f3.timers, { platform: 'linux' });
     f3.fake.advance(10_000);
     eq(f3.fake.calls, [], 'killed 进程零信号');
+
+    // 场景 4：Windows → taskkill /pid <pid> /T /F（注入假 spawn，不起真进程）
+    {
+      const calls: Array<{ cmd: string; args: string[] }> = [];
+      const emitters: EventEmitter[] = [];
+      const kills: string[] = [];
+      const spawnProc = ((cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        const ee = new EventEmitter();
+        emitters.push(ee);
+        return ee as never;
+      }) as unknown as typeof spawn;
+      const child = { killed: false, pid: 4321, kill: (sig?: string) => { kills.push(sig ?? 'SIGTERM'); return true; } };
+      terminateGracefully(child as never, 1000, { setTimeout, clearTimeout }, { platform: 'win32', spawnProc });
+      eq(calls, [{ cmd: 'taskkill', args: ['/pid', '4321', '/T', '/F'] }], 'Windows 走 taskkill /T /F（整棵树）');
+      eq(kills, [], 'Windows 不直接对子进程发信号');
+      emitters[0].emit('exit', 0);
+      eq(kills, [], 'taskkill 成功不回退 child.kill');
+    }
+
+    // 场景 5：taskkill 非 0 退出 → 回退 child.kill
+    {
+      const emitters: EventEmitter[] = [];
+      const kills: string[] = [];
+      const spawnProc = ((_cmd: string, _args: string[]) => {
+        const ee = new EventEmitter();
+        emitters.push(ee);
+        return ee as never;
+      }) as unknown as typeof spawn;
+      const child = { killed: false, pid: 99, kill: (sig?: string) => { kills.push(sig ?? 'SIGTERM'); return true; } };
+      terminateGracefully(child as never, 1000, { setTimeout, clearTimeout }, { platform: 'win32', spawnProc });
+      emitters[0].emit('exit', 128);
+      eq(kills, ['SIGKILL'], 'taskkill 非 0 退出时回退 child.kill');
+    }
+
+    // 场景 6：taskkill 启动失败 → 回退 child.kill
+    {
+      const kills: string[] = [];
+      const spawnProc = (() => { throw new Error('taskkill missing'); }) as unknown as typeof spawn;
+      const child = { killed: false, pid: 7, kill: (sig?: string) => { kills.push(sig ?? 'SIGTERM'); return true; } };
+      terminateGracefully(child as never, 1000, { setTimeout, clearTimeout }, { platform: 'win32', spawnProc });
+      eq(kills, ['SIGKILL'], 'taskkill 启动失败时回退 child.kill');
+    }
   }
 
   // ── L2 真子进程：SIGTERM 优先 / SIGKILL 升级 ───────────────────────────
@@ -478,6 +522,106 @@ try {
       if (isWindows) skip('E: 中止时写出 interrupt 控制请求', 'Windows 上 SIGTERM=TerminateProcess，桩进程来不及读 stdin');
       else ok(irq != null, 'E: 中止时写出 interrupt 控制请求', JSON.stringify(irq?.msg));
     }
+  }
+
+  // ── A205：超时 → 杀树 → 有界结算（假 CLI + 继承管道的孙进程）──────────
+  console.log('\nA106-8 超时结算不被残留管道拖住');
+  {
+    // 桩：拉起一个继承 stdout/stderr 的孙进程并长期存活；自己忽略 SIGTERM。
+    // Windows 上 taskkill /T 会连孙进程一起收；POSIX 上孙进程会活下来攥着管道，
+    // 正好用来验「close 不来也必须结算」。
+    const grandchildCode =
+      "require('fs').writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => process.exit(0), 20000)";
+    const HANG_SRC = `
+'use strict';
+const { spawn } = require('child_process');
+if (process.argv.includes('--version')) { console.log('9.9.9-hang'); process.exit(0); }
+const pidFile = process.env.STUB_GC_PID || '';
+try { spawn(process.execPath, ['-e', ${JSON.stringify(grandchildCode)}, pidFile], { stdio: 'inherit' }); } catch (e) {}
+console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'hang-1' }));
+process.on('SIGTERM', () => {});
+setInterval(() => {}, 1000);
+`;
+    const hangPath = path.join(root, 'stub-hang.cjs');
+    const pidFile = path.join(root, 'grandchild.pid');
+    fs.writeFileSync(hangPath, HANG_SRC, 'utf8');
+    fs.rmSync(pidFile, { force: true });
+
+    const hangDef = { ...claudeDef, cli: { ...claudeDef.cli!, bin: hangPath, timeoutMs: 1200 } };
+    process.env.STUB_GC_PID = pidFile;
+    const adapter = new CliAdapter(hangDef);
+    const events: AgentEvent[] = [];
+    const t0 = Date.now();
+    for await (const ev of adapter.send(ctx({}))) events.push(ev);
+    const elapsed = Date.now() - t0;
+    delete process.env.STUB_GC_PID;
+
+    const errors = events.filter(e => e.type === 'error') as Array<{ message?: string }>;
+    const dones = events.filter(e => e.type === 'done');
+    ok(errors.length === 1, '超时只报一次 error（无重复结算）', `${errors.length} 条`);
+    ok(
+      errors.length === 1 && String(errors[0].message).includes('已终止'),
+      '超时文案如实写进事件流',
+      String(errors[0]?.message ?? '')
+    );
+    ok(dones.length === 1, 'done 只发一次（无重复结算）', `${dones.length} 条`);
+    // 上限：超时 1.2s + 有界收尾 5s + 余量
+    ok(elapsed <= 1200 + 5000 + 1500, '超时后在有界窗内结算', `${elapsed}ms`);
+    if (isWindows) {
+      skip('POSIX 上被残留管道拖住时强制结算', 'Windows 由 taskkill /T 直接收掉孙进程，close 正常触发');
+    } else {
+      ok(elapsed >= 5500, 'POSIX 上孙进程攥着管道时靠有界收尾强制结算', `${elapsed}ms`);
+    }
+
+    // 清理孙进程（Windows 上已被 taskkill 收走，这里多半是 no-op）
+    await sleep(200);
+    let gcPid = 0;
+    try {
+      gcPid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+    } catch {
+      /* 桩没写成 pid，忽略 */
+    }
+    if (isWindows) {
+      let alive = false;
+      if (gcPid) {
+        try {
+          process.kill(gcPid, 0);
+          alive = true;
+        } catch {
+          /* 不存在 = 已收走 */
+        }
+      }
+      ok(gcPid > 0 && !alive, 'Windows taskkill /T 同时收掉孙进程', `pid=${gcPid} alive=${alive}`);
+    }
+    try {
+      if (gcPid) process.kill(gcPid, 'SIGKILL');
+    } catch {
+      /* 已经退出，忽略 */
+    }
+  }
+
+  // ── A205：Qoder 家族超时默认值 + 引号提示归类 ─────────────────────────
+  console.log('\nA106-9 超时默认值与引号提示');
+  {
+    eq(findDef('qoder').cli!.timeoutMs, 1_200_000, 'qoder 放宽到 20 分钟');
+    eq(findDef('qoder-cn').cli!.timeoutMs, 1_200_000, 'qoder-cn 放宽到 20 分钟');
+    eq(findDef('zcode').cli!.timeoutMs, 900_000, 'zcode 仍是 15 分钟');
+    eq(DEFAULT_TIMEOUT_MS, 480_000, 'DEFAULT_TIMEOUT_MS 未被改动');
+    const uncovered = AGENT_DEFS.filter(
+      d => d.cli && d.descriptor.id !== 'qoder' && d.descriptor.id !== 'qoder-cn' && d.descriptor.id !== 'zcode'
+    );
+    for (const d of uncovered) {
+      eq(d.cli!.timeoutMs ?? DEFAULT_TIMEOUT_MS, 480_000, `${d.descriptor.id} 仍是默认 480 秒`);
+    }
+
+    const msg = 'bash: line 1: unexpected EOF looking for matching "';
+    const hinted = withCliShellQuoteHint(msg);
+    ok(hinted.startsWith(msg), '提示追加在原文之后');
+    ok(hinted.includes('shell 引号解析问题'), '归类为 CLI shell 引号问题');
+    ok(hinted.includes('powershell -NoProfile -ExecutionPolicy Bypass -File'), '给出一行可复制的替代写法');
+    ok(hinted.includes("-File 'C:\\path"), '示例用单引号路径（双引号正是踩雷写法）');
+    ok(withCliShellQuoteHint(hinted) === hinted, '提示幂等，不重复追加');
+    ok(withCliShellQuoteHint('all good') === 'all good', '非引号错误不加提示');
   }
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
