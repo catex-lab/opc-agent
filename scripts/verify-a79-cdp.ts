@@ -494,7 +494,19 @@ async function main() {
   console.log('✓ 端点发现 / 回环绑定 / target 唯一性 / 外部客户端真附着均符合预期');
 }
 
-main().catch(e => {
-  console.error('验证脚本自身出错:', e);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    /**
+     * 断言全绿后显式退出。
+     *
+     * 这个脚本里还留着 CDP socket / Electron 子进程等句柄，`finally` 关闭后
+     * 事件循环仍可能被占住 —— 不 exit 进程就会「断言全过、进程不动」。
+     * 挂进 `verify:ui` 的 `&&` 主链后，表现是整条链吊死（2026-11-04 实测
+     * 48/48 通过后卡住不动，后面段一个都不跑）。与 a129 / a119 的坑同类。
+     */
+    process.exit(0);
+  })
+  .catch(e => {
+    console.error('验证脚本自身出错:', e);
+    process.exit(1);
+  });

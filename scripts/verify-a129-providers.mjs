@@ -242,6 +242,21 @@ async function main() {
   let server = await startServer(port);
   if (!server.ready) {
     ok(false, '服务端启动并就绪', server.log.slice(-500));
+    /**
+     * 起不来就直接收尾，不能只 `return`。
+     *
+     * `process.on('exit', cleanup)` 只在进程真要退出时才跑，而这里的 mock
+     * HTTP server 还开着监听 —— 事件循环有活句柄，进程永远不退出。挂进
+     * `verify:ui` 的 `&&` 主链后，表现就是「这一段红了、后面一段都不开始、
+     * 整条链吊死」（2026-11-04 实测卡在 verify:a129-providers 不动）。
+     * 与 a119 的「绿了但不退出」是同一个坑，处理方式也一样：立刻收干净。
+     */
+    killTree(server.child);
+    try {
+      mock.srv.close();
+    } catch {
+      /* ignore */
+    }
     return;
   }
   ok(true, '服务端启动并就绪');

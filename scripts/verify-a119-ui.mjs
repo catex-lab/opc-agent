@@ -496,6 +496,27 @@ async function main() {
       );
 
       // 换 Agent：点另一张卡片
+      /**
+       * A119 [10] 的读库竞态（2026-11-04 全量第 52 段红过一次）。
+       *
+       * 前端是「先乐观改本地、再落库」：点击后 App 的 handleRebindAgent 先
+       * `updateSession()`（高亮立刻翻转），再用 `void fetch(...)` 发 PATCH ——
+       * 不 await。于是「高亮切过去了」与「库里真的写完了」之间有几十毫秒的
+       * 窗口。原来点完（高亮一变）立刻 GET，一旦 GET 跑在 PATCH 前面就会读到
+       * 旧 agent_id（实测复现：PATCH 返回 200 `{success:true}`、库里最终是
+       * 新值、刷新后 UI 也读的是新值 —— 库没写错，是闸门读早了）。
+       *
+       * 所以这里先等**这条** PATCH 的响应（按 agentId 过滤，别等到点击时并发
+       * 发出的 permissionMode 那条），并断言它 200；之后再去读库。
+       * 断言强度不降反升：既验请求真的发了、返回成功，又验库里落的是新值。
+       */
+      const patchResponse = page.waitForResponse(
+        r =>
+          r.request().method() === 'PATCH' &&
+          r.url().includes(`/api/sessions/${sid}`) &&
+          (r.request().postData() ?? '').includes(secondAgent),
+        { timeout: 15000 }
+      );
       await page.locator(`[data-agent="${secondAgent}"]`).click();
       await page.waitForFunction(
         id => document.querySelector(`[data-agent="${id}"]`)?.getAttribute('aria-pressed') === 'true',
@@ -503,6 +524,13 @@ async function main() {
         { timeout: 10000 }
       );
       ok(true, '[10] 点另一张卡片后高亮切过去了', secondAgent);
+
+      const patchRes = await patchResponse;
+      ok(
+        patchRes.status() === 200,
+        '[10] 换 Agent 的 PATCH 返回成功（请求真的发了，不是只改界面）',
+        `HTTP ${patchRes.status()}`
+      );
 
       const after = await json(await fetch(`${base}/api/sessions/${sid}`));
       ok(
