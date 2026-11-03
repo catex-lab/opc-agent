@@ -17,6 +17,14 @@
  *   [5] definitions 契约（bin 数组 / binExts / engineCandidates / shortcutNames）
  *   [6] 真探测：trae 与 zcode 的 availability 必须是 ready
  *
+ * **ZCode 未安装分支**（本机 2026-11-03 实测：快捷方式指向
+ * `E:\AI\ZCode\ZCode.exe`，该文件已删除、PATH 也无 `zcode`）：
+ *   安装态断言（引擎存在 / 探测为 ready / 真实版本号）打印固定格式的
+ *   `ZCode 未安装：<原因>，跳过 N 条安装态断言（非断言）` 并显式跳过，退出码仍 0；
+ *   但「未安装时 shortcutInstallRoot 必须为 null」「探测必须返回 not-installed」
+ *   这两条**保留并加强** —— 环境缺失时探测正确性仍要守住。
+ *   已安装分支恢复原 33 条断言，一条不少。
+ *
  * 运行：npx tsx scripts/verify-a105.mjs
  */
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync } from 'node:fs';
@@ -35,6 +43,8 @@ import { AGENT_DEFS } from '../server/agents/definitions.ts';
 let pass = 0;
 let fail = 0;
 const failures = [];
+let skipped = 0;
+const skipList = [];
 
 function check(name, cond, detail = '') {
   if (cond) {
@@ -45,6 +55,16 @@ function check(name, cond, detail = '') {
     failures.push(name);
     console.log(`  ✗ ${name}${detail ? ` —— ${detail}` : ''}`);
   }
+}
+
+/**
+ * 显式跳过（非断言）：只用于「ZCode 未安装」时那些必须有安装才能验证的条目。
+ * 必须打印出来 —— 不许静默跳过，也不许把跳过算成通过。
+ */
+function skipCheck(name, reason) {
+  skipped++;
+  skipList.push(name);
+  console.log(`  ⊘ ${name} —— 跳过（${reason}，非断言）`);
 }
 
 /** 文件存在（不猜、不递归） */
@@ -151,14 +171,52 @@ console.log('\n[3] trae-cn.cmd 的 Electron-node 垫片解析');
 
 // ---------- [4] 快捷方式反推安装根 ----------
 console.log('\n[4] ZCode.lnk 反推安装根');
-{
-  const root = shortcutInstallRoot('ZCode.lnk');
-  check('找到安装根', typeof root === 'string' && root.length > 0, String(root));
-  if (root) {
-    const engine = path.join(root, 'resources', 'glm', 'zcode.cjs');
+const zcodeDef = AGENT_DEFS.find(d => d.descriptor.id === 'zcode');
+const zcodeRoot = shortcutInstallRoot('ZCode.lnk');
+const zcodePathHit = findExecutable(
+  zcodeDef?.cli?.bin ?? 'zcode',
+  [],
+  zcodeDef?.cli?.binExts
+);
+/**
+ * 安装判定用两个**实际可观测**的信号：
+ *   - 开始菜单快捷方式能反推出安装根（= 快捷方式存在且目标可执行文件还在）；
+ *   - 或者 PATH 里真的能搜到 zcode 命令。
+ * 只要有一个成立就按「已安装」跑全套断言；两个都没有才是未安装。
+ */
+const zcodeInstalled = zcodeRoot !== null || zcodePathHit !== null;
+const ZCODE_INSTALL_CHECKS = [
+  '[4] 安装根下存在引擎 resources/glm/zcode.cjs',
+  '[6] zcode 探测为 ready（修复前是 not-installed）',
+  '[6] zcode 拿到真实版本号',
+];
+if (zcodeInstalled) {
+  check('找到安装根', typeof zcodeRoot === 'string' && zcodeRoot.length > 0, String(zcodeRoot));
+  if (zcodeRoot) {
+    const engine = path.join(zcodeRoot, 'resources', 'glm', 'zcode.cjs');
     check('安装根下存在引擎 resources/glm/zcode.cjs', isFile(engine), engine);
+  } else {
+    // PATH 能搜到、但快捷方式反推不到安装根：引擎位置无从验证，显式跳过。
+    skipCheck(ZCODE_INSTALL_CHECKS[0], 'PATH 有 zcode，但快捷方式反推不到安装根');
   }
-  check('不存在的快捷方式返回 null（不猜）', shortcutInstallRoot('definitely-not-installed-xyz.lnk') === null);
+} else {
+  // 未安装不等于「不测」：探测函数在环境缺失时的正确性必须守住。
+  check(
+    '未安装时 shortcutInstallRoot 必须为 null（目标不存在就不猜安装根）',
+    zcodeRoot === null,
+    `root=${String(zcodeRoot)} / pathHit=${String(zcodePathHit)}`
+  );
+}
+check('不存在的快捷方式返回 null（不猜）', shortcutInstallRoot('definitely-not-installed-xyz.lnk') === null);
+
+if (!zcodeInstalled) {
+  const missing = [
+    zcodeRoot === null ? '开始菜单 ZCode.lnk 反推不到安装根（快捷方式缺失或目标已删除）' : '',
+    zcodePathHit === null ? 'PATH 中未找到命令 zcode' : '',
+  ].filter(Boolean).join('；');
+  console.log(`ZCode 未安装：${missing}，跳过 ${ZCODE_INSTALL_CHECKS.length} 条安装态断言（非断言）`);
+  // 引擎位置依赖安装根，未安装时无从验证 —— 显式跳过，不许静默省略。
+  skipCheck(ZCODE_INSTALL_CHECKS[0], 'ZCode 未安装');
 }
 
 // ---------- [5] definitions 契约 ----------
@@ -230,8 +288,27 @@ console.log('\n[6] 真探测（起子进程，几秒内完成）');
   );
 
   const zcode = await reg.probeOne('zcode', true);
-  check('zcode 探测为 ready（修复前是 not-installed）', zcode?.status.availability === 'ready', zcode?.status.message);
-  check('zcode 拿到真实版本号', /\d+\.\d+/.test(zcode?.status.version ?? ''), zcode?.status.version);
+  if (zcodeInstalled) {
+    check('zcode 探测为 ready（修复前是 not-installed）', zcode?.status.availability === 'ready', zcode?.status.message);
+    check('zcode 拿到真实版本号', /\d+\.\d+/.test(zcode?.status.version ?? ''), zcode?.status.version);
+  } else {
+    // 未安装时仍要守「探测不猜」：必须如实返回 not-installed，不许委婉成 ready。
+    check(
+      '未安装时 zcode 探测必须返回 not-installed（不猜成 ready）',
+      zcode?.status.availability === 'not-installed',
+      `${zcode?.status.availability} / ${zcode?.status.message}`
+    );
+    for (const name of ZCODE_INSTALL_CHECKS.slice(1)) {
+      skipCheck(name, 'ZCode 未安装');
+    }
+    // 自检：跳过清单必须是**实际检测结果**推出来的那份，且条数一致。
+    check(
+      '跳过清单与实际检测结果一致（' + ZCODE_INSTALL_CHECKS.length + ' 条安装态断言）',
+      skipList.length === ZCODE_INSTALL_CHECKS.length &&
+        skipList.every((n, i) => n === ZCODE_INSTALL_CHECKS[i]),
+      skipList.join(' / ')
+    );
+  }
 
   reg.disposeAll();
   // Windows 上 sqlite 连接仍持着 chat.db，强删会 EBUSY（node-safe-delete-shim
@@ -244,5 +321,9 @@ console.log('\n[6] 真探测（起子进程，几秒内完成）');
 }
 
 // ---------- 汇总 ----------
-console.log(`\nA105 结果：${pass}/${pass + fail}${fail ? `，失败项：${failures.join('；')}` : ''}`);
+console.log(
+  `\nA105 结果：${pass}/${pass + fail}` +
+    (skipped ? `，显式跳过 ${skipped} 条（非断言）：${skipList.join('；')}` : '') +
+    (fail ? `，失败项：${failures.join('；')}` : '')
+);
 process.exit(fail ? 1 : 0);
