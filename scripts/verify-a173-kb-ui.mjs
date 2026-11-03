@@ -228,6 +228,17 @@ window.fetch = async function (input, init) {
     return json({ allowProject: allowProject, allowAll: allowAll });
   }
   if (url.indexOf('/api/kb/status') >= 0) return json(statusPayload());
+  // kb.search 逐 Agent 开关（31b4533）后新增的独立端点；夹具缺它时面板拿到
+  // 兜底的空对象，在 toolPolicy.agents.map 处直接崩，整块面板都挂不上。
+  if (url.indexOf('/api/kb/tool-policy') >= 0) {
+    return json({
+      maxPerTurn: 2,
+      agents: [
+        { id: 'claude', name: 'Claude Code', supported: true, enabled: true },
+        { id: 'workbuddy', name: 'WorkBuddy', supported: true, enabled: false },
+      ],
+    });
+  }
   if (url.indexOf('/api/kb/search') >= 0 && method === 'POST') {
     return json({
       query: body ? body.query : '',

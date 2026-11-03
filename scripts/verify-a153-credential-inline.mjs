@@ -198,6 +198,11 @@ try {
   p3.on('pageerror', e => errors3.push(e.message));
   await p3.goto(`${base}/settings?section=login&agent=doubao`, { waitUntil: 'domcontentloaded' });
   await p3.waitForSelector('[data-settings-section="login"]', { timeout: 10000 });
+  // 分区切换与凭据行渲染都是异步的：waitForSelector 命中的是导航按钮，
+  // 行本身可能晚一帧出现。先等行可见再断言，避免把中间态判成走错分区。
+  await p3
+    .waitForSelector('[data-credential-row="doubao"]', { state: 'visible', timeout: 10000 })
+    .catch(() => {});
   // 登录配置区的凭据行只在 section==='login' 时渲染 —— 行可见就证明
   // 落到了正确分区（之前的 bug 是落在外观页，行根本不渲染）。
   const rowVisible = await p3.locator('[data-credential-row="doubao"]').isVisible();
