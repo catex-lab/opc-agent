@@ -21,9 +21,16 @@ import {
   toolItem,
   toolPathOf,
 } from '../shared/trace.js';
-import type { Block, ThinkingBlock, ToolBlock } from '../shared/blocks.js';
+import type { Block, TextBlock, ThinkingBlock, ToolBlock } from '../shared/blocks.js';
 // 折叠口径（真实结束优先 / 下一条事件兜底 / 不假装完成）的纯函数层
-import { resolveTraceItems } from '../src/trace/fold.js';
+import {
+  hasUnreturnedResult,
+  resolveTraceItems,
+  shouldAutoFoldOnTurnEnd,
+  shouldFoldProcess,
+} from '../src/trace/fold.js';
+// 轨迹行（含旁白）与「整轮合并成一条」的判定
+import { buildTraceRows, canGroupProcess } from '../src/trace/rows.js';
 
 let total = 0;
 const failures: string[] = [];
@@ -49,6 +56,13 @@ const tool = (name: string, input: Record<string, unknown>, extra: Partial<ToolB
   startedAt: 1000,
   endedAt: 1600,
   ...extra,
+});
+
+const text = (content: string): TextBlock => ({
+  id: `txt-${Math.random().toString(36).slice(2, 7)}`,
+  type: 'text',
+  text: content,
+  state: 'done',
 });
 
 const think = (text: string, extra: Partial<ThinkingBlock> = {}): ThinkingBlock => ({
@@ -301,6 +315,134 @@ console.log('\n[7] resolveTraceItems：完成判定与关键步骤');
     contentStarted: true,
   });
   ok(!read[0].critical, '普通读取不是关键步骤，完成后照常折叠');
+}
+
+// ============= [8] 整轮收拢：旁白归入轨迹 / 收拢时机 / 手动意图 =============
+console.log('\n[8] 整轮收拢：旁白、结束信号与手动意图');
+{
+  // 1) 思考 + 工具 + 旁白 + 工具 → 同一条行序列（不再按 text 断段）
+  const whole = buildTraceRows(
+    [
+      think('先看目录'),
+      tool('Read', { file_path: '/a.ts' }),
+      text('Codex 的历史记录存在本机 ~/.codex 里。'),
+      tool('Grep', { pattern: 'codex' }),
+    ],
+    { streaming: false, contentStarted: true }
+  );
+  const kinds = whole.map(r => r.kind).join(',');
+  ok(
+    whole.length === 4 && whole[0].kind === 'thinking' && whole[2].kind === 'text',
+    '整轮过程（思考 + 工具 + 旁白）落在同一个行序列里',
+    kinds
+  );
+
+  // 2) 旁白行不吞空白块
+  const blank = buildTraceRows([tool('Read', { file_path: '/a.ts' }), text('   ')], {
+    streaming: false,
+    contentStarted: true,
+  });
+  ok(blank.length === 1, '空白 text 块不产生旁白行', `rows=${blank.length}`);
+
+  // 3) 旁白隔开的思考不再跨段挂到更早的工具下面
+  const split = buildTraceRows(
+    [tool('Read', { file_path: '/a.ts' }), text('换个位置再看'), think('看第二处')],
+    { streaming: false, contentStarted: true }
+  );
+  const splitThird = split[2];
+  ok(
+    split.length === 3 &&
+      !!splitThird &&
+      splitThird.kind === 'thinking' &&
+      splitThird.nested.length === 0,
+    '旁白之后的思考不再挂到更早的工具下面',
+    splitThird?.kind
+  );
+
+  // 4) 段内紧邻的思考仍按原规则挂靠
+  const attached = buildTraceRows(
+    [tool('Read', { file_path: '/a.ts' }), think('为什么读这个')],
+    { streaming: false, contentStarted: true }
+  );
+  const attachedFirst = attached[0];
+  ok(
+    attached.length === 1 &&
+      !!attachedFirst &&
+      attachedFirst.kind !== 'text' &&
+      attachedFirst.nested.length === 1,
+    '紧跟工具的思考仍在段内挂靠'
+  );
+
+  // 5) 过程区能否合并成一条
+  ok(
+    canGroupProcess([
+      think('想'),
+      text('旁白'),
+      tool('Read', { file_path: '/a.ts' }),
+      text('再查一下'),
+      tool('Grep', { pattern: 'x' }),
+    ]),
+    '有工具且只有 tool/thinking/text → 整轮合并成一条'
+  );
+  ok(!canGroupProcess([think('想'), text('旁白')]), '没有工具 → 不硬套摘要条');
+  const imageBlock: Block = { id: 'img-1', type: 'image', image: { url: 'x' } };
+  ok(
+    !canGroupProcess([tool('Read', { file_path: '/a.ts' }), imageBlock]),
+    '夹着 image 块 → 退回逐段渲染，不吞其它块'
+  );
+
+  // 6) 收拢时机：首个正文字段，或本轮结束
+  ok(
+    shouldFoldProcess({ hasAnswer: true, streaming: true }),
+    '正文出现 → 立即收拢'
+  );
+  ok(
+    !shouldFoldProcess({ hasAnswer: false, streaming: true }),
+    '运行中且没有正文 → 保持展开'
+  );
+  ok(
+    shouldFoldProcess({ hasAnswer: false, streaming: false }),
+    '本轮结束但没产出正文 → 也收成一条'
+  );
+
+  // 7) 摘要条的「结果未回传」
+  const missing = resolveTraceItems(
+    buildTrace([tool('Read', { file_path: '/a.ts' }, { status: 'running', endedAt: undefined })]),
+    { streaming: false, contentStarted: true }
+  );
+  ok(hasUnreturnedResult(missing), '最后一步 missing → 摘要条标「结果未回传」');
+  const interrupted = resolveTraceItems(
+    buildTrace([tool('Bash', { command: 'x' }, { status: 'interrupted', endedAt: undefined })]),
+    { streaming: true, contentStarted: false }
+  );
+  ok(hasUnreturnedResult(interrupted), '最后一步 interrupted → 摘要条标「结果未回传」');
+  ok(
+    !hasUnreturnedResult(
+      resolveTraceItems(buildTrace([tool('Read', { file_path: '/a.ts' })]), {
+        streaming: false,
+        contentStarted: true,
+      })
+    ),
+    '全部正常完成 → 摘要条不标「结果未回传」'
+  );
+
+  // 8) 轮次结束分支不得覆盖手动意图
+  ok(
+    shouldAutoFoldOnTurnEnd({ wasStreaming: true, streaming: false, manual: false }),
+    '自动：流式结束且用户未干预 → 收拢'
+  );
+  ok(
+    !shouldAutoFoldOnTurnEnd({ wasStreaming: true, streaming: false, manual: true }),
+    '用户手动展开/收起后 → 本轮结束不再自动收'
+  );
+  ok(
+    !shouldAutoFoldOnTurnEnd({ wasStreaming: true, streaming: true, manual: false }),
+    '仍在流式 → 不触发结束分支'
+  );
+  ok(
+    !shouldAutoFoldOnTurnEnd({ wasStreaming: false, streaming: false, manual: false }),
+    '挂载即完成 → 交给初始状态，不重复收拢'
+  );
 }
 
 // ============= 汇总 =============

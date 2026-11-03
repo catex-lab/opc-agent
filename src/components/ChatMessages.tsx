@@ -5,6 +5,8 @@ import { Brain, Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, TextSelec
 import { Message, Model, RegisteredAgent, Block, ThinkingBlock, ToolBlock } from '../types';
 import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
+import { canGroupProcess } from '../trace/rows';
+import { shouldFoldProcess } from '../trace/fold';
 import { BackgroundTasksPill } from './BackgroundTasksPill';
 import { useBackgroundTasks } from '../hooks/useBackgroundTasks';
 import { formatHandledDuration, hasFileEdits, lingeringToolBlocks } from '../../shared/trace';
@@ -1259,18 +1261,18 @@ export function ChatMessages({
   /**
    * 一条助手回复 → 块序列（A36：工具与思考合成「执行轨迹」）。
    *
-   * 分组规则：从第一个 `tool` 块起，把后面**连续的** tool / thinking 块一并吞进来，
-   * 交给 `AgentTrace` 渲染成一条轨迹；遇到 text 就断开。
+   * 分组规则（2026-11-03）：`answerStartIdx` 之前的全部块（工具 + 思考 +
+   * 中途旁白）合并成**一个** `AgentTrace`；答案起点之后照旧平铺。
    *
-   * 为什么思考块要被吞进去：思考紧跟在某次工具调用之后时，它是「为什么这么调」的
-   * 注解，单独占一行会和步骤平级、抢位置。交给 AgentTrace 之后它会缩进挂到
-   * 上一个步骤下面（见 trace.ts 的 buildTrace）。
+   * 为什么不再按 text 断段：一轮过程被切成多段之后，收拢时就会留下好几条
+   * 摘要和夹在中间的旁白，整轮仍占半屏。旁白属于过程，必须跟着轨迹一起收。
    *
-   * 为什么开头的思考块**不**吞：没有可挂的父级，硬塞进轨迹只会得到一条
-   * 「0 步」的空壳；它继续走 ThinkingView，保持「先思考后作答」的老观感。
+   * 为什么思考块也吞进去：紧跟在工具之后的思考是「为什么这么调」的注解，
+   * 交给 AgentTrace 后会缩进挂到上一步下面（见 trace.ts 的 buildTrace）；
+   * 开头的思考则作为轨迹的第一行，不再单独占一块。
    *
-   * 按「连续」而非「全部」分组，是为了保留「工具 → 文本 → 工具」这种交错顺序
-   * （文本是模型对上一批工具结果的解释，位置有语义）。
+   * 保险：过程区里没有工具（纯思考 / 纯文本消息）或夹着 AgentTrace 不认识
+   * 的块（image / artifact / note）时，退回原来的逐段渲染。
    *
    * `defaultOpen`：这条消息是不是会话里**最新一条助手消息**。它只对「有思考、
    * 但还没有正文」的消息起作用（正在思考的那条另由 block.state 决定）。
@@ -1344,7 +1346,38 @@ export function ChatMessages({
       processNodes.push(node);
     };
 
-    let i = 0;
+    /**
+     * 过程区 = 答案起点之前的全部块（工具 + 思考 + 中途旁白）。
+     *
+     * 2026-11-03：不再按 text 断段。收拢时整轮过程必须只剩**一条**摘要，
+     * 中途旁白属于过程，跟着轨迹一起收，不再单独占行把答案往下推。
+     *
+     * 两个保险：过程区里得真的有工具（纯思考/纯文本消息不硬套摘要条）；
+     * 且不能夹着 AgentTrace 不认识的块（image / artifact / note），
+     * 遇到这种就退回原来的逐段渲染，保证其它块不会被吞掉。
+     */
+    const processEnd = hasAnswer ? answerStartIdx : blocks.length;
+    const processBlocks = blocks.slice(0, processEnd);
+    const groupProcess = canGroupProcess(processBlocks);
+    // 正文出现即收；本轮结束（!isStreaming）也收 —— 没产出正文的轮不能摊着
+    const collapseProcess = shouldFoldProcess({
+      hasAnswer,
+      streaming: !!message.isStreaming,
+    });
+
+    if (groupProcess) {
+      processNodes.push(
+        <AgentTrace
+          key={`trace-${message.id}`}
+          blocks={processBlocks}
+          isStreaming={!!message.isStreaming}
+          collapse={collapseProcess}
+        />
+      );
+    }
+
+    // 合并后从答案起点继续；未合并时仍从 0 开始走原来的逐段规则。
+    let i = groupProcess ? processEnd : 0;
     while (i < blocks.length) {
       const block = blocks[i];
       if (block.type === 'tool') {
@@ -1363,7 +1396,7 @@ export function ChatMessages({
             key={`trace-${group[0].id}`}
             blocks={group}
             isStreaming={!!message.isStreaming}
-            collapse={hasAnswer}
+            collapse={collapseProcess}
           />
         );
         i = j;

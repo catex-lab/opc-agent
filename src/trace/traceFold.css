@@ -92,6 +92,33 @@
   letter-spacing: 0.01em;
 }
 
+/* ---------- 轨迹内部旁白 ---------- */
+
+/* 旁白属于过程，不是答案：颜色退到 secondary，字号/行高继续继承
+   `.tc-trace`（14px / 1.7），不另起一档。 */
+.tc-trace .tc-trace-narration {
+  margin: 0;
+  padding: 1px 0 1px 2px;
+  color: var(--td-text-color-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 摘要条上的「结果未回传」 ---------- */
+
+/* 与步骤行尾的胶囊同一形态（单色底 + 灰字），但**不带**
+   `margin-left:auto` —— 摘要条的自动边距留给耗时，两个 auto 会把
+   剩余空间对半分，右缘就对不齐了。 */
+.tc-trace .tc-trace-unreturned {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 4px;
+  background-color: var(--tc-hover-chrome);
+  color: var(--td-text-color-placeholder);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .tc-step-body,
   .tc-step-body[data-open='0'] {

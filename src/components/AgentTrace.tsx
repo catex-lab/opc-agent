@@ -56,7 +56,6 @@ import {
 import type { Block } from '../../shared/blocks';
 import {
   buildDiffHunks,
-  buildTrace,
   formatHandledDuration,
   formatStepDuration,
   summarizeTrace,
@@ -65,7 +64,12 @@ import {
 } from '../../shared/trace';
 import { DiffView } from './DiffView';
 import { useOverflowY } from '../hooks/useOverflowY';
-import { resolveTraceItems, type ResolvedTraceItem } from '../trace/fold';
+import {
+  hasUnreturnedResult,
+  shouldAutoFoldOnTurnEnd,
+  type ResolvedTraceItem,
+} from '../trace/fold';
+import { buildTraceRows, isNarration, stepRows } from '../trace/rows';
 import '../trace/traceFold.css';
 
 /**
@@ -485,21 +489,24 @@ export interface AgentTraceProps {
 }
 
 export function AgentTrace({ blocks, isStreaming = false, collapse = false }: AgentTraceProps) {
-  const rawItems = useMemo(() => buildTrace(blocks), [blocks]);
   /**
    * 生产口径的完成判定（见 src/trace/fold.ts）：
    * 真实结束事件优先；缺失时才用「下一条事件」兜底；没有后续事件的
    * 长耗时步骤保持 running，本轮结束仍无结束事件的标为 missing。
+   *
+   * 行序列同时包含旁白（text 块）：它们是过程的一部分，跟着轨迹一起
+   * 收拢/展开，不再落在轨迹外面把答案往下推。
    */
-  const items = useMemo(
+  const rows = useMemo(
     () =>
-      resolveTraceItems(rawItems, {
+      buildTraceRows(blocks, {
         streaming: !!isStreaming,
         contentStarted: !!collapse,
       }),
-    [rawItems, isStreaming, collapse]
+    [blocks, isStreaming, collapse]
   );
-  const summary = useMemo(() => summarizeTrace(items), [items]);
+  const steps = useMemo(() => stepRows(rows), [rows]);
+  const summary = useMemo(() => summarizeTrace(steps), [steps]);
 
   // 既定口径：完成态默认收起；流式中默认展开。
   // 手动切过之后不再自动干预（否则用户刚展开就被「跑完」那一刻关掉）。
@@ -517,9 +524,15 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
     const wasStreaming = prevStreaming.current;
     prevStreaming.current = !!isStreaming;
 
-    // 本轮结束：完成态收起（手动展开过就尊重手动）
+    // 本轮结束：完成态收起（手动展开/收起过就尊重手动，不再自动干预）
     if (wasStreaming && !isStreaming) {
-      if (!touched.current) {
+      if (
+        shouldAutoFoldOnTurnEnd({
+          wasStreaming,
+          streaming: !!isStreaming,
+          manual: touched.current,
+        })
+      ) {
         setExpanded(false);
         setFoldReason('done');
       }
@@ -535,7 +548,7 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
     // 每次它由假变真都收拢一次：正文恢复输出后，过程重新让位。
     if (collapse && !wasCollapse) {
       contentStartedRef.current = true;
-      foldedAtRef.current = items.length;
+      foldedAtRef.current = rows.length;
       if (!touched.current) {
         setExpanded(false);
         setFoldReason('content');
@@ -546,18 +559,18 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
     // 正文之后又来了工具事件：ChatMessages 的 hasAnswer 会暂时回落。
     // 但那条工具可能落在**下一段轨迹**（正文把轨迹切成多段），本段没有新行，
     // 就不能跟着重开 —— 旧过程已经完成，重新展开只会把正文往下推。
-    // 只有本段真的多了步骤（items.length > 收拢时的长度）才重新展开。
+    // 只有本段真的多了行（rows.length > 收拢时的长度）才重新展开。
     if (
       !collapse &&
       wasCollapse &&
       contentStartedRef.current &&
       !touched.current &&
-      items.length > foldedAtRef.current
+      rows.length > foldedAtRef.current
     ) {
       setExpanded(true);
       setFoldReason(null);
     }
-  }, [collapse, isStreaming, items.length]);
+  }, [collapse, isStreaming, rows.length]);
 
   /**
    * 收拢后仍有新工具事件：重新展开；等正文重新出现（collapse 由假变真）
@@ -568,9 +581,9 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
    */
   useEffect(() => {
     if (!isStreaming || touched.current || !contentStartedRef.current) return;
-    const fresh = items.slice(foldedAtRef.current);
+    const fresh = rows.slice(foldedAtRef.current);
     if (fresh.length === 0) return;
-    if (fresh.some(i => i.status === 'running')) {
+    if (fresh.some(i => !isNarration(i) && i.status === 'running')) {
       setExpanded(true);
       setFoldReason(null);
     } else if (collapse) {
@@ -579,7 +592,7 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
       setExpanded(false);
       setFoldReason('content');
     }
-  }, [items, isStreaming, collapse]);
+  }, [rows, isStreaming, collapse]);
 
   /**
    * 折叠动画要「先挂住再卸」。
@@ -605,10 +618,12 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
     setFoldReason(next ? null : 'manual');
   };
 
-  const running = items.some(i => i.status === 'running');
-  const stepCount = items.filter(i => i.kind === 'tool').length;
-  const totalMs = items.reduce((s, i) => s + (i.durationMs ?? 0), 0);
+  const running = rows.some(i => !isNarration(i) && i.status === 'running');
+  const stepCount = steps.filter(i => i.kind === 'tool').length;
+  const totalMs = steps.reduce((s, i) => s + (i.durationMs ?? 0), 0);
   const durationText = formatHandledDuration(totalMs);
+  /** 收拢后摘要条要能交代「最后一步没等到结果」 */
+  const unreturned = hasUnreturnedResult(steps);
 
   // 渐隐遮罩：只有真的溢出时才淡出，否则短轨迹末尾会莫名其妙变虚
   const { ref: scrollRef, el: scrollEl, overflowing } = useOverflowY<HTMLDivElement>();
@@ -631,9 +646,9 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
     };
     pin();
     return () => cancelAnimationFrame(raf);
-  }, [running, expanded, showBody, items, scrollEl]);
+  }, [running, expanded, showBody, rows, scrollEl]);
 
-  if (items.length === 0) return null;
+  if (rows.length === 0) return null;
 
   /**
    * 汇总行文案。
@@ -686,6 +701,16 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
         <span className="tc-trace-count" data-trace-count>
           {stepCount} 步
         </span>
+        {/* 收拢态才提示：展开时这一步的行尾已经有同名胶囊，不必重复 */}
+        {!expanded && unreturned && (
+          <span
+            className="tc-trace-unreturned"
+            data-trace-unreturned
+            title="最后一步没有等到结束事件，既不算完成也不算失败"
+          >
+            结果未回传
+          </span>
+        )}
         {/* 首个正文 token 收拢时给一个可见出口；摘要条本身始终可点 */}
         {foldedReason === 'content' && (
           <span className="tc-trace-foldtag" data-trace-foldtag>
@@ -716,13 +741,19 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
               data-fade={overflowing ? '1' : undefined}
             >
               <div className="tc-steps">
-                {items.map(item =>
-                  item.kind === 'thinking' ? (
-                    <div key={item.id} className="tc-trace-solo">
-                      <ThinkingNode item={item} collapse={collapse} />
+                {rows.map(row =>
+                  isNarration(row) ? (
+                    <div key={row.id} className="tc-trace-solo">
+                      <p className="tc-trace-narration" data-trace-narration>
+                        {row.text}
+                      </p>
+                    </div>
+                  ) : row.kind === 'thinking' ? (
+                    <div key={row.id} className="tc-trace-solo">
+                      <ThinkingNode item={row} collapse={collapse} />
                     </div>
                   ) : (
-                    <StepRow key={item.id} item={item} collapse={collapse} />
+                    <StepRow key={row.id} item={row} collapse={collapse} />
                   )
                 )}
               </div>

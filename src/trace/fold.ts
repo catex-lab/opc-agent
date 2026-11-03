@@ -170,3 +170,42 @@ export function resolveTraceItems(
 ): ResolvedTraceItem[] {
   return items.map((item, index) => resolveOne(item, items, index, opts));
 }
+
+/**
+ * 收拢后的摘要条是否要标「结果未回传」。
+ *
+ * 只看**最后一条工具步骤**：旁白 / 思考可能排在它后面，但它们没有结果
+ * 可丢；把结尾的思考当成「最后一项」会漏掉真正没回话的那次调用。
+ */
+export function hasUnreturnedResult(items: readonly ResolvedTraceItem[]): boolean {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i]!;
+    if (item.kind !== 'tool') continue;
+    return item.completion === 'missing' || item.status === 'interrupted';
+  }
+  return false;
+}
+
+/**
+ * 过程轨迹的收拢条件：正文出现（回答开始）或本轮结束。
+ *
+ * 两者都是**轮次级**信号，不是「文本够不够长」的猜测。运行中且还没有
+ * 正文时必须保持展开，否则用户看不到正在跑的过程。
+ */
+export function shouldFoldProcess(input: { hasAnswer: boolean; streaming: boolean }): boolean {
+  return input.hasAnswer || !input.streaming;
+}
+
+/**
+ * 「本轮结束」分支要不要自动收起。
+ *
+ * 手动展开过就不再干预：用户点开是为了看明细，跑完那一刻把它关掉等于
+ * 否定这次点击。手动收起同理 —— 本来就已经收着，也不该再触发一次动画。
+ */
+export function shouldAutoFoldOnTurnEnd(input: {
+  wasStreaming: boolean;
+  streaming: boolean;
+  manual: boolean;
+}): boolean {
+  return input.wasStreaming && !input.streaming && !input.manual;
+}
