@@ -186,6 +186,10 @@ console.log('\n[2] 代码块：A55 后按钮精简');
   );
 
   // B3：工具卡耗时（夹具里 Bash 跑了 1200ms）
+  // 过程流改版后一轮结束默认收成一条摘要，步骤只在展开态渲染 —— 先点开再断言，
+  // 否则「1.2s」根本不在 DOM 里（不是没做，是被折叠藏起来了）。
+  await page.locator('[data-steps-bar]').first().click();
+  await page.waitForTimeout(500);
   const dur = await page.locator('text=1.2s').count();
   ok(dur > 0, '工具卡显示耗时 1.2s', String(dur));
 

@@ -253,6 +253,8 @@ const DARK_CARD = '[data-theme-option="dark"], button:has-text("固定深色")';
 
 const TRANSPARENCY_RANGE = 'input[aria-label="界面透明度"]';
   await page.locator('button[title="设置"]').first().click();
+  // A28 之后设置默认落在「我的资料」；透明度与光斑控件在「外观」分区。
+  await page.locator('[data-settings-section="appearance"]').first().click();
   await page.waitForSelector(TRANSPARENCY_RANGE, { timeout: 15000 });
   const rangeMax = await page.locator(TRANSPARENCY_RANGE).getAttribute('max');
   ok(rangeMax === '100', '滑动条上限是 100（不是 A23 的 45）', String(rangeMax));

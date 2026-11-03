@@ -572,6 +572,8 @@ try {
   // ── [6] 手动固定深色（系统仍是浅色 —— 割裂出现的场合）──
   console.log('\n[5] 在设置里固定「深色」（系统保持浅色）');
   await page.locator('button[title="设置"]').first().click();
+  // A28 之后设置默认落在「我的资料」；主题卡片在「外观」分区。
+  await page.locator('[data-settings-section="appearance"]').first().click();
   // 主题卡片用「锚点 or 旧文案」兜底：这两个脚本跑的是**已打包的应用**，
   // 包可能落后于源码（A37 改了设置页但没重新打包，最新包仍是 A36 的 p39，
   // 那一版还没有 `data-theme-option`，按钮文案是「固定深色」）。

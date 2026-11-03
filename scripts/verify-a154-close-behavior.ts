@@ -254,6 +254,8 @@ try {
       });
 
       await page.goto(`${base}/settings`, { waitUntil: 'domcontentloaded' });
+      // A28 之后设置默认落在「我的资料」；关闭行为三选在「外观」分区。
+      await page.locator('[data-settings-section="appearance"]').first().click();
       await page.waitForSelector('[data-close-behavior-setting]', { timeout: 15000 });
 
       const opts = await page.evaluate(() =>

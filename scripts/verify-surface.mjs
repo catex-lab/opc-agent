@@ -511,6 +511,9 @@ for (const dark of [false, true]) {
   const page = await ctx.newPage();
   watch(page);
   await open(page, '/settings?glass=1');
+  // A28 之后设置默认落在「我的资料」；光斑开关在「外观」分区，先切过去再取样。
+  await page.locator('[data-settings-section="appearance"]').first().click();
+  await page.waitForTimeout(400);
   const v = await page.evaluate(RESOLVE_VARS, ['--tc-solid', '--tc-veil', '--td-bg-color-specialcomponent', '--td-bg-color-component-disabled']);
   const bodyBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   // 先证明「深色真的生效了」。不先断言这一条，深色分支一旦没切过去，

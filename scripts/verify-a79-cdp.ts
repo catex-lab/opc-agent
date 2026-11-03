@@ -73,7 +73,13 @@ function checkContracts() {
 
   // target 解析：认错比认不出危险得多
   ok(cdp.includes('appUrls'), '契约：记录应用自己的窗口 URL');
-  ok(/!appUrls\.some\(/.test(cdp), '契约：解析 target 时把应用自己的窗口排除掉');
+  // e43487f 把「精确相等」换成了 isAppTarget()（同 origin + 路径前缀）：
+  // 应用窗口的 URL 会变成 /chat/<id>、?glass=1，精确相等认不出来。
+  // 断言钉住的是语义（排除应用自己的页面），不是某一种写法。
+  ok(
+    /function isAppTarget\(/.test(cdp) && /pages\.filter\(t => !isAppTarget\(t\.url\)\)/.test(cdp),
+    '契约：解析 target 时把应用自己的窗口排除掉（同 origin + 路径前缀，不止精确相等）'
+  );
   ok(/多于一个就宁可交出去 null/.test(cdp), '契约：候选不唯一时宁可给 null（不让 Agent 点到应用自己的界面）');
 
   // 主进程接线：开关必须在 ready 之前同步追加
@@ -319,7 +325,9 @@ async function runSmoke() {
     await appPage.goto(`${api}/chat/${session.id}`, { waitUntil: 'domcontentloaded' });
     await appPage.evaluate(() => {
       try {
-        localStorage.setItem('opc.workspace-open', 'true');
+        // App.tsx 存的开关值就是 '1' / '0'（`=== '1'` 判定）。
+        // 这里曾写成 'true'，读回来恒为 false —— 面板永远不挂，等 tablist 必然超时。
+        localStorage.setItem('opc.workspace-open', '1');
       } catch {
         /* 隐私模式 */
       }

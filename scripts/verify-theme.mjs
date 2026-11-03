@@ -62,6 +62,10 @@ const r2 = await state();
 
 await page.locator('button[title="设置"]').first().click();
 await page.waitForTimeout(900);
+// A28 之后设置默认落在「我的资料」，主题卡在「外观」分区；先切分区再点卡片，
+// 否则会一直等一个尚未渲染的 [data-theme-option]。
+await page.locator('[data-settings-section="appearance"]').first().click();
+await page.waitForTimeout(400);
 // 选择器要避开「跟随系统」那张卡：它的说明文案里也含「浅色」二字
 // （"跟着 Windows 的深浅色设置走"），用 :has-text("浅色") 会命中两张卡。
 await page.locator('[data-theme-option="light"]').first().click();

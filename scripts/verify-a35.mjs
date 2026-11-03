@@ -450,6 +450,9 @@ console.log('\n[7] 滑杆：默认刻度 + 拖动数值 + 统一恢复默认');
   });
   await page.goto(base + '/settings?glass=1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(900);
+  // A28 之后设置默认落在「我的资料」，透明度与光斑滑杆在「外观」分区。
+  await page.locator('[data-settings-section="appearance"]').first().click();
+  await page.waitForTimeout(400);
 
   const ranges = await page.evaluate(() =>
     [...document.querySelectorAll('input[type="range"]')].map(el => el.getAttribute('aria-label'))

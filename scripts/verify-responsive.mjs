@@ -161,12 +161,13 @@ await page.setViewportSize({ width: 1280, height: 800 });
 await page.waitForTimeout(500);
 await page.locator('button[title="设置"]').first().click();
 await page.waitForTimeout(900);
-const settings = await page.evaluate(() => ({
-  hasAppearance: document.body.innerText.includes('外观'),
-  hasSystem: document.body.innerText.includes('跟随系统'),
-}));
-record('设置页 有外观分区', settings.hasAppearance, true);
-record('设置页 有「跟随系统」选项', settings.hasSystem, true);
+const hasAppearance = await page.evaluate(() => document.body.innerText.includes('外观'));
+record('设置页 有外观分区', hasAppearance, true);
+// A28 之后设置默认落在「我的资料」，外观选项要切到「外观」分区才渲染。
+await page.locator('[data-settings-section="appearance"]').first().click();
+await page.waitForTimeout(400);
+const hasSystem = await page.evaluate(() => document.body.innerText.includes('跟随系统'));
+record('设置页 有「跟随系统」选项', hasSystem, true);
 
 /** 两个颜色的相对亮度差的绝对值。小于 8 说明「同色」与「没色」分不出来。 */
 function diffLum(a, b) {
