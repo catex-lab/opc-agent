@@ -900,19 +900,11 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
       }
 
       /* P3：没有清单、也没有配置文件，但它**真的接受** `--model`。
-         这时「模型由 Agent 决定」是一句假话 —— 应用明明能传下去，
-         只是不知道有哪些名字可选。改成让用户手动填，填完先标定一次。
-         判据不是手写表，是 buildArgs 自己（见 agentAcceptsModel 的注释）。 */
-      if (agentAcceptsModel(agentId)) {
-        return res.json({
-          models: [],
-          defaultModel: defaultModel ?? "",
-          source: "manual",
-          selectable: true,
-          manual: true,
-          note: "这个 Agent 没有列出模型的命令，但它接受 --model：手动填一个模型名即可，填完会先跑一次确认。",
-        });
-      }
+         这里**不再提前返回**：CLI 枚举为空时，官方文案表里的模型仍要参与
+         下面的合并（qoder 安装后 CLI 未落盘/失效时，用户不该只看到一句
+         「模型由 Agent 决定」）。手动输入语义挪到合并之后再判 —— 合并完
+         仍然没有清单时才退回 manual。判据不是手写表，是 buildArgs 自己
+         （见 agentAcceptsModel 的注释）。 */
     }
 
     /* qoder 家族：`--list-models` 只吐账号自己的 3 条，而官方文案表里
@@ -928,6 +920,19 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
         list = merged.models;
         unverified = merged.unverified;
       }
+    }
+
+    /* P3：合并完仍然没有清单，但它真的接受 `--model` → 退回手动输入。
+       判据仍来自 buildArgs 自己（agentAcceptsModel），不是一张手写表。 */
+    if (list.length === 0 && agentAcceptsModel(agentId)) {
+      return res.json({
+        models: [],
+        defaultModel: defaultModel ?? "",
+        source: "manual",
+        selectable: true,
+        manual: true,
+        note: "这个 Agent 没有列出模型的命令，但它接受 --model：手动填一个模型名即可，填完会先跑一次确认。",
+      });
     }
 
     res.json({

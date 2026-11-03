@@ -341,6 +341,72 @@ try {
   ok(defaultFallback.unverified.includes(routedId),
     '[4] 超过 7 天的判定作废（旧结论不许继续藏模型）', routedId);
 
+  /* —— 接口行为：CLI 枚举 0 个时，官方清单仍必须被合并进来。
+     用一个独立服务端钉住：HOME/USERPROFILE 指向夹具目录，PATH 里剔掉 qoder
+     目录（qoder 的 extraPaths 也走 %USERPROFILE%，所以 CLI 一定是 0 条）。
+     这是在验后端分支顺序 —— 旧代码会在 manual 分支提前 return，官方表永远
+     没机会合并。 */
+  console.log('\n[4b] 接口行为：CLI 枚举为空时的官方清单合并');
+  const epPort = await freePort();
+  const epBase = `http://127.0.0.1:${epPort}`;
+  const noQoderPath = (process.env.PATH || '')
+    .split(path.delimiter)
+    .filter(p => !/qoder/i.test(p))
+    .join(path.delimiter);
+  // 先放一份「官方表也为空」的夹具：两个来源都空，才能验 manual 回退。
+  writeFixtureHome(fixtureHome, { ...fixture, locales: { 'zh-CN': {} } });
+  const epChild = spawn('npx tsx server/index.ts', {
+    cwd: ROOT,
+    shell: true,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      PORT: String(epPort),
+      OPC_DATA_DIR: path.join(TMP, 'endpoint-data'),
+      USERPROFILE: fixtureHome,
+      PATH: noQoderPath,
+      NODE_OPTIONS: '',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  try {
+    const ep = await waitReady(epBase, epChild);
+    ok(ep.ready, '[4b] 接口行为专用服务端起来了');
+    if (ep.ready) {
+      const empty = await json(await fetch(`${epBase}/api/agents/qoder/models`));
+      ok(
+        empty.source === 'manual' &&
+          (empty.models ?? []).length === 0 &&
+          empty.selectable === true &&
+          empty.manual === true,
+        '[4b] CLI 与官方表都空：退回 manual（200，不报 500）',
+        `${empty.source}/${(empty.models ?? []).length}/selectable=${empty.selectable}`
+      );
+
+      // 官方表恢复成完整夹具：CLI 仍是 0 条，但官方条目必须出现在响应里
+      writeFixtureHome(fixtureHome, fixture);
+      const withOfficial = await json(await fetch(`${epBase}/api/agents/qoder/models`));
+      const ids = (withOfficial.models ?? []).map(m => m.modelId);
+      ok(
+        withOfficial.source === 'catalog' && (withOfficial.unverified ?? []).length >= 3,
+        '[4b] CLI 枚举 0 个 + 官方表存在：仍合并出未验证模型',
+        `${(withOfficial.unverified ?? []).length} 条`
+      );
+      ok(
+        expectedZh.every(id => ids.includes(id)) && withOfficial.selectable === true,
+        '[4b] 官方条目真的进了响应且仍可切换',
+        `${ids.length} 条 / selectable=${withOfficial.selectable}`
+      );
+    }
+  } finally {
+    killTree(epChild);
+    // 等它真的退出再往下跑：后面的 UI 断言对机器负载敏感（固定等待的坑）
+    const epDeadline = Date.now() + 8000;
+    while (epChild.exitCode == null && Date.now() < epDeadline) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
+
   /* —— 真实文件：只嗅探，不参与判红（按用户要求：不认识就明说，不许静默通过） */
   const livePath = path.join(
     process.env.USERPROFILE || process.env.HOME || '',
@@ -440,9 +506,11 @@ try {
   page.on('pageerror', e => pageErrors.push(e.message));
 
   await page.goto(`${base}/chat/${sessionId}`, { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(2500);
 
   const trigger = page.locator('[data-model-trigger]');
+  /* 固定 2.5s 在冷启动/机器忙时不够：元素晚一拍出现，断言就判假，而后面
+     click() 会自动等待反而成功。先显式等挂载，断言强度不变。 */
+  await trigger.first().waitFor({ state: 'attached', timeout: 20000 }).catch(() => {});
   ok((await trigger.count()) === 1, '[3] 模型触发器存在（只读清单也要能打开看）');
   const triggerText = (await trigger.innerText().catch(() => '')).trim();
   ok(triggerText.includes('模型由 Agent 决定'), '[3] 触发器上不写模型名（写了就等于说「现在用的是它」）',
@@ -847,7 +915,7 @@ try {
      顺序错了就会得到「动作过了、断言没过」的假红）。这里显式等挂载。 */
   const wbTriggerShown = await wbTrigger
     .first()
-    .waitFor({ state: 'attached', timeout: 15000 })
+    .waitFor({ state: 'attached', timeout: 30000 })
     .then(() => true)
     .catch(() => false);
   ok(wbTriggerShown && (await wbTrigger.count()) === 1, '[7] 模型触发器存在');
