@@ -90,22 +90,55 @@ jobs:
       # "Process completed with exit code 1"，看不出到底缺什么。这里先把
       # 三个版本号和 electron 运行时目录打出来：electron 版本一旦是 `^` 范围
       # 而又没装进 node_modules，electron-builder 会在配置加载后立刻失败。
+      #
+      # 自证背景：v1.0.1 那次（run 41485994197）第 8 步 3 秒就 exit 1，而
+      # Actions 的 job 日志需要鉴权，匿名 API 只能拿到 annotation 里的一句
+      # "Process completed with exit code 1"，根因无从确认。所以这里把
+      # electron 运行时缺失时改成**显式补装**（不再依赖 postinstall 的隐式行为），
+      # 并把打包输出落盘上传，下一次失败能自证。
       - name: 打包前置自检
         shell: pwsh
         run: |
+          Write-Host '::group::环境版本'
           "node $(node -v) / npm $(npm -v)"
           "electron $(node -p "require('electron/package.json').version")"
           "electron-builder $(node -p "require('electron-builder/package.json').version")"
+          Write-Host '::endgroup::'
+
           if (-not (Test-Path 'node_modules/electron/dist/electron.exe')) {
-            Write-Error 'node_modules/electron/dist 缺失：electron 的 postinstall 没把运行时解出来'
+            Write-Host '::group::electron 运行时缺失，显式补装'
+            node node_modules/electron/install.js
+            Write-Host '::endgroup::'
+          }
+          if (-not (Test-Path 'node_modules/electron/dist/electron.exe')) {
+            Write-Error 'electron 运行时仍然缺失：install.js 没能落下 dist/electron.exe'
             exit 1
           }
+          "electron dist version = $(Get-Content 'node_modules/electron/dist/version' -ErrorAction SilentlyContinue)"
 
       # --publish never 是显式的：CI 下 electron-builder 会打印
       # "Implicit publishing triggered by CI detection" 并把策略设为
       # onTagOrDraft，本项目只上传自己的三件套，不需要它的发布链路。
+      #
+      # 输出同时落盘到 pack.log：失败时由下一步作为 artifact 上传，
+      # 这样即使没有 Actions 日志权限也能读到 electron-builder 的真实报错。
       - name: 打包 unpacked 目录
-        run: node scripts/build-installer.mjs --dir --publish never
+        shell: pwsh
+        run: |
+          Write-Host '::group::electron-builder 输出'
+          node scripts/build-installer.mjs --dir --publish never 2>&1 | Tee-Object -FilePath pack.log
+          $code = $LASTEXITCODE
+          Write-Host '::endgroup::'
+          exit $code
+
+      - name: 上传打包日志（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaging-log
+          path: pack.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: 生成发布说明
         shell: pwsh
