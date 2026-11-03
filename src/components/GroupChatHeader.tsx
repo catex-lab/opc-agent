@@ -3,6 +3,7 @@ import { Users, ChevronDown, Check, Pencil, Menu, Workflow } from 'lucide-react'
 import { GroupAvatar } from './UserAvatar';
 import { AgentAvatar } from './AgentAvatar';
 import { PanelHeader } from './PanelHeader';
+import { KbScopeChip } from './kb/KbScopeChip';
 import { ORCHESTRATION_META, type OrchestrationMode, type RegisteredAgent } from '../types';
 
 /**
@@ -73,6 +74,8 @@ interface GroupChatHeaderProps {
    * 空串 = 沿用成员堆叠。
    */
   groupAvatar?: string;
+  /** 知识库按会话维度开关，群聊同样适用 */
+  sessionId?: string;
 }
 
 export function GroupChatHeader({
@@ -88,6 +91,7 @@ export function GroupChatHeader({
   onBack,
   onOpenWorkflow,
   groupAvatar,
+  sessionId,
 }: GroupChatHeaderProps) {
   /** 正在就地改群名 */
   const [editing, setEditing] = useState(false);
@@ -264,6 +268,8 @@ export function GroupChatHeader({
       }
       actions={
         <>
+          {/* 知识库入口：范围只在当前会话内生效，群聊同样给会话级开关 */}
+          {sessionId && <KbScopeChip sessionId={sessionId} sessionTitle={title} />}
           {/* A41：动态工作流入口。放在模式切换旁边 —— 两者是同一层东西的
               两种选择：「固定模式一句话」与「写脚本自由编排」。 */}
           <button

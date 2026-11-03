@@ -1441,6 +1441,9 @@ export function ChatMessages({
         return (
         <div
           key={message.id}
+          // 知识库来源卡的「回到原对话」只带 messageId，落地页靠这个锚点定位
+          id={`msg-${message.id}`}
+          data-message-id={message.id}
           // A35：助手侧整条改成纵向（头部一行 + 正文一行），用户侧保持
           // 「头像在右、气泡在左」的横向排布。
           className={

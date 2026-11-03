@@ -1742,6 +1742,8 @@ function AppContent() {
                           onToggleWorkspace={compact ? undefined : toggleWorkspace}
                           onDelete={() => handleDeleteSession(currentSession.id)}
                           onBack={compact ? handleBackToList : undefined}
+                          sessionId={currentSession.id}
+                          sessionTitle={currentSession.title || '新对话'}
                         />
                       )}
                       <Suspense

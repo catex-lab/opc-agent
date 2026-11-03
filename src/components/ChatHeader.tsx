@@ -4,6 +4,7 @@ import { PanelHeader } from './PanelHeader';
 import { AgentDetailModal } from './AgentDetailModal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { WorkspaceBadge } from './WorkspaceBadge';
+import { KbScopeChip } from './kb/KbScopeChip';
 import { MENU_ITEM_TEXT_CLASS } from './menuItem';
 import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
 import type { ScenarioTemplate } from '../scenarios';
@@ -27,6 +28,10 @@ interface ChatHeaderProps {
   onDelete: () => void;
   /** 单栏（窄屏）模式下返回列表；宽屏不传 */
   onBack?: () => void;
+  /** 知识库面板按会话维度开关，必须知道当前会话 */
+  sessionId?: string;
+  /** 会话标题，仅用于知识库面板头部 */
+  sessionTitle?: string;
 }
 
 /**
@@ -66,6 +71,8 @@ export function ChatHeader({
   onToggleWorkspace,
   onDelete,
   onBack,
+  sessionId,
+  sessionTitle,
 }: ChatHeaderProps) {
   const [showDetail, setShowDetail] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -161,6 +168,8 @@ export function ChatHeader({
           {/* A63：工作区徽标。最左 —— 它表达的是「当前在哪儿干活」，
               是随时要看的状态；删除是低频操作，继续躲在 ⋯ 里。 */}
           {onCwdChange && <WorkspaceBadge cwd={cwd} onChange={onCwdChange} />}
+          {/* 知识库入口：范围是会话级状态，和「在哪儿干活」一样需要随时看到 */}
+          {sessionId && <KbScopeChip sessionId={sessionId} sessionTitle={sessionTitle} />}
           {/* A82（需求）：工作区开关紧贴「⋯」的**左侧**。
 
               原先它在整行最左边，和 ⋯ 之间隔着工作区徽标 —— 两个都是

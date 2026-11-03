@@ -324,6 +324,23 @@ export function ChatPage({
   const pendingJumpRef = useRef(true);
 
   /**
+   * 知识库来源卡的「回到原对话」会带 `#msg-<messageId>`。
+   * 只按主键定位，不把来源卡的脱敏正文塞回消息流。
+   */
+  const jumpToHashTarget = useCallback((): boolean => {
+    const hash = window.location.hash;
+    if (!hash.startsWith('#msg-')) return false;
+    const messageId = hash.slice('#msg-'.length);
+    if (!messageId) return false;
+    const target = document.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(messageId)}"]`
+    );
+    if (!target) return false;
+    target.scrollIntoView({ behavior: 'auto', block: 'center' });
+    return true;
+  }, []);
+
+  /**
    * ⚠️ 必须是 `useLayoutEffect`，不能是 `useEffect`。
    *
    * 消息是**异步**取回来的：`useEffect` 在浏览器绘制之后才跑，所以用户
@@ -352,6 +369,12 @@ export function ChatPage({
       container.scrollTop = container.scrollHeight;
     };
 
+    // 知识库回跳优先于「落到底部」：先渲染出的消息里已经有目标锚点时直接定位
+    if ((currentSession?.messages.length ?? 0) > 0 && jumpToHashTarget()) {
+      pendingJumpRef.current = false;
+      return;
+    }
+
     if (pendingJumpRef.current) {
       if ((currentSession?.messages.length ?? 0) === 0) return;
       pendingJumpRef.current = false;
@@ -363,7 +386,16 @@ export function ChatPage({
     }
 
     el.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [currentSession?.id, currentSession?.messages]);
+  }, [currentSession?.id, currentSession?.messages, jumpToHashTarget]);
+
+  // 同一个会话里点「回到原对话」只会改 hash，不会重挂载页面；补一个监听。
+  useEffect(() => {
+    const onHashChange = () => {
+      jumpToHashTarget();
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, [jumpToHashTarget]);
 
   // 处理发送消息
   const handleSend = useCallback((message: string) => {
@@ -604,6 +636,7 @@ export function ChatPage({
           onOpenWorkflow={openWorkflow}
           // A115：群头像。用户在群设置里换的，头部 leading 据此切成一整颗
           groupAvatar={groupAvatar}
+          sessionId={currentSession.id}
         />
       )}
 
