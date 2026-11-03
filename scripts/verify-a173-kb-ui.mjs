@@ -23,6 +23,8 @@ import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { build } from 'esbuild';
 import { chromium } from 'playwright-core';
+import postcss from 'postcss';
+import tailwindcss from 'tailwindcss';
 
 const ROOT = process.cwd();
 const OUT = join(ROOT, '.render-check', 'kb-ui');
@@ -30,6 +32,8 @@ const OUT = join(ROOT, '.render-check', 'kb-ui');
 // 也不会在仓库里留下任何中间文件。
 const FIXTURE_DIR = join(tmpdir(), 'opc-kb-a173-fixture');
 const SHOTS = join(OUT, 'shots');
+/** 会话头部三档截图单独放目录：它们是「头部布局」的证据，不是知识库面板的。 */
+const HEADER_SHOTS = join(ROOT, '.render-check', 'header');
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
 const failures = [];
@@ -98,11 +102,20 @@ import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { KnowledgeBasePanel } from '../../../src/components/kb/KnowledgeBasePanel';
+import { ChatHeader } from '../../../src/components/ChatHeader';
+import { GroupChatHeader } from '../../../src/components/GroupChatHeader';
 import './tokens.css';
 import '../../../src/kb-ui.css';
 
 const params = new URLSearchParams(window.location.search);
 const scenario = params.get('state') || 'ready';
+/**
+ * 同一个夹具页三种用法：默认渲染知识库面板；mode=header 渲染单聊头部那一行；
+ * mode=group 渲染群聊头部那一行（两者必须共用同一套 .chat-row 降级规则）。
+ */
+const mode = params.get('mode') || 'panel';
+/** 会话头部夹具的容器宽度（900 / 1024 / 1280 三档）。 */
+const headerWidth = Number(params.get('w') || 1280);
 
 let allowProject = false;
 let allowAll = false;
@@ -271,17 +284,97 @@ function Fixture() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<Fixture />);
+/**
+ * 会话头部夹具：容器宽度由 URL 参数 w 固定，正好是三档断点。
+ *
+ * 名字故意给得很长 —— 这一行的病灶就是「名字被挤成 Qo…」，
+ * 只有长名字才看得出「截断有地板、悬停可读全名」。
+ */
+function HeaderFixture() {
+  const agent = {
+    id: 'qoder',
+    // 长名字是刻意的：这一行的病灶就是「名字被挤成 Qo…」，
+    // 名字够长才会在 900 档真的走到截断，才拍得出「截断有地板」。
+    name: 'Qoder 本地代码助手 · 工作区知识库索引与检索（这是一个用于验证窄宽截断的长名字示例）',
+    kind: 'cli',
+    capabilities: [],
+    status: { availability: 'ready', message: '当前可用', updatedAt: '2026-11-03T00:00:00.000Z' },
+  };
+  const scenario = { id: 'coding', label: '编码', description: '代码编写与重构', color: '#0052D9' };
+  return (
+    <MemoryRouter>
+      <div style={{ width: headerWidth, overflow: 'hidden', background: 'var(--tc-surface-chrome)' }}>
+        <ChatHeader
+          agent={agent}
+          fallbackTitle="未注册 Agent"
+          isLoading={false}
+          scenario={scenario}
+          cwd="C:/work/opc-agent/knowledge-base-ui"
+          onCwdChange={function () {}}
+          workspaceOpen={false}
+          onToggleWorkspace={function () {}}
+          onDelete={function () {}}
+          sessionId="s1"
+          sessionTitle="重构权限中间件"
+        />
+      </div>
+    </MemoryRouter>
+  );
+}
+
+/**
+ * 群聊头部夹具：与单聊同一套容器宽度档位。
+ *
+ * 群的识别信息更多（成员头像堆叠 + 人数 + 编排模式 + 工作流），
+ * 长群名用来验证「先挤名字以外的东西，名字有 6 汉字地板」。
+ */
+function GroupHeaderFixture() {
+  const members = [
+    { id: 'claude', name: 'Claude Code', kind: 'cli', capabilities: [],
+      status: { availability: 'ready', message: '当前可用', updatedAt: '2026-11-03T00:00:00.000Z' } },
+    { id: 'qoder', name: 'Qoder', kind: 'cli', capabilities: [],
+      status: { availability: 'ready', message: '当前可用', updatedAt: '2026-11-03T00:00:00.000Z' } },
+    { id: 'workbuddy', name: 'WorkBuddy', kind: 'cli', capabilities: [],
+      status: { availability: 'busy', message: '忙碌', updatedAt: '2026-11-03T00:00:00.000Z' } },
+    { id: 'cursor', name: 'Cursor', kind: 'cli', capabilities: [],
+      status: { availability: 'offline', message: '离线', updatedAt: '2026-11-03T00:00:00.000Z' } },
+    { id: 'gemini', name: 'Gemini CLI', kind: 'cli', capabilities: [],
+      status: { availability: 'offline', message: '离线', updatedAt: '2026-11-03T00:00:00.000Z' } },
+  ];
+  return (
+    <MemoryRouter>
+      <div style={{ width: headerWidth, overflow: 'hidden', background: 'var(--tc-surface-chrome)' }}>
+        <GroupChatHeader
+          title="产品与研发协作群 · 知识库索引与检索验收（这是一个用于验证群聊窄宽截断的长群名示例）"
+          members={members}
+          onlineCount={2}
+          orchestration="dispatch"
+          onOrchestrationChange={function () {}}
+          onRename={function () {}}
+          onShowAgentDetail={function () {}}
+          settingsOpen={false}
+          onSettingsOpenChange={function () {}}
+          onOpenWorkflow={function () {}}
+          sessionId="s1"
+        />
+      </div>
+    </MemoryRouter>
+  );
+}
+
+if (mode === 'header') {
+  createRoot(document.getElementById('root')).render(<HeaderFixture />);
+} else if (mode === 'group') {
+  createRoot(document.getElementById('root')).render(<GroupHeaderFixture />);
+} else {
+  createRoot(document.getElementById('root')).render(<Fixture />);
+}
 `;
 
 // 夹具入口落在系统临时目录，相对路径的 ../../../src 会指到 Temp 的上一级，
-// 因此这里把真实组件与样式换成绝对路径，脚本从任何工作目录都成立。
-const FIXTURE_SOURCE = FIXTURE_ENTRY
-  .replace(
-    "'../../../src/components/kb/KnowledgeBasePanel'",
-    JSON.stringify(join(ROOT, 'src', 'components', 'kb', 'KnowledgeBasePanel'))
-  )
-  .replace("'../../../src/kb-ui.css'", JSON.stringify(join(ROOT, 'src', 'kb-ui.css')));
+// 因此这里把 `'../../../src/` 前缀整体换成绝对路径，脚本从任何工作目录都成立。
+const SRC_ROOT = join(ROOT, 'src').replace(/\\/g, '/');
+const FIXTURE_SOURCE = FIXTURE_ENTRY.replace(/'\.\.\/\.\.\/\.\.\/src\//g, `'${SRC_ROOT}/`);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -305,6 +398,7 @@ const server = createServer(async (req, res) => {
 await mkdir(OUT, { recursive: true });
 await mkdir(FIXTURE_DIR, { recursive: true });
 await mkdir(SHOTS, { recursive: true });
+await mkdir(HEADER_SHOTS, { recursive: true });
 
 const indexCss = await readFile(join(ROOT, 'src', 'index.css'), 'utf8');
 await writeFile(join(FIXTURE_DIR, 'tokens.css'), themeTokensFromIndexCss(indexCss), 'utf8');
@@ -312,11 +406,24 @@ await writeFile(join(FIXTURE_DIR, 'entry.tsx'), FIXTURE_SOURCE, 'utf8');
 await writeFile(
   join(FIXTURE_DIR, 'index.html'),
   '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">' +
-    '<link rel="stylesheet" href="./entry.css"></head>' +
+    '<link rel="stylesheet" href="./entry.css">' +
+    // 会话头部用的是 Tailwind 工具类，夹具必须带上真实生成的 utilities，
+    // 否则 flex/truncate 全都不生效，拍出来的只会是「竖排」的假象。
+    '<link rel="stylesheet" href="./utilities.css"></head>' +
     '<body style="margin:0;background:var(--td-bg-color-page)"><div id="root"></div>' +
     '<script src="./entry.js"></script></body></html>',
   'utf8'
 );
+
+// 按项目自己的 tailwind.config.js 生成 utilities（preflight 在项目里已关闭）。
+const utilities = await postcss([
+  tailwindcss({
+    config: join(ROOT, 'tailwind.config.js'),
+    content: [`${join(ROOT, 'src').replace(/\\/g, '/')}/**/*.{tsx,ts}`],
+    corePlugins: { preflight: false },
+  }),
+]).process('@tailwind utilities;', { from: undefined });
+await writeFile(join(FIXTURE_DIR, 'utilities.css'), utilities.css, 'utf8');
 
 await build({
   entryPoints: [join(FIXTURE_DIR, 'entry.tsx')],
@@ -329,6 +436,8 @@ await build({
   define: { 'process.env.NODE_ENV': '"production"' },
   // 夹具在系统临时目录里，依赖解析必须显式指回项目 node_modules。
   nodePaths: [join(ROOT, 'node_modules')],
+  // Agent 头像等静态资源：Vite 下由资源管线处理，esbuild 这里给个等价实现。
+  loader: { '.svg': 'dataurl', '.png': 'dataurl', '.webp': 'dataurl' },
   logLevel: 'silent',
 });
 
@@ -359,6 +468,22 @@ async function openPanel(state, theme) {
   await page.waitForSelector('[data-kb-panel]');
   if (theme === 'dark') {
     await page.evaluate(() => document.documentElement.classList.add('dark'));
+  }
+  return page;
+}
+
+/** 打开会话头部夹具：`mode` 区分单聊 / 群聊，容器宽度固定为 `width`，正好压在三档断点上。 */
+async function openHeader(mode, width, theme) {
+  const page = await context.newPage();
+  await page.setViewportSize({ width, height: 140 });
+  await page.goto(`${base}/index.html?mode=${mode}&w=${width}`, { waitUntil: 'load' });
+  await page.addStyleTag({
+    content: '*, *::before, *::after { transition: none !important; animation: none !important; }',
+  });
+  await page.waitForSelector('.chat-row');
+  if (theme === 'dark') {
+    await page.evaluate(() => document.documentElement.classList.add('dark'));
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
   }
   return page;
 }
@@ -506,11 +631,161 @@ try {
   ok((await emptyPage.locator('[data-kb-empty]').count()) === 0, '索引完成后空态消失');
   ok(true, '空态截图', join(SHOTS, 'empty.png'));
 
+  console.log('\n[9] 会话头部窄宽降级（900 / 1024 / 1280）');
+  // 防止以后新增 chip 又把这一行撑破：三档都必须满足
+  // 「这一行不溢出 + 在线徽标横排 + 名字保底 6 汉字」，超出宽度的部分只能靠降级让位。
+  for (const width of [900, 1024, 1280]) {
+    const page = await openHeader('header', width, 'light');
+    const rowMetrics = await page.locator('.chat-row').evaluate(el => ({
+      scroll: el.scrollWidth,
+      client: el.clientWidth,
+    }));
+    ok(
+      rowMetrics.scroll <= rowMetrics.client + 1,
+      `${width}px：这一行不溢出`,
+      `${rowMetrics.scroll}/${rowMetrics.client}`
+    );
+
+    const statusInfo = await page.locator('[data-chat-status]').first().evaluate(el => ({
+      text: el.textContent.trim(),
+      whiteSpace: getComputedStyle(el).whiteSpace,
+      height: el.getBoundingClientRect().height,
+    }));
+    ok(
+      statusInfo.text === '在线' && statusInfo.whiteSpace === 'nowrap' && statusInfo.height <= 28,
+      `${width}px：在线徽标横排、不参与压缩`,
+      `h=${statusInfo.height.toFixed(1)}px`
+    );
+
+    const titleInfo = await page.locator('.chat-row h1').evaluate(el => ({
+      minWidth: parseFloat(getComputedStyle(el).minWidth),
+      width: el.getBoundingClientRect().width,
+      text: el.textContent.trim(),
+    }));
+    ok(
+      titleInfo.minWidth >= 96 && titleInfo.width >= titleInfo.minWidth - 0.5,
+      `${width}px：名字保底约 6 个汉字宽`,
+      `${titleInfo.width.toFixed(0)}px / min ${titleInfo.minWidth}px`
+    );
+
+    const kbLabelVisible = await page.locator('[data-kb-chip-label]').isVisible();
+    const chevronVisible = await page
+      .locator('[data-workspace-badge] summary svg')
+      .last()
+      .isVisible();
+    if (width <= 1024) {
+      ok(!kbLabelVisible, `${width}px：知识库入口退化为单色图标`);
+      ok(!chevronVisible, `${width}px：工作区 chip 去掉展开箭头`);
+      const ariaLabel = await page.locator('[data-kb-chip]').getAttribute('aria-label');
+      ok(!!ariaLabel && ariaLabel.includes('知识库'), `${width}px：图标按钮保留 aria-label`, ariaLabel || '');
+    } else {
+      ok(kbLabelVisible, `${width}px：知识库入口保留文字`);
+      ok(chevronVisible, `${width}px：工作区 chip 保留展开箭头`);
+    }
+    ok((await page.locator('[data-chat-more]').count()) === 1, `${width}px：次要动作仍在「…」里`);
+
+    await page.locator('[data-chat-more] summary').click();
+    const moreItems = await page.locator('[data-chat-more] [role="menuitem"], [data-chat-more] button').count();
+    ok(moreItems >= 2, `${width}px：更多操作收纳在「…」里`, `${moreItems} 项`);
+    await page.locator('[data-chat-more] summary').click();
+
+    await page.screenshot({ path: join(HEADER_SHOTS, `${width}-light.png`) });
+    await page.evaluate(() => document.documentElement.classList.add('dark'));
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await page.screenshot({ path: join(HEADER_SHOTS, `${width}-dark.png`) });
+    ok(true, `${width}px 浅 / 深截图`, join(HEADER_SHOTS, `${width}-light.png`));
+    await page.close();
+  }
+
+  console.log('\n[10] 群聊头部窄宽降级（900 / 1024 / 1280）');
+  // 与单聊同一套 .chat-row 容器查询：单聊好、群聊坏说明有第二套数值，
+  // 所以这里按同一优先级逐档复核，截图落在 header 目录里成对比较。
+  for (const width of [900, 1024, 1280]) {
+    const page = await openHeader('group', width, 'light');
+    const rowMetrics = await page.locator('.chat-row').evaluate(el => ({
+      scroll: el.scrollWidth,
+      client: el.clientWidth,
+    }));
+    ok(
+      rowMetrics.scroll <= rowMetrics.client + 1,
+      `群聊 ${width}px：这一行不溢出`,
+      `${rowMetrics.scroll}/${rowMetrics.client}`
+    );
+
+    const statusInfo = await page.locator('[data-chat-status]').first().evaluate(el => ({
+      text: el.textContent.trim(),
+      whiteSpace: getComputedStyle(el).whiteSpace,
+      height: el.getBoundingClientRect().height,
+    }));
+    ok(
+      statusInfo.text.includes('在线') && statusInfo.whiteSpace === 'nowrap' && statusInfo.height <= 28,
+      `群聊 ${width}px：在线徽标横排、不参与压缩`,
+      `h=${statusInfo.height.toFixed(1)}px`
+    );
+
+    const titleInfo = await page.locator('.chat-row h1').evaluate(el => ({
+      minWidth: parseFloat(getComputedStyle(el).minWidth),
+      width: el.getBoundingClientRect().width,
+      text: el.textContent.trim(),
+      fullName: el.querySelector('span[title]')?.getAttribute('title') || '',
+    }));
+    ok(
+      titleInfo.minWidth >= 96 && titleInfo.width >= titleInfo.minWidth - 0.5,
+      `群聊 ${width}px：群名保底约 6 个汉字宽`,
+      `${titleInfo.width.toFixed(0)}px / min ${titleInfo.minWidth}px`
+    );
+    ok(
+      titleInfo.fullName.includes('产品与研发协作群'),
+      `群聊 ${width}px：群名截断后仍可读回全名（title）`
+    );
+    ok(
+      titleInfo.text.includes('（5）'),
+      `群聊 ${width}px：成员数未被挤掉`,
+      titleInfo.text.slice(-8)
+    );
+    // textContent 里有不算数：必须真的落在 h1 的框内，不能被 overflow 裁掉。
+    const countInfo = await page.locator('.chat-row h1').evaluate(el => {
+      const count = Array.from(el.querySelectorAll('span')).find(s => /（\d+）/.test(s.textContent || ''));
+      if (!count) return null;
+      const rect = count.getBoundingClientRect();
+      return { width: rect.width, right: rect.right, boxRight: el.getBoundingClientRect().right };
+    });
+    ok(
+      !!countInfo && countInfo.width > 0 && countInfo.right <= countInfo.boxRight + 0.5,
+      `群聊 ${width}px：成员数在可视区内（未被裁切）`,
+      countInfo ? `${countInfo.right.toFixed(0)} / ${countInfo.boxRight.toFixed(0)}` : 'missing'
+    );
+
+    const avatarCount = await page.locator('[data-member-avatar]').count();
+    ok(avatarCount === 4, `群聊 ${width}px：成员头像堆叠保留 4 个`, `${avatarCount} 个`);
+
+    const kbLabelVisible = await page.locator('[data-kb-chip-label]').isVisible();
+    if (width <= 1024) {
+      ok(!kbLabelVisible, `群聊 ${width}px：知识库入口退化为单色图标`);
+      const ariaLabel = await page.locator('[data-kb-chip]').getAttribute('aria-label');
+      ok(!!ariaLabel && ariaLabel.includes('知识库'), `群聊 ${width}px：图标按钮保留 aria-label`, ariaLabel || '');
+    } else {
+      ok(kbLabelVisible, `群聊 ${width}px：知识库入口保留文字`);
+    }
+
+    await page.screenshot({ path: join(HEADER_SHOTS, `group-${width}-light.png`) });
+    await page.evaluate(() => document.documentElement.classList.add('dark'));
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await page.screenshot({ path: join(HEADER_SHOTS, `group-${width}-dark.png`) });
+    ok(true, `群聊 ${width}px 浅 / 深截图`, join(HEADER_SHOTS, `group-${width}-light.png`));
+    await page.close();
+  }
+
   for (const page of [ready, autoPage, manualPage, emptyPage]) await page.close();
 } finally {
   await context.close();
   await browser.close();
   await new Promise(resolve => server.close(resolve));
+}
+
+// 夹具的运行期文件用完即删（截图与日志不进临时目录）。
+for (const name of ['index.html', 'entry.js', 'entry.css', 'utilities.css']) {
+  await unlink(join(FIXTURE_DIR, name)).catch(() => {});
 }
 
 console.log(`\nA173 闸门：${checks.total - failures.length}/${checks.total} 通过`);

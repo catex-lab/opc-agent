@@ -129,6 +129,18 @@ export interface PanelHeaderProps {
    */
   actionsAlign?: 'center' | 'title';
   className?: string;
+  /**
+   * 标题行（内层那一行）的额外 class，挂载**行**而不是整个 header。
+   *
+   * 会话头部要用它把这一行声明成容器查询的容器（`.chat-row`）：需要按
+   * 「这一行还剩多少宽度」降级，而不是按窗口宽度 —— 右侧工作区面板一展开，
+   * 窗口没变但这一行会窄 300px，媒体查询对此一无所知。
+   *
+   * ⚠️ 不要改成把 `container-type` 挂在 header 上：header 里还挂着知识库
+   * 浮层、删除确认框这些 `position: fixed` 的子树，而 `contain: layout`
+   * 会把它们从「相对视口」改成「相对 header」—— 浮层会被压进 52px 的条里。
+   */
+  rowClassName?: string;
 }
 
 export function PanelHeader({
@@ -147,6 +159,7 @@ export function PanelHeader({
   backLabel = '返回',
   actionsAlign = 'center',
   className = '',
+  rowClassName = '',
 }: PanelHeaderProps) {
   const isPage = level === 'page';
   // 页面级用 h1、栏级用 h2：标题层级与视觉层级保持一致
@@ -180,7 +193,7 @@ export function PanelHeader({
       }}
     >
       <div
-        className={`flex items-center gap-3 ${
+        className={`flex items-center gap-3 ${rowClassName} ${
           compact
             ? 'px-4 py-2.5 sm:px-6'
             : dense

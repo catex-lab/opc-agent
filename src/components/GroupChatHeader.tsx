@@ -128,6 +128,10 @@ export function GroupChatHeader({
   return (
     <PanelHeader
       compact
+      // 与一对一头部共用同一套「按行宽降级」的容器查询（见 kb-ui.css 的
+      // .chat-row）。群聊这一行同样会因右侧面板展开而变窄，媒体查询只认
+      // 窗口宽度，裁掉的会是群名 —— 所以容器要挂在这一行，而不是 header。
+      rowClassName="chat-row"
       // A103（需求）：与 ChatHeader 同步 —— 会话头部改用框架面 chrome，
       // 和左边消息列表栏同色。一对一与群聊是同一个位置的两副内容，
       // 只有一套配色，不能一个白一个灰。
@@ -229,9 +233,11 @@ export function GroupChatHeader({
             onClick={startRename}
             title="点击修改群名"
             aria-label={`群名：${title}，点击修改`}
-            className="group/name -mx-1 flex min-w-0 items-center gap-1 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-[var(--tc-hover-chrome)]"
+            className="group/name -mx-1 flex min-w-0 max-w-full items-center gap-1 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-[var(--tc-hover-chrome)]"
           >
-            <span className="min-w-0 truncate">{title}</span>
+            {/* 群名允许截断，但截断后的全名要能读回来（原生悬停提示）。
+                h1 自带 truncate，这里再套一层只为挂 title —— 与单聊头部一致。 */}
+            <span className="min-w-0 truncate" title={title}>{title}</span>
             <span
               className="shrink-0 text-body font-normal"
               style={{ color: 'var(--td-text-color-placeholder)' }}
@@ -255,12 +261,15 @@ export function GroupChatHeader({
            它只是状态读数，不是可点的东西，常驻底色让它看起来像一枚按钮。
            去掉底后是小圆点 + 文字，与单聊栏头那个「在线」读数同一形态。 */
         <span
-          className="flex items-center gap-1 rounded px-1.5 py-[1px] text-caption"
+          // 与单聊「在线」徽标同规：状态是读数，宽度再紧也不参与压缩、
+          // 不许折行。折成「2 / 在线」两行时，52px 的单行头部直接破功。
+          data-chat-status
+          className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 py-[1px] text-caption"
           style={{ color: 'var(--td-text-color-secondary)' }}
           title={`${onlineCount} 个成员在线`}
         >
           <span
-            className="h-1.5 w-1.5 rounded-full"
+            className="h-1.5 w-1.5 flex-none rounded-full"
             style={{ backgroundColor: onlineCount > 0 ? '#00A870' : '#C6C6C6' }}
           />
           {onlineCount} 在线

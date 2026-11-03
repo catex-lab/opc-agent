@@ -110,6 +110,10 @@ export function ChatHeader({
   return (
     <PanelHeader
       compact
+      // 容器查询的容器挂在「这一行」上（见 kb-ui.css 的 .chat-row）。
+      // 会话头部要按**这一行**的可用宽度降级：右侧工作区一展开，窗口宽度
+      // 没变但这一行少了 300px，媒体查询量不出来。
+      rowClassName="chat-row"
       // A103（需求）：标题栏与左栏同色 —— 从 `content` 改回 `chrome`。
       //
       // 这里原来是 `content`（#ffffff），理由是「聊天区是一条连续的白色工作面，
@@ -124,27 +128,38 @@ export function ChatHeader({
       className="relative"
       onBack={onBack}
       backLabel="返回消息列表"
-      title={displayName}
+      // 名字允许被截断，但截断后的完整名字要能读回来：
+      // h1 自带 truncate，这里再套一层只为挂 title（原生悬停提示）。
+      title={<span className="block truncate" title={displayName}>{displayName}</span>}
       badge={
         <>
           {/* 在线状态紧贴名字：IM 里「在跟谁说话 / 他能不能回」是同一眼要读到的信息 */}
           {meta ? (
             <span
-              className="flex items-center gap-1 text-secondary"
+              // 状态点是**读数**不是装饰：宽度再紧也不参与压缩，更不能折行 ——
+              // 折成「在 / 线」两行时，徽标比名字还占高，52px 的单行头部直接破功。
+              data-chat-status
+              className="flex shrink-0 items-center gap-1 whitespace-nowrap text-secondary"
               style={{ color: meta.color }}
               title={agent?.status.message || (agent ? availabilityLabelOf(agent) : meta.label)}
             >
-              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: meta.dot }} />
+              <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ backgroundColor: meta.dot }} />
               {agent ? availabilityLabelOf(agent) : meta.label}
             </span>
           ) : (
-            <span className="text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
+            <span
+              data-chat-status
+              className="shrink-0 whitespace-nowrap text-secondary"
+              style={{ color: 'var(--td-text-color-placeholder)' }}
+            >
               离线
             </span>
           )}
           {scenario && (
             <span
-              className="rounded px-1.5 py-[1px] text-caption"
+              // 场景标签同样按「不换行、不压缩」处理：它是可选的第三块内容，
+              // 一旦允许它抢宽度，被挤掉的就是 Agent 名字。
+              className="shrink-0 whitespace-nowrap rounded px-1.5 py-[1px] text-caption"
               style={{
                 backgroundColor: `color-mix(in srgb, ${scenario.color} 12%, transparent)`,
                 color: scenario.color,

@@ -702,3 +702,56 @@
     padding: 0 7px;
   }
 }
+
+/* ---------- 会话头部：按「这一行」的宽度降级 ----------
+ *
+ * 这一行是「左边名字 + 右边一摞 chip/按钮」的固定结构。宽度不够时只能按
+ * 优先级取舍，**不整体缩小字号**：
+ *
+ *   名字（≥6 个汉字） > 在线徽标（横排） > 工作区目录 > 知识库入口 > 装饰
+ *
+ * 断点量的是 `.chat-row` 自身的宽度（ChatHeader 通过 PanelHeader 的
+ * rowClassName 挂上去），不是窗口：右侧工作区面板一展开，窗口宽度没变、
+ * 这一行却窄了 300px —— 媒体查询对此一无所知，裁掉的会是名字。
+ */
+.chat-row {
+  container-type: inline-size;
+  container-name: chat-row;
+}
+
+/* 名字的地板：约 6 个汉字。再窄就只剩「Qo…」这种没有信息量的前缀，
+   与其挤名字，不如让右边的 chip 先降级。h1 自带 truncate，悬停可看全名。 */
+.chat-row h1 {
+  min-width: 6em;
+}
+
+@container chat-row (max-width: 1024px) {
+  /* 知识库入口退化为单色图标按钮：文字藏起来，按钮宽度随之收紧，
+     aria-label / title 保留（见 KbScopeChip）。 */
+  .kb-chip > .kb-chip-label {
+    display: none;
+  }
+
+  .kb-chip {
+    padding: 0 7px;
+  }
+
+  /* 工作区 chip 退化为「目录名 + 图标」：先让掉右侧的展开箭头。
+     目录名本身已经交代这是什么，箭头只是「能换目录」的装饰提示，
+     点 summary 依然能展开。 */
+  .chat-row [data-workspace-badge] summary > svg:last-child {
+    display: none;
+  }
+
+  .chat-row [data-workspace-badge] summary > span {
+    max-width: 6em;
+  }
+}
+
+@container chat-row (max-width: 900px) {
+  /* 再窄一档：目录名上限收到 5 个汉字。仍保留文字而不是只剩图标 ——
+     「哪个目录」是这一步里最后才该丢的信息。 */
+  .chat-row [data-workspace-badge] summary > span {
+    max-width: 5em;
+  }
+}
