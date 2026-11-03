@@ -36,11 +36,16 @@ export function isNarration(row: TraceRow): row is TraceNarration {
  * 两个条件缺一不可：过程区里确实有工具（纯思考/纯文本消息不硬套摘要条），
  * 且没有 AgentTrace 不认识的块（image / artifact / note）——否则合并会
  * 把这些块吞掉或改变它们的顺序。
+ *
+ * `raw` 是原生事件的旁路抽屉：UI 不渲染（renderBlock 返回 null），
+ * 轨迹行也跳过它。它不该把整轮归并挡在门外 —— CLI 通道每轮都会带一条
+ * `system/init` 之类的未识别行，一旦要求「全是可见块」就永远合并不了。
  */
 export function canGroupProcess(blocks: readonly Block[]): boolean {
+  const visible = blocks.filter(b => b.type !== 'raw');
   return (
-    blocks.some(b => b.type === 'tool') &&
-    blocks.every(b => b.type === 'tool' || b.type === 'thinking' || b.type === 'text')
+    visible.some(b => b.type === 'tool') &&
+    visible.every(b => b.type === 'tool' || b.type === 'thinking' || b.type === 'text')
   );
 }
 

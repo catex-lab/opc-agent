@@ -30,7 +30,7 @@ import {
   shouldFoldProcess,
 } from '../src/trace/fold.js';
 // 轨迹行（含旁白）与「整轮合并成一条」的判定
-import { buildTraceRows, canGroupProcess } from '../src/trace/rows.js';
+import { buildTraceRows, canGroupProcess, isNarration, stepRows } from '../src/trace/rows.js';
 
 let total = 0;
 const failures: string[] = [];
@@ -391,7 +391,48 @@ console.log('\n[8] 整轮收拢：旁白、结束信号与手动意图');
     '夹着 image 块 → 退回逐段渲染，不吞其它块'
   );
 
-  // 6) 收拢时机：首个正文字段，或本轮结束
+  // 7) CLI 旁路块（system/init 等原生事件）不得挡住整轮归并。
+  // 这是 Qoder / Qwen 真机形态：raw + 思考 + 多组工具 + 多段旁白。
+  // 合并成立 → 渲染层只产出一条轨迹，本轮结束后收成一行摘要；
+  // 展开后摘要条下能看到全部步骤与旁白。
+  const rawBlock: Block = {
+    id: 'raw-1',
+    type: 'raw',
+    count: 1,
+    entries: [{ channel: 'cli:system/init', at: 0, payload: { type: 'system', subtype: 'init' } }],
+    omitted: 0,
+  };
+  const qoderTurn: Block[] = [
+    rawBlock,
+    think('先确认商汤说了什么，再决定查哪张表。'),
+    tool('Read', { file_path: '/db/schema.sql' }),
+    text('schema 里没有 msg 表，改查 app-db。'),
+    tool('Write', { file_path: '/query/chat-query.qs', content: lines(52) }),
+    tool('Bash', { command: 'qoder run chat-query.qs' }),
+    text('chat 表能查到，接着换 sense 表。'),
+    tool('Read', { file_path: '/db/sense.sql' }),
+    text('sense 表的字段名和 chat 不一样。'),
+    tool('Write', { file_path: '/query/sense-query.qs', content: lines(28) }),
+  ];
+  ok(
+    canGroupProcess(qoderTurn),
+    'raw 旁路块不挡住整轮归并 → 渲染层只产出一条轨迹（一行摘要）'
+  );
+  const qoderRows = buildTraceRows(qoderTurn, { streaming: false, contentStarted: true });
+  ok(
+    qoderRows.length === 9,
+    '思考 + 5 个工具 + 3 段旁白 → 9 行（raw 被跳过）',
+    `${qoderRows.length}`
+  );
+  ok(
+    qoderRows.filter(isNarration).length === 3,
+    '三段旁白全部进入同一条轨迹的行序列'
+  );
+  ok(
+    stepRows(qoderRows).filter(r => r.kind === 'tool').length === 5,
+    '展开摘要条能看到全部 5 个工具步骤'
+  );
+  // 8) 收拢时机：首个正文字段，或本轮结束
   ok(
     shouldFoldProcess({ hasAnswer: true, streaming: true }),
     '正文出现 → 立即收拢'
@@ -405,7 +446,7 @@ console.log('\n[8] 整轮收拢：旁白、结束信号与手动意图');
     '本轮结束但没产出正文 → 也收成一条'
   );
 
-  // 7) 摘要条的「结果未回传」
+  // 9) 摘要条的「结果未回传」
   const missing = resolveTraceItems(
     buildTrace([tool('Read', { file_path: '/a.ts' }, { status: 'running', endedAt: undefined })]),
     { streaming: false, contentStarted: true }
@@ -426,7 +467,7 @@ console.log('\n[8] 整轮收拢：旁白、结束信号与手动意图');
     '全部正常完成 → 摘要条不标「结果未回传」'
   );
 
-  // 8) 轮次结束分支不得覆盖手动意图
+  // 10) 轮次结束分支不得覆盖手动意图
   ok(
     shouldAutoFoldOnTurnEnd({ wasStreaming: true, streaming: false, manual: false }),
     '自动：流式结束且用户未干预 → 收拢'
