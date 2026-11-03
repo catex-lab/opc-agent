@@ -103,7 +103,16 @@ if (zipArg) {
   // win-unpacked 的父目录是 resources，再上一层就是完整应用目录
   const appDir = path.dirname(path.dirname(asarSource));
   if (!fs.existsSync(appDir)) fail(`推不出完整包目录：${appDir}`);
-  const r = spawnSync('tar', ['-a', '-c', '-f', fullOut, '-C', appDir, '.'], { stdio: 'inherit' });
+  // ⚠️ 这里**不能**写 `-C appDir .`：那样 1210 个条目会全部带 `./` 前缀
+  // （`./`、`./OPC Agent.exe`、`./resources/app.asar` …）。7-Zip / bsdtar / .NET
+  // 会把 `./` 归一到根目录，命令行都能解；但 **Windows 资源管理器**（双击
+  // 「全部解压缩」走的 Shell zip 处理器）会枚举出 **0 个条目** 并报
+  // 「压缩(zipped)文件夹无效」。实测 v1.0.2 的 full zip：Shell.Application 的
+  // NameSpace 能打开、Items.Count = 0；同一个 bsdtar 改成显式列出顶层条目后
+  // Items.Count = 3。所以显式传顶层条目名，让条目名保持相对路径形态。
+  // 闸门见 scripts/verify-a171-update.ts 的静态断言。
+  const topLevel = fs.readdirSync(appDir);
+  const r = spawnSync('tar', ['-a', '-c', '-f', fullOut, '-C', appDir, ...topLevel], { stdio: 'inherit' });
   if (r.status !== 0) {
     fail('打完整包失败（Windows 需要系统自带 tar；或改用 --zip 指定已有 zip）');
   }

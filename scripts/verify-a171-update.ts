@@ -374,6 +374,21 @@ const buildSource = read('scripts/build-update.ts');
 ok(buildSource.includes('canonicalManifestBody'), '发布脚本与客户端共用签名正文函数');
 ok(buildSource.includes('createPrivateKey'), '发布脚本从 base64 PKCS#8 读私钥');
 
+// full zip 的条目名不能带 `./` 前缀：Windows 资源管理器的 zip 处理器会枚举出
+// 0 个条目并报「压缩(zipped)文件夹无效」（v1.0.2 实测，见 build-update.ts 注释）。
+// 所以打包时必须显式列出顶层条目，不能再出现 `-C <dir> '.'` 这种 argv 写法。
+ok(
+  !/['"]-C['"]\s*,\s*[A-Za-z_$][\w$]*\s*,\s*['"]\.['"]/.test(buildSource),
+  'full zip 不用 `-C <dir> .`（避免 `./` 前缀条目名）',
+  '出现 tar ... -C appDir "." 写法'
+);
+ok(buildSource.includes('fs.readdirSync(appDir)'), 'full zip 显式枚举顶层条目名', '缺 readdirSync(appDir)');
+ok(
+  /spawnSync\('tar',[^\n]*\.\.\.topLevel/.test(buildSource),
+  'tar 参数展开顶层条目列表（...topLevel）',
+  '缺 tar argv 的 ...topLevel'
+);
+
 const pkg = JSON.parse(read('package.json')) as {
   scripts: Record<string, string>;
   repository?: { url?: string };
