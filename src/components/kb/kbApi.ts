@@ -6,6 +6,7 @@ import type {
   KbSessionPatchResult,
   KbSessionSummary,
   KbStatus,
+  KbToolPolicy,
 } from './types';
 
 interface ApiErrorBody {
@@ -50,6 +51,17 @@ export function patchKbPolicy(patch: Partial<KbScopePolicy>): Promise<KbScopePol
   return request<KbScopePolicy>('/api/kb/policy', {
     method: 'PATCH',
     body: JSON.stringify(patch),
+  });
+}
+
+export function fetchKbToolPolicy(): Promise<KbToolPolicy> {
+  return request<KbToolPolicy>('/api/kb/tool-policy');
+}
+
+export function patchKbToolEnabled(agentId: string, enabled: boolean): Promise<KbToolPolicy> {
+  return request<KbToolPolicy>('/api/kb/tool-policy', {
+    method: 'PATCH',
+    body: JSON.stringify({ agentId, enabled }),
   });
 }
 

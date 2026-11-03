@@ -962,6 +962,25 @@ export function getMessagesBySession(sessionId: string): DbMessage[] {
 }
 
 /**
+ * 会话里最近一条用户消息的 id。
+ *
+ * 知识库工具的「每轮上限」用它当轮次键：用户每发一条消息，键就变一次，
+ * 计数自然重置；同一条用户消息触发的多次工具调用共享同一个额度。
+ * 不按「进程启动」或「时间窗口」算，是因为 CLI/SDK 进程可能跨轮复用。
+ */
+export function getLatestUserMessageId(sessionId: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT id FROM messages
+       WHERE session_id = ? AND role = 'user'
+       ORDER BY created_at DESC, rowid DESC
+       LIMIT 1`
+    )
+    .get(bind(sessionId)) as { id?: string } | undefined;
+  return row?.id ?? null;
+}
+
+/**
  * 按 id 取单条消息（A99）。
  *
  * 文件核对要拿的是**落库的那份 blocks**，不是前端传来的块 —— 前端那份

@@ -9,6 +9,21 @@ export interface KbScopePolicy {
   allowAll: boolean;
 }
 
+/** 逐 Agent 的 kb.search 开关（默认关闭）。 */
+export interface KbToolAgent {
+  id: string;
+  name: string;
+  /** 该通道是否具备 MCP 工具面；false 时只享受首轮自动注入 */
+  supported: boolean;
+  enabled: boolean;
+}
+
+export interface KbToolPolicy {
+  /** 每个 Agent 每轮最多主动检索的次数 */
+  maxPerTurn: number;
+  agents: KbToolAgent[];
+}
+
 export interface KbDisabledSession {
   sessionId: string;
   reason: KbDisabledReason | null;

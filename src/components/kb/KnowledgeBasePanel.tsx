@@ -1,15 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, Database, Lock, RotateCcw, Search, X } from 'lucide-react';
-import type { KbBackfillResult, KbScope, KbSearchResult, KbSessionSummary, KbStatus } from './types';
+import type {
+  KbBackfillResult,
+  KbScope,
+  KbSearchResult,
+  KbSessionSummary,
+  KbStatus,
+  KbToolPolicy,
+} from './types';
 import {
   KbApiError,
   backfillKb,
   fetchAgentNames,
   fetchKbStatus,
+  fetchKbToolPolicy,
   fetchSessionSummaries,
   patchKbPolicy,
   patchKbSession,
+  patchKbToolEnabled,
   rebuildKb,
   searchKb,
 } from './kbApi';
@@ -78,6 +87,9 @@ export function KnowledgeBasePanel({
   const [busy, setBusy] = useState<BusyKind>('');
   const [confirmRebuild, setConfirmRebuild] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [toolPolicy, setToolPolicy] = useState<KbToolPolicy | null>(null);
+  const [toolBusy, setToolBusy] = useState('');
+  const [toolFeedback, setToolFeedback] = useState('');
   const seqRef = useRef(0);
 
   const refreshStatus = useCallback(async () => {
@@ -97,12 +109,14 @@ export function KnowledgeBasePanel({
     setSearchError('');
     setFeedback(null);
     setConfirmRebuild(false);
+    setToolFeedback('');
     (async () => {
       try {
-        const [nextStatus, sessionList, agentMap] = await Promise.all([
+        const [nextStatus, sessionList, agentMap, toolPolicyNext] = await Promise.all([
           fetchKbStatus(),
           fetchSessionSummaries(),
           fetchAgentNames(),
+          fetchKbToolPolicy(),
         ]);
         if (cancelled) return;
         setStatus(nextStatus);
@@ -110,6 +124,7 @@ export function KnowledgeBasePanel({
           Object.fromEntries(sessionList.map(item => [item.id, item]))
         );
         setAgents(agentMap);
+        setToolPolicy(toolPolicyNext);
       } catch (e) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : '读取索引状态失败');
@@ -203,6 +218,27 @@ export function KnowledgeBasePanel({
       }
     },
     [refreshStatus, sessionId]
+  );
+
+  const toggleAgentTool = useCallback(
+    async (agentId: string, enabled: boolean) => {
+      setToolBusy(agentId);
+      setToolFeedback('');
+      try {
+        const next = await patchKbToolEnabled(agentId, enabled);
+        setToolPolicy(next);
+        setToolFeedback(
+          enabled
+            ? '已开启：该 Agent 本轮可直接检索，最多 2 次。'
+            : '已关闭：该 Agent 不再主动检索，首轮自动注入仍生效。'
+        );
+      } catch (e) {
+        setToolFeedback(e instanceof KbApiError ? e.message : '工具开关保存失败');
+      } finally {
+        setToolBusy('');
+      }
+    },
+    []
   );
 
   const runBackfill = useCallback(
@@ -491,6 +527,63 @@ export function KnowledgeBasePanel({
                   </button>
                 </div>
               </section>
+
+              {toolPolicy ? (
+                <section className="kb-section" data-kb-tool-section>
+                  <div className="kb-section-head">
+                    <h3 className="kb-section-title">Agent 主动检索</h3>
+                    <p className="kb-section-desc">
+                      工具默认关闭。开启后该 Agent 可在回答中主动检索并引用历史会话；
+                      每个 Agent 每轮最多 {toolPolicy.maxPerTurn} 次，首轮自动注入不受开关影响。
+                    </p>
+                  </div>
+                  <div className="kb-agent-list" data-kb-tool-agents>
+                    {toolPolicy.agents.map(agent => (
+                      <div className="kb-agent-row" data-kb-tool-agent={agent.id} key={agent.id}>
+                        <div className="kb-agent-main">
+                          <span className="kb-agent-name">{agent.name || agent.id}</span>
+                          <span className="kb-agent-hint">
+                            {agent.supported
+                              ? '开启后该 Agent 可在回答中主动检索并引用历史会话'
+                              : '该通道不支持工具调用，仅享受首轮自动注入'}
+                          </span>
+                        </div>
+                        {agent.supported ? (
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={agent.enabled}
+                            aria-label={`${agent.name || agent.id} 主动检索`}
+                            className={`kb-switch${agent.enabled ? ' is-on' : ''}`}
+                            data-kb-tool-toggle
+                            data-kb-tool-enabled={agent.enabled ? 'true' : 'false'}
+                            disabled={toolBusy === agent.id}
+                            onClick={() => void toggleAgentTool(agent.id, !agent.enabled)}
+                          >
+                            <span className="kb-switch-track" aria-hidden="true">
+                              <span className="kb-switch-thumb" />
+                            </span>
+                            <span className="kb-switch-text">
+                              {toolBusy === agent.id
+                                ? '保存中…'
+                                : agent.enabled
+                                  ? '已开启'
+                                  : '已关闭'}
+                            </span>
+                          </button>
+                        ) : (
+                          <span className="kb-agent-unsupported">仅自动注入</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {toolFeedback ? (
+                    <p className="kb-feedback" data-kb-tool-feedback role="status">
+                      {toolFeedback}
+                    </p>
+                  ) : null}
+                </section>
+              ) : null}
 
               <section className="kb-section" data-kb-search-section>
                 <div className="kb-section-head">

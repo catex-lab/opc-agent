@@ -28,8 +28,10 @@ import path from 'node:path';
 import readline from 'node:readline';
 import * as chatDb from '../db.js';
 import { dataDirPath } from '../paths.js';
+import type { AgentDefinition } from '../agents/definitions.js';
 import type { KbCitationRef } from '../../shared/blocks.js';
 import { redactForStorage } from './redact.js';
+import { isKbToolEnabled, KB_TOOL_MAX_PER_TURN } from './optout.js';
 import {
   DEFAULT_MAX_TOKENS,
   DEFAULT_TOP_K,
@@ -45,6 +47,8 @@ export const KB_MCP_TOOL_NAME = 'kb.search';
 export const KB_MCP_ALLOWED_TOOL_IDS = ['mcp__kb__kb.search', 'mcp__kb__search'] as const;
 export const KB_MCP_TOOL_PREFIX = 'mcp__kb__';
 export const KB_MCP_SESSION_ENV = 'OPC_KB_SESSION_ID';
+/** Agent 标识由宿主注入，工具按它查「逐 Agent 开关」。 */
+export const KB_MCP_AGENT_ENV = 'OPC_KB_AGENT_ID';
 
 export interface KbMcpServerSpec {
   command: string;
@@ -93,8 +97,10 @@ function resolveKbMcpLaunch(): { command: string; args: string[]; env: Record<st
  *
  * `sessionId` 只在宿主自己起进程时写进 env（SDK / ACP 路径）；
  * CLI 路径用继承环境，避免把会话 id 固化进磁盘配置。
+ * `agentId` 用于逐 Agent 的工具开关；CLI 的配置文件按 Agent 分文件，
+ * 写进 env 不会串到别的 Agent。
  */
-export function kbMcpServerSpec(sessionId?: string): KbMcpServerSpec {
+export function kbMcpServerSpec(sessionId?: string, agentId?: string): KbMcpServerSpec {
   const launch = resolveKbMcpLaunch();
   const env: Record<string, string> = {
     OPC_DATA_DIR: dataDirPath,
@@ -103,11 +109,29 @@ export function kbMcpServerSpec(sessionId?: string): KbMcpServerSpec {
     ...launch.env,
   };
   if (sessionId) env[KB_MCP_SESSION_ENV] = sessionId;
+  if (agentId) env[KB_MCP_AGENT_ENV] = agentId;
   return { command: launch.command, args: launch.args, env };
 }
 
 /** 支持 `--mcp-config` 且已实测/同构的 CLI Agent */
 const KB_MCP_CONFIG_AGENTS = new Set(['qoder', 'qoder-cn', 'claude']);
+
+/**
+ * 该 Agent 的通道是否具备主动检索的工具面。
+ *
+ * 与「开关是否打开」是两件事：这里回答「能不能」，开关回答「要不要」。
+ * Codex SDK / HTTP 型没有 MCP 注入面，只享受首轮自动注入。
+ */
+export function kbToolSupported(def: AgentDefinition): boolean {
+  const kind = def.descriptor.kind;
+  if (kind === 'http' || kind === 'mock') return false;
+  if (kind === 'acp') return true;
+  if (kind === 'sdk') {
+    const provider = def.sdk?.provider ?? 'tencent';
+    return provider !== 'codex' && provider !== 'opencode';
+  }
+  return KB_MCP_CONFIG_AGENTS.has(def.descriptor.id);
+}
 
 /**
  * 给 CLI Agent 生成 MCP 启动参数（复用扩展分发的 `--mcp-config` 机制）。
@@ -122,7 +146,7 @@ export function kbMcpArgsFor(agentId: string): string[] {
     const dir = path.join(dataDirPath, 'extensions');
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `mcp-kb-${agentId}.json`);
-    const spec = kbMcpServerSpec();
+    const spec = kbMcpServerSpec(undefined, agentId);
     fs.writeFileSync(
       file,
       JSON.stringify({ mcpServers: { [KB_MCP_SERVER_NAME]: spec } }, null, 2),
@@ -167,14 +191,47 @@ function sessionTitleOf(sessionId: string): string | undefined {
 }
 
 /**
+ * 本轮已用的检索次数：key = 会话 + 该会话最新一条用户消息 + Agent。
+ *
+ * 为什么用「最新用户消息 id」而不是进程启动时间：CLI/SDK 进程可能跨轮复用，
+ * 按进程算会把上一轮的消耗带进下一轮；按用户消息算，用户每发一条，
+ * 键就换一个，额度自然重置。同一轮里多个 Agent 各自有独立额度。
+ */
+const turnUsage = new Map<string, number>();
+
+function turnKeyOf(sessionId: string, agentId: string): string {
+  let latestUser: string | null = null;
+  try {
+    latestUser = chatDb.getLatestUserMessageId(sessionId);
+  } catch {
+    latestUser = null;
+  }
+  return `${sessionId}::${latestUser ?? 'no-user-message'}::${agentId}`;
+}
+
+/**
  * 执行 `kb.search`。抛 `ToolInputError` 表示参数不合法（回给模型的 isError）。
+ *
+ * 策略顺序：宿主上下文 → 逐 Agent 开关（默认关闭）→ 入参 → 每轮上限。
+ * 开关只决定「能不能用」，范围收口仍由 `searchKnowledge` 的 `policy.allow_*`
+ * 负责，打开开关不会绕过 project/all 的显式放行。
  */
 export function executeKbSearchTool(
   rawArgs: unknown,
-  sessionId: string | undefined
+  sessionId: string | undefined,
+  agentId: string | undefined
 ): { citations: KbCitationRef[]; tokensUsed: number; scopeApplied: string; filteredOut: number } {
   if (!sessionId) {
     throw new ToolInputError('缺少宿主注入的会话上下文（sessionId 不允许由调用方提供）');
+  }
+  const agent = String(agentId ?? '').trim();
+  if (!agent) {
+    throw new ToolInputError('缺少宿主注入的 Agent 标识（agentId 不允许由调用方提供）');
+  }
+  if (!isKbToolEnabled(agent)) {
+    throw new ToolInputError(
+      `知识库检索工具未开启（Agent: ${agent}）。该工具默认关闭，请在「知识库」面板的「Agent 主动检索」中为本 Agent 打开开关。`
+    );
   }
   if (!rawArgs || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
     throw new ToolInputError('入参必须是对象，且只允许 query / scope / topK');
@@ -211,6 +268,15 @@ export function executeKbSearchTool(
     topK = Math.min(DEFAULT_TOP_K, Math.max(1, Math.floor(n)));
   }
 
+  // 每轮上限：在真正检索前拦截，避免第 3 次还花一轮 token 去扫 FTS。
+  const turnKey = turnKeyOf(sessionId, agent);
+  const usedThisTurn = turnUsage.get(turnKey) ?? 0;
+  if (usedThisTurn >= KB_TOOL_MAX_PER_TURN) {
+    throw new ToolInputError(
+      `本轮检索次数已达上限（最多 ${KB_TOOL_MAX_PER_TURN} 次）。请基于已返回的来源作答，下一轮对话会重置计数。`
+    );
+  }
+
   const result = searchKnowledge({
     sessionId,
     query,
@@ -218,6 +284,8 @@ export function executeKbSearchTool(
     topK,
     maxTokens: DEFAULT_MAX_TOKENS,
   });
+
+  turnUsage.set(turnKey, usedThisTurn + 1);
 
   const citations: KbCitationRef[] = result.hits.map(hit => ({
     citationId: hit.citationId,
@@ -269,6 +337,7 @@ function toolDefinition() {
  */
 export function runKbMcpStdioServer(): void {
   const sessionId = process.env[KB_MCP_SESSION_ENV];
+  const agentId = process.env[KB_MCP_AGENT_ENV];
   const out = (payload: unknown) => {
     process.stdout.write(`${JSON.stringify(payload)}\n`);
   };
@@ -318,7 +387,7 @@ export function runKbMcpStdioServer(): void {
           return;
         }
         try {
-          const result = executeKbSearchTool(params.arguments, sessionId);
+          const result = executeKbSearchTool(params.arguments, sessionId, agentId);
           reply(req.id, {
             content: [
               {

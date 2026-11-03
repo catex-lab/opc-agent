@@ -34,6 +34,20 @@ function section(title: string): void {
   console.log(`\n[${title}]`);
 }
 
+/** 断言抛错并返回错误文案，供「拒绝理由」类断言复用。 */
+function expectThrow(fn: () => unknown, name: string): string {
+  let raised = false;
+  let message = '';
+  try {
+    fn();
+  } catch (err) {
+    raised = true;
+    message = err instanceof Error ? err.message : String(err);
+  }
+  ok(name, raised, message);
+  return message;
+}
+
 async function main(): Promise<void> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opc-kb-inject-'));
   process.env.OPC_DATA_DIR = dataDir;
@@ -45,6 +59,7 @@ async function main(): Promise<void> {
   const store = await import('../server/kb/store.js');
   const inject = await import('../server/kb/inject.js');
   const tool = await import('../server/kb/tool.js');
+  const optout = await import('../server/kb/optout.js');
   const definitions = await import('../server/agents/definitions.js');
 
   const nowIso = new Date().toISOString();
@@ -137,7 +152,30 @@ async function main(): Promise<void> {
   }
   ok('会话不存在时不抛出（失败不阻断）', !threw && missing === null);
 
-  /* ═══════════ 3. 范围收口 ═══════════ */
+  /* ═══════════ 3. 工具开关：默认关闭 / 逐 Agent 开启 ═══════════ */
+  section('工具开关：默认关闭 / 逐 Agent 开启');
+  ok('默认策略下 claude 的工具开关为关', optout.isKbToolEnabled('claude') === false);
+  ok('默认策略下 qoder 的工具开关为关', optout.isKbToolEnabled('qoder') === false);
+  const defaultDenied = expectThrow(
+    () => tool.executeKbSearchTool({ query: '并发写冲突' }, sA.id, 'claude'),
+    '默认关闭时工具调用被拒'
+  );
+  ok('拒绝文案说明「默认关闭」与开启入口', defaultDenied.includes('默认关闭'), defaultDenied);
+
+  // 开关与自动注入是两回事：工具关着，首轮注入照常发生。
+  const injectWhileClosed = inject.buildKbInjection(sA.id, '并发写冲突');
+  ok('工具关闭不影响首轮自动注入', Boolean(injectWhileClosed && injectWhileClosed.count > 0));
+
+  optout.setKbToolEnabled('claude', true);
+  optout.setKbToolEnabled('qoder', true);
+  ok('写入开关后 claude 为开', optout.isKbToolEnabled('claude') === true);
+  const enabledCall = tool.executeKbSearchTool({ query: '并发写冲突', topK: 2 }, sA.id, 'claude');
+  ok(
+    '开启后工具可调用且返回 citationId',
+    enabledCall.citations.length > 0 && Boolean(enabledCall.citations[0]!.citationId)
+  );
+
+  /* ═══════════ 4. 范围收口与 source_only ═══════════ */
   section('范围收口与 source_only');
   const crossWorkspace = inject.buildKbInjection(sA.id, '向量检索预算');
   ok('workspace 注入不跨工作区', Boolean(crossWorkspace && crossWorkspace.count === 0));
@@ -149,7 +187,11 @@ async function main(): Promise<void> {
   // 所以这里连本群自己的内容也不该被注入 —— 隐私口径优先于召回率。
   const groupOwn = inject.buildKbInjection(sGroup.id, '群组秘钥XYZ');
   ok('群聊首轮注入（workspace）不注入 source_only', Boolean(groupOwn && groupOwn.count === 0));
-  const groupToolSession = tool.executeKbSearchTool({ query: '群组秘钥XYZ', scope: 'session' }, sGroup.id);
+  const groupToolSession = tool.executeKbSearchTool(
+    { query: '群组秘钥XYZ', scope: 'session' },
+    sGroup.id,
+    'qoder'
+  );
   ok('工具显式 scope=session 才可检索本群 source_only', groupToolSession.citations.length > 0);
   ok('显式 session 命中的切片标记 sourceType=group', groupToolSession.citations[0]?.sourceType === 'group');
 
@@ -158,50 +200,71 @@ async function main(): Promise<void> {
   const stillWorkspace = inject.buildKbInjection(sA.id, '向量检索预算');
   ok('project/all 已开启时注入仍固定 workspace', Boolean(stillWorkspace && stillWorkspace.count === 0));
 
-  /* ═══════════ 4. 工具入参与越权 ═══════════ */
+  /* ═══════════ 5. 工具入参与越权 ═══════════ */
   section('kb.search 工具');
-  const valid = tool.executeKbSearchTool({ query: '并发写冲突', topK: 2 }, sA.id);
-  ok('合法入参返回 citationId', valid.citations.length > 0 && Boolean(valid.citations[0]!.citationId));
-  ok('工具返回范围标记为 workspace', valid.scopeApplied === 'workspace');
-  ok('工具 topK 被收口到 4 以内', valid.citations.length <= 4);
-
-  const expectThrow = (fn: () => unknown, name: string) => {
-    let raised = false;
-    let message = '';
-    try {
-      fn();
-    } catch (err) {
-      raised = true;
-      message = err instanceof Error ? err.message : String(err);
-    }
-    ok(name, raised, message);
-  };
+  ok('工具返回范围标记为 workspace', enabledCall.scopeApplied === 'workspace');
+  ok('工具 topK 被收口到 4 以内', enabledCall.citations.length <= 4);
 
   expectThrow(
-    () => tool.executeKbSearchTool({ query: 'x', sessionId: 's-b' }, sA.id),
+    () => tool.executeKbSearchTool({ query: 'x', sessionId: 's-b' }, sA.id, 'claude'),
     '工具拒绝客户端传 sessionId'
   );
   expectThrow(
-    () => tool.executeKbSearchTool({ query: 'x', path: 'E:/secret' }, sA.id),
+    () => tool.executeKbSearchTool({ query: 'x', path: 'E:/secret' }, sA.id, 'claude'),
     '工具拒绝客户端传路径'
   );
   expectThrow(
-    () => tool.executeKbSearchTool({ query: '' }, sA.id),
+    () => tool.executeKbSearchTool({ query: '' }, sA.id, 'claude'),
     '工具拒绝空 query'
   );
   expectThrow(
-    () => tool.executeKbSearchTool({ query: 'x' }, undefined),
+    () => tool.executeKbSearchTool({ query: 'x' }, undefined, 'claude'),
     '缺少宿主 sessionId 时拒绝执行'
   );
-
-  // 先把策略收回，验证越权 scope 被 service 层拒绝
-  store.setScopePolicy({ allowProject: false, allowAll: false });
   expectThrow(
-    () => tool.executeKbSearchTool({ query: '向量检索预算', scope: 'all' }, sA.id),
-    '未开启全部范围时 scope=all 被拒绝'
+    () => tool.executeKbSearchTool({ query: 'x' }, sA.id, undefined),
+    '缺少宿主 agentId 时拒绝执行'
   );
 
-  /* ═══════════ 5. CLI 参数生成 ═══════════ */
+  // 开关打开也不能绕过范围：project/all 仍受 policy.allow_* 约束
+  store.setScopePolicy({ allowProject: false, allowAll: false });
+  const scopeDenied = expectThrow(
+    () => tool.executeKbSearchTool({ query: '向量检索预算', scope: 'all' }, sA.id, 'claude'),
+    '开关已打开但 scope=all 未放行时仍被拒绝'
+  );
+  ok('越权拒绝由服务端范围策略给出', scopeDenied.includes('未开启'), scopeDenied);
+
+  /* ═══════════ 6. 每轮上限 2 次 ═══════════ */
+  section('每轮上限与轮次重置');
+  // 上面 enabledCall 已成功 1 次，这是本轮第 2 次
+  const second = tool.executeKbSearchTool({ query: '并发写冲突' }, sA.id, 'claude');
+  ok('本轮第 2 次仍可用', second.citations.length > 0);
+  const thirdDenied = expectThrow(
+    () => tool.executeKbSearchTool({ query: '并发写冲突' }, sA.id, 'claude'),
+    '本轮第 3 次被拒'
+  );
+  ok('上限拒绝文案含「2 次」', thirdDenied.includes(`${optout.KB_TOOL_MAX_PER_TURN} 次`), thirdDenied);
+  ok('上限拒绝文案说明下一轮重置', thirdDenied.includes('下一轮'), thirdDenied);
+
+  // 同一会话的新一轮：最新 user 消息变了，计数应重置
+  msg('a-3', sA.id, 'user', '新一轮提问：还有别的冲突场景吗？');
+  const newTurn = tool.executeKbSearchTool({ query: '并发写冲突' }, sA.id, 'claude');
+  ok('新的一轮计数重置后可继续检索', newTurn.citations.length > 0);
+
+  // 关闭即时生效：不需要重启进程，下一次调用立刻被拒
+  optout.setKbToolEnabled('claude', false);
+  const closedAgain = expectThrow(
+    () => tool.executeKbSearchTool({ query: '并发写冲突' }, sA.id, 'claude'),
+    '关闭后下一次调用立即被拒'
+  );
+  ok('关闭后的拒绝仍是「未开启」口径', closedAgain.includes('未开启'), closedAgain);
+  const injectWhileClosedAgain = inject.buildKbInjection(sA.id, '并发写冲突');
+  ok(
+    '关闭工具后自动注入仍然生效',
+    Boolean(injectWhileClosedAgain && injectWhileClosedAgain.count > 0)
+  );
+
+  /* ═══════════ 7. CLI 参数生成 ═══════════ */
   section('CLI 参数生成');
   const ctx = {
     sessionId: sA.id,
@@ -227,13 +290,30 @@ async function main(): Promise<void> {
     Boolean(configPath && fs.existsSync(configPath!) && fs.readFileSync(configPath!, 'utf8').includes('"kb"')),
     String(configPath)
   );
+  ok(
+    'mcp 配置把 Agent 标识注入子进程',
+    Boolean(
+      configPath &&
+        fs.existsSync(configPath!) &&
+        JSON.parse(fs.readFileSync(configPath!, 'utf8')).mcpServers.kb.env.OPC_KB_AGENT_ID ===
+          'qoder'
+    ),
+    String(configPath)
+  );
 
-  /* ═══════════ 6. 前端接线与诚实边界 ═══════════ */
+  const sdkSpec = tool.kbMcpServerSpec(sA.id, 'claude');
+  ok('SDK spec 注入 OPC_KB_AGENT_ID', sdkSpec.env.OPC_KB_AGENT_ID === 'claude', JSON.stringify(sdkSpec.env));
+  ok('SDK spec 注入 OPC_KB_SESSION_ID', sdkSpec.env.OPC_KB_SESSION_ID === sA.id);
+
+  /* ═══════════ 8. 前端接线与诚实边界 ═══════════ */
   section('前端提示与能力边界');
   const repoRoot = path.resolve(import.meta.dirname, '..');
   const read = (rel: string) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 
   ok('回答区渲染知识库引用', read('src/components/ChatMessages.tsx').includes('data-kb-refs'));
+  ok('知识库面板提供逐 Agent 开关', read('src/components/kb/KnowledgeBasePanel.tsx').includes('data-kb-tool-toggle'));
+  ok('前端调用工具策略接口', read('src/components/kb/kbApi.ts').includes('/api/kb/tool-policy'));
+  ok('服务端注册工具策略接口', read('server/kb/routes.ts').includes('/api/kb/tool-policy'));
   ok('单聊消费 kb_refs 事件', read('src/hooks/useChat.ts').includes("case 'kb_refs'"));
   ok('群聊消费 kb_refs 事件', read('src/hooks/useGroupChat.ts').includes("case 'kb_refs'"));
   ok('HTTP 型不声明 MCP 工具', !read('server/agents/adapters/http.ts').includes('mcpServers:'));

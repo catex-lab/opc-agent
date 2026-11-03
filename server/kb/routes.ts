@@ -16,6 +16,9 @@ import {
   setSessionIndexed,
 } from './indexer.js';
 import { setScopePolicy, getScopePolicy, getSessionState } from './store.js';
+import { allAgentDefs, findDef } from '../agents/definitions.js';
+import { listKbToolEnabled, setKbToolEnabled, KB_TOOL_MAX_PER_TURN } from './optout.js';
+import { kbToolSupported } from './tool.js';
 
 const SCOPES: KbScope[] = ['session', 'workspace', 'project', 'all'];
 
@@ -136,9 +139,66 @@ export function registerKbRoutes(app: Express): void {
     res.json(setScopePolicy(patch));
   });
 
+  /**
+   * 逐 Agent 的工具开关（默认关闭）。
+   *
+   * `supported=false` 表示该通道没有 MCP 工具面（HTTP / Codex SDK），
+   * 只享受首轮自动注入 —— 界面据此禁用开关，不给出假控件。
+   */
+  app.get('/api/kb/tool-policy', (_req, res) => {
+    res.json(kbToolPolicyPayload());
+  });
+
+  app.patch('/api/kb/tool-policy', (req, res) => {
+    const agentId = req.body?.agentId;
+    const enabled = req.body?.enabled;
+    if (typeof agentId !== 'string' || !agentId) {
+      res.status(400).json({ error: 'agentId 必填' });
+      return;
+    }
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须是布尔值' });
+      return;
+    }
+    const def = findDef(agentId);
+    if (!def) {
+      res.status(400).json({ error: `未知 Agent：${agentId}` });
+      return;
+    }
+    if (enabled && !kbToolSupported(def)) {
+      res.status(400).json({
+        error: '该 Agent 通道不支持主动检索工具（只享受首轮自动注入）',
+        code: 'kb_tool_unsupported',
+      });
+      return;
+    }
+    try {
+      setKbToolEnabled(agentId, enabled);
+      res.json(kbToolPolicyPayload());
+    } catch (err) {
+      res.status(500).json({ error: '保存工具策略失败', detail: String(err) });
+    }
+  });
+
   // 兼容启动路径：允许外部显式触发一次初始化（默认后台回填 90 天）
   app.post('/api/kb/init', (req, res) => {
     const backfill = req.body?.backfill === false ? false : true;
     res.json(bootKnowledgeBase({ backfill }));
   });
+}
+
+function kbToolPolicyPayload(): {
+  maxPerTurn: number;
+  agents: Array<{ id: string; name: string; supported: boolean; enabled: boolean }>;
+} {
+  const enabledAgentIds = listKbToolEnabled();
+  return {
+    maxPerTurn: KB_TOOL_MAX_PER_TURN,
+    agents: allAgentDefs().map(def => ({
+      id: def.descriptor.id,
+      name: def.descriptor.name,
+      supported: kbToolSupported(def),
+      enabled: enabledAgentIds[def.descriptor.id] === true,
+    })),
+  };
 }

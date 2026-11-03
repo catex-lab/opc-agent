@@ -68,6 +68,14 @@ electron/  ──►  主进程（窗口 / 托盘 / CDP / 终端 / 更新）
 
 `main.ts` 建窗口与 IPC，`cdp.ts` 做浏览器调试附着，`terminal.ts` 包 `node-pty`，`preload.cjs` 暴露受限 API，`close-policy.ts` 决定关闭窗口是退出 / 收进托盘 / 先问（与设置页读同一份偏好）。
 
+### 知识库（跨 Agent 检索）
+
+- 索引独立 `data/kb.sqlite`；用户的「不索引会话」与「逐 Agent 工具开关」共用 `data/kb-optout.json`（跨重建保留，读取兼容老版的字符串数组格式）。
+- **首轮自动注入**：会话第一轮按 workspace 范围取 top-4 注入 prompt，与工具开关无关。
+- **`kb.search` 工具默认关闭**，按 `agentId` 逐个在知识库面板「Agent 主动检索」里开启。默认关闭的理由是**隐私与 token 成本**：主动检索意味着 Agent 自己去翻历史对话，必须由用户显式授权；常开还会让普通问答背上额外的上下文预算。
+- 开启后每个 Agent **每轮最多 2 次**。轮次键取该会话最新一条用户消息 id —— 用户发下一条即重置，CLI/SDK 进程跨轮复用也不会带账。
+- 工具只接受 `query / scope / topK`；`sessionId` 与 Agent 标识由宿主注入。project/all 范围仍由服务端 `policy.allow_*` 收口，**打开开关不会绕过范围策略**。
+
 ## 三、数据库
 
 `node:sqlite`（Node 22 内置），**不是 better-sqlite3**。数据库文件默认 `./data/chat.db`，可用 `OPC_DATA_DIR` 覆盖。
@@ -126,7 +134,7 @@ run_start → block_* (多次) → [permission_request → 用户答复] → run
 不是单元测试，是**在真实界面里断言可观测行为**：Playwright 驱动本机 Chrome 打开真实页面，用真实鼠标坐标点击并用 `elementFromPoint` 自证命中。
 
 ```bash
-npm run verify:ui      # 主链，串行跑 70+ 段
+npm run verify:ui      # 主链，串行跑 98 段
 npm run verify:logo    # 图标资产一致性
 npm run verify:package # 打包产物逐字节核对
 ```
@@ -210,6 +218,33 @@ rm -rf node_modules && npm install
 按钮几何只在 `index.css` 一处定义（`--tc-btn-height` / `--tc-btn-pad-x`），组件里不写 `px-*` / `py-*` 调尺寸。
 
 暗色适配用 `color-mix(in srgb, var(--td-xxx-color) N%, transparent)`，不要写死 rgba。
+
+### 界面三条硬规则（改相关组件前先读）
+
+这三条是 1.0.4 定稿、并且已经进 `verify:ui` 的验收口径。判据写死在这里，改布局时按判据回归，不要只靠肉眼。
+
+1. **会话头按“这一行”的宽度降级，不按窗口。** 容器查询挂在 `.chat-row`（`container-type: inline-size`，ChatHeader/GroupChatHeader 通过 `PanelHeader` 的 `rowClassName` 挂载），三档为全宽档（验收宽度 1280）、`@container chat-row (max-width: 1024px)`、`@container chat-row (max-width: 900px)`。
+   - 判据：`.chat-row h1 { min-width: 6em }`（约 96px）在任何档位都不得被覆盖；名字允许截断，但不得小于 6 个汉字宽。
+   - 1024 档：知识库入口只留单色图标（隐藏 `.kb-chip-label`，保留 `aria-label`/`title`），工作区 chip 隐藏展开箭头。
+   - 900 档：工作区目录名再收到 `5em`。
+   - 断点必须继续写在 `.chat-row` 容器查询里；退回 `@media` 按窗口宽度算会把“右侧面板展开后这一行变窄”判错。
+2. **过程流一轮结束只留一条摘要。** 轮次真实结束（收到 `run_end`）后，思考、工具调用与旁白合并成一张摘要卡并自动收起；点开才显示步骤与旁白。
+   - 判据：没有真实结束事件的步骤显示「结果未回传」，不得按“下一条事件即完成”猜成绿色完成态。
+   - 写入、删除、权限、报错四类关键步骤在展开态常驻：不自动折叠，也不能被手动收起。权限步骤目前由浮层承担；一旦接入轨迹，必须按同一规则常驻。
+   - 用户手动展开后，后续事件不得再次自动折叠（除非是新的一轮）。
+3. **扩展矩阵用三列固定网格。** `.ext-matrix-row` 唯一模板为 `grid-template-columns: minmax(0, 1fr) 80px 120px`（`column-gap: 12px`，`padding-left: 34px`），两条 lane 共用这个模板；lane 外层 `xl`（≥1280）才分两列，窄宽降单列，不压窄通道/状态列。
+   - 判据：同一列相对 lane 左缘的 x 必须一致；组头与条目左边界对齐；`.ext-matrix-channel` / `.ext-matrix-status` 必须 `white-space: nowrap`。
+   - 列定义只出现在 `src/index.css` 一处；组件里不得再写第二份列宽。
+
+### 解释性文案 InfoHint 分期待办（未完成）
+
+InfoHint 的全局收敛尚未收口，当前状态必须如实标注为“未完成”：
+
+- **P1（完成 3 处）**：[ExtensionDetail.tsx](src/components/ExtensionDetail.tsx) 的挂载能力图例、敏感内容提示，以及 [ExtensionPanel.tsx](src/components/ExtensionPanel.tsx) 的页脚统计已改用 `InfoHint`。
+- **P2（未开始）**：设置页、记忆面板、更新卡的常驻说明仍未迁移；[SettingsPage.tsx](src/components/SettingsPage.tsx) 有 7 处、[MemoryPanel.tsx](src/components/MemoryPanel.tsx) 有 4 处、[UpdateCard.tsx](src/components/UpdateCard.tsx) 有 1 处仍是 `HintTip`。
+- **P3（未开始）**：全仓仍有 12 处 `HintTip` 调用，`HintTip` 组件尚未删除；`InfoHint` 与 `HintTip` 两套组件并存。
+
+验收口径：迁移一处就把调用点改为 `InfoHint`，并同步减少上面的计数；计数归零前不得把该分期标记为完成。
 
 ## 十、数据不进版本库
 

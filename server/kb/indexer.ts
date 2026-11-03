@@ -11,10 +11,7 @@
  * 重建时这条隐私选择必须还在，否则敏感会话会被重新索引。
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
 import * as chatDb from '../db.js';
-import { dataDirPath } from '../paths.js';
 import { normalizeProjectPath } from '../project-key.js';
 import { textOfBlocks } from '../../shared/blocks.js';
 import {
@@ -26,6 +23,7 @@ import {
 } from './chunk.js';
 import { KbRedactionError, assertRedactionClean, redactOrFail } from './redact.js';
 import { setKbPersistSink, type KbPersistEvent } from './events.js';
+import { readOptOutStore, writeOptOutStore } from './optout.js';
 import {
   countChunks,
   deleteAllChunks,
@@ -46,8 +44,6 @@ import {
   sha256,
   type KbChunkRow,
 } from './store.js';
-
-const OPT_OUT_FILE = 'kb-optout.json';
 
 export interface IndexSessionOptions {
   /** 强制重建整段会话（消息编辑/删除后使用） */
@@ -80,36 +76,15 @@ let bootBackfillStarted = false;
 
 /* ══════════════ 「不索引」清单 ══════════════ */
 
-function optOutPath(): string {
-  return path.join(dataDirPath, OPT_OUT_FILE);
-}
-
 function readOptOut(): Set<string> {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(optOutPath(), 'utf8');
-  } catch (err) {
-    // 首次运行没有清单是正常的；读不到/解析不了则是 fail-closed：
-    // 不能把损坏的排除清单当成「没有排除项」，否则敏感会话会被重新索引。
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return new Set();
-    throw new Error('不索引清单不可读，已停止索引以防误索引');
-  }
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed)) {
-      return new Set(parsed.filter((v): v is string => typeof v === 'string'));
-    }
-  } catch {
-    /* 落到下面统一抛错 */
-  }
-  throw new Error('不索引清单格式损坏，已停止索引以防误索引');
+  return new Set(readOptOutStore().sessions);
 }
 
 function writeOptOut(next: Set<string>): void {
-  fs.mkdirSync(dataDirPath, { recursive: true });
-  const tmp = `${optOutPath()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify([...next].sort(), null, 2), 'utf8');
-  fs.renameSync(tmp, optOutPath());
+  // 同一文件里还有「逐 Agent 工具开关」，写会话清单时必须原样保留，
+  // 否则关掉一个会话的索引会顺手把用户的工具开关抹掉。
+  const current = readOptOutStore();
+  writeOptOutStore({ ...current, sessions: [...next].sort() });
 }
 
 export function isSessionOptedOut(sessionId: string): boolean {

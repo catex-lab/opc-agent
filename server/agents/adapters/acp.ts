@@ -461,7 +461,7 @@ export class AcpAdapter implements AgentProvider {
       try {
         // A176：ACP 的 stdio MCP 配置（env 必须是 [{name,value}] 数组）。
         // 会话 id 随进程环境注入，工具侧不接受调用方传 sessionId。
-        const kbSpec = kbMcpServerSpec(ctx.sessionId);
+        const kbSpec = kbMcpServerSpec(ctx.sessionId, this.descriptor.id);
         const mcpServers = [
           {
             name: KB_MCP_SERVER_NAME,
