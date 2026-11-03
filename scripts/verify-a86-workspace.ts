@@ -18,6 +18,10 @@
  *      现在按 BOM + NUL 奇偶分布先认编码再解码。
  *   6. **md 超 256 KB 静默降级** —— 退回纯文本必须有显式说明
  *      （`data-markdown-plain-fallback`），不是悄无声息换成等宽字体。
+ *   7. **html 没有安全预览**（A172）—— 用 `sandbox=""` 的 iframe + srcDoc，
+ *      srcDoc 注入 `default-src 'none'` 的 CSP、剥掉 meta refresh、加
+ *      `<base target="_blank">`。断言要证明：不执行脚本、不联网、不跳转，
+ *      且「预览 / 源码」切换偏好会被记住。
  *
  * 运行：npx tsx scripts/verify-a86-workspace.ts
  */
@@ -81,6 +85,20 @@ function checkContracts() {
   ok(/export const MAX_PREVIEW_LINES/.test(panel) && /export const MAX_MARKDOWN_BYTES/.test(panel), '契约：面板两个渲染阈值是导出常量（集中、可引）');
   // md 超限退回纯文本时必须有一句显式说明，不是静默换成等宽字体
   ok(panel.includes('data-markdown-plain-fallback'), '契约：md 超限退回纯文本有显式说明标记');
+  // A172：html 沙箱预览的三条硬边界（沙箱、CSP、剥 meta refresh）
+  ok(panel.includes('buildSafeHtmlDocument'), '契约：html 预览走 buildSafeHtmlDocument（统一注入点）');
+  ok(panel.includes("default-src 'none'"), '契约：srcDoc 注入 default-src none 的 CSP');
+  ok(panel.includes("style-src 'unsafe-inline'"), '契约：CSP 只放行内联样式');
+  ok(panel.includes('sandbox=""'), '契约：iframe sandbox 为空（不给任何能力）');
+  ok(!/sandbox=\{[^}]*'allow-/.test(panel), '契约：sandbox 没有 allow-* 令牌');
+  ok(panel.includes('http-equiv') && /refresh/i.test(panel), '契约：源文件里的 meta refresh 会被剥掉');
+  ok(panel.includes('<base target="_blank">'), '契约：注入 base target=_blank 防接管');
+  ok(panel.includes('referrerPolicy="no-referrer"'), '契约：iframe 不带 Referer');
+  ok(/export const MAX_HTML_PREVIEW_BYTES = 1024 \* 1024/.test(panel), '契约：html 预览上限与文本阈值同口径（1 MB）');
+  ok(panel.includes('data-html-view-toggle'), '契约：html 有预览/源码切换控件');
+  ok(panel.includes('opc.workspace-html-view'), '契约：切换偏好落到 localStorage（同一套 key）');
+  ok(panel.includes('data-html-preview-iframe'), '契约：沙箱 iframe 有标记（便于验证与排查）');
+  ok(panel.includes('data-html-oversize-fallback'), '契约：html 超限退回源码时有显式说明');
   ok(/'\.\(md\|markdown\)\$/.test(panel) || panel.includes('\\.(md|markdown)$'), '契约：只对 md/markdown 走富文本（mdx 不认）');
 
   const badge = read('src/components/WorkspaceBadge.tsx');
@@ -184,6 +202,28 @@ async function runServerChecks() {
   );
   // 超过 md 富渲染阈值（256 KB）但不到文本上限（1 MB）的大 md
   fs.writeFileSync(path.join(projDir, 'big-md.md'), `# 大文件\n\n${'x'.repeat(300 * 1024)}\n`, 'utf8');
+  // A172：html 沙箱预览夹具 —— 同时带脚本、meta refresh、外链图片与外链锚点，
+  // 用来证明「不执行脚本 / 不联网 / 不跳转」三条边界真的生效。
+  fs.writeFileSync(
+    path.join(projDir, 'preview.html'),
+    `<!doctype html>
+<html>
+<head><title>preview</title><style>.title{color:#c00}</style></head>
+<body>
+<h1 class="title">HTML 沙箱 ${MARK}</h1>
+<p>正文可见</p>
+<a href="https://example.com/never">外链</a>
+<img src="https://example.com/never.png" alt="never" />
+<meta http-equiv="refresh" content="0;url=https://example.com/never" />
+<script>
+  window.__opcScriptRan = true;
+  document.body.setAttribute('data-script-ran', '1');
+</script>
+</body>
+</html>
+`,
+    'utf8'
+  );
   fs.writeFileSync(path.join(outsideDir, 'secret.txt'), 'outside', 'utf8');
 
   const port = await freePort();
@@ -261,6 +301,10 @@ async function runServerChecks() {
     const bigMd = await (await fetch(`${base}/api/fs/read?${qs('big-md.md')}`)).json();
     ok(bigMd?.kind === 'text' && Number(bigMd?.size) > 256 * 1024, '预览：>256KB 的 md 仍返回 text（富渲染降级由前端提示）', JSON.stringify(bigMd).slice(0, 160));
 
+    // ④.7 A172：html 也走 text 通道（沙箱渲染完全在前端，服务端不用改）
+    const html = await (await fetch(`${base}/api/fs/read?${qs('preview.html')}`)).json();
+    ok(html?.kind === 'text' && String(html?.content ?? '').includes(MARK), '预览：html 返回 text 且内容完整（供沙箱渲染）', JSON.stringify(html).slice(0, 160));
+
     // ⑤ containment：跳出去必须被拒
     const esc = await fetch(`${base}/api/fs/read?${qs('../secret.txt')}`);
     ok(esc.status === 400 || esc.status === 403, '预览：../ 逃逸被拒', String(esc.status));
@@ -327,6 +371,7 @@ async function runUiChecks(base: string, sid: string, mark: string) {
     ok(false, 'UI：dist 未构建（先 npm run build）');
     return;
   }
+  fs.mkdirSync(path.join(root, '.render-check'), { recursive: true });
   const browser = await chromium.launch({ executablePath: CHROME, headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const pageErrors: string[] = [];
@@ -402,6 +447,54 @@ async function runUiChecks(base: string, sid: string, mark: string) {
     await SLEEP(300);
     const u16Text = await page.locator('[data-file-preview] pre').last().innerText();
     ok(u16Text.includes(mark), 'UI：UTF-16LE 文件内容真的显示在预览里', u16Text.slice(0, 60));
+
+    // ⑤ A172 html 沙箱预览 —— 默认预览、可切源码、偏好会记住
+    await page.locator('[data-file-preview-close]').click();
+    await SLEEP(300);
+    await page.getByRole('button', { name: /preview\.html/ }).first().click();
+    await page.waitForSelector('[data-html-view-toggle]', { timeout: 10_000 });
+    await page.waitForSelector('[data-html-preview-iframe]', { timeout: 10_000 });
+    ok(true, 'UI：html 有「预览 / 源码」切换控件');
+    const toggle = page.locator('[data-html-view-toggle]');
+    const previewPressed = await toggle.getByRole('button', { name: '预览' }).getAttribute('aria-pressed');
+    ok(previewPressed === 'true', 'UI：html 默认走预览（预览按钮 aria-pressed=true）', String(previewPressed));
+    const sandbox = await page.locator('[data-html-preview-iframe]').getAttribute('sandbox');
+    ok(sandbox !== null && !/allow-scripts|allow-same-origin|allow-/.test(sandbox), 'UI：iframe sandbox 未给 allow-*（尤其 allow-scripts / allow-same-origin）', String(sandbox));
+    const srcDoc = (await page.locator('[data-html-preview-iframe]').getAttribute('srcdoc')) ?? '';
+    ok(srcDoc.includes("default-src 'none'"), 'UI：srcDoc 含 default-src none 的 CSP');
+    ok(srcDoc.includes("style-src 'unsafe-inline'"), 'UI：srcDoc 的 CSP 只放行内联样式');
+    ok(srcDoc.includes('<base target="_blank">'), 'UI：srcDoc 注入 base target=_blank');
+    ok(!/http-equiv\s*=\s*"?refresh/i.test(srcDoc), 'UI：源文件的 meta refresh 已被剥掉');
+    await page.screenshot({ path: '.render-check/a172-html-preview.png' });
+
+    // 沙箱内：文字能看到（srcDoc 真的渲染），但脚本没执行、外链没加载
+    const frame = page.frames().find(f => f !== page.mainFrame() && f.url().startsWith('about:srcdoc'));
+    ok(!!frame, 'UI：srcdoc iframe 真的建了独立文档');
+    if (frame) {
+      const ran = await frame.evaluate(() => (window as unknown as { __opcScriptRan?: boolean }).__opcScriptRan === true);
+      ok(ran === false, 'UI：沙箱内脚本没有执行（window.__opcScriptRan 未置位）');
+      const bodyText = await frame.locator('body').innerText();
+      ok(bodyText.includes(mark), 'UI：沙箱内正文真的渲染出来（不执行脚本也能看）', bodyText.slice(0, 60));
+    }
+
+    // 切到源码 → 带行号纯文本、不再有 iframe；偏好写进 localStorage
+    await toggle.getByRole('button', { name: '源码' }).click();
+    await page.waitForSelector('[data-html-source-pane]', { timeout: 10_000 });
+    const iframeAfter = await page.locator('[data-html-preview-iframe]').count();
+    ok(iframeAfter === 0, 'UI：切到源码后 iframe 消失（不再沙箱渲染）', String(iframeAfter));
+    const preAfter = await page.locator('[data-file-preview] pre').count();
+    ok(preAfter >= 2, 'UI：切到源码后是带行号的纯文本（两列 pre）', String(preAfter));
+    const storedView = await page.evaluate(() => localStorage.getItem('opc.workspace-html-view'));
+    ok(storedView === 'source', 'UI：切换偏好落到 localStorage（opc.workspace-html-view=source）', String(storedView));
+    await page.screenshot({ path: '.render-check/a172-html-source.png' });
+
+    // 关掉再打开同一文件：仍停在源码（记住切换态）
+    await page.locator('[data-file-preview-close]').click();
+    await SLEEP(300);
+    await page.getByRole('button', { name: /preview\.html/ }).first().click();
+    await page.waitForSelector('[data-html-source-pane]', { timeout: 10_000 });
+    const rememberedIframe = await page.locator('[data-html-preview-iframe]').count();
+    ok(rememberedIframe === 0, 'UI：二次打开同一 html 仍记住源码视图', String(rememberedIframe));
 
     ok(pageErrors.length === 0, 'UI：页面零错误', pageErrors.slice(0, 2).join(' | '));
   } catch (e) {
