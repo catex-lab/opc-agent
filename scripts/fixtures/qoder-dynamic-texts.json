@@ -1,0 +1,31 @@
+{
+  "_note": "A151 固定夹具（已脱敏）：只保留解析器认的那层结构 —— locales → modelSelector.item.<slug> 显示名，以及 <slug>.description。没有任何账号、凭据、token、路径或本机私有数据；显示名与描述均为夹具自造的公开文案。",
+  "schemaVersion": 1,
+  "version": "fixture-1",
+  "namespace": "qoder-ide-fixture",
+  "locales": {
+    "zh-CN": {
+      "modelSelector.item.auto": "Auto",
+      "modelSelector.item.efficient": "经济",
+      "modelSelector.item.fast": "快速",
+      "modelSelector.item.performance": "性能",
+      "modelSelector.item.lite": "轻量",
+      "modelSelector.item.ultimate": "极致",
+      "modelSelector.item.experts-ultimate": "极致",
+      "modelSelector.item.gfmodel": "GLM-5.3-Flash",
+      "modelSelector.item.gfmodel.description": "夹具：常用快速模型",
+      "modelSelector.item.gmodel": "GLM-5.3",
+      "modelSelector.item.gmodel_dup": "GLM-5.3",
+      "modelSelector.item.dmodel": "DeepSeek-V4-Pro",
+      "modelSelector.item.dfmodel": "DeepSeek-Flash",
+      "modelSelector.item.kmodel": "Kimi-K2.8-Preview",
+      "modelSelector.item.qmodel": "Qwen3.7-Plus",
+      "modelSelector.item.qfmodel": "Qwen3.8-Flash",
+      "modelSelector.item.cmodel": "Cantus"
+    },
+    "en": {
+      "modelSelector.item.gfmodel": "GLM-5.3-Flash",
+      "modelSelector.item.kmodel_latest": "Kimi-K3.1-Pro-EN"
+    }
+  }
+}

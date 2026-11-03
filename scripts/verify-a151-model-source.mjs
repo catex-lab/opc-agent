@@ -18,6 +18,10 @@
  *   [4][5] 可用性标定（P2）：判 invalid 的模型必须从菜单里消失、判 routed 的
  *       必须留下并去掉「未验证」角标、没标过的标「未验证」；界面上点一条
  *       「未验证」的，必须先打一次标定接口，通过才写进会话。
+ *       **[4] 的产品行为断言跑在仓库内固定夹具 `scripts/fixtures/qoder-dynamic-texts.json`**
+ *       （[5] 的 UI 用同一份夹具构造接口响应），不再依赖本机 `~/.qoder` 的
+ *       外部数据；真实文件只做嗅探、只打印告警，不参与判红。夹具与解析函数
+ *       对不上时，契约自检会直接红 —— 不允许夹具悄悄失效。
  *
  * 运行：npx tsx scripts/verify-a151-model-source.mjs（需先 npm run build）
  */
@@ -31,6 +35,15 @@ const ROOT = process.cwd();
 const TMP = path.join(ROOT, '.tmp', `a151-model-${Date.now()}`);
 const DATA = path.join(TMP, 'data');
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+
+/* [4] 要调用**真实**解析函数做契约自检。import 链会打开 SQLite（definitions /
+   probe 侧效应），所以先把自己的数据目录指到临时目录，绝不碰仓库里的真实
+   `data/chat.db`；服务端子进程仍然用 spawn env 里的 OPC_DATA_DIR。 */
+fs.mkdirSync(DATA, { recursive: true });
+process.env.OPC_DATA_DIR = DATA;
+const { mergeOfficialExtras, readOfficialModels } = await import(
+  '../server/agents/modelAvailability.ts'
+);
 
 let pass = 0;
 let fail = 0;
@@ -189,56 +202,199 @@ try {
     '[2] 既无目录也无配置的 Agent 维持 unknown（不编清单）',
     `${doubao.source}/${doubao.models?.length ?? 0}`);
 
-  // ============= [4] 接口层：标定结果真的改变菜单 =============
+  // ============= [4] 产品行为（固定夹具）：qoder「未验证」与标定过滤 =============
   //
-  // 为什么这一段要往 `data/model-availability.json` 里**直接写**标定结果，
-  // 而不是真打一次：一条标定要真起一次 CLI（qoder 冷态 8-20s）、真花 token，
-  // 十几条就是十几分钟。闸门里只能验「拿到这个结论之后菜单怎么变」，
-  // 判定本身在 `verify:model-catalog` 第 9 段用纯函数钉。
-  // 真实的**写入路径**在下面用 doubao 验（http 通道没有 CLI，不发调用）。
-  console.log('\n[4] 接口层：qoder「未验证」与标定过滤');
-  const q0 = await json(await fetch(`${base}/api/agents/qoder/models`));
-  const unv0 = Array.isArray(q0.unverified) ? q0.unverified : [];
-  ok(unv0.length >= 3, '[4] qoder 把「官方有、CLI 没列」的模型标成未验证',
-    `${unv0.length} 条（本机 ~/.qoder/.auth/dynamic-texts.json）`);
-  ok(q0.selectable === true, '[4] 未验证 ≠ 不可选（qoder 仍可选）');
-  ok((q0.models ?? []).filter(m => m.verified === false).length === unv0.length,
-    '[4] unverified 名单与 verified:false 的行数一致（两个口径不许分叉）');
+  // 这一段原来直接读本机 `~/.qoder/.auth/dynamic-texts.json` 与真实 CLI 清单，
+  // 于是 Qoder 升级（v1.0.346 后本机 CLI 枚举不出模型）就把整段打红 —— 红的是
+  // **外部数据前提**，不是产品行为。改成两层：
+  //   产品行为 → 仓库内固定夹具 `scripts/fixtures/qoder-dynamic-texts.json`；
+  //   真实文件 → 只嗅探、只打印告警（非断言，退出码不受影响）。
+  // 另外加**契约自检**：夹具必须能被真实解析函数（readOfficialModels）读出来；
+  // 键名/路径/语言约定任一改动而夹具没跟上，这一段直接红，夹具不许变成摆设。
+  console.log('\n[4] 产品行为（固定夹具）：qoder「未验证」与标定过滤');
 
-  const invalidId = unv0[0];
-  const routedId = unv0[1];
-  const clickId = unv0[2];
-  const availFile = path.join(DATA, 'model-availability.json');
-  fs.mkdirSync(DATA, { recursive: true });
-  fs.writeFileSync(
-    availFile,
-    JSON.stringify({
-      version: 1,
-      agents: {
-        qoder: {
-          [invalidId]: {
-            verdict: 'invalid',
-            at: Date.now(),
-            evidence: `Model "${invalidId}" is not available right now; using "qfmodel" instead.`,
-          },
-          [routedId]: {
-            verdict: 'routed',
-            at: Date.now(),
-            evidence: "You've reached your credit usage limit",
-          },
-        },
-      },
-    }),
-    'utf8'
+  const FIXTURE = path.join(ROOT, 'scripts', 'fixtures', 'qoder-dynamic-texts.json');
+  const fixture = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+
+  /* 夹具的「期望值」独立算一遍（不调用产品函数）：产品解析契约一变，两边就对不上。 */
+  const EFFORT_LABELS = new Set(['Auto', '自动', '经济', '快速', '性能', '轻量', '极致']);
+  const expectedOfficialIds = locale => {
+    const out = [];
+    const seen = new Set();
+    for (const [key, value] of Object.entries(locale ?? {})) {
+      const hit = key.match(/^modelSelector\.item\.([^.]+)$/);
+      if (!hit) continue;
+      const name = typeof value === 'string' ? value.trim() : '';
+      if (!name || EFFORT_LABELS.has(name) || seen.has(name)) continue;
+      seen.add(name);
+      out.push(name);
+    }
+    return out;
+  };
+
+  const zhLocale = fixture.locales?.['zh-CN'];
+  const expectedZh = expectedOfficialIds(zhLocale);
+  const expectedEn = expectedOfficialIds(fixture.locales?.en);
+
+  /* —— 契约自检：把夹具放进一个临时 HOME，让**真实** readOfficialModels 去读。
+     这一条同时钉住「文件路径 + locales 形状 + 语言优先级 + item 键正则 + 档位过滤」。 */
+  const writeFixtureHome = (home, json) => {
+    const authDir = path.join(home, '.qoder', '.auth');
+    fs.mkdirSync(authDir, { recursive: true });
+    fs.writeFileSync(path.join(authDir, 'dynamic-texts.json'), JSON.stringify(json), 'utf8');
+  };
+  const withHome = (home, fn) => {
+    const prevUserProfile = process.env.USERPROFILE;
+    const prevHome = process.env.HOME;
+    process.env.USERPROFILE = home;
+    process.env.HOME = home;
+    try {
+      return fn();
+    } finally {
+      if (prevUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = prevUserProfile;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+    }
+  };
+
+  const fixtureHome = path.join(TMP, 'fixture-home');
+  writeFixtureHome(fixtureHome, fixture);
+  const officialFromFixture = withHome(fixtureHome, () => readOfficialModels('qoder'));
+  ok(
+    officialFromFixture.map(m => m.modelId).join('|') === expectedZh.join('|'),
+    '[4] 契约自检：fixture 与解析函数对得上（路径 / locales / item 键 / 档位过滤）',
+    `${officialFromFixture.length} 条 vs ${expectedZh.length} 条`
+  );
+  ok(
+    officialFromFixture.some(
+      m => m.description === zhLocale?.['modelSelector.item.gfmodel.description']
+    ),
+    '[4] 契约自检：description 键仍被解析',
+    String(officialFromFixture.find(m => m.modelId === 'GLM-5.3-Flash')?.description ?? '')
   );
 
-  const q1 = await json(await fetch(`${base}/api/agents/qoder/models`));
-  ok(!(q1.models ?? []).some(m => m.modelId === invalidId),
+  /* 语言回落：只有 `en` 时也必须能读（readOfficialTexts 的 zh-CN → zh → en-US → en 链） */
+  const enHome = path.join(TMP, 'fixture-home-en');
+  writeFixtureHome(enHome, { ...fixture, locales: { en: fixture.locales?.en } });
+  const officialEn = withHome(enHome, () => readOfficialModels('qoder'));
+  ok(
+    officialEn.map(m => m.modelId).join('|') === expectedEn.join('|'),
+    '[4] 契约自检：zh-CN 缺失时回落到 en（默认值/回落）',
+    `${officialEn.length} 条 vs ${expectedEn.length} 条`
+  );
+
+  /* —— 产品行为：官方清单并进菜单，未标过的一律「未验证」 */
+  const nowFixture = Date.now();
+  // 代表 CLI 自己列出的那几条（真实环境条数会变，夹具里固定两条）
+  const baseModels = [
+    { modelId: 'Default', name: 'Default' },
+    { modelId: 'custom-fixture', name: 'custom-fixture' },
+  ];
+  const mergedNoVerdict = mergeOfficialExtras(baseModels, officialFromFixture, {}, nowFixture);
+  const unverifiedIds = mergedNoVerdict.unverified;
+  ok(unverifiedIds.length >= 3,
+    '[4] qoder 把「官方有、CLI 没列」的模型标成未验证',
+    `${unverifiedIds.length} 条（fixture）`);
+  ok(mergedNoVerdict.models.length === baseModels.length + expectedZh.length,
+    '[4] 未验证 ≠ 不可选（全部留在菜单里）',
+    `${mergedNoVerdict.models.length} 条`);
+  ok(mergedNoVerdict.models.filter(m => m.verified === false).length === unverifiedIds.length,
+    '[4] unverified 名单与 verified:false 的行数一致（两个口径不许分叉）');
+
+  const invalidId = unverifiedIds[0];
+  const routedId = unverifiedIds[1];
+  const clickId = unverifiedIds[2];
+  ok(!!invalidId && !!routedId && !!clickId,
+    '[4] 夹具里至少三条可标定的未验证模型（后两段依赖它们）',
+    `${invalidId} / ${routedId} / ${clickId}`);
+
+  const verdicts = {
+    [invalidId]: {
+      verdict: 'invalid',
+      at: nowFixture,
+      evidence: `Model "${invalidId}" is not available right now; using "qfmodel" instead.`,
+    },
+    [routedId]: {
+      verdict: 'routed',
+      at: nowFixture,
+      evidence: "You've reached your credit usage limit",
+    },
+  };
+  const merged = mergeOfficialExtras(baseModels, officialFromFixture, verdicts, nowFixture);
+  ok(!merged.models.some(m => m.modelId === invalidId),
     '[4] 判 invalid 的模型不进菜单（放上去就是点了被静默替换的假控件）', invalidId);
-  ok((q1.models ?? []).some(m => m.modelId === routedId && m.verified === true),
+  ok(merged.models.some(m => m.modelId === routedId && m.verified === true),
     '[4] 判 routed 的模型留在菜单里且 verified:true（名字有效、只是没额度）', routedId);
-  ok((q1.unverified ?? []).length === unv0.length - 2,
-    '[4] unverified 名单少了两条', `${(q1.unverified ?? []).length} / ${unv0.length}`);
+  ok(merged.unverified.length === unverifiedIds.length - 2,
+    '[4] unverified 名单少了两条', `${merged.unverified.length} / ${unverifiedIds.length}`);
+
+  /* 默认值/回落：unknown 与**过期**的标定都不许当成可用，回到「未验证」 */
+  const defaultFallback = mergeOfficialExtras(baseModels, officialFromFixture, {
+    [invalidId]: { verdict: 'unknown', at: nowFixture },
+    [routedId]: { verdict: 'invalid', at: nowFixture - 8 * 24 * 3600 * 1000 },
+  }, nowFixture);
+  ok(
+    defaultFallback.unverified.includes(invalidId) &&
+      defaultFallback.models.some(m => m.modelId === invalidId),
+    '[4] unknown 当作没标过（回落成未验证，不猜成可用）', invalidId);
+  ok(defaultFallback.unverified.includes(routedId),
+    '[4] 超过 7 天的判定作废（旧结论不许继续藏模型）', routedId);
+
+  /* —— 真实文件：只嗅探，不参与判红（按用户要求：不认识就明说，不许静默通过） */
+  const livePath = path.join(
+    process.env.USERPROFILE || process.env.HOME || '',
+    '.qoder',
+    '.auth',
+    'dynamic-texts.json'
+  );
+  const sniffLive = () => {
+    if (!fs.existsSync(livePath)) {
+      console.log(`[嗅探] dynamic-texts 不存在：${livePath}（非断言告警）`);
+      return;
+    }
+    let topKeys = [];
+    try {
+      const raw = JSON.parse(fs.readFileSync(livePath, 'utf8'));
+      topKeys = Object.keys(raw ?? {});
+      const locales = raw?.locales ?? {};
+      const recognized = Object.values(locales).some(
+        v =>
+          v &&
+          typeof v === 'object' &&
+          Object.keys(v).some(k => /^modelSelector\.item\.[^.]+$/.test(k))
+      );
+      if (!recognized) {
+        console.log(`dynamic-texts 结构待更新：${livePath} ${JSON.stringify(topKeys)}`);
+        return;
+      }
+      const count = Object.values(locales).reduce(
+        (n, v) => n + Object.keys(v).filter(k => /^modelSelector\.item\.[^.]+$/.test(k)).length,
+        0
+      );
+      console.log(
+        `[嗅探] dynamic-texts 可用：${livePath}（顶层 ${JSON.stringify(topKeys)}，识别 ${count} 条，非断言）`
+      );
+    } catch (e) {
+      console.log(`dynamic-texts 结构待更新：${livePath}（无法解析：${String(e).slice(0, 80)}）`);
+    }
+  };
+  sniffLive();
+
+  /* 运行期接口也嗅探一眼：解析函数能读 ≠ 接口一定把它合进来了 ——
+     qoder 的 CLI 枚举为空时会走 manual 分支提前返回，官方清单根本没机会合并。
+     这里只打印，不判红。 */
+  const qLive = await json(await fetch(`${base}/api/agents/qoder/models`));
+  const liveUnv = Array.isArray(qLive.unverified) ? qLive.unverified.length : 0;
+  if (qLive.source !== 'catalog' || liveUnv === 0) {
+    console.log(
+      `[嗅探] qoder 运行期清单未合入官方表：source=${qLive.source} models=${(qLive.models ?? []).length} unverified=${liveUnv}（非断言告警）`
+    );
+  }
+
+  const availFile = path.join(DATA, 'model-availability.json');
+  fs.mkdirSync(DATA, { recursive: true });
+  fs.writeFileSync(availFile, JSON.stringify({ version: 1, agents: { qoder: verdicts } }), 'utf8');
 
   // 真实写路径：POST 标定。用 doubao（kind: http，没有 cli 通道）——
   // 它会立刻返回 unknown，**不发任何网络请求、不起任何子进程**。
@@ -424,6 +580,32 @@ try {
     });
   });
 
+  /* 清单也走**同一份仓库夹具**：真实 qoder 清单依赖本机 CLI/账号，不能让它
+     的外部状态决定 UI 断言。这里用 [4] 解析出来的模型 + 一条 routed 判定，
+     构造接口响应；点击流程本身仍然是真的。 */
+  const uiVerdicts = {
+    [routedId]: {
+      verdict: 'routed',
+      at: Date.now(),
+      evidence: "You've reached your credit usage limit",
+    },
+  };
+  const uiMerged = mergeOfficialExtras([], officialFromFixture, uiVerdicts, Date.now());
+  const uiPayload = {
+    models: uiMerged.models,
+    defaultModel: routedId,
+    source: 'catalog',
+    selectable: true,
+    unverified: uiMerged.unverified,
+  };
+  await page2.route('**/api/agents/qoder/models', route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(uiPayload),
+    })
+  );
+
   await page2.goto(`${base}/chat/${qSid}`, { waitUntil: 'domcontentloaded' });
   await page2.waitForTimeout(2500);
 
@@ -441,8 +623,8 @@ try {
   /* 肯定式先钉一条：下面那条「数量相等」在**两边都是 0** 时也成立 ——
      整块未验证态被删掉时会假绿。这是本项目踩过的坑（TRAPS §4）。 */
   ok(badgeCount > 0, '[5] 至少有一条带「未验证」角标（否则下面那条相等断言会假绿）');
-  ok(badgeCount === (q1.unverified ?? []).length,
-    '[5] 每一条未验证的模型都带「未验证」角标', `${badgeCount} / ${(q1.unverified ?? []).length}`);
+  ok(badgeCount === uiPayload.unverified.length,
+    '[5] 每一条未验证的模型都带「未验证」角标', `${badgeCount} / ${uiPayload.unverified.length}`);
   ok((await page2.locator('[data-model-probe-hint]').count()) === 1,
     '[5] 浮层先说明「点了会跑一次 CLI」（不写这句，无响应会被当成卡死）');
   ok((await page2.locator('[data-model-popup-add]').count()) === 1,
