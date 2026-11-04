@@ -12,6 +12,11 @@
  *   A 交换：目标文件被另一个进程短时独占（2.5 秒）→ 必须重试后成功
  *   B 回滚：新版本不写健康文件 → 必须恢复旧 asar 并记 rolled-back
  *   C 失败：占用超过重试预算 → 必须显式 failed（旧 asar 原封不动）
+ *   E 消解：失败记录版本 ≤ 当前版本 → 判定为已消解，状态文件与残留被清理
+ *   F 忽略：只有 apply-failed / rollback 能忽略，且走同一套清理
+ *
+ * 另外 A/C 还顺带钉住「成功与失败都不留残渣」：成功后状态文件不常驻，
+ * 失败后暂存包/健康文件/job/helper 都被清掉，只留 apply-state.json 当证据。
  *
  * 「假 app」用当前 node：不带参数启动会立即退回 REPL 并因 stdin 关闭而退出，
  * 正好模拟「新版本没起来」；场景 A 由本脚本在观察到交换后写健康文件。
@@ -25,6 +30,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { SWAP_HELPER_SOURCE } from '../electron/updater/swap-helper-source';
+import { clearApplyArtifacts } from '../electron/updater/apply-artifacts';
+import { compareVersions, decideBootOutcome, isDismissableError } from '../electron/updater/boot-outcome';
 
 let pass = 0;
 let fail = 0;
@@ -182,7 +189,8 @@ async function scenarioA(): Promise<void> {
   }
 
   const marker = readMarker(sb);
-  ok(marker.state === 'confirmed', '健康确认后标记为 confirmed', JSON.stringify(marker));
+  ok(!existsSync(sb.marker), '成功确认后状态文件不常驻（apply-state.json 已清理）', JSON.stringify(marker));
+  ok(!existsSync(sb.health), '成功确认后健康文件也已清理');
   ok(!existsSync(sb.backup), '确认后删除 .bak 备份');
   ok(!existsSync(sb.staged), '确认后清掉暂存包');
   ok(!existsSync(sb.helper) && !existsSync(sb.jobPath), '确认后清理 helper 与 job 临时文件');
@@ -227,7 +235,96 @@ async function scenarioC(): Promise<void> {
   ok(marker.version === '1.0.9', '失败标记里带版本号', marker.version);
   ok(readFileSync(sb.target, 'utf8') === OLD, '旧 asar 原封不动（没有半截状态）');
   ok(!existsSync(sb.backup), '失败时没有留下 .bak');
+  ok(existsSync(sb.marker), '失败时保留 apply-state.json（下次启动要展示原因）');
+  ok(!existsSync(sb.staged), '失败时清掉暂存包（不留可误用的残片）');
+  ok(!existsSync(sb.helper) && !existsSync(sb.jobPath), '失败时清理 helper 与 job 临时文件');
   cleanup(sb);
+}
+
+/* ══════════════ 启动结论 / 忽略（纯函数 + 真实清理） ══════════════ */
+
+/** 造一个「上次更新失败后留下的现场」：失败记录 + 暂存包 + job + helper + .bak */
+function makeBootSandbox(label: string): Sandbox {
+  const sb = makeSandbox(label, 8_000, 6_000);
+  writeFileSync(sb.marker, JSON.stringify({ state: 'failed', version: '1.0.7', error: 'EBUSY' }));
+  writeFileSync(sb.health, JSON.stringify({ version: '1.0.9' }));
+  writeFileSync(sb.backup, OLD);
+  return sb;
+}
+
+function scopeOf(sb: Sandbox): { stagingDir: string; backupPath: string } {
+  return { stagingDir: join(sb.base, 'staging'), backupPath: sb.backup };
+}
+
+function scenarioE(): void {
+  console.log('\n[E] 失败记录版本 ≤ 当前版本 → 不展示且状态文件被清理');
+  ok(compareVersions('1.0.10', '1.0.9') > 0, '版本按数字段比较（1.0.10 > 1.0.9）');
+  ok(compareVersions('1.0.7', '1.0.7') === 0, '同版本比较为 0');
+
+  ok(
+    decideBootOutcome({ state: 'failed', version: '1.0.7', error: 'EBUSY' }, '1.0.7').kind === 'resolved',
+    '同版本（用户已手动装上）→ 已消解，不展示'
+  );
+  ok(
+    decideBootOutcome({ state: 'failed', version: '1.0.9' }, '1.0.10').kind === 'resolved',
+    '当前版本更高 → 已消解，不展示'
+  );
+  ok(
+    decideBootOutcome({ state: 'rolled-back', version: '1.0.9' }, '1.0.7').kind === 'rolled-back',
+    '当前版本更低 → 仍需展示回滚'
+  );
+  ok(
+    decideBootOutcome({ state: 'failed', version: '1.0.9' }, '1.0.7').kind === 'apply-failed',
+    '当前版本更低 → 仍需展示交接失败'
+  );
+  ok(
+    decideBootOutcome({ state: 'failed' }, '1.0.7').kind === 'apply-failed',
+    '记录里没有版本号时不敢判已消解'
+  );
+  ok(
+    decideBootOutcome({ state: 'pending' }, '1.0.7').kind === 'in-progress',
+    '交接进行中（pending / unconfirmed）不动任何文件'
+  );
+  ok(decideBootOutcome(null, '1.0.7').kind === 'none', '没有记录 → 什么都不做');
+  ok(
+    decideBootOutcome({ state: 'idle' }, '1.0.7').kind === 'resolved',
+    '陈旧 / 未知状态（如人工复位的 idle）→ 静默清理'
+  );
+
+  const sb = makeBootSandbox('E');
+  const res = clearApplyArtifacts(scopeOf(sb));
+  ok(!existsSync(sb.marker), '已消解时清掉 apply-state.json');
+  ok(!existsSync(sb.staged), '已消解时清掉 .download 暂存包');
+  ok(!existsSync(sb.jobPath) && !existsSync(sb.helper), '已消解时清掉 apply-job.json 与 update-swap.cjs');
+  ok(!existsSync(sb.backup), '已消解时清掉 .bak');
+  ok(!existsSync(sb.health), '已消解时清掉 health.json');
+  ok(res.failed.length === 0, '清理过程没有失败项', res.failed.join(', '));
+  cleanup(sb);
+}
+
+function scenarioF(): void {
+  console.log('\n[F] 「忽略」入口能清除，且只对交接失败开放');
+  ok(isDismissableError('apply-failed') && isDismissableError('rollback'), 'apply-failed / rollback 允许忽略');
+  ok(!isDismissableError('network') && !isDismissableError('digest'), '网络 / 摘要错误不给忽略入口');
+  ok(!isDismissableError('signature') && !isDismissableError(undefined), '验签错误与空错误不给忽略入口');
+
+  // 忽略复用的就是这套清理：清完后红字的来源（状态文件）已不存在
+  const sb = makeBootSandbox('F');
+  clearApplyArtifacts(scopeOf(sb));
+  ok(
+    !existsSync(sb.marker) && !existsSync(sb.staged) && !existsSync(sb.backup),
+    '忽略后状态文件与残留被清空'
+  );
+
+  const updaterSrc = readFileSync(join('electron', 'updater', 'index.ts'), 'utf8');
+  const mainSrc = readFileSync(join('electron', 'main.ts'), 'utf8');
+  const preloadSrc = readFileSync(join('electron', 'preload.cjs'), 'utf8');
+  const card = readFileSync(join('src', 'components', 'UpdateCard.tsx'), 'utf8');
+  ok(updaterSrc.includes('dismissError') && updaterSrc.includes('isDismissableError'), '控制器用同一判定实现忽略');
+  ok(mainSrc.includes("'opc:update-dismiss'"), '主进程注册忽略 IPC');
+  ok(preloadSrc.includes("'opc:update-dismiss'"), 'preload 暴露忽略入口');
+  ok(card.includes('data-update-dismiss'), '卡片渲染忽略按钮（可被闸门定位）');
+  ok(card.includes("error.code === 'apply-failed' || error.code === 'rollback'"), '忽略按钮只对交接类错误出现');
 }
 
 /* ══════════════ 接线组（静态断言） ══════════════ */
@@ -238,6 +335,8 @@ function staticAsserts(): void {
   ok(updater.includes('stickyApplyError'), '自动检查保留 apply-failed / rollback 提示');
   ok(updater.includes('上次更新没有装好'), '启动后汇报上一次交接失败');
   ok(/code: 'apply-failed'[\s\S]{0,400}可以重新下载并重试/.test(updater), '失败文案给出重试路径');
+  ok(updater.includes('decideBootOutcome'), '启动结论先做版本比较（不再无条件展示旧记录）');
+  ok(updater.includes('clearApplyArtifacts'), '启动 / 忽略时调用统一清理函数');
 
   const card = readFileSync(join('src', 'components', 'UpdateCard.tsx'), 'utf8');
   ok(card.includes('{error && ('), '关于页只要存在 error 就渲染（不跟 phase 走）');
@@ -249,6 +348,8 @@ async function main(): Promise<void> {
   await scenarioA();
   await scenarioB();
   await scenarioC();
+  scenarioE();
+  scenarioF();
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
   process.exit(fail === 0 ? 0 : 1);
 }

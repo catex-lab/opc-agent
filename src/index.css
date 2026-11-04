@@ -5573,6 +5573,20 @@ html[data-opc-glass='1'] t-chat-sender {
   text-decoration: underline;
 }
 
+/* 「忽略」是按钮而不是链接：去掉浏览器默认的按钮外观，只留文字样式 */
+.tc-update-dismiss {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.tc-update-dismiss:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .tc-update-progress {
   display: flex;
   flex-direction: column;

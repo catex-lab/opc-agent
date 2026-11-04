@@ -88,9 +88,22 @@ function cleanup() {
   rm(job.jobPath);
 }
 
+// 失败/回滚路径也不留渣：暂存包、健康文件、备份（旧 asar 还在时才敢删）全清掉。
+// 只保留 apply-state.json —— 那是下次启动给用户看的证据，由主进程按
+// 「记录版本 vs 当前版本」决定展示还是清理。
+function cleanupFailure() {
+  try {
+    if (fs.existsSync(job.targetAsar)) rm(job.backupPath);
+  } catch { /* 备份不在就算了 */ }
+  rm(job.stagedAsar);
+  rm(job.healthPath);
+  cleanup();
+}
+
 (async () => {
   if (!(await waitParentExit(job.parentPid, 30000))) {
-    writeMarker({ state: 'failed', error: '等待旧进程退出超时' });
+    writeMarker({ state: 'failed', version: job.version, error: '等待旧进程退出超时' });
+    cleanupFailure();
     return;
   }
 
@@ -100,8 +113,8 @@ function cleanup() {
   let stagedSize = -1;
   try { stagedSize = fs.statSync(job.stagedAsar).size; } catch { stagedSize = -1; }
   if (stagedSize !== job.stagedSize) {
-    writeMarker({ state: 'failed', error: '暂存的新版本文件缺失或体积不符' });
-    cleanup();
+    writeMarker({ state: 'failed', version: job.version, error: '暂存的新版本文件缺失或体积不符' });
+    cleanupFailure();
     return;
   }
 
@@ -133,6 +146,9 @@ function cleanup() {
     writeMarker({ state: 'confirmed', attempts: 1, version: job.version });
     rm(job.backupPath);
     rm(job.stagedAsar);
+    // 成功即清：状态文件不该常驻，下一次启动读不到任何记录就无需展示
+    rm(job.markerPath);
+    rm(job.healthPath);
     cleanup();
     return;
   }
@@ -144,7 +160,7 @@ function cleanup() {
   if (fs.existsSync(job.backupPath)) await renameWithRetry(job.backupPath, job.targetAsar, lockTimeoutMs);
   writeMarker({ state: 'rolled-back', attempts: 1, version: job.version });
   launchApp();
-  cleanup();
+  cleanupFailure();
 })().catch(err => {
   // 走到这里说明「备份/落盘」中途出错：此时旧 asar 可能已经被改名到 .bak，
   // 若不还原，下一次手动启动会因为找不到 app.asar 直接起不来。
@@ -154,6 +170,7 @@ function cleanup() {
     }
   } catch { /* 还原失败只能留给人工处理 */ }
   writeMarker({ state: 'failed', version: job.version, error: String((err && err.message) || err) });
+  cleanupFailure();
   try { launchApp(); } catch { /* 起不来时用户仍可手动启动 */ }
 });
 `;

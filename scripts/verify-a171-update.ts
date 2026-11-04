@@ -400,10 +400,13 @@ ok(
   '缺失 / 不可读 / 摘要不符 → 中文错误 + 回到可重试状态',
   '缺 abandonStaged 或重试文案'
 );
+const artifactsSource = read('electron/updater/apply-artifacts.ts');
 ok(
-  updaterSource.includes("'.download'") && updaterSource.includes("'.part'") && updaterSource.includes("'.asar'"),
+  artifactsSource.includes("'.download'") &&
+    artifactsSource.includes("'.part'") &&
+    artifactsSource.includes("'.asar'"),
   '清理覆盖半成品、暂存包与历史 .asar 残留',
-  '缺 sweepStaging 的后缀集合'
+  '缺 apply-artifacts 的后缀集合'
 );
 
 const helperSource = read('electron/updater/swap-helper-source.ts');

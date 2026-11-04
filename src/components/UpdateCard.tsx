@@ -29,6 +29,7 @@ interface UpdateBridge {
     check: () => Promise<UpdateState>;
     download: () => Promise<UpdateState>;
     quitAndInstall: () => Promise<{ ok: boolean; error?: string }>;
+    dismiss: () => Promise<UpdateState>;
     onStateChange: (cb: (state: UpdateState) => void) => () => void;
   };
 }
@@ -111,6 +112,12 @@ export function UpdateCard() {
       const r = await api.quitAndInstall();
       if (!r?.ok) setActionError(r?.error ?? '无法开始安装');
     });
+  };
+
+  /** 只对交接类错误出现：清掉提示与状态文件，用户自己确认「我知道了」 */
+  const dismiss = () => {
+    if (!api) return;
+    void run(() => api.dismiss());
   };
 
   const { phase, release, progress, error } = state;
@@ -247,7 +254,7 @@ export function UpdateCard() {
             )}
 
             {/* 有错误就画出来，不跟着 phase 走：上一次交接失败的提示要在
-                「发现新版本」旁边常驻，直到用户自己点「下载更新」重试。 */}
+                「发现新版本」旁边常驻，直到用户重试成功或点「忽略」。 */}
             {error && (
               state.legacyManualUpdate ? (
                 // 旧版客户端内置旧公钥，验签必然失败 —— 这不是网络问题，
@@ -282,6 +289,17 @@ export function UpdateCard() {
                   >
                     手动下载
                   </a>
+                  {error.code === 'apply-failed' || error.code === 'rollback' ? (
+                    <button
+                      type="button"
+                      className="tc-update-link tc-update-dismiss"
+                      onClick={dismiss}
+                      disabled={busy}
+                      data-update-dismiss
+                    >
+                      忽略
+                    </button>
+                  ) : null}
                 </div>
               )
             )}

@@ -177,6 +177,31 @@ npm run update:build -- --version 1.1.0 --notes-file release-notes.md \
 （base64 PKCS#8），本地则用 `.tmp/` 下的密钥文件 —— `.tmp/` 已被 gitignore，
 私钥不要提交。闸门：`npm run verify:a171-update`。
 
+### 更新状态文件的生命周期与清理口径
+
+一次更新在系统 temp 的 `opc-agent-update/` 与 `resources/` 下最多留下这些文件：
+
+| 文件 | 何时出现 | 谁写 | 何时必须消失 |
+| --- | --- | --- | --- |
+| `<asset>.download` / `.part` | 下载中 / 下载完成 | 主进程 | 交接成功、交接失败、重新下载、用户忽略 |
+| `apply-job.json`、`update-swap.cjs` | 点「退出并重启」时 | 主进程 | helper 结束（成功 / 失败 / 回滚） |
+| `app.asar.bak` | 旧 asar 被换下时 | helper | 健康确认、自动回滚、失败还原、用户忽略 |
+| `health.json` | 新版本窗口加载成功 | 主进程 `confirmHealthy()` | helper 读到后自删；下次启动兜底清理 |
+| `apply-state.json` | 每次交接 | helper / 主进程 | 成功即删；失败记录在「当前版本 ≥ 记录版本」时删；用户点「忽略」时删 |
+
+判定与清理各自只有一个出处：
+
+- `electron/updater/boot-outcome.ts` —— 版本比较与「展示 / 已消解 / 忽略」的纯判定；
+- `electron/updater/apply-artifacts.ts` —— 唯一删除口径，含暂存包、状态文件、交接脚本、`.bak`、健康文件。
+
+`verify:a176-update-swap` 用临时目录直接调用这两个模块，不只看源码里有没有那行字。
+
+三条纪律：
+
+1. `apply-state.json` 是**唯一**允许短暂常驻的文件，且只允许在「记录版本 > 当前版本」期间存在。用户手动装了完整包、或重试成功过一次，启动时就必须静默清掉，不能再红字常驻。
+2. 失败不等于留证据：除 `apply-state.json` 外的中间产物一律清掉，避免下次更新误用旧补丁或旧 `.bak`。
+3. 清理一律「尽力而为」：被占用的文件记为失败、留给下次启动再试，清理异常绝不能改变更新结论。
+
 ### 轮换更新签名密钥
 
 ```bash

@@ -334,6 +334,9 @@ function registerIpc() {
   ipcMain.handle('opc:update-check', () => updater.check());
   ipcMain.handle('opc:update-download', () => updater.download());
   ipcMain.handle('opc:update-quit-install', () => updater.quitAndInstall());
+  // 「忽略」只清上一次交接失败的提示与残留；网络/验签/哈希类错误没有这个
+  // 入口 —— 它们重试一次就会重新出现，藏起来只会误导用户。
+  ipcMain.handle('opc:update-dismiss', () => updater.dismissError());
 
   // A63：工作区 —— 选目录对话框。
   //

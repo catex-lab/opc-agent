@@ -33,7 +33,6 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -50,6 +49,8 @@ import {
   manifestUrl,
   releasesPageUrl,
 } from './config.js';
+import { clearApplyArtifacts, sweepStagedFiles } from './apply-artifacts.js';
+import { decideBootOutcome, isDismissableError } from './boot-outcome.js';
 import { SWAP_HELPER_SOURCE } from './swap-helper-source.js';
 
 /** 下载/暂存目录：系统 temp，绝不写进 data/ */
@@ -64,15 +65,6 @@ function ensureStagingDir(): string {
   mkdirSync(dir, { recursive: true });
   return dir;
 }
-
-/**
- * 暂存目录里算「更新资产」的文件后缀。
- *
- * `.asar` 那一档是**历史遗留**：1.0.2–1.0.4 的客户端把下载完的包直接存成
- * `app-<ver>.asar`，正是它引出了「退出并重启」时的 ENOENT（见 `stagedFile`
- * 的注释）。留着它只为在下一次下载时把旧残留清掉。
- */
-const STAGED_SUFFIXES = ['.download', '.part', '.asar'] as const;
 
 /**
  * 暂存文件的**唯一定义点**：下载写它、交接前校验它、传给 helper 也用它。
@@ -90,23 +82,12 @@ function stagedFile(dir: string, assetName: string): string {
   return join(dir, `${assetName}.download`);
 }
 
-/**
- * 清掉暂存目录里的更新资产（半成品、旧版本残留、历史 `.asar`）。
- *
- * `keep` 传本次要保留的绝对路径。删除一律 `force` + 吞错：清残留失败
- * 不该把一次本来可用的更新变成失败。
- */
-function sweepStaging(dir: string, keep?: string): void {
-  for (const name of readdirSafe(dir)) {
-    if (!STAGED_SUFFIXES.some(suffix => name.endsWith(suffix))) continue;
-    const full = join(dir, name);
-    if (keep && full === keep) continue;
-    try {
-      rmSync(full, { force: true });
-    } catch {
-      /* 尽力而为：被别的进程占着就留给下次 */
-    }
-  }
+/** 一次更新留在磁盘上的所有位置：暂存目录 + resources 下的 `.bak` */
+function applyArtifactScope(): { stagingDir: string; backupPath: string } {
+  return {
+    stagingDir: stagingDir(),
+    backupPath: `${join(process.resourcesPath, 'app.asar')}.bak`,
+  };
 }
 
 interface PendingAsset {
@@ -389,23 +370,36 @@ class UpdateController {
   }
 
   /**
-   * 上一次退出时的替换结果。回滚/失败要让用户看见一次 ——
-   * 不能让应用「悄悄退回过一次」而用户毫不知情。
+   * 上一次退出时的替换结果。
+   *
+   * 只有「失败记录指向的版本仍比当前版本新」才需要告诉用户 —— 用户可能
+   * 已经手动装了完整包、或重试成功过一次，这时旧记录已被现实消解：既不该
+   * 再展示，也不该让一个永久失败记录留在 temp 里。判定见 `boot-outcome.ts`。
    */
   private reportBootOutcome(): void {
     const marker = readMarker();
-    if (!marker?.state) return;
-    if (marker.state === 'rolled-back') {
+    const outcome = decideBootOutcome(marker, this.state.currentVersion);
+    if (outcome.kind === 'none' || outcome.kind === 'in-progress') return;
+
+    if (outcome.kind === 'resolved') {
+      // 已消解 / 已成功：静默清掉状态文件与所有中间产物，不打扰用户
+      this.clearApplyResidue();
+      return;
+    }
+
+    // 仍要展示：状态文件留给界面，其余残留一并清掉（失败路径不留渣）
+    this.clearApplyResidue({ keepState: true });
+    if (outcome.kind === 'rolled-back') {
       this.set({
         phase: 'error',
         legacyManualUpdate: false,
         error: {
           code: 'rollback',
-          message: `版本 ${marker.version ?? ''} 启动失败，已自动回滚到 ${this.state.currentVersion}`.trim(),
+          message: `版本 ${outcome.version ?? ''} 启动失败，已自动回滚到 ${this.state.currentVersion}`.trim(),
           manualUrl: releasesPageUrl(),
         },
       });
-    } else if (marker.state === 'failed') {
+    } else {
       // 这条必须让用户一直看得见：交接 helper 失败时文件根本没换，桌面版
       // 重启后仍是旧版本。以前它只在启动后 5 秒内存在，随后自动检查把它清掉，
       // 用户看到的就是「重启了还是旧版本、界面还提示有新版本」。
@@ -414,11 +408,34 @@ class UpdateController {
         legacyManualUpdate: false,
         error: {
           code: 'apply-failed',
-          message: `上次更新没有装好：${marker.error ?? '未知原因'}。可以重新下载并重试；若反复失败，请先关闭所有 OPC Agent 窗口，或手动下载完整包。`,
+          message: `上次更新没有装好：${outcome.error ?? '未知原因'}。可以重新下载并重试；若反复失败，请先关闭所有 OPC Agent 窗口，或手动下载完整包。`,
           manualUrl: releasesPageUrl(),
         },
       });
     }
+  }
+
+  /**
+   * 用户点「忽略」：清掉上次交接失败的提示与残留。
+   *
+   * 只接受 `apply-failed` / `rollback`（见 `isDismissableError`）：网络、
+   * 验签、哈希这类错误重试一次就会重新出现，给「忽略」只会让用户误以为
+   * 问题消失了。
+   */
+  dismissError(): UpdateState {
+    if (!isDismissableError(this.state.error?.code)) return this.getState();
+    this.clearApplyResidue();
+    this.set({
+      phase: this.state.phase === 'error' ? 'idle' : this.state.phase,
+      error: undefined,
+      legacyManualUpdate: false,
+    });
+    return this.getState();
+  }
+
+  /** 清掉状态文件与中间产物；清不了的留给下次启动，不改变任何结论 */
+  private clearApplyResidue(opts: { keepState?: boolean; keepHealth?: boolean } = {}): void {
+    clearApplyArtifacts({ ...applyArtifactScope(), ...opts });
   }
 
   async check(): Promise<UpdateState> {
@@ -534,7 +551,7 @@ class UpdateController {
       });
       this.pending.stagedPath = staged;
       // 清掉旧版本残留与半成品，只保留本次待安装的那一个
-      sweepStaging(dir, staged);
+      sweepStagedFiles(dir, staged);
       this.set({
         phase: 'ready',
         progress: undefined,
@@ -645,16 +662,8 @@ class UpdateController {
    */
   private abandonStaged(code: string, message: string): { ok: false; error: string } {
     this.pending = null;
-    try {
-      const dir = ensureStagingDir();
-      sweepStaging(dir);
-      rmSync(join(dir, 'update-swap.cjs'), { force: true });
-      rmSync(join(dir, 'apply-job.json'), { force: true });
-      rmSync(markerPath(), { force: true });
-      rmSync(healthPath(), { force: true });
-    } catch {
-      /* 清理失败不改变结论：那份文件已经不可信 */
-    }
+    // 暂存包已不可信：连同状态文件、交接脚本、`.bak`、健康文件一起清掉
+    this.clearApplyResidue();
     this.set({ stagedVersion: undefined });
     this.fail(code, message);
     return { ok: false, error: message };
@@ -673,14 +682,15 @@ class UpdateController {
     if (marker?.state !== 'unconfirmed') return;
     const version = this.state.currentVersion;
     try {
-      const dir = ensureStagingDir();
+      ensureStagingDir();
       writeFileSync(
         healthPath(),
         JSON.stringify({ version, at: new Date().toISOString() }, null, 2)
       );
       writeMarker({ state: 'confirmed', version });
-      rmSync(`${join(process.resourcesPath, 'app.asar')}.bak`, { force: true });
-      sweepStaging(dir);
+      // 成功升级后不留常驻状态：`.bak`、下载包、job、helper、状态文件一并清掉。
+      // health.json 必须留到 helper 读到它（否则会被判成启动失败而回滚）。
+      this.clearApplyResidue({ keepHealth: true });
     } catch {
       /* 健康检查写失败不该影响启动 */
     }
@@ -691,14 +701,6 @@ class UpdateController {
     if (this.intervalTimer) clearInterval(this.intervalTimer);
     this.checkTimer = null;
     this.intervalTimer = null;
-  }
-}
-
-function readdirSafe(dir: string): string[] {
-  try {
-    return readdirSync(dir);
-  } catch {
-    return [];
   }
 }
 

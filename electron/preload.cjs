@@ -192,6 +192,14 @@ contextBridge.exposeInMainWorld('opc', {
     },
 
     /**
+     * 忽略上一次交接失败的提示（只对 apply-failed / rollback 生效）。
+     * 主进程会同时清掉状态文件与残留；其它错误码这里原样返回 state。
+     */
+    dismiss() {
+      return ipcRenderer.invoke('opc:update-dismiss');
+    },
+
+    /**
      * 订阅状态变化，返回取消订阅函数。
      * @param {(state: import('../shared/update.js').UpdateState) => void} cb
      */
