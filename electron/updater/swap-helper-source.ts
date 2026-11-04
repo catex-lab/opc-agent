@@ -24,7 +24,59 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 
 const job = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/* ══════════ 可注入的单调时钟 ══════════
+ *
+ * 时长**只**用单调时钟算（performance.now / hrtime），绝不用 Date.now：
+ * 用户机器可能被 NTP 回拨，墙钟一倒退，重试预算就会被算成负数、文案里的
+ * 「已等待」也会变成谎话。墙钟只保留给 ISO 时间戳（取证时看先后顺序）。
+ *
+ * 闸门用 globalThis.__OPC_SWAP_HOOKS__ 注入假时钟、假 sleep、假 rename，
+ * 走的是下面同一段逻辑 —— 生产路径不设置这个全局，拿到的就是真实实现。
+ */
+const hooks = (globalThis.__OPC_SWAP_HOOKS__ && typeof globalThis.__OPC_SWAP_HOOKS__ === 'object')
+  ? globalThis.__OPC_SWAP_HOOKS__
+  : {};
+const monoNow = typeof hooks.now === 'function'
+  ? hooks.now
+  : () => {
+      if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
+      return Number(process.hrtime.bigint()) / 1e6;
+    };
+const sleep = typeof hooks.sleep === 'function'
+  ? hooks.sleep
+  : ms => new Promise(resolve => setTimeout(resolve, ms));
+const renameFile = typeof hooks.rename === 'function' ? hooks.rename : (from, to) => fs.renameSync(from, to);
+const killPid = typeof hooks.kill === 'function' ? hooks.kill : pid => process.kill(pid);
+// 持有者查询默认走 Restart Manager；闸门注入假函数，避免每次失败都拉起 PowerShell
+const listHoldersFn = typeof hooks.holders === 'function' ? hooks.holders : target => listHolders(target);
+
+const HELPER_T0 = monoNow();
+const MAX_MARKER_CHARS = 65536;
+const MAX_SAMPLES = 50;
+const round1 = n => Math.round(n * 10) / 10;
+const sec = ms => round1(ms / 1000).toFixed(1);
+/** 预算整秒时不带小数（「预算 60 秒」），非整秒才保留一位 */
+const budgetSec = ms => (ms % 1000 === 0 ? String(ms / 1000) : sec(ms));
+
+/** trace 常驻内存；每次落盘都取一份快照，避免把半截状态写出去 */
+const traceData = {
+  jobAt: typeof job.jobAt === 'string' ? job.jobAt : null,
+  precheckMs: Number.isFinite(Number(job.precheckMs)) ? Number(job.precheckMs) : null,
+  helperStartedAt: new Date().toISOString(),
+  parentWait: null,
+  processWait: null,
+  lockWait: null,
+  // 一次交换可能有两次抢锁（备份旧包 / 放入新包）：最后一次放 lockWait（带采样），
+  // 历史只留摘要，避免 marker 被样本撑大
+  lockWaitHistory: [],
+  events: [],
+  totalMs: null,
+};
+
+function snapshotTrace() {
+  return { ...traceData, totalMs: round1(monoNow() - HELPER_T0) };
+}
 
 // 安装目录（= OPC Agent.exe 所在目录）。只按**路径**认「我们自己的进程」，
 // 绝不按进程名全局杀 —— 用户机器上可能还开着别的 Electron 应用。
@@ -44,24 +96,64 @@ function writeMarker(patch) {
     const prev = fs.existsSync(job.markerPath)
       ? JSON.parse(fs.readFileSync(job.markerPath, 'utf8'))
       : {};
-    fs.writeFileSync(job.markerPath, JSON.stringify({ ...prev, ...patch, at: new Date().toISOString() }, null, 2));
+    const next = { ...prev, ...patch, at: new Date().toISOString() };
+    let text = JSON.stringify(next, null, 2);
+    /* 超大时**截断**而不是写坏：先砍 events / 采样，再退化成摘要。
+       用户机器上的 state 是事后取证的唯一凭据，绝不能因为 trace 太大而
+       写出半截 JSON（下次启动会读不出来）。 */
+    if (text.length > MAX_MARKER_CHARS && next.trace) {
+      const lock = next.trace.lockWait;
+      next.trace = {
+        ...next.trace,
+        events: Array.isArray(next.trace.events) ? next.trace.events.slice(-5) : [],
+        lockWait: lock
+          ? { ...lock, samples: Array.isArray(lock.samples) ? lock.samples.slice(0, 12) : [] }
+          : null,
+        truncated: true,
+      };
+      text = JSON.stringify(next, null, 2);
+    }
+    if (text.length > MAX_MARKER_CHARS) {
+      next.trace = { truncated: true, jobAt: next.trace && next.trace.jobAt, totalMs: next.trace && next.trace.totalMs };
+      text = JSON.stringify(next, null, 2);
+    }
+    fs.writeFileSync(job.markerPath, text);
   } catch { /* marker 写不进去不该拖垮交换流程 */ }
 }
 
 async function waitParentExit(pid, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const started = monoNow();
+  while (monoNow() - started < timeoutMs) {
     try {
-      process.kill(pid, 0);
+      killPid(pid);
     } catch (err) {
       // 只有 ESRCH（进程真的没了）才算退出。EPERM 表示进程还在、只是没权限
       // 发信号 —— 1.0.7 把任何异常都当「已退出」，如果旧进程以管理员身份
       // 运行，helper 会在它还没退干净时就开始 rename，撞 EBUSY 白等 20 秒。
-      if (err && err.code === 'ESRCH') return true;
+      if (err && err.code === 'ESRCH') {
+        const elapsedMs = round1(monoNow() - started);
+        traceData.parentWait = { stage: '等进程退出', elapsedMs, budgetMs: timeoutMs, exited: true };
+        return { exited: true, elapsedMs };
+      }
     }
     await sleep(300);
   }
-  return false;
+  const elapsedMs = round1(monoNow() - started);
+  traceData.parentWait = { stage: '等进程退出', elapsedMs, budgetMs: timeoutMs, exited: false };
+  return { exited: false, elapsedMs };
+}
+
+/** 采样压缩：首 10 + 每 10 条一条 + 末 10，最多 50 条。
+ *  先保首末再保中间 —— 末 10 条是「失败前最后发生了什么」，不能被截掉。 */
+function sampleSamples(all) {
+  if (all.length <= MAX_SAMPLES) return all.slice();
+  const idx = new Set();
+  for (let i = 0; i < 10 && i < all.length; i += 1) idx.add(i);
+  for (let i = Math.max(0, all.length - 10); i < all.length; i += 1) idx.add(i);
+  for (let i = 9; i < all.length && idx.size < MAX_SAMPLES; i += 10) idx.add(i);
+  let out = [...idx].sort((a, b) => a - b).map(i => all[i]);
+  if (out.length > MAX_SAMPLES) out = [...out.slice(0, 10), ...out.slice(out.length - 10)];
+  return out;
 }
 
 /* ══════════ 安装目录残留进程：先等、再定向结束 ══════════
@@ -78,12 +170,9 @@ async function waitParentExit(pid, timeoutMs) {
  */
 function trace(msg) {
   try {
-    const prev = fs.existsSync(job.markerPath)
-      ? JSON.parse(fs.readFileSync(job.markerPath, 'utf8'))
-      : {};
-    const list = Array.isArray(prev.trace) ? prev.trace.slice(-19) : [];
-    list.push({ t: new Date().toISOString(), msg: msg });
-    fs.writeFileSync(job.markerPath, JSON.stringify({ ...prev, trace: list }, null, 2));
+    traceData.events.push({ t: new Date().toISOString(), msg: msg });
+    if (traceData.events.length > 20) traceData.events.shift();
+    writeMarker({ trace: snapshotTrace() });
   } catch { /* 取证信息写不进去不该影响交换 */ }
 }
 
@@ -153,32 +242,53 @@ function killTargets(list) {
 }
 
 async function guardInstallDir(timeoutMs) {
+  const startedAt = new Date().toISOString();
+  const startedMono = monoNow();
+  const finish = patch => {
+    traceData.processWait = {
+      stage: '等进程退出',
+      startedAt,
+      endedAt: new Date().toISOString(),
+      elapsedMs: round1(monoNow() - startedMono),
+      budgetMs: timeoutMs,
+      pids: [],
+      killed: [],
+      leftover: [],
+      ...patch,
+    };
+  };
   if (!INSTALL_DIR) {
+    finish({ skipped: 'no-install-dir' });
     trace('未提供安装目录，跳过残留进程检查');
     return;
   }
   let snapshot = listInstallDirProcesses();
   if (snapshot === null) {
+    finish({ skipped: 'enum-unavailable' });
     trace('进程枚举不可用（PowerShell 调用失败），只靠 rename 重试');
     return;
   }
   let others = snapshot.filter(p => p.pid !== process.pid);
   if (!others.length) {
+    finish({ pids: [] });
     trace('安装目录内没有其他进程');
     return;
   }
+  finish({ pids: others.map(p => p.pid) });
   trace('安装目录内仍有 ' + others.length + ' 个进程：' + others.map(labelOf).join('、'));
-  const deadline = Date.now() + timeoutMs;
-  while (others.length > 0 && Date.now() < deadline) {
+  const deadline = startedMono + timeoutMs;
+  while (others.length > 0 && monoNow() < deadline) {
     await sleep(1000);
     snapshot = listInstallDirProcesses();
     if (snapshot === null) {
+      finish({ pids: others.map(p => p.pid), skipped: 'enum-lost' });
       trace('等待中进程枚举失效，转入 rename 重试');
       return;
     }
     others = snapshot.filter(p => p.pid !== process.pid);
   }
   if (!others.length) {
+    finish({ pids: [] });
     trace('残留进程已自行退出');
     return;
   }
@@ -188,8 +298,17 @@ async function guardInstallDir(timeoutMs) {
     trace('以下进程在更新开始后才启动，不终止：' + keep.map(labelOf).join('、'));
   }
   const leftovers = others.filter(isLeftover);
-  if (!leftovers.length) return;
+  if (!leftovers.length) {
+    finish({ pids: others.map(p => p.pid), killed: [], leftover: [], kept: keep.map(p => p.pid) });
+    return;
+  }
   const killed = killTargets(leftovers);
+  finish({
+    pids: others.map(p => p.pid),
+    killed: killed.map(p => p.pid),
+    leftover: leftovers.map(p => p.pid),
+    kept: keep.map(p => p.pid),
+  });
   trace(
     '等待 ' + Math.round(timeoutMs / 1000) + ' 秒后定向结束残留进程：' +
       (killed.length ? killed.map(labelOf).join('、') : '无（均已自行退出）')
@@ -262,18 +381,63 @@ function listHolders(target) {
 // 工具子进程**不**持有 app.asar，真正持有的只有 OPC Agent 主进程 —— 所以
 // 1.0.7 「一退就换」撞的其实是还没退干净的主进程或另一个残留实例。
 // 这里对有界重试之外，前置 guardInstallDir 先把安装目录里的残留进程等走 / 结束掉。
-async function renameWithRetry(from, to, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
+async function renameWithRetry(from, to, timeoutMs, label) {
+  const started = monoNow();
+  const startedAt = new Date().toISOString();
+  const failures = [];
+  let attempts = 0;
+  let lastAt = started;
+  let lastDtMs = 0;
+  const finish = (ok, code) => {
+    const elapsedMs = round1(monoNow() - started);
+    traceData.lockWait = {
+      stage: '抢锁',
+      label: label || null,
+      startedAt,
+      endedAt: new Date().toISOString(),
+      elapsedMs,
+      budgetMs: timeoutMs,
+      attempts,
+      lastDtMs,
+      samples: sampleSamples(failures),
+      code: code || null,
+      ok,
+    };
+    traceData.lockWaitHistory.push({
+      label: label || null,
+      elapsedMs,
+      attempts,
+      lastDtMs,
+      sampleCount: traceData.lockWait.samples.length,
+      code: code || null,
+      ok,
+    });
+    if (traceData.lockWaitHistory.length > 4) traceData.lockWaitHistory.shift();
+    return elapsedMs;
+  };
   while (true) {
+    if (attempts > 0) lastDtMs = round1(monoNow() - lastAt);
+    lastAt = monoNow();
+    attempts += 1;
     try {
-      fs.renameSync(from, to);
+      renameFile(from, to);
+      finish(true, null);
       return;
     } catch (err) {
       const code = err && err.code;
       if (code !== 'EBUSY' && code !== 'EPERM' && code !== 'EACCES') throw err;
-      if (Date.now() >= deadline) {
-        const e = new Error('旧版本 app.asar 仍被占用（' + code + '），可能还有 OPC Agent 进程没有退干净（已等待 ' + Math.round(timeoutMs / 1000) + ' 秒）');
+      failures.push({ attempt: attempts, dtMs: attempts === 1 ? 0 : lastDtMs, code });
+      const elapsedMs = monoNow() - started;
+      if (elapsedMs >= timeoutMs) {
+        finish(false, code);
+        // 文案：前半是**实测经过**，后半是**预算**，两者分开写。
+        const e = new Error(
+          '抢锁失败：旧版本 app.asar 仍被占用（' + code + '），已等待 ' +
+            sec(elapsedMs) + ' 秒（预算 ' + budgetSec(timeoutMs) + ' 秒）'
+        );
         e.code = code;
+        e.stage = '抢锁';
+        e.elapsedMs = round1(elapsedMs);
         throw e;
       }
       await sleep(250);
@@ -307,8 +471,15 @@ function cleanupFailure() {
 }
 
 (async () => {
-  if (!(await waitParentExit(job.parentPid, 30000))) {
-    writeMarker({ state: 'failed', version: job.version, error: '等待旧进程退出超时' });
+  const parent = await waitParentExit(job.parentPid, 30000);
+  if (!parent.exited) {
+    // setup 阶段失败：文案必须点名阶段，并与抢锁失败区分开。
+    writeMarker({
+      state: 'failed',
+      version: job.version,
+      error: '等进程退出失败：等待旧进程退出超时，已等待 ' + sec(parent.elapsedMs) + ' 秒（预算 ' + budgetSec(30000) + ' 秒）',
+      trace: snapshotTrace(),
+    });
     cleanupFailure();
     return;
   }
@@ -324,7 +495,7 @@ function cleanupFailure() {
   let stagedSize = -1;
   try { stagedSize = fs.statSync(job.stagedAsar).size; } catch { stagedSize = -1; }
   if (stagedSize !== job.stagedSize) {
-    writeMarker({ state: 'failed', version: job.version, error: '暂存的新版本文件缺失或体积不符' });
+    writeMarker({ state: 'failed', version: job.version, error: '暂存的新版本文件缺失或体积不符', trace: snapshotTrace() });
     cleanupFailure();
     return;
   }
@@ -332,20 +503,20 @@ function cleanupFailure() {
   // 2) 备份旧 asar，放入新 asar（同目录临时名再 rename，避免半截文件被加载）
   //    两次 rename 都要等锁；预算耗尽时由 catch 写明「谁还持有」。
   rm(job.backupPath);
-  if (fs.existsSync(job.targetAsar)) await renameWithRetry(job.targetAsar, job.backupPath, LOCK_TIMEOUT_MS);
+  if (fs.existsSync(job.targetAsar)) await renameWithRetry(job.targetAsar, job.backupPath, LOCK_TIMEOUT_MS, '备份旧包');
   const tmp = job.targetAsar + '.new';
   rm(tmp);
   fs.copyFileSync(job.stagedAsar, tmp);
-  await renameWithRetry(tmp, job.targetAsar, LOCK_TIMEOUT_MS);
-  writeMarker({ state: 'unconfirmed', attempts: 1, version: job.version });
+  await renameWithRetry(tmp, job.targetAsar, LOCK_TIMEOUT_MS, '放入新包');
+  writeMarker({ state: 'unconfirmed', attempts: 1, version: job.version, trace: snapshotTrace() });
   trace('新 asar 已就位，等待健康文件');
 
   // 3) 启动新版本，等它写出健康文件
   rm(job.healthPath);
   const child = launchApp();
-  const deadline = Date.now() + job.healthTimeoutMs;
+  const healthStarted = monoNow();
   let healthy = false;
-  while (Date.now() < deadline) {
+  while (monoNow() - healthStarted < job.healthTimeoutMs) {
     if (fs.existsSync(job.healthPath)) {
       healthy = true;
       break;
@@ -354,7 +525,7 @@ function cleanupFailure() {
   }
 
   if (healthy) {
-    writeMarker({ state: 'confirmed', attempts: 1, version: job.version });
+    writeMarker({ state: 'confirmed', attempts: 1, version: job.version, trace: snapshotTrace() });
     rm(job.backupPath);
     rm(job.stagedAsar);
     // 成功即清：状态文件不该常驻，下一次启动读不到任何记录就无需展示
@@ -365,11 +536,11 @@ function cleanupFailure() {
   }
 
   // 4) 等不到健康文件 = 新版本没起来（或起来就崩）→ 自动回滚并重启旧版本
-  try { process.kill(child.pid); } catch { /* 已经退了 */ }
+  try { killPid(child.pid); } catch { /* 已经退了 */ }
   await sleep(1500);
   rm(job.targetAsar);
-  if (fs.existsSync(job.backupPath)) await renameWithRetry(job.backupPath, job.targetAsar, LOCK_TIMEOUT_MS);
-  writeMarker({ state: 'rolled-back', attempts: 1, version: job.version });
+  if (fs.existsSync(job.backupPath)) await renameWithRetry(job.backupPath, job.targetAsar, LOCK_TIMEOUT_MS, '恢复旧包');
+  writeMarker({ state: 'rolled-back', attempts: 1, version: job.version, trace: snapshotTrace() });
   launchApp();
   cleanupFailure();
 })().catch(err => {
@@ -385,7 +556,7 @@ function cleanupFailure() {
   const code = err && err.code;
   if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
     // 只取证、不终止：把真正持有 app.asar 的进程名字写进提示，用户照着关。
-    const holders = listHolders(job.targetAsar);
+    const holders = listHoldersFn(job.targetAsar);
     if (holders === null) {
       trace('Restart Manager 不可用，无法列出持有者（可能是杀毒 / 索引服务的过滤驱动短暂拦截）');
     } else if (!holders.length) {
@@ -396,7 +567,7 @@ function cleanupFailure() {
       trace('失败时仍持有 app.asar：' + names);
     }
   }
-  writeMarker({ state: 'failed', version: job.version, error: error });
+  writeMarker({ state: 'failed', version: job.version, error: error, trace: snapshotTrace() });
   cleanupFailure();
   try { launchApp(); } catch { /* 起不来时用户仍可手动启动 */ }
 });

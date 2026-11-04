@@ -18,6 +18,12 @@
  *   H 残留进程：安装目录里的旧实例 → 先等、超时按路径结束，再交换
  *   I 外部持有：不在安装目录的进程 → 只把持有者名字写进失败文案，不杀
  *
+ *   J1–J6 假时钟：预算边界（59.9 秒成功 / 60.1 秒失败）、文案秒数≈实测、
+ *           系统时间回拨不影响、240 次重试的 attempts / 末次 dtMs、
+ *           采样上限与首末采样、setup 与抢锁阶段文案可区分。
+ *           helper 通过 `globalThis.__OPC_SWAP_HOOKS__` 注入假 now / sleep /
+ *           rename / kill / holders，走的是与生产完全同一段逻辑，**不真等**。
+ *
  * 另外 A/C 还顺带钉住「成功与失败都不留残渣」：成功后状态文件不常驻，
  * 失败后暂存包/健康文件/job/helper 都被清掉，只留 apply-state.json 当证据。
  *
@@ -164,6 +170,15 @@ function patchJob(sb: Sandbox, patch: Record<string, unknown>): void {
   writeFileSync(sb.jobPath, JSON.stringify({ ...job, ...patch }, null, 2));
 }
 
+/** 交换过程中 target 会短暂不存在（先改名成 .bak），轮询时读不到属正常现象 */
+function readText(file: string): string {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
 function isAlive(child: ChildProcess): boolean {
   return child.exitCode === null && child.signalCode === null;
 }
@@ -199,8 +214,8 @@ async function scenarioA(): Promise<void> {
   await waitFor(() => existsSync(sentinel), 8_000);
 
   const { child } = startHelper(sb);
-  const swapped = await waitFor(() => readFileSync(sb.target, 'utf8') === NEW, 10_000);
-  ok(swapped, '占用释放后完成交换（遇到 EBUSY 自动重试）', readFileSync(sb.target, 'utf8'));
+  const swapped = await waitFor(() => readText(sb.target) === NEW, 10_000);
+  ok(swapped, '占用释放后完成交换（遇到 EBUSY 自动重试）', readText(sb.target));
   writeFileSync(sb.health, JSON.stringify({ version: '1.0.9' }));
   await waitExit(child, 10_000);
   try {
@@ -222,12 +237,12 @@ async function scenarioB(): Promise<void> {
   console.log('\n[B] 新版本不写健康文件 → 必须自动回滚');
   const sb = makeSandbox('B', 2_500, 6_000);
   const { child } = startHelper(sb);
-  await waitFor(() => readFileSync(sb.target, 'utf8') === NEW, 8_000);
-  ok(readFileSync(sb.target, 'utf8') === NEW, '先完成交换再等健康文件');
+  await waitFor(() => readText(sb.target) === NEW, 8_000);
+  ok(readText(sb.target) === NEW, '先完成交换再等健康文件');
   await waitExit(child, 12_000);
 
   const marker = readMarker(sb);
-  ok(readFileSync(sb.target, 'utf8') === OLD, '健康超时后恢复旧 asar', readFileSync(sb.target, 'utf8'));
+  ok(readText(sb.target) === OLD, '健康超时后恢复旧 asar', readText(sb.target));
   ok(marker.state === 'rolled-back', '标记为 rolled-back', JSON.stringify(marker));
   ok(marker.version === '1.0.9', '回滚标记里带版本号（界面要用它解释）', marker.version);
   ok(!existsSync(sb.backup), '回滚后 .bak 已被消费');
@@ -254,7 +269,7 @@ async function scenarioC(): Promise<void> {
   ok(!!marker.error && marker.error.includes('占用'), '失败原因写清「被占用」', marker.error);
   ok(!!marker.error && marker.error.includes('等待'), '失败原因带等待时长（便于判断是残留进程）', marker.error);
   ok(marker.version === '1.0.9', '失败标记里带版本号', marker.version);
-  ok(readFileSync(sb.target, 'utf8') === OLD, '旧 asar 原封不动（没有半截状态）');
+  ok(readText(sb.target) === OLD, '旧 asar 原封不动（没有半截状态）');
   ok(!existsSync(sb.backup), '失败时没有留下 .bak');
   ok(existsSync(sb.marker), '失败时保留 apply-state.json（下次启动要展示原因）');
   ok(!existsSync(sb.staged), '失败时清掉暂存包（不留可误用的残片）');
@@ -273,9 +288,9 @@ async function scenarioG(): Promise<void> {
 
   const t0 = Date.now();
   const { child } = startHelper(sb);
-  const swapped = await waitFor(() => readFileSync(sb.target, 'utf8') === NEW, 30_000);
+  const swapped = await waitFor(() => readText(sb.target) === NEW, 30_000);
   const elapsed = Date.now() - t0;
-  ok(swapped, '20 秒后仍被占用，但在 60 秒预算内等到锁释放并完成交换', readFileSync(sb.target, 'utf8'));
+  ok(swapped, '20 秒后仍被占用，但在 60 秒预算内等到锁释放并完成交换', readText(sb.target));
   ok(elapsed > 20_000, '确认真的等了 20 秒以上（不是侥幸提前成功）', `${elapsed}ms`);
   writeFileSync(sb.health, JSON.stringify({ version: '1.0.9' }));
   await waitExit(child, 10_000);
@@ -305,9 +320,9 @@ async function scenarioH(): Promise<void> {
 
   const t0 = Date.now();
   const { child } = startHelper(sb);
-  const swapped = await waitFor(() => readFileSync(sb.target, 'utf8') === NEW, 15_000);
+  const swapped = await waitFor(() => readText(sb.target) === NEW, 15_000);
   const elapsed = Date.now() - t0;
-  ok(swapped, '残留进程被结束、锁释放后完成交换', readFileSync(sb.target, 'utf8'));
+  ok(swapped, '残留进程被结束、锁释放后完成交换', readText(sb.target));
   ok(elapsed >= 1_500, '先等一段时间再动手，不是发现就杀', `${elapsed}ms`);
   ok(await waitDead(stub, 2_000), '安装目录内的残留进程被定向结束', `exit=${stub.exitCode}`);
   writeFileSync(sb.health, JSON.stringify({ version: '1.0.9' }));
@@ -330,7 +345,7 @@ async function scenarioI(): Promise<void> {
   ok(!!marker.error && marker.error.includes('持有者'), '失败文案列出「谁持有」', marker.error);
   ok(!!marker.error && /pid \d+/.test(marker.error), '持有者带 pid，用户能定位进程', marker.error);
   ok(isAlive(locker), '外部进程没有被终止', `exit=${locker.exitCode}`);
-  ok(readFileSync(sb.target, 'utf8') === OLD, '旧 asar 原封不动');
+  ok(readText(sb.target) === OLD, '旧 asar 原封不动');
   ok(existsSync(sb.marker), '失败时保留 apply-state.json 供界面展示');
   try {
     locker.kill();
@@ -338,6 +353,323 @@ async function scenarioI(): Promise<void> {
     /* 已退出 */
   }
   cleanup(sb);
+}
+
+/* ══════════════ 假时钟（注入 hooks，走生产同一段逻辑，不真等） ══════════════ */
+
+interface LockSample {
+  attempt: number;
+  dtMs: number;
+  code: string;
+}
+
+interface MarkerTrace {
+  jobAt?: string | null;
+  precheckMs?: number | null;
+  helperStartedAt?: string;
+  parentWait?: { stage?: string; elapsedMs?: number; budgetMs?: number; exited?: boolean } | null;
+  processWait?: { stage?: string; elapsedMs?: number; budgetMs?: number; skipped?: string } | null;
+  lockWait?: {
+    stage?: string;
+    label?: string | null;
+    startedAt?: string;
+    endedAt?: string;
+    elapsedMs: number;
+    budgetMs: number;
+    attempts: number;
+    lastDtMs: number;
+    samples: LockSample[];
+    code?: string | null;
+    ok: boolean;
+  } | null;
+  lockWaitHistory?: Array<{ label?: string | null; elapsedMs: number; attempts: number; ok?: boolean }>;
+  totalMs?: number | null;
+  truncated?: boolean;
+}
+
+interface FakeMarker {
+  state?: string;
+  version?: string;
+  error?: string;
+  trace?: MarkerTrace;
+}
+
+interface FakeSandbox extends Sandbox {
+  harness: string;
+  cfgPath: string;
+}
+
+interface FakeOptions {
+  /** rename 前 N 次抛 EBUSY，之后真实交换（0 = 一次就成功） */
+  failCount: number;
+  /** 每次 sleep 推进多少假毫秒（helper 传的是 250/300/1000，这里可独立设定） */
+  stepMs: number;
+  killMode?: 'esrch' | 'alive';
+  rollbackWall?: boolean;
+  lockTimeoutMs?: number;
+  healthTimeoutMs?: number;
+}
+
+/**
+ * 造一个「目标 asar 不存在」的假现场：helper 只会走**一次** rename（tmp → target），
+ * 这样 attempts / 采样条数完全由 fake 配置决定，不会被备份那一次搅乱。
+ * installDir 置空 → 跳过 PowerShell 进程枚举；parentPid 由假 kill 决定是否「已退出」。
+ */
+function makeFakeSandbox(label: string, opts: FakeOptions): FakeSandbox {
+  const base = mkdtempSync(join(tmpdir(), `opc a176 fake ${label} 空格 `));
+  // 目录要有（copyFileSync 往这里写 .new），但 target 文件**不造**：
+  // 这样 helper 只走一次 rename（tmp → target），attempts 完全由假配置决定
+  mkdirSync(join(base, 'resources'), { recursive: true });
+  mkdirSync(join(base, 'staging'), { recursive: true });
+  const target = join(base, 'resources', 'app.asar');
+  const staged = join(base, 'staging', 'app-1.0.10.asar.download');
+  const helper = join(base, 'staging', 'update-swap.cjs');
+  const jobPath = join(base, 'staging', 'apply-job.json');
+  const cfgPath = join(base, 'staging', 'fake-clock.json');
+  const harness = join(base, 'staging', 'harness.cjs');
+  const backup = target + '.bak';
+  const marker = join(base, 'staging', 'apply-state.json');
+  const health = join(base, 'staging', 'health.json');
+  writeFileSync(staged, NEW);
+  writeFileSync(helper, SWAP_HELPER_SOURCE);
+  writeFileSync(cfgPath, JSON.stringify(opts));
+  writeFileSync(
+    jobPath,
+    JSON.stringify(
+      {
+        parentPid: 1,
+        version: '1.0.10',
+        targetAsar: target,
+        stagedAsar: staged,
+        stagedSize: Buffer.byteLength(NEW),
+        backupPath: backup,
+        markerPath: marker,
+        healthPath: health,
+        helperPath: helper,
+        jobPath,
+        appExe: NODE,
+        installDir: '',
+        startedAt: '2026-11-04T12:00:00.000Z',
+        jobAt: '2026-11-04T12:00:00.500Z',
+        precheckMs: 250,
+        processWaitMs: 0,
+        healthTimeoutMs: opts.healthTimeoutMs ?? 1,
+        lockTimeoutMs: opts.lockTimeoutMs ?? 60_000,
+      },
+      null,
+      2
+    )
+  );
+  // argv 布局必须与生产一致：argv[2] = job（helper 直接读），argv[3] = 假时钟配置
+  writeFileSync(
+    harness,
+    `'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const cfg = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+let fakeNow = 1000000;
+let renames = 0;
+if (cfg.rollbackWall) {
+  // NTP 回拨：墙钟每次读取都倒退 5 秒；单调时钟（hooks.now）不受影响
+  let wall = Date.UTC(2026, 10, 4, 12, 0, 0);
+  const RealDate = Date;
+  globalThis.Date = class FakeDate extends RealDate {
+    constructor(...args) { const t = wall; wall -= 5000; super(...(args.length ? args : [t])); }
+    static now() { const t = wall; wall -= 5000; return t; }
+  };
+}
+globalThis.__OPC_SWAP_HOOKS__ = {
+  now: () => fakeNow,
+  sleep: () => { fakeNow += cfg.stepMs; return Promise.resolve(); },
+  rename: (from, to) => {
+    renames += 1;
+    if (renames <= cfg.failCount) { const e = new Error('EBUSY'); e.code = 'EBUSY'; throw e; }
+    fs.renameSync(from, to);
+  },
+  kill: () => { if (cfg.killMode !== 'alive') { const e = new Error('gone'); e.code = 'ESRCH'; throw e; } },
+  holders: () => [],
+};
+require(path.join(__dirname, 'update-swap.cjs'));
+`,
+    'utf8'
+  );
+  return { base, target, staged, backup, marker, health, helper, jobPath, harness, cfgPath };
+}
+
+function readFakeMarker(sb: FakeSandbox): FakeMarker {
+  try {
+    return JSON.parse(readFileSync(sb.marker, 'utf8')) as FakeMarker;
+  } catch {
+    return {};
+  }
+}
+
+async function runFake(sb: FakeSandbox): Promise<FakeMarker> {
+  const child = spawn(NODE, [sb.harness, sb.jobPath, sb.cfgPath], { stdio: 'ignore' });
+  const exited = await waitExit(child, 10_000);
+  ok(exited, 'helper 在假时钟下秒级退出（不真等预算）', `exit=${child.exitCode}`);
+  return readFakeMarker(sb);
+}
+
+const msgSeconds = (error: string | undefined): number | null => {
+  const m = /已等待\s+([0-9]+(?:\.[0-9])?)\s+秒/.exec(error ?? '');
+  return m ? Number(m[1]) : null;
+};
+
+async function scenarioJ1(): Promise<void> {
+  console.log('\n[J1] 预算边界：59.9 秒成功 / 60.1 秒失败（假时钟）');
+
+  // step=101ms：第 594 次尝试发生在 593×101 = 59,893ms（59.9 秒）→ 成功
+  const t0 = Date.now();
+  const success = makeFakeSandbox('J1-ok', { failCount: 593, stepMs: 101 });
+  const okMarker = await runFake(success);
+  const okTrace = okMarker.trace?.lockWait;
+  ok(okMarker.state === 'rolled-back', '交换成功后因健康超时进入 rolled-back（证明真的换过）', JSON.stringify(okMarker.state));
+  ok(!!okTrace && okTrace.ok === true, '成功路径的 trace 记录抢锁成功', JSON.stringify(okTrace && okTrace.ok));
+  ok(!!okTrace && okTrace.attempts === 594, '59.9 秒边界：第 594 次尝试拿到锁', okTrace?.attempts);
+  ok(!!okTrace && okTrace.elapsedMs === 59_893, '实测耗时 59,893ms（≈59.9 秒）', okTrace?.elapsedMs);
+  ok(!!okTrace && okTrace.elapsedMs < 60_000, '未越过 60 秒预算', okTrace?.elapsedMs);
+  cleanup(success);
+
+  // 同一步长下一直 EBUSY：第 596 次尝试发生在 60,095ms（60.1 秒）→ 失败
+  const fail = makeFakeSandbox('J1-fail', { failCount: 1_000_000, stepMs: 101 });
+  const failMarker = await runFake(fail);
+  const failTrace = failMarker.trace?.lockWait;
+  ok(failMarker.state === 'failed', '越过预算后显式 failed', JSON.stringify(failMarker.state));
+  ok(
+    !!failMarker.error && failMarker.error.includes('已等待 60.1 秒（预算 60 秒）'),
+    '文案是实测口径：已等待 60.1 秒（预算 60 秒）',
+    failMarker.error
+  );
+  ok(!!failTrace && failTrace.ok === false && failTrace.attempts === 596, '第 596 次尝试被判超预算', failTrace?.attempts);
+  cleanup(fail);
+  ok(Date.now() - t0 < 5_000, '两个边界场景合计 5 秒内完成（未真等 60 秒）', `${Date.now() - t0}ms`);
+}
+
+async function scenarioJ2(): Promise<void> {
+  console.log('\n[J2] 文案里的秒数 ≈ trace 里的实测经过（容差 ±0.2 秒）');
+  const sb = makeFakeSandbox('J2', { failCount: 1_000_000, stepMs: 101 });
+  const marker = await runFake(sb);
+  const shown = msgSeconds(marker.error);
+  const measured = (marker.trace?.lockWait?.elapsedMs ?? NaN) / 1000;
+  ok(shown !== null, '失败文案能解析出秒数', marker.error);
+  ok(!!shown && Math.abs(shown - measured) <= 0.2, '文案秒数与 trace 实测耗时相差 ≤0.2 秒', `${shown} vs ${measured}`);
+  ok(
+    !!marker.trace?.lockWait && marker.trace.lockWait.elapsedMs > 60_000,
+    'trace 里的实测耗时确实超过预算（不是把 60 当成结果）',
+    marker.trace?.lockWait?.elapsedMs
+  );
+  ok(!!marker.trace?.lockWait?.budgetMs && marker.trace.lockWait.budgetMs === 60_000, 'trace 同时记录预算 60,000ms');
+  cleanup(sb);
+}
+
+async function scenarioJ3(): Promise<void> {
+  console.log('\n[J3] 系统时间倒退（NTP 回拨）不影响结果与文案');
+  const normal = makeFakeSandbox('J3-base', { failCount: 1_000_000, stepMs: 101 });
+  const normalMarker = await runFake(normal);
+  cleanup(normal);
+
+  const skewed = makeFakeSandbox('J3-skew', { failCount: 1_000_000, stepMs: 101, rollbackWall: true });
+  const skewedMarker = await runFake(skewed);
+  ok(skewedMarker.state === normalMarker.state, '回拨后状态不变', `${skewedMarker.state} vs ${normalMarker.state}`);
+  ok(skewedMarker.error === normalMarker.error, '回拨后失败文案逐字一致（时长只认单调时钟）', skewedMarker.error);
+  ok(
+    skewedMarker.trace?.lockWait?.elapsedMs === normalMarker.trace?.lockWait?.elapsedMs,
+    '回拨后实测耗时一致',
+    `${skewedMarker.trace?.lockWait?.elapsedMs} vs ${normalMarker.trace?.lockWait?.elapsedMs}`
+  );
+  ok(
+    skewedMarker.trace?.lockWait?.attempts === normalMarker.trace?.lockWait?.attempts,
+    '回拨后重试次数一致',
+    `${skewedMarker.trace?.lockWait?.attempts} vs ${normalMarker.trace?.lockWait?.attempts}`
+  );
+  ok(
+    typeof skewedMarker.trace?.lockWait?.startedAt !== 'undefined' ||
+      typeof skewedMarker.trace?.helperStartedAt === 'string',
+    'trace 仍保留 ISO 时间戳（墙钟只用于取证，不参与计时）'
+  );
+  cleanup(skewed);
+}
+
+async function scenarioJ4(): Promise<void> {
+  console.log('\n[J4] 240 次重试才拿到锁：attempts 与末次 dtMs 正确');
+  const sb = makeFakeSandbox('J4', { failCount: 239, stepMs: 100 });
+  const marker = await runFake(sb);
+  const lock = marker.trace?.lockWait;
+  ok(!!lock && lock.ok === true, '第 240 次重试成功', JSON.stringify(lock && lock.ok));
+  ok(!!lock && lock.attempts === 240, 'attempts 总数 = 240', lock?.attempts);
+  ok(!!lock && lock.lastDtMs === 100, '末次重试间隔 dtMs = 100ms', lock?.lastDtMs);
+  ok(!!lock && lock.elapsedMs === 23_900, '实测总耗时 = 239×100ms', lock?.elapsedMs);
+  ok(
+    !!lock && Array.isArray(lock.samples) && lock.samples.length > 0 && lock.samples[0].attempt === 1 && lock.samples[0].code === 'EBUSY',
+    '首次采样是第 1 次 EBUSY',
+    JSON.stringify(lock?.samples && lock.samples[0])
+  );
+  cleanup(sb);
+}
+
+async function scenarioJ5(): Promise<void> {
+  console.log('\n[J5] 采样上限：61 次重试的样本 ≤50 条，首末采样正确');
+  const sb = makeFakeSandbox('J5', { failCount: 60, stepMs: 100 });
+  const marker = await runFake(sb);
+  const lock = marker.trace?.lockWait;
+  const samples = lock?.samples ?? [];
+  ok(!!lock && lock.attempts === 61, 'attempts = 61', lock?.attempts);
+  ok(samples.length <= 50, '样本条数不超过上限 50', samples.length);
+  ok(samples.length > 10, '样本没有被砍成只有首尾（中段每 10 条留 1 条）', samples.length);
+  ok(samples[0]?.attempt === 1, '首条采样 = 第 1 次', samples[0]?.attempt);
+  // 第 61 次是成功那次，失败采样止于第 60 次 —— 末条必须是它，不能被截掉
+  ok(samples[samples.length - 1]?.attempt === 60, '末条采样 = 第 60 次（成功前最后一次失败一定保留）', samples[samples.length - 1]?.attempt);
+  ok(samples.some(s => s.attempt === 10) && samples.some(s => s.attempt === 52), '首 10 与末 10 都在', samples.map(s => s.attempt).join(','));
+  ok(
+    samples.every((s, i) => i === 0 || s.attempt > samples[i - 1].attempt),
+    '采样按尝试次数递增（没有重复/乱序）'
+  );
+  cleanup(sb);
+}
+
+async function scenarioJ6(): Promise<void> {
+  console.log('\n[J6] setup 阶段失败与抢锁阶段失败的文案可区分');
+  // 父进程一直不退（kill 不抛 ESRCH），每次 sleep 推进 300ms → 100 次后 30,000ms 超时
+  const setup = makeFakeSandbox('J6-setup', { failCount: 0, stepMs: 300, killMode: 'alive' });
+  const setupMarker = await runFake(setup);
+  ok(setupMarker.state === 'failed', 'setup 阶段超时也写 failed', JSON.stringify(setupMarker.state));
+  ok(
+    !!setupMarker.error && setupMarker.error.startsWith('等进程退出失败'),
+    '文案点名阶段「等进程退出失败」',
+    setupMarker.error
+  );
+  ok(
+    !!setupMarker.error && setupMarker.error.includes('已等待 30.0 秒（预算 30 秒）'),
+    'setup 文案同样是实测经过 + 预算',
+    setupMarker.error
+  );
+  ok(
+    setupMarker.trace?.parentWait?.exited === false && setupMarker.trace.parentWait.elapsedMs === 30_000,
+    'trace.parentWait 记录了 30,000ms 未退出',
+    JSON.stringify(setupMarker.trace?.parentWait)
+  );
+  cleanup(setup);
+
+  const lockSb = makeFakeSandbox('J6-lock', { failCount: 1_000_000, stepMs: 101 });
+  const lockMarker = await runFake(lockSb);
+  ok(
+    !!lockMarker.error && lockMarker.error.startsWith('抢锁失败'),
+    '抢锁阶段文案以「抢锁失败」开头，与 setup 可区分',
+    lockMarker.error
+  );
+  ok(
+    !!lockMarker.trace?.lockWait && lockMarker.trace.lockWait.stage === '抢锁',
+    'trace 里阶段名是「抢锁」',
+    lockMarker.trace?.lockWait?.stage
+  );
+  ok(
+    !!setupMarker.error && !!lockMarker.error && setupMarker.error !== lockMarker.error &&
+      !lockMarker.error.includes('等进程退出失败'),
+    '两阶段文案不是同一句（阶段名出现在错误里）',
+    lockMarker.error
+  );
+  cleanup(lockSb);
 }
 
 /* ══════════════ 启动结论 / 忽略（纯函数 + 真实清理） ══════════════ */
@@ -446,6 +778,18 @@ function staticAsserts(): void {
   ok(helperSrc.includes("err.code === 'ESRCH'"), '只把 ESRCH 当「旧进程已退出」，EPERM 继续等');
   ok(updater.includes('installDir: dirname(process.execPath)'), '控制器把安装目录写进 job');
   ok(updater.includes('lockTimeoutMs: 60_000') && updater.includes('processWaitMs: 20_000'), 'job 显式带 60 秒锁预算与 20 秒进程等待');
+  ok(updater.includes('createElapsed') && updater.includes('jobAt: new Date().toISOString()'), '主进程用单调时钟量 precheck，并把 job 写出时刻传给 helper');
+  ok(updater.includes('precheckMs: roundMs(elapsed())'), 'job 里带主进程准备阶段耗时');
+
+  // 计时口径：时长只认单调时钟，helper 里不允许用 Date.now 算时长
+  ok(!helperSrc.includes('Date.now('), 'helper 不用 Date.now（墙钟只用于 ISO 时间戳）');
+  ok(helperSrc.includes('__OPC_SWAP_HOOKS__'), 'helper 提供可注入钩子（生产路径不设置该全局）');
+  ok(helperSrc.includes('performance.now') && helperSrc.includes('process.hrtime.bigint'), '生产路径用单调时钟（performance.now / hrtime）');
+  ok(helperSrc.includes("stage: '等进程退出'") && helperSrc.includes("stage: '抢锁'"), 'trace 分阶段记录「等进程退出」与「抢锁」');
+  ok(helperSrc.includes('lockWait') && helperSrc.includes('processWait') && helperSrc.includes('parentWait'), 'trace 覆盖父进程 / 安装目录 / 抢锁三段');
+  ok(helperSrc.includes('samples') && helperSrc.includes('MAX_SAMPLES') && helperSrc.includes('attempts'), '每次重试落采样并记 attempts');
+  ok(helperSrc.includes('budgetSec(') && helperSrc.includes('已等待 '), '失败文案把实测经过与预算分开写');
+  ok(helperSrc.includes('truncated'), 'marker 过大时截断而不是写坏');
 }
 
 async function main(): Promise<void> {
@@ -457,6 +801,14 @@ async function main(): Promise<void> {
   await scenarioG();
   await scenarioH();
   await scenarioI();
+  const fakeT0 = Date.now();
+  await scenarioJ1();
+  await scenarioJ2();
+  await scenarioJ3();
+  await scenarioJ4();
+  await scenarioJ5();
+  await scenarioJ6();
+  console.log(`\n[J] 假时钟六例总耗时 ${Date.now() - fakeT0}ms（全部走注入时钟，未真等）`);
   scenarioE();
   scenarioF();
   console.log(`\n结果：${pass} 通过，${fail} 失败`);

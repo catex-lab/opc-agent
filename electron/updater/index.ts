@@ -51,6 +51,7 @@ import {
 } from './config.js';
 import { clearApplyArtifacts, sweepStagedFiles } from './apply-artifacts.js';
 import { decideBootOutcome, isDismissableError } from './boot-outcome.js';
+import { createElapsed, roundMs } from './clock.js';
 import { SWAP_HELPER_SOURCE } from './swap-helper-source.js';
 
 /** 下载/暂存目录：系统 temp，绝不写进 data/ */
@@ -101,6 +102,8 @@ interface ApplyMarker {
   version?: string;
   error?: string;
   at?: string;
+  /** 分阶段耗时 / 重试采样；helper 写入，主进程只读不写 */
+  trace?: unknown;
 }
 
 class UpdateFailed extends Error {
@@ -575,6 +578,8 @@ class UpdateController {
    * 能看到一串英文。任何读不出来 / 对不上都得转成一句中文 + 可重试状态。
    */
   async quitAndInstall(): Promise<{ ok: boolean; error?: string }> {
+    // 单调时钟：只用来量「交接前的准备工作花了多久」，墙钟只进 ISO 时间戳
+    const elapsed = createElapsed();
     if (!this.state.supported) return { ok: false, error: '当前不是打包版，不能替换 app.asar' };
     if (this.state.phase !== 'ready' || !this.pending) {
       return { ok: false, error: '没有已下载好的更新' };
@@ -628,6 +633,9 @@ class UpdateController {
           installDir: dirname(process.execPath),
           // 更新起点：早于这个时间启动的本目录进程 = 我们的残留，超时后可定向结束
           startedAt: new Date().toISOString(),
+          // job 写出时刻与主进程准备阶段耗时（helper 的 trace 从这里开始算总耗时）
+          jobAt: new Date().toISOString(),
+          precheckMs: roundMs(elapsed()),
           healthTimeoutMs: HEALTH_TIMEOUT_MS,
           lockTimeoutMs: 60_000,
           processWaitMs: 20_000,
