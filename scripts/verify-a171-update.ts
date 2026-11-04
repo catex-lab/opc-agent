@@ -616,6 +616,30 @@ ok(
   /\.tc-update-notes-scrim\s*\{[^}]*position:\s*fixed[^}]*inset:\s*0/.test(css),
   '弹层外有一层覆盖全屏的关闭载体'
 );
+/* 2026-11-04（用户确认）：深色加极淡遮罩，浅色不加。
+   颜色必须走令牌（.tc-about 不改 hex），并且只允许出现在 :root.dark 分叉里；
+   数值钉在 0.10–0.15 —— 超出这个区间就不再是「极淡」，浅色下则必须完全没有。 */
+ok(
+  /\.tc-update-notes-scrim\s*\{[^}]*background-color:\s*var\(--tc-scrim-color\)/.test(css),
+  '遮罩底色走主题令牌（不写死在选择器里）'
+);
+ok(
+  /:root\s*\{[\s\S]*?--tc-scrim-color:\s*transparent/.test(css),
+  '浅色主题没有遮罩（保持轻量感）'
+);
+{
+  const m = /:root\.dark\s*\{[\s\S]*?--tc-scrim-color:\s*rgb\(0\s+0\s+0\s*\/\s*([0-9.]+)%\)/.exec(css);
+  const alpha = m ? parseFloat(m[1]) / 100 : null;
+  ok(
+    alpha !== null && alpha >= 0.1 && alpha <= 0.15,
+    '深色遮罩是 0.10–0.15 的极淡黑',
+    alpha === null ? '没找到 rgb(0 0 0 / N%) 令牌' : `${alpha}`
+  );
+}
+ok(
+  !/\.tc-update-notes-scrim\s*\{[^}]*#[0-9a-fA-F]{3,8}/.test(css),
+  '遮罩没有硬编码十六进制色值'
+);
 ok(
   /\.tc-about-privacy-cards\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/.test(css),
   '隐私三卡在同一行铺开（三列网格）'

@@ -1523,6 +1523,12 @@ h4 {
      而它不占任何布局空间，只是两条 inset 线。 */
   --tc-dialog-edge-top: rgba(255, 255, 255, 0.9);
   --tc-dialog-edge-bottom: rgba(0, 0, 0, 0.06);
+
+  /* 2026-11-04：更新说明弹层的遮罩底色。
+     浅色保持零遮罩（对话框自带四层投影，已足够读出层级）；
+     深色下投影在暗背景上会被吃掉，补一层极淡的 12% 黑把背景压下去。
+     掩码色走令牌而不是写进 .tc-update-notes-scrim，深浅两套只在这里分叉。 */
+  --tc-scrim-color: transparent;
 }
 
 :root.dark {
@@ -1551,6 +1557,10 @@ h4 {
     0 32px 64px -24px rgba(0, 0, 0, 0.4);
   --tc-dialog-edge-top: rgba(255, 255, 255, 0.1);
   --tc-dialog-edge-bottom: rgba(0, 0, 0, 0.3);
+
+  /* 深色：12% 黑。再深就不是「极淡」了 —— 会像一块独立应用的模态遮罩，
+     而这层只是把设置弹窗背景往后退半档，别压过弹层本身。 */
+  --tc-scrim-color: rgb(0 0 0 / 12%);
 }
 
 /* 用法：把原位上的 `backgroundColor: var(--*-container)` + `border` 内联样式
@@ -5475,6 +5485,8 @@ html[data-opc-glass='1'] t-chat-sender {
   position: fixed;
   inset: 0;
   z-index: 1000;
+  /* 底色由主题令牌决定：浅色 transparent、深色 12% 黑 */
+  background-color: var(--tc-scrim-color);
 }
 
 .tc-update-notes-dialog {

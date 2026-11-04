@@ -60,6 +60,17 @@ function ok(cond, label, detail) {
   }
 }
 
+/** 从计算色里取 alpha：`transparent` → 0，`rgb(...)` → 1，`rgba(...)` → 第 4 位 */
+function colorAlpha(color) {
+  if (!color) return null;
+  if (color === 'transparent') return 0;
+  const m = /rgba?\(([^)]+)\)/.exec(color);
+  if (!m) return null;
+  const parts = m[1].split(',').map(s => s.trim());
+  const a = parts.length === 4 ? parseFloat(parts[3]) : 1;
+  return Number.isFinite(a) ? a : null;
+}
+
 /**
  * 记忆面板塞 6 条技能。
  *
@@ -491,6 +502,7 @@ console.log('\n[4] 关于页三段式：版本条单行、说明进弹层、隐�
     const notes = dlg.querySelector('[data-update-notes]');
     const text = dlg.innerText;
     const active = document.activeElement;
+    const overlay = document.querySelector('[data-update-notes-overlay]');
     return {
       width: Math.round(r.width),
       height: Math.round(r.height),
@@ -500,12 +512,18 @@ console.log('\n[4] 关于页三段式：版本条单行、说明进弹层、隐�
       notesText: notes ? notes.innerText : '',
       notesWidth: notes ? { sw: notes.scrollWidth, cw: notes.clientWidth } : null,
       focusInside: !!active && dlg.contains(active),
+      overlayBg: overlay ? getComputedStyle(overlay).backgroundColor : null,
     };
   });
   ok(opened !== null, '点「查看更新内容」打开弹层');
   ok(opened && Math.abs(opened.width - 480) <= 2, '弹层宽约 480px', `实测 ${opened?.width}px`);
   ok(opened && opened.height <= 560, '弹层高度封顶（可在内部滚动）', `实测 ${opened?.height}px`);
   ok(opened && opened.inBody && !opened.insideSettings, '弹层 portal 到 body（不参与设置页排版）');
+  ok(
+    opened && colorAlpha(opened.overlayBg) === 0,
+    '浅色主题不给遮罩（保持轻量感）',
+    opened?.overlayBg
+  );
   ok(opened && opened.focusInside, '打开后焦点进入弹层');
   ok(
     opened && opened.notesText.includes('升级失败的红字不再常驻'),
@@ -593,6 +611,26 @@ console.log('\n[4] 关于页三段式：版本条单行、说明进弹层、隐�
     darkCard.bodyColor !== null && darkCard.bodyColor !== privacy.bodyColors[0],
     '隐私卡正文颜色随主题变化',
     `浅 ${privacy.bodyColors[0]} / 深 ${darkCard.bodyColor}`
+  );
+
+  /* ── 深色遮罩：存在且极淡，点遮罩能关 ── */
+  await dark.page.locator('[data-update-notes-toggle]').click();
+  await dark.page.waitForTimeout(250);
+  const darkScrim = await dark.page.evaluate(() => {
+    const overlay = document.querySelector('[data-update-notes-overlay]');
+    return overlay ? getComputedStyle(overlay).backgroundColor : null;
+  });
+  const darkAlpha = colorAlpha(darkScrim);
+  ok(
+    darkAlpha !== null && darkAlpha >= 0.1 && darkAlpha <= 0.15,
+    '深色主题有 0.10–0.15 的极淡遮罩',
+    darkScrim
+  );
+  await dark.page.locator('[data-update-notes-overlay]').click({ position: { x: 20, y: 20 } });
+  await dark.page.waitForTimeout(200);
+  ok(
+    await dark.page.locator('[data-update-notes-dialog]').count() === 0,
+    '深色下点遮罩同样关闭弹层'
   );
   await dark.ctx.close();
   await ctx.close();
