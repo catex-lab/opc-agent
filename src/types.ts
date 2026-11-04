@@ -823,14 +823,16 @@ export function agentStatusViewOf(agent: {
   status: { availability: AgentAvailability; probeState?: AgentStatus['probeState'] };
 }): { key: string; label: string; color: string; dot: string } {
   const { availability, probeState } = agent.status;
+  // 配色直接借用既有档位（warn / danger），不在这里再写一份 hex：
+  // 状态词换了、颜色语义没换，圆点与标签自然保持同一套令牌。
   if (probeState === 'timeout') {
-    return { key: 'probe-timeout', label: '探测超时', color: 'var(--tc-status-warn)', dot: '#ED7B2F' };
+    return { ...AVAILABILITY_META['needs-auth'], key: 'probe-timeout', label: '探测超时' };
   }
   if (probeState === 'credential-invalid') {
-    return { key: 'credential-invalid', label: '凭据无效', color: 'var(--tc-status-danger)', dot: '#E34D59' };
+    return { ...AVAILABILITY_META['needs-setup'], key: 'credential-invalid', label: '凭据无效' };
   }
   if (probeState === 'probe-failed') {
-    return { key: 'probe-failed', label: '探测失败', color: 'var(--tc-status-danger)', dot: '#E34D59' };
+    return { ...AVAILABILITY_META['needs-setup'], key: 'probe-failed', label: '探测失败' };
   }
 
   const base = AVAILABILITY_META[availability];
