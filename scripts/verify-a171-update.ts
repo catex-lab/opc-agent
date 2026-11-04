@@ -544,15 +544,96 @@ ok(cardSrc.includes('parseUpdateNotes') && cardSrc.includes('data-update-notes')
 ok(!cardSrc.includes('className="tc-update-notes">{release.notes}'), '旧的 `<p>{release.notes}</p>` 已移除');
 
 const css = read('src/index.css');
+/* 2026-11-04：说明正文从更新区挪进弹层，限高责任也一起转移。
+   原期望：`.tc-update-notes` 自身带 `max-height`，在 700px 卡片内滚动。
+   新期望：`.tc-update-notes` 只需可滚动；高度由 `.tc-update-notes-dialog`
+   （480px 宽、≤70vh）约束 —— 下面单独钉住弹层尺寸，避免放宽成「什么都不查」。 */
 ok(
-  /\.tc-update-notes\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/.test(css),
-  '说明区限高并在 700px 卡片内滚动',
-  '缺 max-height / overflow-y'
+  /\.tc-update-notes\s*\{[^}]*overflow-y:\s*auto/.test(css),
+  '说明正文自身可滚动（容器高度交给弹层）',
+  '缺 overflow-y'
 );
 ok(
   !/\.tc-update-notes\s*\{[^}]*white-space:\s*pre-wrap/.test(css),
   '不再用 pre-wrap 原样输出 Markdown'
 );
+
+/* ══════════════ 关于页三段式布局（源码级） ══════════════ */
+
+section('关于页三段式布局（版本条 / 更新区 / 隐私三卡）');
+
+const aboutSrc = read('src/components/AboutPanel.tsx');
+
+ok(aboutSrc.includes('data-about-version-line'), '版本块有 data-about-version-line 锚点（DOM 高度断言的落点）');
+ok(
+  /<span className="tc-about-name">[\s\S]{0,160}?<span className="tc-about-ver">[\s\S]{0,160}?<span className="tc-about-build"/.test(aboutSrc),
+  '名称、版本、运行时在同一个 flex 行内（不再「另起一行靠右」）',
+  '结构不匹配'
+);
+ok(!aboutSrc.includes('tc-about-tagline'), '定位句已移出版本块（保证单行）');
+ok(
+  aboutSrc.includes('Electron ${info.electron}') && aboutSrc.includes('Node ${info.node}') && aboutSrc.includes('${info.platform} ${info.arch}'),
+  '运行时信息包含 Electron / Node / 平台与架构'
+);
+ok(aboutSrc.includes("appInfo?.().then"), '版本仍取自 app.getVersion() 的桥（不改口径）');
+
+const privacyEntries = aboutSrc.slice(aboutSrc.indexOf('const PRIVACY = ['));
+ok(
+  aboutSrc.includes('{PRIVACY.map(') &&
+    (aboutSrc.match(/data-about-privacy-card/g) ?? []).length === 1 &&
+    ['不收集任何信息', '只会发给你自己配置的模型服务商', '永久免费且无广告'].every(t => privacyEntries.includes(t)),
+  '隐私区由 PRIVACY 三条常量渲染成三张条目卡（同一个模板，不手写三份）'
+);
+for (const title of ['不收集任何信息', '只会发给你自己配置的模型服务商', '永久免费且无广告']) {
+  ok(aboutSrc.includes(title), `合规文案命中：${title}`);
+}
+ok(!aboutSrc.includes('InfoHint'), '关于页没有引入 InfoHint（合规文案不得收进 ⓘ）');
+ok(
+  aboutSrc.includes('tc-about-privacy-card-title') && aboutSrc.includes('tc-about-privacy-card-body'),
+  '每张卡是「一行标题 + 一句说明」'
+);
+
+ok(cardSrc.includes('data-update-notes-toggle'), '更新区有「查看更新内容」入口');
+ok(
+  cardSrc.includes('data-update-notes-dialog') && cardSrc.includes('createPortal'),
+  '说明正文在 portal 弹层内，不参与更新区版式'
+);
+ok(cardSrc.includes('aria-modal="true"') && cardSrc.includes('data-update-notes-overlay'), '弹层有 modal 语义与外层关闭载体');
+ok(/e\.key === 'Escape'/.test(cardSrc) && cardSrc.includes('e.target === e.currentTarget'), 'Esc 与点外都能关闭');
+ok(cardSrc.includes('previous?.focus()'), '关闭后焦点还原到触发器');
+ok(
+  !cardSrc.includes('<UpdateNotes markdown={release.notes} />'),
+  'available 态不再把说明正文直接铺在更新区',
+  '仍存在内联正文'
+);
+
+ok(
+  /\.tc-update-notes-dialog\s*\{[^}]*width:\s*480px[^}]*max-height:\s*min\(70vh,\s*560px\)/.test(css),
+  '说明弹层宽 480px、高 ≤ 70vh',
+  '缺弹层尺寸'
+);
+ok(
+  /\.tc-update-notes-scrim\s*\{[^}]*position:\s*fixed[^}]*inset:\s*0/.test(css),
+  '弹层外有一层覆盖全屏的关闭载体'
+);
+ok(
+  /\.tc-about-privacy-cards\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/.test(css),
+  '隐私三卡在同一行铺开（三列网格）'
+);
+ok(
+  css.includes('@media (max-width: 760px)') && /\.tc-about-privacy-cards\s*\{[^}]*minmax\(0,\s*1fr\)/.test(css.split('@media (max-width: 760px)')[1] ?? ''),
+  '窄屏落成单列，避免横向溢出'
+);
+ok(
+  /\.tc-about-privacy-card\s*\{[^}]*background-color:\s*var\(--td-bg-color-component\)/.test(css),
+  '隐私卡配色走主题令牌（随浅深主题变化）'
+);
+ok(!/\.tc-about-privacy-card[^}]*#[0-9a-fA-F]{3,8}/.test(css), '隐私卡没有硬编码十六进制色值');
+ok(
+  /\.tc-about-build\s*\{[^}]*color:\s*var\(--td-text-color-placeholder\)/.test(css),
+  '运行时信息用次级字色（不抢名称与版本）'
+);
+
 
 /* ══════════════ 真实密钥联调 ══════════════ */
 

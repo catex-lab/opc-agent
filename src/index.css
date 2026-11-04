@@ -4880,22 +4880,11 @@ html[data-opc-glass='1'] t-chat-sender {
    不往外扩散，也不会和设置页其余分区的 Tailwind 工具类打架。
    ===================================================================== */
 
-/* ── 顶部身份条 ───────────────────────────────────────────────────── */
+/* ── 顶部版本条（单行）：图标 + 名称 + 版本 + 运行时 ───────────────── */
 .tc-about-topbar {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.tc-about-topbar-id {
-  display: flex;
   align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.tc-about-topbar-text {
+  gap: 10px;
   min-width: 0;
 }
 
@@ -4927,12 +4916,6 @@ html[data-opc-glass='1'] t-chat-sender {
   height: 100%;
 }
 
-.tc-about-name-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .tc-about-name {
   font-size: 16px;
   font-weight: 600;
@@ -4951,21 +4934,15 @@ html[data-opc-glass='1'] t-chat-sender {
   letter-spacing: 0.01em;
 }
 
-.tc-about-tagline {
-  margin-top: 3px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--td-text-color-secondary);
-}
-
+/* 运行时信息：与名称/版本同一行，但降到次级字色，不抢主信息 */
 .tc-about-build {
-  flex: none;
-  padding-top: 2px;
+  min-width: 0;
   font-size: 11px;
   letter-spacing: 0.01em;
   color: var(--td-text-color-placeholder);
-  text-align: right;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── 分区：眉标 + 发丝线 ─────────────────────────────────────────── */
@@ -4990,87 +4967,45 @@ html[data-opc-glass='1'] t-chat-sender {
   height: 12px;
 }
 
-/* 陈述句：这一页最重要的一句话，字号仅次于应用名 */
-.tc-about-statement {
-  margin-top: 10px;
-  font-size: 19px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--td-text-color-primary);
+/* ── 隐私三卡：一行标题 + 一句说明，始终可见 ──────────────────────
+   用户确认（2026-11-04）：合规文案不做 ⓘ、不做折叠；三卡在同一行铺开，
+   窄屏（<760px）自动落成单列，避免横向溢出。 */
+.tc-about-privacy-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
 }
 
-/* ── 隐私三段式：小标题 + 内容，行间只有发丝线 ──────────────────── */
-.tc-about-blocks {
-  margin-top: 14px;
+@media (max-width: 760px) {
+  .tc-about-privacy-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
-.tc-about-block {
-  padding: 12px 0;
-  border-top: 1px solid var(--tc-edge);
+.tc-about-privacy-card {
+  min-width: 0;
+  padding: 11px 13px;
+  border: 1px solid var(--tc-edge);
+  border-radius: 10px;
+  background-color: var(--td-bg-color-component);
 }
 
-.tc-about-block:first-child {
-  padding-top: 4px;
-  border-top: 0;
-}
-
-.tc-about-block-label {
-  margin: 0 0 6px;
+.tc-about-privacy-card-title {
+  margin: 0 0 4px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--td-text-color-secondary);
+  line-height: 1.4;
+  color: var(--td-text-color-primary);
+  overflow-wrap: anywhere;
 }
 
-.tc-about-block-body {
+.tc-about-privacy-card-body {
   margin: 0;
-  font-size: 12.5px;
-  line-height: 1.7;
-  color: var(--td-text-color-primary);
-}
-
-.tc-about-block-body strong {
-  font-weight: 500;
-}
-
-/* 次级说明：换行另起，不与主句挤在同一段 */
-.tc-about-dim {
-  display: block;
-  margin-top: 5px;
-  color: var(--td-text-color-placeholder);
-}
-
-.tc-about-block-body.tc-about-dim {
-  color: var(--td-text-color-placeholder);
-}
-
-.tc-about-keep {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  /* 与 `.tc-about-block-body` 同档（12.5px / 1.7）。原来这里不写字号，
-     继承到的是页面默认正文（14px）—— 同一段隐私说明里，勾选清单比它
-     下面的解释文字大一号，读起来像两个层级。清单是正文的一部分，
-     不该比正文更响。 */
-  font-size: 12.5px;
-  line-height: 1.7;
-  color: var(--td-text-color-primary);
-}
-
-.tc-about-keep li {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-}
-
-.tc-about-keep svg {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  margin-top: 4px;
-  /* 语义色只在这里用一次：勾选＝「确实留在本机」。
-     其余图标一律 secondary / placeholder，不做彩色装饰。 */
-  color: var(--td-success-color);
-  opacity: 0.85;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--td-text-color-secondary);
+  overflow-wrap: anywhere;
 }
 
 /* ── 点星引导卡 ──────────────────────────────────────────────────── */
@@ -5517,6 +5452,87 @@ html[data-opc-glass='1'] t-chat-sender {
 
 .tc-update-notes strong {
   color: var(--td-text-color-primary);
+}
+
+/* ── 更新说明入口与弹层 ──────────────────────────────────────────
+   用户确认（2026-11-04）：说明正文不再铺在更新区，收进 480px 滚动弹层。
+   弹层 portal 到 body，Esc / 点外关闭（逻辑在 UpdateCard 的 UpdateNotesDialog）。 */
+.tc-update-notes-toggle {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: var(--text-secondary);
+  color: var(--td-brand-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.tc-update-notes-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.tc-update-notes-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  max-height: min(70vh, 560px);
+  padding: 14px 16px 16px;
+  border: 1px solid var(--tc-edge-strong);
+  border-radius: 12px;
+  background-color: var(--tc-surface-raised);
+  box-shadow: var(--shadow-popup);
+  overflow: hidden;
+}
+
+.tc-update-notes-dialog-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.tc-update-notes-dialog-title {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+}
+
+.tc-update-notes-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+}
+
+.tc-update-notes-close:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+/* 弹层内部负责滚动：整块高度由 dialog 的 70vh 上限兜住 */
+.tc-update-notes-dialog .tc-update-notes {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
 }
 
 .tc-update-note {

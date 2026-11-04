@@ -17,8 +17,9 @@
  * 浏览器开发态没有 preload 桥，整块降级成「仅在桌面版可用」，
  * 不渲染任何假状态。
  */
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AlertCircle, Check, Download, RefreshCw, RotateCcw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { AlertCircle, Check, Download, RefreshCw, RotateCcw, X } from 'lucide-react';
 import type { UpdateState } from '../../shared/update';
 import { UPDATE_RELEASES_PAGE } from '../../shared/update';
 import { InfoHint } from './InfoHint';
@@ -68,6 +69,83 @@ function UpdateNotes({ markdown }: { markdown: string }) {
   );
 }
 
+/**
+ * 更新内容弹层。
+ *
+ * 2026-11-04（用户确认）：Release 说明默认**不再铺在更新区**——它曾经能占
+ * 大半屏，把版本与更新动作挤到一边。现在收进「查看更新内容」入口，点开
+ * 才是约 480px 宽的滚动弹层。关闭口径与 InfoHint/设置弹层一致：
+ * portal 到 body、Esc 关闭、点外关闭、打开时焦点进弹层、关闭后还原到触发器。
+ */
+function UpdateNotesDialog({
+  markdown,
+  onClose,
+}: {
+  markdown: string;
+  onClose: () => void;
+}) {
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // 捕获阶段拦下：设置弹层也监听 Esc，不拦住会连设置一起关掉。
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      if (e.key === 'Tab') {
+        // 只读弹层只有一个可聚焦控件，Tab 不把焦点漏到背景。
+        e.preventDefault();
+        closeRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      previous?.focus();
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="tc-update-notes-scrim"
+      data-update-notes-overlay
+      onMouseDown={e => {
+        e.stopPropagation();
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="更新内容"
+        className="tc-update-notes-dialog"
+        data-update-notes-dialog
+      >
+        <div className="tc-update-notes-dialog-head">
+          <span className="tc-update-notes-dialog-title">更新内容</span>
+          <button
+            ref={closeRef}
+            type="button"
+            className="tc-update-notes-close"
+            aria-label="关闭更新内容"
+            onClick={onClose}
+            data-update-notes-close
+          >
+            <X size={16} strokeWidth={1.5} />
+          </button>
+        </div>
+        <UpdateNotes markdown={markdown} />
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 interface UpdateBridge {
   update?: {
     getState: () => Promise<UpdateState>;
@@ -110,6 +188,9 @@ export function UpdateCard() {
   const [state, setState] = useState<UpdateState>(INITIAL);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 「查看更新内容」弹层：默认关闭，说明正文因此不占版面 */
+  const [notesOpen, setNotesOpen] = useState(false);
+  const closeNotes = useCallback(() => setNotesOpen(false), []);
 
   useEffect(() => {
     if (!api) return;
@@ -249,7 +330,16 @@ export function UpdateCard() {
                       : `代码层 ${formatSize(release.size)}`}
                   </span>
                 </div>
-                {release.notes ? <UpdateNotes markdown={release.notes} /> : null}
+                {release.notes ? (
+                  <button
+                    type="button"
+                    className="tc-update-notes-toggle"
+                    onClick={() => setNotesOpen(true)}
+                    data-update-notes-toggle
+                  >
+                    查看更新内容
+                  </button>
+                ) : null}
                 {release.requiresFull ? (
                   <div className="tc-update-incompatible">
                     <p className="tc-update-note">
@@ -359,6 +449,11 @@ export function UpdateCard() {
           </p>
         </>
       )}
+
+      {/* 说明正文只在弹层里出现；portal 到 body，不参与这块的版式 */}
+      {notesOpen && release?.notes ? (
+        <UpdateNotesDialog markdown={release.notes} onClose={closeNotes} />
+      ) : null}
     </div>
   );
 }

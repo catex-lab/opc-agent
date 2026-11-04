@@ -455,22 +455,32 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
   ok(!/服务商\s+，/.test(body), '标点没有被 JSX 换行折叠出的空格顶开');
   ok(/只存在本机/.test(body), '给「数据在哪」一个明确答案');
 
-  /* 勾选清单与解释正文必须同一档字号（12.5px）。
-     原来 `.tc-about-keep` 没写字号、继承了页面默认正文 14px，
-     同一段说明里清单比它下面的解释大一号 —— 用户看到的就是「这块字太大」。
-     判据取**两者的 computed 值相等**，而不是钉死 12.5：将来整体调档也不会误红。 */
+  /* 2026-11-04（用户确认）：隐私从「陈述句 + 三段块」改成三张条目卡。
+     原期望：`.tc-about-keep li` 与 `.tc-about-block-body` 同字号
+     （旧清单继承了 14px，比解释正文更响）。
+     新期望：三张卡的标题、正文**各自**同一档，且正文不大于标题 ——
+     结构换了，但「同一块说明里不许出现两个层级」的判据原样保留。 */
   const typeScale = await page.evaluate(() => {
-    const pick = (sel) => {
-      const el = document.querySelector(sel);
-      return el ? parseFloat(getComputedStyle(el).fontSize) : null;
+    const cards = [...document.querySelectorAll('[data-about-privacy-card]')];
+    const size = el => (el ? parseFloat(getComputedStyle(el).fontSize) : null);
+    return {
+      count: cards.length,
+      titles: cards.map(c => size(c.querySelector('.tc-about-privacy-card-title'))),
+      bodies: cards.map(c => size(c.querySelector('.tc-about-privacy-card-body'))),
     };
-    return { keep: pick('.tc-about-keep li'), bodyText: pick('.tc-about-block-body') };
   });
-  ok(typeScale.keep !== null && typeScale.bodyText !== null,
-    '字号取样点都在（清单 + 解释正文）', JSON.stringify(typeScale));
-  ok(typeScale.keep === typeScale.bodyText,
-    '★ 勾选清单与解释正文同字号（清单不比正文更响）',
-    `清单 ${typeScale.keep}px / 正文 ${typeScale.bodyText}px`);
+  ok(typeScale.count === 3, '隐私三卡都在（字号取样点存在）', `实测 ${typeScale.count} 张`);
+  ok(
+    typeScale.titles.every(s => s !== null && s === typeScale.titles[0]) &&
+      typeScale.bodies.every(s => s !== null && s === typeScale.bodies[0]),
+    '三张卡的标题与正文各自同一档字号',
+    `标题 ${typeScale.titles.join('/')} / 正文 ${typeScale.bodies.join('/')}`
+  );
+  ok(
+    typeScale.bodies.every((b, i) => b !== null && typeScale.titles[i] !== null && b <= typeScale.titles[i] + 0.5),
+    '★ 卡内只有一个层级：正文不大于标题',
+    `标题 ${typeScale.titles.join('/')} / 正文 ${typeScale.bodies.join('/')}`
+  );
 
   // 入口：href 必须是真地址，不能是占位
   const links = await page.locator('[data-about-link]').evaluateAll(els => els.map(el => ({

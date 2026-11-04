@@ -44,7 +44,6 @@ import {
   Github,
   Star,
   ShieldCheck,
-  Check,
   MessageSquare,
   ChevronRight,
   ChevronDown,
@@ -75,16 +74,25 @@ function bridge(): AboutBridge | undefined {
 }
 
 /**
- * 「只存在本机」的清单。
+ * 隐私声明的三条合规文案。
  *
- * 刻意具体到目录/字段级 —— 「你的数据是安全的」这种话等于没说，
- * 用户真正想知道的是「我删掉哪个文件夹就等于删干净了」。
+ * 用户确认（2026-11-04）：这三条必须**始终可见**，每张卡一行标题 + 一句说明；
+ * 不许收进 ⓘ 图标，也不许折叠成可展开区 —— 它们是这一页的合规底线。
+ * 标题与正文都保持一句话，避免把「不收集」说成一段需要读完的长文。
  */
-const LOCAL_ONLY = [
-  '会话记录与全部消息历史（data/chat.db）',
-  '生成的图片缓存（data/images/）',
-  'Agent 配置、模型厂商与凭据',
-  '工作区路径、偏好设置与界面状态',
+const PRIVACY = [
+  {
+    title: '不收集任何信息',
+    body: '没有遥测、埋点、崩溃上报，也没有安装 ID；全部数据只存在本机。',
+  },
+  {
+    title: '只会发给你自己配置的模型服务商',
+    body: '只有你发消息时的对话内容会离开本机，不经过任何中转服务器。',
+  },
+  {
+    title: '永久免费且无广告',
+    body: '不收费、不投放广告，也没有付费墙；点星是唯一的外部支持入口。',
+  },
 ];
 
 /**
@@ -161,24 +169,17 @@ export default function AboutPanel() {
 
   return (
     <div>
-      {/* ── 顶部身份条 ────────────────────────────────────────────
-          退化成一条左对齐的细条：小 logo + 名称 + 版本 + 一句话定位，
-          右侧是构建信息。不再居中、不再有大留白 —— 与下方各分区共用
-          同一套左对齐节奏，整页读起来像一份文档而不是六个同级面板。 */}
-      <header className="tc-about-topbar">
-        <div className="tc-about-topbar-id">
-          <div className="tc-about-tile tc-about-tile--sm">
-            <img src={appIcon} alt="" />
-          </div>
-          <div className="tc-about-topbar-text">
-            <div className="tc-about-name-row">
-              <span className="tc-about-name">{info?.name || 'OPC Agent'}</span>
-              <span className="tc-about-ver">v{info?.version || '—'}</span>
-            </div>
-            <p className="tc-about-tagline">把本机的各种 Agent，当作通讯录里的联系人。</p>
-          </div>
+      {/* ── 顶部版本条（单行）────────────────────────────────────
+          用户确认（2026-11-04）：整块压成一行 —— 名称与版本为主色，
+          Electron / Node / 平台走次级字色，图标保留。原来「名称一行、
+          定位句一行、构建信息另起一行靠右」的三行头会把更新区挤下去。 */}
+      <header className="tc-about-topbar" data-about-version-line>
+        <div className="tc-about-tile tc-about-tile--sm">
+          <img src={appIcon} alt="" />
         </div>
-        <p className="tc-about-build">{buildLine}</p>
+        <span className="tc-about-name">{info?.name || 'OPC Agent'}</span>
+        <span className="tc-about-ver">v{info?.version || '—'}</span>
+        <span className="tc-about-build" data-about-runtime>{buildLine}</span>
       </header>
 
       {/* ── 更新 ──────────────────────────────────────────────────
@@ -186,54 +187,21 @@ export default function AboutPanel() {
           检查/下载/重启的状态机与主进程一致（见 UpdateCard 顶部说明）。 */}
       <UpdateCard />
 
-      {/* ── 隐私：陈述句 + 三段式 ─────────────────────────────────
-          废掉 dt/dd 对账表：三段（只存在本机 / 离开本机 / 第三方 Agent）
-          都用同一种「小标题 + 内容」的块结构，与入口、许可两区的卡片
-          节奏一致。 */}
+      {/* ── 隐私：三张常驻条目卡 ──────────────────────────────────
+          用户确认（2026-11-04）：合规文案必须一眼可见，做成三张条目卡
+          （一行标题 + 一句说明），始终展开；不装进 ⓘ、不做页签、不加开关。 */}
       <div className="tc-about-zone" data-about-privacy>
         <div className="tc-about-eyebrow">
           <ShieldCheck />
           隐私
         </div>
-        <div className="tc-about-statement">不收集任何信息</div>
-
-        <div className="tc-about-blocks">
-          <section className="tc-about-block">
-            <h4 className="tc-about-block-label">只存在本机</h4>
-            <ul className="tc-about-keep">
-              {LOCAL_ONLY.map(item => (
-                <li key={item}>
-                  <Check />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="tc-about-block">
-            <h4 className="tc-about-block-label">离开本机</h4>
-            {/* 整句写成一行、不留换行：JSX 会把换行折叠成一个空格，
-                于是「发送给 你自己配置的模型服务商 ，这是功能本身」——
-                中文里凭空多出两格空白。标点必须紧贴相邻元素。 */}
-            <p className="tc-about-block-body">
-              只有你发消息时的对话内容，它会被发送给你<strong>自己配置的模型服务商</strong>，这是功能本身，不是收集。
-              <span className="tc-about-dim">
-                应用不经过任何中转服务器，也没有自建后端；你点开的外链交给系统浏览器打开。
-              </span>
-            </p>
-          </section>
-
-          {/* 2026-10-29：把「只存在本机」限定到本应用自身 —— 你接入的第三方 Agent
-              （腾讯 WorkBuddy、Anthropic Claude Code 等）是各自厂商的产品，
-              其自身行为（含各自的遥测/条款）不受本应用控制。
-              这句是必要的：应用自身零遥测（A141），但部分 Agent 的 CLI 自带
-              厂商侧的上报端点，不声明会被误解为「WorkBuddy 也不外发」。 */}
-          <section className="tc-about-block">
-            <h4 className="tc-about-block-label">第三方 Agent</h4>
-            <p className="tc-about-block-body tc-about-dim">
-              以上是本应用自身的承诺。你接入的第三方 Agent（如腾讯 WorkBuddy、Anthropic Claude Code 等）是各自厂商的产品，其自身行为不受本应用控制。
-            </p>
-          </section>
+        <div className="tc-about-privacy-cards">
+          {PRIVACY.map(item => (
+            <section className="tc-about-privacy-card" data-about-privacy-card key={item.title}>
+              <h4 className="tc-about-privacy-card-title">{item.title}</h4>
+              <p className="tc-about-privacy-card-body">{item.body}</p>
+            </section>
+          ))}
         </div>
       </div>
 

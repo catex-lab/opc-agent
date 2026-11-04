@@ -91,11 +91,86 @@ await new Promise(r => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}`;
 await mkdir(OUT, { recursive: true });
 
+/**
+ * 2026-11-04 追加：关于页三段式布局的 DOM 断言。
+ *
+ * 只测结构会漏掉「一页三段」真正的失败态 —— 版本条又变成三行、说明正文
+ * 又把更新区撑开、隐私卡被折叠。所以在同一份 700px 弹窗里量高度、量实际
+ * 占用、量弹层开合，并跑浅/深两套主题确认配色跟着令牌走。
+ *
+ * 更新区需要「有可用版本」态：浏览器开发态没有 preload，这里注入一个
+ * 最小的 `window.opc` 桥（只在本次 section 的 context 里），把状态固定成
+ * available，说明正文里刻意混入 `##`、`**` 与转义反斜杠。
+ */
+const NOTES_FIXTURE = [
+  '## 修复',
+  '',
+  '- **升级失败的红字不再常驻**',
+  '  卡片新增「忽略」入口，失败后自动清理残留',
+  '- 下载失败**不再**把上一次的错误盖掉',
+  '',
+  '### 说明',
+  '',
+  '转义写法 \\*\\*也应还原\\*\\*，行内 `code` 可读。',
+].join('\n');
+
+const ABOUT_FIXTURE = {
+  appInfo: {
+    name: 'OPC Agent',
+    version: '1.0.9',
+    electron: '44.7.2',
+    node: '22.20.0',
+    chrome: '144.0.0.0',
+    platform: 'win32',
+    arch: 'x64',
+  },
+  updateState: {
+    phase: 'available',
+    currentVersion: '1.0.8',
+    supported: true,
+    checkedAt: '2026-11-04T02:00:00.000Z',
+    release: { version: '1.0.9', notes: NOTES_FIXTURE, size: 2_100_000, requiresFull: false },
+  },
+};
+
+/**
+ * 更新区需要「有可用版本」态，但浏览器开发态没有 preload。
+ *
+ * 注意：**不能**用 addInitScript 在应用启动前塞 `window.opc` —— 主程序会据此
+ * 走桌面分支，`/settings` 反而不渲染。这里等设置弹窗起来之后再补桥，
+ * 「关于」分区是点击时才挂载，届时读到的就是这份固定状态。
+ */
+async function installUpdateBridge(page, fixture) {
+  await page.evaluate(f => {
+    const state = f.updateState;
+    window.opc = {
+      appInfo: async () => f.appInfo,
+      update: {
+        getState: async () => state,
+        check: async () => state,
+        download: async () => state,
+        quitAndInstall: async () => ({ ok: true }),
+        dismiss: async () => state,
+        onStateChange: () => () => {},
+      },
+    };
+  }, fixture);
+}
+
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 const errors = [];
 
-async function newPage(viewport) {
+async function newPage(viewport, opts = {}) {
   const ctx = await browser.newContext({ viewport });
+  if (opts.theme) {
+    await ctx.addInitScript(t => {
+      try {
+        localStorage.setItem('theme', t);
+      } catch {
+        /* 隐私模式下不可写，不因此放弃整轮 */
+      }
+    }, opts.theme);
+  }
   const page = await ctx.newPage();
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', e => errors.push(String(e)));
@@ -312,8 +387,219 @@ console.log('\n[3] 窗口比 700 矮时，退成铺满可用高度');
   await ctx.close();
 }
 
-// ============= [4] 控制台 =============
-console.log('\n[4] 控制台');
+// ============= [4] 关于页三段式：版本条单行 / 说明进弹层 / 隐私三卡 =============
+console.log('\n[4] 关于页三段式：版本条单行、说明进弹层、隐私三卡常驻');
+{
+  const viewport = { width: 1440, height: 900 };
+  const { ctx, page } = await newPage(viewport, { theme: 'light' });
+  await openSettings(page);
+  await installUpdateBridge(page, ABOUT_FIXTURE);
+  await page.locator('[data-settings-section="about"]').first().click();
+  await page.waitForTimeout(500);
+
+  /* ── 版本条：一行 + 运行时信息 ── */
+  const version = await page.evaluate(() => {
+    const el = document.querySelector('[data-about-version-line]');
+    if (!el) return null;
+    const build = el.querySelector('[data-about-runtime]');
+    const name = el.querySelector('.tc-about-name');
+    const size = n => (n ? parseFloat(getComputedStyle(n).fontSize) : null);
+    return {
+      height: Math.round(el.getBoundingClientRect().height),
+      text: el.innerText.replace(/\s+/g, ' ').trim(),
+      nameSize: size(name),
+      buildSize: size(build),
+      buildColor: build ? getComputedStyle(build).color : null,
+      nameColor: name ? getComputedStyle(name).color : null,
+    };
+  });
+  ok(version !== null, '版本块有 data-about-version-line 锚点');
+  ok(version && version.height <= 40, '版本块压成一行（高度 ≤ 40px）', `实测 ${version?.height}px`);
+  ok(
+    version && /Electron 44\.7\.2/.test(version.text) && /Node 22\.20\.0/.test(version.text) && /win32 x64/.test(version.text),
+    '单行里包含 Electron / Node / 平台架构',
+    version?.text
+  );
+  ok(
+    version && version.buildSize !== null && version.nameSize !== null && version.buildSize < version.nameSize,
+    '运行时信息是次级字号（不抢名称与版本）',
+    `运行时 ${version?.buildSize}px / 名称 ${version?.nameSize}px`
+  );
+  ok(
+    version && version.buildColor !== version.nameColor,
+    '运行时信息用次级字色（与名称不同色）',
+    `${version?.buildColor} vs ${version?.nameColor}`
+  );
+
+  /* ── 隐私三卡：常驻、文案命中、一行标题 ── */
+  const privacy = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('[data-about-privacy-card]')];
+    return {
+      count: cards.length,
+      titles: cards.map(c => (c.querySelector('.tc-about-privacy-card-title')?.innerText ?? '').trim()),
+      bodies: cards.map(c => (c.querySelector('.tc-about-privacy-card-body')?.innerText ?? '').trim()),
+      titleHeights: cards.map(c => Math.round((c.querySelector('.tc-about-privacy-card-title')?.getBoundingClientRect().height ?? 0))),
+      backgrounds: cards.map(c => getComputedStyle(c).backgroundColor),
+      bodyColors: cards.map(c => {
+        const body = c.querySelector('.tc-about-privacy-card-body');
+        return body ? getComputedStyle(body).color : null;
+      }),
+      visible: cards.every(c => c.getBoundingClientRect().width > 0 && c.getBoundingClientRect().height > 0),
+    };
+  });
+  ok(privacy.count === 3, '隐私区正好三张条目卡', `实测 ${privacy.count}`);
+  ok(privacy.visible, '三张卡默认可见（不折叠、不藏进 ⓘ）');
+  ok(
+    ['不收集任何信息', '只会发给你自己配置的模型服务商', '永久免费且无广告'].every(t => privacy.titles.includes(t)),
+    '三张卡标题命中合规文案',
+    privacy.titles.join(' / ')
+  );
+  ok(privacy.titleHeights.every(h => h > 0 && h <= 24), '每张卡标题都是一行', privacy.titleHeights.join(' / '));
+  ok(privacy.bodies.every(t => t.length > 0), '每张卡都有一句说明', privacy.bodies.map(t => t.length).join(' / '));
+
+  /* ── 更新区：available 态不铺开正文 ── */
+  const update = await page.evaluate(() => {
+    const section = document.querySelector('[data-update-section]');
+    const inline = document.querySelectorAll('[data-update-section] [data-update-notes]').length;
+    const toggle = document.querySelector('[data-update-notes-toggle]');
+    const brand = section?.querySelector('.tc-btn-brand');
+    return {
+      inline,
+      hasToggle: !!toggle,
+      toggleText: toggle ? toggle.innerText.trim() : '',
+      height: section ? Math.round(section.getBoundingClientRect().height) : null,
+      buttonHeight: brand ? Math.round(brand.getBoundingClientRect().height) : null,
+      buttonText: brand ? brand.innerText.trim() : '',
+    };
+  });
+  ok(update.inline === 0, 'available 态不把说明正文铺在更新区', `内联正文 ${update.inline} 块`);
+  ok(update.hasToggle && /查看更新内容/.test(update.toggleText), '「查看更新内容」入口存在', update.toggleText);
+  ok(update.height !== null && update.height <= 260, '更新区只留状态与动作（高度 ≤ 260px）', `实测 ${update.height}px`);
+  ok(
+    update.buttonHeight !== null && Math.abs(update.buttonHeight - 32) <= 1 && /下载更新/.test(update.buttonText),
+    '更新主按钮规格不变（高 32px）',
+    `高 ${update.buttonHeight}px / ${update.buttonText}`
+  );
+
+  /* ── 弹层：480px、portal、Markdown 渲染、Esc/点外关闭、焦点 ── */
+  await page.locator('[data-update-notes-toggle]').click();
+  await page.waitForTimeout(250);
+  const opened = await page.evaluate(() => {
+    const dlg = document.querySelector('[data-update-notes-dialog]');
+    if (!dlg) return null;
+    const r = dlg.getBoundingClientRect();
+    const notes = dlg.querySelector('[data-update-notes]');
+    const text = dlg.innerText;
+    const active = document.activeElement;
+    return {
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+      inBody: dlg.parentElement?.parentElement === document.body,
+      insideSettings: !!document.querySelector('[data-settings-modal] [data-update-notes-dialog]'),
+      text,
+      notesText: notes ? notes.innerText : '',
+      notesWidth: notes ? { sw: notes.scrollWidth, cw: notes.clientWidth } : null,
+      focusInside: !!active && dlg.contains(active),
+    };
+  });
+  ok(opened !== null, '点「查看更新内容」打开弹层');
+  ok(opened && Math.abs(opened.width - 480) <= 2, '弹层宽约 480px', `实测 ${opened?.width}px`);
+  ok(opened && opened.height <= 560, '弹层高度封顶（可在内部滚动）', `实测 ${opened?.height}px`);
+  ok(opened && opened.inBody && !opened.insideSettings, '弹层 portal 到 body（不参与设置页排版）');
+  ok(opened && opened.focusInside, '打开后焦点进入弹层');
+  ok(
+    opened && opened.notesText.includes('升级失败的红字不再常驻'),
+    '说明正文确实渲染出来',
+    opened?.notesText.slice(0, 40)
+  );
+  ok(
+    opened && !opened.text.includes('**') && !opened.text.includes('##') && !opened.text.includes('\\'),
+    '弹层里不再字面出现 `**` / `##` / 转义反斜杠',
+    opened?.text.slice(0, 60)
+  );
+  ok(
+    opened && opened.notesWidth && opened.notesWidth.sw <= opened.notesWidth.cw + 1,
+    '弹层正文无横向溢出',
+    JSON.stringify(opened?.notesWidth)
+  );
+
+  await page.screenshot({ path: join(OUT, 'about-notes-dialog.png') });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  ok(await page.locator('[data-update-notes-dialog]').count() === 0, 'Esc 关闭弹层');
+  ok(
+    await page.locator('[data-settings-modal]').count() > 0,
+    'Esc 只关弹层，不连带关掉设置弹窗',
+  );
+  const restored = await page.evaluate(() => {
+    const a = document.activeElement;
+    return !!a && a.getAttribute('data-update-notes-toggle') !== null;
+  });
+  ok(restored, '关闭后焦点回到「查看更新内容」入口');
+
+  // 点外关闭：重新打开后点左上角（弹层之外）
+  await page.locator('[data-update-notes-toggle]').click();
+  await page.waitForTimeout(200);
+  await page.mouse.click(20, 20);
+  await page.waitForTimeout(200);
+  ok(await page.locator('[data-update-notes-dialog]').count() === 0, '点弹层以外关闭');
+
+  /* ── 700px 容器：无横向溢出 ── */
+  const overflow = await page.evaluate(() => {
+    const inner = document.querySelector('[data-settings-modal] [data-settings-panel]');
+    const scroller = inner && inner.parentElement;
+    const line = document.querySelector('[data-about-version-line]');
+    const cards = document.querySelector('.tc-about-privacy-cards');
+    return {
+      scroller: scroller ? { sw: scroller.scrollWidth, cw: scroller.clientWidth, w: Math.round(scroller.getBoundingClientRect().width) } : null,
+      line: line ? { sw: line.scrollWidth, cw: line.clientWidth } : null,
+      cards: cards ? { sw: cards.scrollWidth, cw: cards.clientWidth } : null,
+      doc: { sw: document.documentElement.scrollWidth, iw: window.innerWidth },
+    };
+  });
+  ok(overflow.scroller !== null, '量到设置内容区');
+  ok(overflow.scroller && overflow.scroller.sw <= overflow.scroller.cw + 1, '内容区无横向溢出',
+    `${overflow.scroller?.sw}/${overflow.scroller?.cw}`);
+  ok(overflow.line && overflow.line.sw <= overflow.line.cw + 1, '版本条没有横向溢出',
+    `${overflow.line?.sw}/${overflow.line?.cw}`);
+  ok(overflow.cards && overflow.cards.sw <= overflow.cards.cw + 1, '三张隐私卡没有横向溢出',
+    `${overflow.cards?.sw}/${overflow.cards?.cw}`);
+  ok(overflow.doc.sw <= overflow.doc.iw, '页面整体没有横向滚动条', `${overflow.doc.sw}/${overflow.doc.iw}`);
+
+  await page.screenshot({ path: join(OUT, 'about-three-zones.png') });
+
+  /* ── 浅/深主题：配色必须跟着令牌变化 ── */
+  const dark = await newPage(viewport, { theme: 'dark' });
+  await openSettings(dark.page);
+  await installUpdateBridge(dark.page, ABOUT_FIXTURE);
+  await dark.page.locator('[data-settings-section="about"]').first().click();
+  await dark.page.waitForTimeout(500);
+  const darkCard = await dark.page.evaluate(() => {
+    const card = document.querySelector('[data-about-privacy-card]');
+    const body = card?.querySelector('.tc-about-privacy-card-body');
+    const line = document.querySelector('[data-about-version-line]');
+    return {
+      bg: card ? getComputedStyle(card).backgroundColor : null,
+      bodyColor: body ? getComputedStyle(body).color : null,
+      theme: line ? getComputedStyle(document.body).color : null,
+    };
+  });
+  ok(
+    darkCard.bg !== null && darkCard.bg !== privacy.backgrounds[0],
+    '隐私卡背景随浅/深主题变化',
+    `浅 ${privacy.backgrounds[0]} / 深 ${darkCard.bg}`
+  );
+  ok(
+    darkCard.bodyColor !== null && darkCard.bodyColor !== privacy.bodyColors[0],
+    '隐私卡正文颜色随主题变化',
+    `浅 ${privacy.bodyColors[0]} / 深 ${darkCard.bodyColor}`
+  );
+  await dark.ctx.close();
+  await ctx.close();
+}
+
+// ============= [5] 控制台 =============
+console.log('\n[5] 控制台');
 ok(errors.length === 0, '全程零控制台错误', errors.slice(0, 2).join(' | ') || '干净');
 
 await browser.close();
