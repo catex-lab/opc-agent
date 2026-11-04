@@ -2,8 +2,8 @@ import { useMemo } from 'react';
 import { ChatMarkdown } from '@tdesign-react/chat';
 import { useSmoothText } from '../hooks/useSmoothText';
 import { stripEmoji } from '../utils/plainText';
-import { planAnswer } from '../answer/renderPlan';
-import { AnswerCodeCard, AnswerEvidence, AnswerLinkCards } from './AnswerCards';
+import { chartOf, planAnswer } from '../answer/renderPlan';
+import { AnswerChartCard, AnswerCodeCard, AnswerEvidence, AnswerLinkCards, AnswerTableCard } from './AnswerCards';
 
 /**
  * 答案正文的 markdown 容器（方案 C：正文匀速揭示）。
@@ -21,10 +21,13 @@ import { AnswerCodeCard, AnswerEvidence, AnswerLinkCards } from './AnswerCards';
  * 永远显示不出来。`data-emoji-stripped` 是给闸门的钩子（有没有真的删过）。
  *
  * A174：内容分级渲染。`planAnswer()` 把正文切成 `md` / `links` /
- * `evidence` / `coderef` 四种片段，`md` 片段**照旧**交给 ChatMarkdown ——
- * 这里没有引入任何新的 markdown 解析器，只是在段落边界上把本来就自成一
- * 块的内容换成更紧凑的卡片。切分是纯函数，随揭示游标逐帧重算（代价是
- * O(字数)，与 Cherry 自己每帧重渲染相比可以忽略）。
+ * `evidence` / `table` / `coderef` 五种片段，`md` 片段**照旧**交给
+ * ChatMarkdown —— 这里没有引入任何新的 markdown 解析器，只是在段落边界上
+ * 把本来就自成一块的内容换成更紧凑的卡片。切分是纯函数，随揭示游标逐帧
+ * 重算（代价是 O(字数)，与 Cherry 自己每帧重渲染相比可以忽略）。
+ *
+ * 表格只有「两列标签+数值、≥3 行、全非负」时才升级成图表卡，其余一律
+ * 表格卡；图卡里也保留「查看表格」的回退路径。
  */
 export function AnswerMarkdown({
   text,
@@ -65,6 +68,14 @@ export function AnswerMarkdown({
                 at={at}
               />
             );
+          case 'table': {
+            const chart = chartOf(seg);
+            return chart ? (
+              <AnswerChartCard key={idx} table={seg} chart={chart} />
+            ) : (
+              <AnswerTableCard key={idx} table={seg} />
+            );
+          }
           case 'coderef':
             return (
               <AnswerCodeCard

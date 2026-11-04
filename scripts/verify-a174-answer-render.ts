@@ -20,7 +20,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { countHttpLinks, parseCodeRefLine, parseLinkLine, planAnswer, sanitizeHttpUrl } from '../src/answer/renderPlan.js';
+import {
+  MAX_TABLE_ROWS,
+  chartOf,
+  countHttpLinks,
+  parseCodeRefLine,
+  parseLinkLine,
+  parseNumericCell,
+  planAnswer,
+  sanitizeHttpUrl,
+  splitTableRow,
+} from '../src/answer/renderPlan.js';
 import { normalizePrefs, validatePrefsPatch } from '../server/preferences.js';
 
 let pass = 0;
@@ -195,11 +205,19 @@ section('证据块：只有「$ 命令 + 输出」形态才折');
 
 section('不误伤：表格 / 普通代码块 / 中文标点');
 
+/* 原期望（A174 P1）：表格整块留在 markdown，`segs.length === 1 && kind === 'md'`。
+ * 新期望（本次）：标准 GFM 表转成 `table` 片段 —— 这是本需求明确要的形态变化，
+ * 不是放宽。原「逐字保留」改为「行列内容逐字保留」，因为表格现在由 React
+ * 渲染，不再经过 Cherry。 */
 {
   const text = ['| 名称 | 链接 |', '| --- | --- |', '| 一 | https://a.example.com |', '', '> 引用里的一句话。'].join('\n');
   const segs = planAnswer(text);
-  ok(segs.length === 1 && segs[0].kind === 'md', '表格不切分（含 URL 的单元格也不当成链接行）');
-  ok(segs[0].kind === 'md' && segs[0].text.includes('| 名称 | 链接 |'), '表格原文逐字保留');
+  const table = segs.find(s => s.kind === 'table');
+  ok(!!table, '标准 GFM 表转成表格片段');
+  ok(table?.kind === 'table' && table.header.join('|') === '名称|链接', '表头逐字保留');
+  ok(table?.kind === 'table' && table.rows[0].join('|') === '一|https://a.example.com', '单元格逐字保留（URL 原样）');
+  ok(segs.some(s => s.kind === 'md' && s.text.includes('> 引用里的一句话。')), '表格之后的普通正文仍走 markdown');
+  ok(countHttpLinks(segs) === 1, '单元格里的 http(s) 链接计入链接数');
 }
 
 {
@@ -216,7 +234,124 @@ section('不误伤：表格 / 普通代码块 / 中文标点');
   ok(segs.every(s => s.kind === 'md'), '零散链接不触发卡片');
 }
 
-/* ══════════════ ⑦ 偏好：linkOpenMode ══════════════ */
+/* ══════════════ ⑦ 表格卡 ══════════════ */
+
+type TableSeg = Extract<ReturnType<typeof planAnswer>[number], { kind: 'table' }>;
+
+function tableOf(text: string): TableSeg | null {
+  const seg = planAnswer(text).find(s => s.kind === 'table');
+  return seg && seg.kind === 'table' ? seg : null;
+}
+
+section('表格卡：解析、对齐、数值列、折叠阈值');
+
+{
+  const t = tableOf(
+    ['| 阶段 | 说明 | 耗时 |', '| :--- | --- | ---: |', '| 解析 | 行级切分 | 12 |', '| 渲染 | 卡片组件 | 8 |'].join('\n'),
+  );
+  ok(t?.header.length === 3, '表头 3 列');
+  ok(t?.rows.length === 2, '数据行 2 行');
+  ok(t?.align.join(',') === 'left,left,right', '显式对齐被采纳（左/左/右）', t?.align.join(','));
+  ok(t?.numeric.join(',') === 'false,false,true', '数值列识别到第三列', t?.numeric.join(','));
+}
+
+{
+  const t = tableOf(['| 名称 | 数量 |', '| --- | --- |', '| 甲 | 1,200 |', '| 乙 | 3.5 |'].join('\n'));
+  ok(t?.align[1] === 'right', '未写对齐时数值列自动右对齐', t?.align[1]);
+  ok(t?.align[0] === 'left', '文本列保持左对齐', t?.align[0]);
+  ok(
+    parseNumericCell('1,200') === 1200 && parseNumericCell('¥3.50') === 3.5 && parseNumericCell('42%') === 42,
+    '千分位 / 货币前缀 / 百分号都能解析',
+  );
+  ok(parseNumericCell('12ms') === null && parseNumericCell('约 12') === null, '带单位或含糊文本不算数值');
+}
+
+{
+  const t = tableOf(['| 项 | 值 |', '| :---: | --- |', '| 甲 | 1 |'].join('\n'));
+  ok(t?.align[0] === 'center', '显式居中被采纳', t?.align[0]);
+  // 显式写 `:---` 的数值列也按左对齐 —— 作者意图优先于启发式，避免静默改版式
+  const leftExplicit = tableOf(['| 项 | 值 |', '| :--- | :--- |', '| 甲 | 120 |'].join('\n'));
+  ok(leftExplicit?.align[1] === 'left', '显式左对齐覆盖数值推断', leftExplicit?.align[1]);
+}
+
+{
+  const cells = splitTableRow('| 含 \\| 的文本 | 尾列 |');
+  ok(cells?.length === 2 && cells[0] === '含 | 的文本', '\\| 转义还原成一个竖线');
+  const t = tableOf(['| A | B | C |', '| --- | --- | --- |', '| 含 \\| 的文本 | 只有一列 |'].join('\n'));
+  ok(t?.rows[0].length === 3 && t?.rows[0][2] === '', '少列的行走位补空（渲染层不用管列数）');
+}
+
+section('表格卡：不合格的 `|` 文本不误判');
+
+{
+  ok(tableOf('| A | B |\n| --- | --- |') === null, '只有表头没有数据行不转卡');
+  ok(tableOf('| A |\n| --- |\n| 1 |') === null, '单列表格不认（那是带竖线的段落）');
+  ok(tableOf('| A | B |\n| --- |\n| 1 | 2 |') === null, '分隔行列数与表头不一致不认');
+  ok(tableOf('| A | B |\n| 一 | 二 |\n| 1 | 2 |') === null, '第二行不是分隔行不认');
+  ok(!planAnswer('第一行 a | b\n第二行 c | d').some(s => s.kind === 'table'), '普通带竖线文本不误判');
+  const mdOnly = planAnswer('第一行 a | b\n第二行 c | d');
+  ok(mdOnly.every(s => s.kind === 'md'), '误判失败时原文完整留在 markdown');
+}
+
+section('表格卡：折叠阈值与流式松手');
+
+{
+  ok(MAX_TABLE_ROWS === 8, '折叠阈值是 8 行');
+  const mk = (n: number): string =>
+    ['| 项 | 值 |', '| --- | ---: |', ...Array.from({ length: n }, (_, i) => `| 行 ${i + 1} | ${i + 1} |`)].join('\n');
+  ok(tableOf(mk(MAX_TABLE_ROWS))?.rows.length === MAX_TABLE_ROWS, '正好 8 行：不触发折叠（UI 判 > MAX）');
+  ok((tableOf(mk(MAX_TABLE_ROWS + 1))?.rows.length ?? 0) > MAX_TABLE_ROWS, '9 行：触发折叠');
+}
+
+{
+  const growing = ['| 项 | 值 |', '| --- | ---: |', '| 甲 | 1 |', '| 乙 | 2 |'].join('\n');
+  ok(!planAnswer(growing, { streaming: true }).some(s => s.kind === 'table'), '流式末尾表格还在长：先留 markdown');
+  ok(planAnswer(growing, { streaming: false }).some(s => s.kind === 'table'), '历史消息里直接转表格卡');
+  const followed = `${growing}\n\n后续正文。`;
+  ok(planAnswer(followed, { streaming: true }).some(s => s.kind === 'table'), '表格后出现非表格行 → 视为结束，流式也转卡');
+  ok(
+    planAnswer(followed, { streaming: true }).some(s => s.kind === 'md' && s.text.includes('后续正文。')),
+    '表格之后的正文没有被吞',
+  );
+}
+
+/* ══════════════ ⑧ 图表卡 ══════════════ */
+
+section('图表卡：两列数值 ≥3 行才画，其余回退表格');
+
+{
+  const chartable = tableOf(
+    ['| 渠道 | 访问量 |', '| --- | ---: |', '| 直接访问 | 1820 |', '| 搜索引擎 | 940 |', '| 社交媒体 | 460 |'].join('\n'),
+  );
+  ok(!!chartable, '图表候选仍先解析成表格片段');
+  const chart = chartable ? chartOf(chartable) : null;
+  ok(!!chart && chart.rows.length === 3, '三行条形全部产出', chart?.rows.length);
+  ok(!!chart && chart.max === 1820, 'max 取最大数值', chart?.max);
+  ok(!!chart && chart.rows[0].label === '直接访问' && chart.rows[0].value === 1820, '标签与数值正确');
+  ok(!!chart && chart.labelHeader === '渠道' && chart.valueHeader === '访问量', '表头带到图卡标题');
+}
+
+{
+  const threeCols = tableOf(['| 渠道 | 占比 | 备注 |', '| --- | ---: | --- |', '| 甲 | 10 | ok |', '| 乙 | 20 | ok |', '| 丙 | 30 | ok |'].join('\n'));
+  ok(threeCols && chartOf(threeCols) === null, '三列表格回退为表格卡（不画图）');
+
+  const twoRows = tableOf(['| 渠道 | 数量 |', '| --- | ---: |', '| 甲 | 10 |', '| 乙 | 20 |'].join('\n'));
+  ok(twoRows && chartOf(twoRows) === null, '只有 2 行不画（条形对比没有信息量）');
+
+  const negative = tableOf(['| 项目 | 增减 |', '| --- | ---: |', '| 新增 | 12 |', '| 删除 | -7 |', '| 净增 | 5 |'].join('\n'));
+  ok(negative && chartOf(negative) === null, '出现负值回退表格（条形长度无法表达负值）');
+
+  const textCol = tableOf(['| 项目 | 状态 |', '| --- | --- |', '| 甲 | 已完成 |', '| 乙 | 进行中 |', '| 丙 | 待开始 |'].join('\n'));
+  ok(textCol && chartOf(textCol) === null, '第二列不是数值 → 回退表格');
+
+  const zeros = tableOf(['| 项目 | 数量 |', '| --- | ---: |', '| 甲 | 0 |', '| 乙 | 0 |', '| 丙 | 0 |'].join('\n'));
+  ok(zeros && chartOf(zeros) === null, '全为 0 回退表格（max=0 时条形没有比例）');
+
+  const unitCol = tableOf(['| 项目 | 耗时 |', '| --- | --- |', '| 甲 | 12ms |', '| 乙 | 30ms |', '| 丙 | 8ms |'].join('\n'));
+  ok(unitCol && chartOf(unitCol) === null, '带单位数值不画（单位不同不可横向比较）');
+}
+
+/* ══════════════ ⑨ 偏好：linkOpenMode ══════════════ */
 
 section('偏好：链接默认打开方式能落盘、脏值被忽略');
 
@@ -237,7 +372,7 @@ section('偏好：链接默认打开方式能落盘、脏值被忽略');
   ok(reset.ok === true && reset.patch.linkOpenMode === null, 'PATCH 用 null 清空（回到默认）');
 }
 
-/* ══════════════ ⑧ 接线（静态断言） ══════════════ */
+/* ══════════════ ⑩ 接线（静态断言） ══════════════ */
 
 section('接线：主进程 / preload / 装饰 / 设置项');
 
@@ -285,6 +420,29 @@ section('接线：主进程 / preload / 装饰 / 设置项');
   ok(!/#[0-9a-fA-F]{3,8}/.test(cssBlock), '分级渲染样式里没有硬编码十六进制颜色（只用令牌）');
   ok(/var\(--tc-|var\(--td-/.test(cssBlock), '用的是既有令牌');
   ok(cssBlock.includes('repeat(2, minmax(0, 1fr))'), '链接卡是 2 列等宽网格');
+
+  /* 表格卡 / 图表卡接线 */
+  const cards = read('src/components/AnswerCards.tsx');
+  ok(cards.includes('data-answer-table'), '表格卡有 data-answer-table');
+  ok(cards.includes('data-answer-table-scroll'), '横向滚动容器有 data 锚点');
+  ok(cards.includes('data-answer-table-head'), '表头有 data 锚点（用于吸顶断言）');
+  ok(cards.includes('data-answer-table-fold'), '折叠按钮有 data 锚点');
+  ok(cards.includes('data-answer-chart'), '图表卡有 data-answer-chart');
+  ok(cards.includes('data-answer-chart-toggle'), '图表卡保留「查看表格」回退入口');
+  ok(cards.includes('sanitizeHttpUrl'), '单元格链接同样过白名单');
+  ok(!cards.includes('dangerouslySetInnerHTML') && !/\.innerHTML\s*=/.test(cards), '没有直接把 HTML 注入 DOM');
+
+  const answerMd = read('src/components/AnswerMarkdown.tsx');
+  ok(answerMd.includes("case 'table'"), 'AnswerMarkdown 分派 table 片段');
+  ok(answerMd.includes('chartOf(seg)'), '表格 → 图表升级判定在渲染层');
+
+  ok(cssBlock.includes('position: sticky'), '表头用 sticky 吸顶');
+  ok(/\.tc-answer-table-scroll[\s\S]*?max-height: 360px/.test(cssBlock), '滚动容器有纵向上限（吸顶才有意义）');
+  ok(/\.tc-answer-table-scroll[\s\S]*?overflow: auto/.test(cssBlock), '滚动容器双向可滚');
+  ok(/data-align='right'/.test(cssBlock), '数值列右对齐有样式落点');
+  ok(/th:first-child[\s\S]*?white-space: nowrap/.test(cssBlock), '首列不换行');
+  ok(/rgb\(var\(--color-/.test(cssBlock), '表格/图表卡颜色全部走 --color-* 令牌');
+  ok(!/#[0-9a-fA-F]{3,8}/.test(cssBlock), '新增样式没有硬编码十六进制颜色');
 }
 
 /* ══════════════ 汇总 ══════════════ */

@@ -67,6 +67,43 @@ const ANSWER = [
   '',
   '`src/components/AnswerCards.tsx` L128–L176 +42 −7',
   '',
+  '三个阶段的情况如下：',
+  '',
+  '| 阶段 | 说明 | 耗时 |',
+  '| :--- | --- | ---: |',
+  '| 解析 | 行级切分 | 12 |',
+  '| 渲染 | 卡片组件 | 8 |',
+  '| 校验 | 闸门 | 3 |',
+  '',
+  '基线对比（这张表很宽，用于验证横向滚动）：',
+  '',
+  '| 指标 | 基线 | 当前 | 变化 | 备注 | 来源 | 负责人 | 复验 | 结论 |',
+  '| --- | ---: | ---: | ---: | --- | --- | --- | --- | --- |',
+  '| 首屏渲染耗时 | 1280 | 940 | -340 | 去掉重复布局计算与无效的样式重算 | https://perf.example.net/report | 张 | 已复验 | 达标 |',
+  '| 交互响应延迟 | 320 | 180 | -140 | 事件委托并把高频回调合并到一次帧内执行 | https://perf.example.net/interact | 李 | 待复验 | 观察 |',
+  '',
+  '十二行清单（用于验证折叠阈值与吸顶）：',
+  '',
+  '| 序号 | 检查项 | 结果 |',
+  '| --- | --- | --- |',
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(i => `| ${i} | 第 ${i} 项检查 | 通过 |`),
+  '',
+  '渠道分布（两列数值，用于验证图表卡）：',
+  '',
+  '| 渠道 | 访问量 |',
+  '| --- | ---: |',
+  '| 直接访问 | 1820 |',
+  '| 搜索引擎 | 940 |',
+  '| 社交媒体 | 460 |',
+  '',
+  '增减明细（含负值，图表卡必须回退成表格）：',
+  '',
+  '| 变更类型 | 行数 |',
+  '| --- | ---: |',
+  '| 新增 | 42 |',
+  '| 删除 | -7 |',
+  '| 净变化 | 35 |',
+  '',
   '其余内容保持行内，不做任何转换。',
 ].join('\n');
 
@@ -370,6 +407,101 @@ try {
     ok(code.text.includes('+42') && code.text.includes('−7'), '卡片带 +42 −7', code.text);
     ok(code.border === '1px' && code.bg === 'none', '不做按钮感（无阴影，只有发丝边）');
 
+    // —— 表格卡：吸顶 / 首列不换行 / 数值右对齐 / 横向可滚 / 折叠阈值
+    const tbl = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-answer-table]')];
+      const first = cards[0];
+      const th = first.querySelector('thead th');
+      const scroll = first.querySelector('[data-answer-table-scroll]');
+      const rightCell = first.querySelector('td[data-align="right"]');
+      return {
+        count: cards.length,
+        sticky: getComputedStyle(th).position,
+        headBg: getComputedStyle(th).backgroundColor,
+        firstColWrap: getComputedStyle(first.querySelector('td[data-first-col="1"]')).whiteSpace,
+        rightAlign: rightCell ? getComputedStyle(rightCell).textAlign : null,
+        rightText: rightCell ? rightCell.textContent.trim() : null,
+        overflowX: getComputedStyle(scroll).overflowX,
+      };
+    });
+    ok(tbl.count === 4, '四张结构化表格卡（阶段 / 宽表 / 十二行 / 负值回退）', tbl.count);
+    ok(tbl.sticky === 'sticky', '表头 position: sticky（吸顶）', tbl.sticky);
+    ok(tbl.firstColWrap === 'nowrap', '首列不换行', tbl.firstColWrap);
+    ok(tbl.rightAlign === 'right', '数值列右对齐', `${tbl.rightAlign} / ${tbl.rightText}`);
+    ok(tbl.overflowX === 'auto', '表格滚动容器可横向滚动', tbl.overflowX);
+
+    const wide = await page.evaluate(() => {
+      const card = [...document.querySelectorAll('[data-answer-table]')].find(c => c.textContent.includes('首屏渲染耗时'));
+      const sc = card.querySelector('[data-answer-table-scroll]');
+      return { scrollWidth: sc.scrollWidth, clientWidth: sc.clientWidth };
+    });
+    ok(wide.scrollWidth > wide.clientWidth, '宽表内容真的超出容器（横向滚动有实际作用）', `${wide.scrollWidth} > ${wide.clientWidth}`);
+
+    const foldCard = page.locator('[data-answer-table][data-table-rows="12"]');
+    ok((await foldCard.count()) === 1, '十二行表格存在');
+    ok((await foldCard.getAttribute('data-table-visible')) === '8', '默认只显示 8 行（折叠阈值生效）');
+    ok(/展开全部 12 行/.test(await foldCard.locator('[data-answer-table-fold]').innerText()), '折叠按钮文案是「展开全部 12 行」');
+    await foldCard.locator('[data-answer-table-fold]').click();
+    await page.waitForTimeout(250);
+    ok((await foldCard.getAttribute('data-table-visible')) === '12', '展开后 12 行全部可见');
+    ok(/收起/.test(await foldCard.locator('[data-answer-table-fold]').innerText()), '展开后按钮变成「收起」');
+
+    // 展开后纵向滚动，表头必须钉在容器顶部
+    const sticky = await page.evaluate(() => {
+      const card = [...document.querySelectorAll('[data-answer-table]')].find(c => c.dataset.tableRows === '12');
+      const sc = card.querySelector('[data-answer-table-scroll]');
+      sc.scrollTop = 60;
+      const th = card.querySelector('thead th');
+      const a = sc.getBoundingClientRect();
+      const b = th.getBoundingClientRect();
+      return { scrollable: sc.scrollHeight > sc.clientHeight, delta: Math.round(b.top - a.top), scrollTop: sc.scrollTop };
+    });
+    ok(sticky.scrollable, '展开后纵向可滚（否则吸顶无从验证）');
+    ok(Math.abs(sticky.delta) < 2, '纵向滚动后表头仍贴在容器顶部', `delta=${sticky.delta}px, scrollTop=${sticky.scrollTop}`);
+    await foldCard.locator('[data-answer-table-fold]').click();
+    await page.waitForTimeout(200);
+
+    // —— 图表卡：两列数值成功；负值/多列/缺行回退表格
+    const chart = await page.evaluate(() => {
+      const c = document.querySelector('[data-answer-chart]');
+      if (!c) return null;
+      const bars = [...c.querySelectorAll('[data-chart-bar]')].map(b => ({
+        value: Number(b.dataset.chartValue),
+        ratio: b.getBoundingClientRect().width / b.parentElement.getBoundingClientRect().width,
+        bg: getComputedStyle(b).backgroundColor,
+      }));
+      return {
+        rows: Number(c.dataset.chartRows),
+        labelHeader: c.querySelector('[data-chart-label-header]').textContent,
+        valueHeader: c.querySelector('[data-chart-value-header]').textContent,
+        bars,
+        toggle: c.querySelector('[data-answer-chart-toggle]').textContent,
+      };
+    });
+    ok(!!chart && chart.rows === 3, '两列数值表升级成图表卡（3 行条形）');
+    ok(!!chart && chart.labelHeader === '渠道' && chart.valueHeader === '访问量', '图卡标题取自表头');
+    ok(!!chart && chart.bars.length === 3, '3 根条形');
+    ok(!!chart && chart.bars[0].value === 1820 && chart.bars[0].ratio > 0.98, '最大值条形占满轨道', chart?.bars[0]?.ratio);
+    ok(
+      !!chart && Math.abs(chart.bars[1].ratio - 940 / 1820) < 0.03 && Math.abs(chart.bars[2].ratio - 460 / 1820) < 0.03,
+      '条形长度与数值成比例',
+      chart?.bars.map(b => b.ratio.toFixed(3)).join(','),
+    );
+    ok(!!chart && chart.toggle.includes('查看表格'), '图卡保留「查看表格」回退入口', chart?.toggle);
+
+    ok((await page.locator('[data-answer-chart]').count()) === 1, '含负值的两列表没有画图（全页只有 1 个图表卡）');
+    const fallback = await page.evaluate(() => {
+      const card = [...document.querySelectorAll('[data-answer-table]')].find(c => c.textContent.includes('变更类型'));
+      return !!card && Number(card.dataset.tableRows) === 3;
+    });
+    ok(fallback, '负值表回退成普通表格卡');
+
+    await page.locator('[data-answer-chart-toggle]').click();
+    await page.waitForTimeout(250);
+    ok((await page.locator('[data-answer-table]').count()) === 5, '图卡展开后能看到原始表格（数据回退路径）');
+    await page.locator('[data-answer-chart-toggle]').click();
+    await page.waitForTimeout(200);
+
     // —— 推测标签：只留标签，没有虚线框
     const guess = await page.evaluate(() => {
       const tags = [];
@@ -462,16 +594,41 @@ try {
       buttons[0]?.click();
     });
     await page.waitForTimeout(300);
+    const themeProbe = () =>
+      page.evaluate(() => {
+        const th = document.querySelector('[data-answer-table] thead th');
+        const bar = document.querySelector('[data-chart-bar]');
+        const card = document.querySelector('[data-answer-table]');
+        return {
+          headBg: getComputedStyle(th).backgroundColor,
+          headText: getComputedStyle(th).color,
+          cardBg: getComputedStyle(card).backgroundColor,
+          barBg: getComputedStyle(bar).backgroundColor,
+        };
+      });
+    const themeLight = await themeProbe();
+
     const shot = page.locator('.tc-bubble-assistant').last();
     await page.screenshot({ path: join(OUT, 'a174-light.png'), fullPage: false });
     await shot.screenshot({ path: join(OUT, 'a174-light-answer.png') });
+    await page.locator('[data-answer-table]').first().screenshot({ path: join(OUT, 'a174-light-table.png') });
+    await page.locator('[data-answer-chart]').screenshot({ path: join(OUT, 'a174-light-chart.png') });
 
     // —— 截图（深色）
     await page.evaluate(() => document.documentElement.classList.add('dark'));
     await page.waitForTimeout(400);
     await page.screenshot({ path: join(OUT, 'a174-dark.png'), fullPage: false });
     await shot.screenshot({ path: join(OUT, 'a174-dark-answer.png') });
+    await page.locator('[data-answer-table]').first().screenshot({ path: join(OUT, 'a174-dark-table.png') });
+    await page.locator('[data-answer-chart]').screenshot({ path: join(OUT, 'a174-dark-chart.png') });
+    const themeDark = await themeProbe();
     await page.evaluate(() => document.documentElement.classList.remove('dark'));
+
+    // 表格 / 图表必须跟着主题走（不是写死的浅色）
+    ok(themeLight.headBg !== themeDark.headBg, '表头底色随主题切换', `${themeLight.headBg} → ${themeDark.headBg}`);
+    ok(themeLight.headText !== themeDark.headText, '表头文字色随主题切换', `${themeLight.headText} → ${themeDark.headText}`);
+    ok(themeLight.cardBg !== themeDark.cardBg, '表格卡底色随主题切换', `${themeLight.cardBg} → ${themeDark.cardBg}`);
+    ok(themeLight.barBg !== themeDark.barBg, '图表条形色随主题切换', `${themeLight.barBg} → ${themeDark.barBg}`);
 
     // 深色主题下再验一次「没有彩色强调」与对比度
     const darkStyle = await page.evaluate(() => {
