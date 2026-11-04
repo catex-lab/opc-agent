@@ -23,6 +23,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 
+/* ══════════ 关掉 Electron 的 asar 感知 ══════════
+ *
+ * 真机 1.0.9 → 1.0.10 的失败根因：本 helper 由 OPC Agent.exe +
+ * ELECTRON_RUN_AS_NODE 启动，Electron 仍然把 asar 支持注入了 Node 的 fs。
+ * 只要对 resources/app.asar 做一次 exists/stat（哪怕只是「旧包还在吗」），
+ * asar 层就会真的打开归档并长期持有句柄 —— 于是 helper 自己锁住了它马上
+ * 要 rename 的文件，EBUSY 一直到预算耗尽，Restart Manager 报的「持有者」
+ * 就是 helper 自己的 pid。
+ *
+ * 实测：不设该开关时，RUN_AS_NODE 进程 stat 一次 app.asar 就会出现在
+ * Restart Manager 持有者列表里；设了之后不会。必须放在任何 fs 调用之前。
+ */
+if (typeof process !== 'undefined') process.noAsar = true;
+
 const job = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 
 /* ══════════ 可注入的单调时钟 ══════════
@@ -50,6 +64,8 @@ const renameFile = typeof hooks.rename === 'function' ? hooks.rename : (from, to
 const killPid = typeof hooks.kill === 'function' ? hooks.kill : pid => process.kill(pid);
 // 持有者查询默认走 Restart Manager；闸门注入假函数，避免每次失败都拉起 PowerShell
 const listHoldersFn = typeof hooks.holders === 'function' ? hooks.holders : target => listHolders(target);
+// 安装目录进程枚举默认走 PowerShell；闸门注入假快照，可精确控制「谁在、何时启动」
+const listProcessesFn = typeof hooks.processes === 'function' ? hooks.processes : () => listInstallDirProcesses();
 
 const HELPER_T0 = monoNow();
 const MAX_MARKER_CHARS = 65536;
@@ -70,6 +86,10 @@ const traceData = {
   // 一次交换可能有两次抢锁（备份旧包 / 放入新包）：最后一次放 lockWait（带采样），
   // 历史只留摘要，避免 marker 被样本撑大
   lockWaitHistory: [],
+  // 1.0.10 漏判：helper 自身成了持有者（asar fs 打开了目标文件）
+  selfHold: false,
+  holdersAtGuard: null,
+  holderRecheck: [],
   events: [],
   totalMs: null,
 };
@@ -89,6 +109,20 @@ const PROCESS_WAIT_MS = Number.isFinite(Number(job.processWaitMs)) && job.proces
 
 function rm(target) {
   try { fs.rmSync(target, { recursive: true, force: true }); } catch { /* 尽力而为 */ }
+}
+
+/** 普通文件存在性判断（不用 asar 感知的 existsSync；noAsar 已设，stat 不会打开归档） */
+function fileExists(target) {
+  try { return fs.statSync(target).isFile(); } catch { return false; }
+}
+
+function holdersOf(target) {
+  try {
+    const rows = listHoldersFn(target);
+    return Array.isArray(rows) ? rows : null;
+  } catch {
+    return null;
+  }
 }
 
 function writeMarker(patch) {
@@ -164,9 +198,11 @@ function sampleSamples(all) {
  * 防的是**安装目录里残留的 OPC Agent 主进程**（例如上一次崩溃留下的实例、
  * 或用户又点开的第二个窗口）。
  *
- * 口径：只认映像路径位于 job.installDir 下的进程；等待结束后只终止
- * 「在本次更新开始前就已启动」的那些（= 我们的残留），更新开始后才启动的
- * 按「另一个实例」处理，只记录、不杀。绝不按进程名全局 taskkill。
+ * 口径：只认映像路径位于 job.installDir 下的进程。等待结束后是否终止，
+ * 按「有没有持有目标文件」判定，不再按启动时间：更新开始后才启动的实例
+ * 一样会把 app.asar 锁死（1.0.10 真机就是这种情况，却因为「启动晚于
+ * job.startedAt」被 keep 放过）。不持有目标文件的进程即使启动晚也只记录、
+ * 不杀；更新前就存在的残留仍然按启动时间结束。绝不按进程名全局 taskkill。
  */
 function trace(msg) {
   try {
@@ -234,11 +270,43 @@ function killTargets(list) {
   const killed = [];
   for (const p of list) {
     try {
-      process.kill(p.pid);
+      // 走可注入的 killPid：闸门据此模拟「定向结束」，生产路径就是 process.kill
+      killPid(p.pid);
       killed.push(p);
     } catch { /* 已经退出 */ }
   }
   return killed;
+}
+
+/**
+ * 重试期间再查一次「谁真正持有目标文件」，并定向结束**持有者**。
+ *
+ * 1.0.10 的漏洞：guardInstallDir 只在交接开始时看过一次进程列表，而且
+ * 「更新开始后才启动」的实例被判定为 keep（只记录不杀）。如果用户在等待
+ * 期间又打开了应用，它会立刻持有 app.asar，60 秒预算必然耗尽。
+ * 这里按「是否持有目标文件」而不是按启动时间决定要不要结束，但**仍然只**
+ * 处理映像路径位于 installDir 之下的进程，绝不按进程名全局杀。
+ */
+function reclaimTargetHolders(reason) {
+  const snapshot = listProcessesFn();
+  const holders = holdersOf(job.targetAsar);
+  const holderPids = holders ? holders.map(h => h.pid) : null;
+  const selfInHolders = !!(holders && holders.some(h => h.pid === process.pid));
+  if (selfInHolders) traceData.selfHold = true;
+  const others = snapshot ? snapshot.filter(p => p.pid !== process.pid) : [];
+  const targets = holderPids ? others.filter(p => holderPids.indexOf(p.pid) >= 0) : [];
+  const killed = killTargets(targets);
+  const rec = {
+    atMs: round1(monoNow() - HELPER_T0),
+    reason: reason || null,
+    holders: holderPids,
+    killed: killed.map(p => p.pid),
+    selfInHolders: selfInHolders,
+    enum: snapshot ? 'ok' : 'unavailable',
+  };
+  traceData.holderRecheck.push(rec);
+  if (traceData.holderRecheck.length > 4) traceData.holderRecheck.shift();
+  return { holders: holderPids, killed: killed, selfInHolders: selfInHolders };
 }
 
 async function guardInstallDir(timeoutMs) {
@@ -262,7 +330,7 @@ async function guardInstallDir(timeoutMs) {
     trace('未提供安装目录，跳过残留进程检查');
     return;
   }
-  let snapshot = listInstallDirProcesses();
+  let snapshot = listProcessesFn();
   if (snapshot === null) {
     finish({ skipped: 'enum-unavailable' });
     trace('进程枚举不可用（PowerShell 调用失败），只靠 rename 重试');
@@ -270,8 +338,25 @@ async function guardInstallDir(timeoutMs) {
   }
   let others = snapshot.filter(p => p.pid !== process.pid);
   if (!others.length) {
-    finish({ pids: [] });
-    trace('安装目录内没有其他进程');
+    // 「安装目录里没有别的进程」并不等于「没有持有者」：1.0.10 真机上
+    // 持有者恰恰是 helper 自己（asar fs 打开了目标文件），pid 被这里排除，
+    // 于是 60 秒后 RM 报的是自己的 pid。必须显式记下来，不能静默通过。
+    const holders = holdersOf(job.targetAsar);
+    traceData.holdersAtGuard = holders;
+    const selfHold = !!(holders && holders.some(h => h.pid === process.pid));
+    if (selfHold) {
+      traceData.selfHold = true;
+      trace('安装目录内没有其他进程，但 Restart Manager 显示持有者是交接进程自身（asar 被本进程打开）');
+    } else if (holders && holders.length) {
+      trace(
+        '安装目录内没有其他进程，但 Restart Manager 列出持有者：' +
+          holders.map(h => (h.app || '未知进程') + '(' + h.pid + ')').join('、') +
+          '（映像路径不在安装目录或枚举取不到路径）'
+      );
+    } else {
+      trace('安装目录内没有其他进程');
+    }
+    finish({ pids: [], holders: holders ? holders.map(h => h.pid) : null, selfHold: selfHold });
     return;
   }
   finish({ pids: others.map(p => p.pid) });
@@ -279,7 +364,7 @@ async function guardInstallDir(timeoutMs) {
   const deadline = startedMono + timeoutMs;
   while (others.length > 0 && monoNow() < deadline) {
     await sleep(1000);
-    snapshot = listInstallDirProcesses();
+    snapshot = listProcessesFn();
     if (snapshot === null) {
       finish({ pids: others.map(p => p.pid), skipped: 'enum-lost' });
       trace('等待中进程枚举失效，转入 rename 重试');
@@ -292,14 +377,32 @@ async function guardInstallDir(timeoutMs) {
     trace('残留进程已自行退出');
     return;
   }
-  // 更新开始后才启动的进程 = 用户另开的实例 / 其他东西，不碰
-  const keep = others.filter(p => !isLeftover(p));
+  // 结束判据从「按启动时间」改成「按是否持有目标文件」：
+  //   - 持有 app.asar 的进程，不管在更新开始前还是开始后才启动，都必须结束
+  //     （用户中途又点开的实例同样会把文件锁死）；
+  //   - 不持有的进程（更新后启动、只开了别的窗口）只记录、不杀。
+  const holders = holdersOf(job.targetAsar);
+  traceData.holdersAtGuard = holders;
+  const holderPids = new Set((holders || []).map(h => h.pid));
+  const selfHold = !!(holders && holders.some(h => h.pid === process.pid));
+  if (selfHold) traceData.selfHold = true;
+  const leftovers = others.filter(p => isLeftover(p) || holderPids.has(p.pid));
+  const keep = others.filter(p => !isLeftover(p) && !holderPids.has(p.pid));
   if (keep.length) {
-    trace('以下进程在更新开始后才启动，不终止：' + keep.map(labelOf).join('、'));
+    trace('以下进程在更新开始后才启动、且未持有目标文件，不终止：' + keep.map(labelOf).join('、'));
   }
-  const leftovers = others.filter(isLeftover);
+  if (selfHold) {
+    trace('Restart Manager 显示交接进程自身持有目标文件，无法由本进程结束');
+  }
   if (!leftovers.length) {
-    finish({ pids: others.map(p => p.pid), killed: [], leftover: [], kept: keep.map(p => p.pid) });
+    finish({
+      pids: others.map(p => p.pid),
+      killed: [],
+      leftover: [],
+      kept: keep.map(p => p.pid),
+      holders: holders ? holders.map(h => h.pid) : null,
+      selfHold: selfHold,
+    });
     return;
   }
   const killed = killTargets(leftovers);
@@ -308,9 +411,11 @@ async function guardInstallDir(timeoutMs) {
     killed: killed.map(p => p.pid),
     leftover: leftovers.map(p => p.pid),
     kept: keep.map(p => p.pid),
+    holders: holders ? holders.map(h => h.pid) : null,
+    selfHold: selfHold,
   });
   trace(
-    '等待 ' + Math.round(timeoutMs / 1000) + ' 秒后定向结束残留进程：' +
+    '等待 ' + Math.round(timeoutMs / 1000) + ' 秒后定向结束持有/残留进程：' +
       (killed.length ? killed.map(labelOf).join('、') : '无（均已自行退出）')
   );
   await sleep(600);
@@ -432,13 +537,24 @@ async function renameWithRetry(from, to, timeoutMs, label) {
         finish(false, code);
         // 文案：前半是**实测经过**，后半是**预算**，两者分开写。
         const e = new Error(
-          '抢锁失败：旧版本 app.asar 仍被占用（' + code + '），已等待 ' +
+          '抢锁失败：app.asar 仍被占用（' + code + '），已等待 ' +
             sec(elapsedMs) + ' 秒（预算 ' + budgetSec(timeoutMs) + ' 秒）'
         );
         e.code = code;
         e.stage = '抢锁';
         e.elapsedMs = round1(elapsedMs);
         throw e;
+      }
+      // 两次抽查：中途又启动的实例同样会锁文件，按「是否持有」定向结束
+      if (attempts === 30 || attempts === 120) {
+        const r = reclaimTargetHolders('retry=' + attempts);
+        if (r.killed.length) {
+          trace('第 ' + attempts + ' 次重试前定向结束持有 app.asar 的进程：' + r.killed.map(labelOf).join('、'));
+        } else if (r.selfInHolders) {
+          trace('第 ' + attempts + ' 次重试时持有者仍包含交接进程自身');
+        } else if (!r.holders) {
+          trace('第 ' + attempts + ' 次重试时 Restart Manager 不可用，继续等待');
+        }
       }
       await sleep(250);
     }
@@ -463,7 +579,7 @@ function cleanup() {
 // 「记录版本 vs 当前版本」决定展示还是清理。
 function cleanupFailure() {
   try {
-    if (fs.existsSync(job.targetAsar)) rm(job.backupPath);
+    if (fileExists(job.targetAsar)) rm(job.backupPath);
   } catch { /* 备份不在就算了 */ }
   rm(job.stagedAsar);
   rm(job.healthPath);
@@ -503,7 +619,7 @@ function cleanupFailure() {
   // 2) 备份旧 asar，放入新 asar（同目录临时名再 rename，避免半截文件被加载）
   //    两次 rename 都要等锁；预算耗尽时由 catch 写明「谁还持有」。
   rm(job.backupPath);
-  if (fs.existsSync(job.targetAsar)) await renameWithRetry(job.targetAsar, job.backupPath, LOCK_TIMEOUT_MS, '备份旧包');
+  if (fileExists(job.targetAsar)) await renameWithRetry(job.targetAsar, job.backupPath, LOCK_TIMEOUT_MS, '备份旧包');
   const tmp = job.targetAsar + '.new';
   rm(tmp);
   fs.copyFileSync(job.stagedAsar, tmp);
@@ -547,7 +663,7 @@ function cleanupFailure() {
   // 走到这里说明「备份/落盘」中途出错：此时旧 asar 可能已经被改名到 .bak，
   // 若不还原，下一次手动启动会因为找不到 app.asar 直接起不来。
   try {
-    if (!fs.existsSync(job.targetAsar) && fs.existsSync(job.backupPath)) {
+    if (!fileExists(job.targetAsar) && fs.existsSync(job.backupPath)) {
       fs.renameSync(job.backupPath, job.targetAsar);
     }
   } catch { /* 还原失败只能留给人工处理 */ }
@@ -563,6 +679,12 @@ function cleanupFailure() {
       trace('Restart Manager 未列出持有者（可能是杀毒 / 索引服务的过滤驱动短暂拦截）');
     } else {
       const names = holders.map(h => (h.app || '未知进程') + '（pid ' + h.pid + '）').join('、');
+      const selfHold = holders.some(h => h.pid === process.pid);
+      if (selfHold) {
+        traceData.selfHold = true;
+        error += '；当前持有者包含交接进程自身（pid ' + process.pid + '）—— 不是用户窗口没关，重试仍失败请手动下载完整包';
+        trace('失败时持有者包含交接进程自身（pid ' + process.pid + '），asar 被本进程打开');
+      }
       error += '；当前持有者：' + names;
       trace('失败时仍持有 app.asar：' + names);
     }

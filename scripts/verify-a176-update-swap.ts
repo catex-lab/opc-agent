@@ -24,6 +24,10 @@
  *           helper 通过 `globalThis.__OPC_SWAP_HOOKS__` 注入假 now / sleep /
  *           rename / kill / holders，走的是与生产完全同一段逻辑，**不真等**。
  *
+ *   K1–K3 假时钟 + 假进程表，覆盖 1.0.9 真机漏判的三条分支：
+ *           主进程 PID 取错时不得静默通过；持有者启动晚于更新开始也要处理；
+ *           进程已退但文件仍被占用（持有者是 helper 自身）必须记 selfHold 并说明。
+ *
  * 另外 A/C 还顺带钉住「成功与失败都不留残渣」：成功后状态文件不常驻，
  * 失败后暂存包/健康文件/job/helper 都被清掉，只留 apply-state.json 当证据。
  *
@@ -368,7 +372,28 @@ interface MarkerTrace {
   precheckMs?: number | null;
   helperStartedAt?: string;
   parentWait?: { stage?: string; elapsedMs?: number; budgetMs?: number; exited?: boolean } | null;
-  processWait?: { stage?: string; elapsedMs?: number; budgetMs?: number; skipped?: string } | null;
+  processWait?: {
+    stage?: string;
+    elapsedMs?: number;
+    budgetMs?: number;
+    skipped?: string;
+    pids?: number[];
+    killed?: number[];
+    leftover?: number[];
+    kept?: number[];
+    holders?: number[] | null;
+    selfHold?: boolean;
+  } | null;
+  selfHold?: boolean;
+  holdersAtGuard?: Array<{ pid: number; app?: string }> | null;
+  holderRecheck?: Array<{
+    atMs?: number;
+    reason?: string | null;
+    holders?: number[] | null;
+    killed?: number[];
+    selfInHolders?: boolean;
+    enum?: string;
+  }>;
   lockWait?: {
     stage?: string;
     label?: string | null;
@@ -408,12 +433,20 @@ interface FakeOptions {
   rollbackWall?: boolean;
   lockTimeoutMs?: number;
   healthTimeoutMs?: number;
+  /** 安装目录（非空才走进程枚举守卫）；空串 = 跳过 */
+  installDir?: string;
+  /** guardInstallDir 的等待预算 */
+  processWaitMs?: number;
+  /** 安装目录内的进程快照：started 决定「更新前残留」还是「更新后启动」 */
+  processes?: Array<{ pid: number; name?: string; started?: string }>;
+  /** Restart Manager 视角的持有者；pid 写 'self' 表示交接进程自身 */
+  holders?: Array<{ pid: number | 'self'; app?: string }>;
 }
 
 /**
  * 造一个「目标 asar 不存在」的假现场：helper 只会走**一次** rename（tmp → target），
  * 这样 attempts / 采样条数完全由 fake 配置决定，不会被备份那一次搅乱。
- * installDir 置空 → 跳过 PowerShell 进程枚举；parentPid 由假 kill 决定是否「已退出」。
+ * installDir 默认置空 → 跳过 PowerShell 进程枚举；K 组显式给快照，走真实判据。
  */
 function makeFakeSandbox(label: string, opts: FakeOptions): FakeSandbox {
   const base = mkdtempSync(join(tmpdir(), `opc a176 fake ${label} 空格 `));
@@ -448,11 +481,11 @@ function makeFakeSandbox(label: string, opts: FakeOptions): FakeSandbox {
         helperPath: helper,
         jobPath,
         appExe: NODE,
-        installDir: '',
+        installDir: opts.installDir ?? '',
         startedAt: '2026-11-04T12:00:00.000Z',
         jobAt: '2026-11-04T12:00:00.500Z',
         precheckMs: 250,
-        processWaitMs: 0,
+        processWaitMs: opts.processWaitMs ?? 0,
         healthTimeoutMs: opts.healthTimeoutMs ?? 1,
         lockTimeoutMs: opts.lockTimeoutMs ?? 60_000,
       },
@@ -467,6 +500,7 @@ function makeFakeSandbox(label: string, opts: FakeOptions): FakeSandbox {
 const fs = require('node:fs');
 const path = require('node:path');
 const cfg = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+const job = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 let fakeNow = 1000000;
 let renames = 0;
 if (cfg.rollbackWall) {
@@ -486,8 +520,26 @@ globalThis.__OPC_SWAP_HOOKS__ = {
     if (renames <= cfg.failCount) { const e = new Error('EBUSY'); e.code = 'EBUSY'; throw e; }
     fs.renameSync(from, to);
   },
-  kill: () => { if (cfg.killMode !== 'alive') { const e = new Error('gone'); e.code = 'ESRCH'; throw e; } },
-  holders: () => [],
+  // 假父进程按 killMode 决定「已退出」，安装目录里的假 pid 一律视为定向结束成功；
+  // 其余 pid（例如回滚时结束新版本）按「已退出」处理，不去动真实进程。
+  kill: pid => {
+    if (pid === job.parentPid) {
+      if (cfg.killMode !== 'alive') { const e = new Error('gone'); e.code = 'ESRCH'; throw e; }
+      return;
+    }
+    const known = (cfg.processes || []).some(p => p.pid === pid);
+    if (known) return;
+    const e = new Error('gone'); e.code = 'ESRCH'; throw e;
+  },
+  holders: () => {
+    const rows = cfg.holders || [];
+    return rows.map(h => ({ pid: h.pid === 'self' ? process.pid : h.pid, app: h.app || 'OPC Agent' }));
+  },
+  processes: () => (cfg.processes || []).map(p => ({
+    pid: p.pid,
+    name: p.name || 'OPC Agent.exe',
+    started: p.started || '2026-11-04T11:59:00.000Z',
+  })),
 };
 require(path.join(__dirname, 'update-swap.cjs'));
 `,
@@ -672,6 +724,100 @@ async function scenarioJ6(): Promise<void> {
   cleanup(lockSb);
 }
 
+/* ══════════════ 1.0.10 真机漏判的三条分支（假时钟 + 假进程表） ══════════════ */
+
+/**
+ * K1：waitParentExit 等错了 PID。
+ * 真机上 helper 的 parentPid 只代表「启动它的那个主进程」，若持有者其实是
+ * 另一个实例，父进程会秒退、旧锁却还在。这里让 parentPid=1（假 kill 立刻
+ * ESRCH），真实持有者 9001 在安装目录里 —— guardInstallDir 必须按持有者把它
+ * 结束，不能因为「父进程已退出」就静默往下 rename。
+ */
+async function scenarioK1(): Promise<void> {
+  console.log('\n[K1] 主进程 PID 取错 → 按持有者定向结束，不静默通过');
+  const install = join(tmpdir(), 'opc a176 fake install K1');
+  const sb = makeFakeSandbox('K1', {
+    failCount: 0,
+    stepMs: 100,
+    installDir: install,
+    processWaitMs: 0,
+    processes: [{ pid: 9001, name: 'OPC Agent.exe', started: '2026-11-04T11:59:00.000Z' }],
+    holders: [{ pid: 9001, app: 'OPC Agent' }],
+  });
+  const marker = await runFake(sb);
+  const pw = marker.trace?.processWait;
+  ok(marker.trace?.parentWait?.exited === true, '父进程（错误的 PID）确实秒退 —— 单看它会被骗过去', JSON.stringify(marker.trace?.parentWait));
+  ok(!!pw && Array.isArray(pw.pids) && pw.pids.includes(9001), 'guard 仍看到了安装目录里的真实持有者 9001', JSON.stringify(pw?.pids));
+  ok(!!pw && Array.isArray(pw.killed) && pw.killed.includes(9001), '按「持有目标文件」定向结束 9001（不是只记录）', JSON.stringify(pw?.killed));
+  ok(!!pw && Array.isArray(pw.holders) && pw.holders.includes(9001), 'trace 记下 Restart Manager 的持有者', JSON.stringify(pw?.holders));
+  ok(marker.trace?.lockWait?.ok === true, '结束持有者后完成交换（没有把 PID 取错当成功路径）', JSON.stringify(marker.trace?.lockWait));
+  cleanup(sb);
+}
+
+/**
+ * K2：持有者启动时间晚于 job.startedAt。
+ * 1.0.9 的判据是「更新前启动的才杀」，于是用户在等待期间又点开的实例
+ * （同样锁着 app.asar）被 keep 放过，60 秒预算必然耗尽。9002 是更新后启动
+ * 的持有者 → 必须结束；9003 同样晚启动但不持有 → 仍然只记录、不杀。
+ */
+async function scenarioK2(): Promise<void> {
+  console.log('\n[K2] 持有者启动晚于更新开始 → 也要处理；不持有的晚启动实例保留');
+  const install = join(tmpdir(), 'opc a176 fake install K2');
+  const sb = makeFakeSandbox('K2', {
+    failCount: 0,
+    stepMs: 100,
+    installDir: install,
+    processWaitMs: 0,
+    processes: [
+      { pid: 9002, name: 'OPC Agent.exe', started: '2026-11-04T12:00:05.000Z' },
+      { pid: 9003, name: 'OPC Agent.exe', started: '2026-11-04T12:00:07.000Z' },
+    ],
+    holders: [{ pid: 9002, app: 'OPC Agent' }],
+  });
+  const marker = await runFake(sb);
+  const pw = marker.trace?.processWait;
+  ok(!!pw && Array.isArray(pw.killed) && pw.killed.includes(9002), '晚启动但持有 app.asar 的 9002 被定向结束', JSON.stringify(pw?.killed));
+  ok(!!pw && Array.isArray(pw.kept) && pw.kept.includes(9003), '晚启动且不持有的 9003 只记录、不杀', JSON.stringify(pw?.kept));
+  ok(!!pw && Array.isArray(pw.killed) && !pw.killed.includes(9003), '9003 不在 killed 列表里', JSON.stringify(pw?.killed));
+  ok(marker.trace?.lockWait?.ok === true, '结束真实持有者后完成交换', JSON.stringify(marker.trace?.lockWait));
+  cleanup(sb);
+}
+
+/**
+ * K3：进程都退了，但文件仍被占用（持有者 = 交接进程自身）。
+ * 1.0.10 真机就是这条：helper 用 Electron 的 asar fs stat 了一次 app.asar，
+ * 自己成了持有者；guard 把 process.pid 排除后得出「没有其他进程」，静默通过。
+ * 修复里 noAsar 关掉了这条路径；万一仍出现，trace 必须记 selfHold，文案必须
+ * 说明「不是用户窗口没关」，不能让用户白关窗口。
+ */
+async function scenarioK3(): Promise<void> {
+  console.log('\n[K3] 无其它进程但持有者是自己 → trace.selfHold + 文案点名自身');
+  const install = join(tmpdir(), 'opc a176 fake install K3');
+  const sb = makeFakeSandbox('K3', {
+    failCount: 1_000_000,
+    stepMs: 250,
+    lockTimeoutMs: 5_000,
+    installDir: install,
+    processWaitMs: 0,
+    processes: [],
+    holders: [{ pid: 'self', app: 'OPC Agent' }],
+  });
+  const marker = await runFake(sb);
+  const pw = marker.trace?.processWait;
+  ok(marker.state === 'failed', '文件始终占着 → 显式 failed', JSON.stringify(marker.state));
+  ok(marker.trace?.selfHold === true, 'trace.selfHold 标出「持有者是交接进程自身」', JSON.stringify(marker.trace?.selfHold));
+  ok(!!pw && pw.selfHold === true, 'processWait 也记下 selfHold（不是静默通过）', JSON.stringify(pw?.selfHold));
+  ok(!!pw && Array.isArray(pw.holders) && pw.holders.length === 1, 'trace 记录了唯一持有者（helper 自己）', JSON.stringify(pw?.holders));
+  ok(
+    !!marker.error && marker.error.includes('交接进程自身') && marker.error.includes('不是用户窗口没关'),
+    '文案明确「不是用户窗口没关」，并给出重试路径',
+    marker.error
+  );
+  ok(!!marker.error && marker.error.includes('已等待') && marker.error.includes('预算 5 秒'), '失败文案保持实测口径（已等待 / 预算）', marker.error);
+  ok(!!marker.trace?.lockWait && marker.trace.lockWait.ok === false && marker.trace.lockWait.code === 'EBUSY', '抢锁阶段记录 EBUSY 与失败', JSON.stringify(marker.trace?.lockWait && { ok: marker.trace.lockWait.ok, code: marker.trace.lockWait.code }));
+  cleanup(sb);
+}
+
 /* ══════════════ 启动结论 / 忽略（纯函数 + 真实清理） ══════════════ */
 
 /** 造一个「上次更新失败后留下的现场」：失败记录 + 暂存包 + job + helper + .bak */
@@ -790,6 +936,18 @@ function staticAsserts(): void {
   ok(helperSrc.includes('samples') && helperSrc.includes('MAX_SAMPLES') && helperSrc.includes('attempts'), '每次重试落采样并记 attempts');
   ok(helperSrc.includes('budgetSec(') && helperSrc.includes('已等待 '), '失败文案把实测经过与预算分开写');
   ok(helperSrc.includes('truncated'), 'marker 过大时截断而不是写坏');
+
+  // 1.0.10 真机漏判：helper 自己被 asar fs 锁住目标文件
+  ok(helperSrc.includes('process.noAsar = true'), 'helper 关闭 Electron asar fs（否则 stat 一次 app.asar 就自锁）');
+  ok(!helperSrc.includes('fs.existsSync(job.targetAsar)'), '不直接用 asar 感知的 existsSync 判断目标文件');
+  ok(helperSrc.includes('function fileExists(') && helperSrc.includes('fileExists(job.targetAsar)'), '目标文件存在性走 fileExists（stat 不打开归档）');
+  ok(helperSrc.includes('reclaimTargetHolders') && helperSrc.includes('holderRecheck'), '重试期间按「是否持有」复查并记录');
+  ok(helperSrc.includes('holderPids.has(p.pid)') && helperSrc.includes('isLeftover(p)'), '结束判据 = 更新前残留 或 持有目标文件');
+  ok(
+    /function killTargets\(list\)[\s\S]{0,260}killPid\(p\.pid\)/.test(helperSrc),
+    '定向结束走可注入的 killPid（闸门能验证「真的杀了」）'
+  );
+  ok(helperSrc.includes('selfHold'), 'trace 显式记录 selfHold（不再静默通过）');
 }
 
 async function main(): Promise<void> {
@@ -809,6 +967,11 @@ async function main(): Promise<void> {
   await scenarioJ5();
   await scenarioJ6();
   console.log(`\n[J] 假时钟六例总耗时 ${Date.now() - fakeT0}ms（全部走注入时钟，未真等）`);
+  const kT0 = Date.now();
+  await scenarioK1();
+  await scenarioK2();
+  await scenarioK3();
+  console.log(`\n[K] 三条漏判分支总耗时 ${Date.now() - kT0}ms（假时钟 + 假进程表）`);
   scenarioE();
   scenarioF();
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
