@@ -39,6 +39,7 @@ import {
 import type { UpdateManifest } from '../shared/update.js';
 import { UPDATE_MANIFEST_URL, UPDATE_REPO_SLUG } from '../shared/update.js';
 import { UPDATE_PUBLIC_KEY_BASE64 } from '../electron/updater/config.js';
+import { parseUpdateNotes } from '../src/utils/updateNotes.js';
 
 let pass = 0;
 let fail = 0;
@@ -483,6 +484,75 @@ if (fs.existsSync(workflowPath)) {
     '说明过短'
   );
 }
+
+/* ══════════════ Release 说明渲染 ══════════════ */
+
+section('Release 说明渲染（Markdown → 结构，不再字面显示）');
+
+const notesSample = [
+  '## 修复',
+  '',
+  '- **加粗标题** 与 `code` 混排',
+  '  续行要拼回上一条，不能拆段',
+  '',
+  '### 注意',
+  '',
+  '普通段落第一行',
+  '第二行（中文折行不加空格）',
+].join('\n');
+const notesBlocks = parseUpdateNotes(notesSample);
+
+const firstBlock = notesBlocks[0];
+ok(
+  !!firstBlock && firstBlock.kind === 'heading' && firstBlock.level === 2,
+  '`##` 解析成二级标题，不再字面显示井号',
+  JSON.stringify(firstBlock)
+);
+
+const bulletBlock = notesBlocks.find(b => b.kind === 'bullet');
+const bulletText = bulletBlock ? bulletBlock.inlines.map(t => t.text).join('') : '';
+ok(!!bulletBlock && bulletText.includes('加粗标题'), '`- ` 解析成列表项，加粗内容取出', bulletText);
+ok(
+  !!bulletBlock && bulletBlock.inlines.some(t => t.kind === 'bold' && t.text === '加粗标题'),
+  '`**加粗**` 变成加粗片段，不残留星号',
+  JSON.stringify(bulletBlock?.inlines)
+);
+ok(
+  !!bulletBlock && bulletBlock.inlines.some(t => t.kind === 'code' && t.text === 'code'),
+  '行内代码变成 code 片段，不残留反引号',
+  JSON.stringify(bulletBlock?.inlines)
+);
+ok(!bulletText.includes('**') && !bulletText.includes('`'), '列表项正文里不再出现字面 `**` / 反引号', bulletText);
+ok(bulletText.includes('混排续行要拼回上一条'), '折行续行拼回同一条列表项（中文不加空格）', bulletText);
+
+const escapedBlocks = parseUpdateNotes('- \\*\\*加粗\\*\\* 和 \\# 标题');
+const escapedBullet = escapedBlocks.find(b => b.kind === 'bullet');
+const escapedText = escapedBullet ? escapedBullet.inlines.map(t => t.text).join('') : '';
+ok(
+  !!escapedBullet && escapedBullet.inlines.some(t => t.kind === 'bold' && t.text === '加粗'),
+  '转义写法 `\\*\\*加粗\\*\\*` 先还原再按加粗渲染',
+  JSON.stringify(escapedBullet?.inlines)
+);
+ok(!escapedText.includes('\\') && !escapedText.includes('**'), '转义反斜杠不再露到界面上', escapedText);
+
+const paragraph = notesBlocks.find(b => b.kind === 'paragraph');
+const paragraphText = paragraph ? paragraph.inlines.map(t => t.text).join('') : '';
+ok(paragraphText.includes('普通段落第一行第二行'), '中文折行的段落拼回一段', paragraphText);
+
+const cardSrc = read('src/components/UpdateCard.tsx');
+ok(cardSrc.includes('parseUpdateNotes') && cardSrc.includes('data-update-notes'), '关于页用结构化渲染而非原文直出', '缺解析器接线');
+ok(!cardSrc.includes('className="tc-update-notes">{release.notes}'), '旧的 `<p>{release.notes}</p>` 已移除');
+
+const css = read('src/index.css');
+ok(
+  /\.tc-update-notes\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/.test(css),
+  '说明区限高并在 700px 卡片内滚动',
+  '缺 max-height / overflow-y'
+);
+ok(
+  !/\.tc-update-notes\s*\{[^}]*white-space:\s*pre-wrap/.test(css),
+  '不再用 pre-wrap 原样输出 Markdown'
+);
 
 /* ══════════════ 真实密钥联调 ══════════════ */
 

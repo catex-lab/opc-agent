@@ -17,11 +17,56 @@
  * 浏览器开发态没有 preload 桥，整块降级成「仅在桌面版可用」，
  * 不渲染任何假状态。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AlertCircle, Check, Download, RefreshCw, RotateCcw } from 'lucide-react';
 import type { UpdateState } from '../../shared/update';
 import { UPDATE_RELEASES_PAGE } from '../../shared/update';
 import { InfoHint } from './InfoHint';
+import { parseUpdateNotes, type NotesInline } from '../utils/updateNotes';
+
+/** 行内片段：加粗 / 行内代码 / 纯文本 —— 只生成元素，不拼 HTML */
+function renderInlines(inlines: NotesInline[]): ReactNode[] {
+  return inlines.map((t, i) => {
+    if (t.kind === 'bold') return <strong key={i}>{t.text}</strong>;
+    if (t.kind === 'code') return <code key={i}>{t.text}</code>;
+    return <span key={i}>{t.text}</span>;
+  });
+}
+
+/**
+ * Release 说明渲染：Markdown 按标题 / 列表 / 段落分块，行内处理加粗与代码。
+ * 之前直接 `pre-wrap` 输出原文，用户看到的是 `## 修复`、`\*\*加粗\*\*`。
+ */
+function UpdateNotes({ markdown }: { markdown: string }) {
+  const blocks = useMemo(() => parseUpdateNotes(markdown), [markdown]);
+  return (
+    <div className="tc-update-notes" data-update-notes>
+      {blocks.map((block, i) => {
+        const children = renderInlines(block.inlines);
+        if (block.kind === 'heading') {
+          const level = Math.min(block.level, 3);
+          return (
+            <p key={i} className={`tc-update-notes-h tc-update-notes-h${level}`}>
+              {children}
+            </p>
+          );
+        }
+        if (block.kind === 'bullet') {
+          return (
+            <p key={i} className="tc-update-notes-li">
+              {children}
+            </p>
+          );
+        }
+        return (
+          <p key={i} className="tc-update-notes-p">
+            {children}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
 
 interface UpdateBridge {
   update?: {
@@ -204,7 +249,7 @@ export function UpdateCard() {
                       : `代码层 ${formatSize(release.size)}`}
                   </span>
                 </div>
-                {release.notes ? <p className="tc-update-notes">{release.notes}</p> : null}
+                {release.notes ? <UpdateNotes markdown={release.notes} /> : null}
                 {release.requiresFull ? (
                   <div className="tc-update-incompatible">
                     <p className="tc-update-note">
