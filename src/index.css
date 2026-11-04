@@ -4846,45 +4846,6 @@ html[data-opc-glass='1'] t-chat-sender {
   color: var(--td-brand-color);
 }
 
-/* ==========================================================================
-   A37：设置页的说明提示图标
-   ==========================================================================
-
-   用户要求「解释性小字收进提示图标内，保证页面干净整洁」。图标本身必须
-   足够小、足够淡 —— 它是「需要时才看」的东西，常驻高对比会变成新的噪音。
-   16px 的圆点按钮：hover 浮一层淡底表示可点，键盘聚焦有焦点环。 */
-.tc-hint-tip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background-color: transparent;
-  color: var(--td-text-color-placeholder);
-  cursor: help;
-  transition:
-    color var(--duration-fast) var(--ease-tencent),
-    background-color var(--duration-fast) var(--ease-tencent);
-}
-
-.tc-hint-tip:hover {
-  background-color: var(--tc-hover-chrome);
-  color: var(--td-text-color-secondary);
-}
-
-/* 「当前不可用」这类需要被看见的说明：图标转警示色，否则用户不会去点它 */
-.tc-hint-tip[data-warn='1'] {
-  color: var(--td-warning-color);
-}
-
-.tc-hint-tip:focus-visible {
-  outline: 2px solid var(--td-brand-color);
-  outline-offset: 1px;
-}
-
 /* ── 应用 Logo（彩色徽章）在深色主题下的微调 ───────────────────────
  *
  * 2026-10-29：Logo 由「黑白同人卦」换成彩色徽章位图，`--tc-logo-tile` /

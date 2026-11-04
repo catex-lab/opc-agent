@@ -261,15 +261,23 @@ rm -rf node_modules && npm install
    - 判据：同一列相对 lane 左缘的 x 必须一致；组头与条目左边界对齐；`.ext-matrix-channel` / `.ext-matrix-status` 必须 `white-space: nowrap`。
    - 列定义只出现在 `src/index.css` 一处；组件里不得再写第二份列宽。
 
-### 解释性文案 InfoHint 分期待办（未完成）
+### 解释性文案 InfoHint 使用口径（2026-11-04 收口）
 
-InfoHint 的全局收敛尚未收口，当前状态必须如实标注为“未完成”：
+**当前状态：`HintTip` 已清零并删除；本轮 16 处常驻说明收敛为 `InfoHint`（另含扩展页既有 3 处，仓库合计 19 处调用）。** 全局只允许一套 tooltip 组件，不得再引入第二种实现。
 
-- **P1（完成 3 处）**：[ExtensionDetail.tsx](src/components/ExtensionDetail.tsx) 的挂载能力图例、敏感内容提示，以及 [ExtensionPanel.tsx](src/components/ExtensionPanel.tsx) 的页脚统计已改用 `InfoHint`。
-- **P2（未开始）**：设置页、记忆面板、更新卡的常驻说明仍未迁移；[SettingsPage.tsx](src/components/SettingsPage.tsx) 有 7 处、[MemoryPanel.tsx](src/components/MemoryPanel.tsx) 有 4 处、[UpdateCard.tsx](src/components/UpdateCard.tsx) 有 1 处仍是 `HintTip`。
-- **P3（未开始）**：全仓仍有 12 处 `HintTip` 调用，`HintTip` 组件尚未删除；`InfoHint` 与 `HintTip` 两套组件并存。
+可执行判据：
 
-验收口径：迁移一处就把调用点改为 `InfoHint`，并同步减少上面的计数；计数归零前不得把该分期标记为完成。
+1. **默认收起。** 仅解释“这个设置/字段是什么意思、行为如何”的普通说明，一律改为 `InfoHint`（16px 细线 ⓘ、24px 点击区），不再占正文版面。单段说明用 `text`，术语表用 `items`；同一个控件只挂 1 枚图标。
+2. **以下场景必须常驻，禁止图标化。**
+   - 隐私/合规声明（数据是否上传、本地存储范围、授权口径）；
+   - 安全语义（如 `deny` 优先级、全放行模式的边界）；
+   - 破坏性操作（删除会话/项目/副本、重建索引、清空切片的不可恢复说明与确认）；
+   - 操作前成本/风险（例如未验证模型会消耗 token）；
+   - 失败/错误原因、空态与首次使用引导。
+3. **可访问性。** 每枚图标必须有可读 `aria-label`（由 `label` 提供）；Tab 可达、`Esc` 关闭、点外关闭；凡“不看就不能正确操作”的内容按第 2 条常驻，不得只依赖 hover。
+4. **视觉走令牌。** 默认 `--td-text-color-placeholder`，仅 `warn` 态用 `--td-warning-color`；禁止硬编码十六进制。浅色/深色都要回归。
+5. **不动版面。** 图标只挂在现有标题/标签行内，不新增行、不改栅格与容器查询断点。改动涉及会话头 `.chat-row` 三档或扩展矩阵三列时，必须同时回归 §九 前三条硬规则的判据。
+6. **验收入口。** 外观页图标契约由 `verify:a37` 覆盖（选择器为 `[data-info-hint]` / `[data-info-hint-panel]`）；迁移时只能同步更新闸门选择器，不得放宽断言强度。
 
 ## 十、数据不进版本库
 
