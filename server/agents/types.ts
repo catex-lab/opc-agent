@@ -479,7 +479,26 @@ export interface AgentStatus {
   lastError?: string;
   /** 探测时间（ISO） */
   probedAt: string;
+  /**
+   * 探测本身的结果分类（A177）。
+   *
+   * 与 `availability` 是**两个维度**：availability 说的是「这个 Agent 现在能不能用」，
+   * probeState 说的是「这次探测动作本身发生了什么」。
+   * 典型冲突：SDK 冷启动 initialize 超时——availability 仍是 `needs-auth`
+   * （看起来像没登录），但 probeState 是 `timeout`，界面必须说「探测超时」
+   * 而不是「未登录」，否则用户会反复去登录一个其实已经登录好的账号。
+   */
+  probeState?: AgentProbeState;
 }
+
+/**
+ * 探测动作的结果分类（A177）。
+ *
+ * - `timeout`：探测在预算内没有返回（SDK 冷启动 / 网络挂起）
+ * - `credential-invalid`：鉴权明确拒绝（401/403 / invalid key / token 过期）
+ * - `probe-failed`：探测进程崩溃、权限拒绝或其它未分类错误
+ */
+export type AgentProbeState = 'timeout' | 'credential-invalid' | 'probe-failed';
 
 /**
  * 权限模式与强制能力矩阵的类型，收敛在 `shared/types.ts`。

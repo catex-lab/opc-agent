@@ -40,6 +40,69 @@ const PROBE_TTL_MS = 5 * 60 * 1000;
 /** 探测并发上限：ACP 要起 Python 进程，SDK 要走网络，一次性全开会很慢 */
 const PROBE_CONCURRENCY = 3;
 
+/**
+ * 单 Agent 探测的默认预算（A177）。
+ *
+ * 为什么按 kind 分开而不是统一 8–10 秒：探测的成本结构差异太大。
+ * - CLI / SDK-with-fast-probe：9 秒足够覆盖一次进程启动 + 版本读取；
+ * - ACP：要拉起 Python 并完成 initialize，本机实测常在 20 秒上下；
+ * - SDK（WorkBuddy/CodeBuddy）：冷启动 initialize 单次就可能超过 60 秒
+ *   （SDK 内部 requestTimeoutMs 默认 60000），首探必须给更长预算。
+ *
+ * `SDK_COLD` 取 120 秒：60 秒（首次 initialize 超时）+ 31 秒（重试成功）
+ * 的实测总耗时约 91 秒，留出余量。`SDK_WARM` 取 45 秒覆盖重试路径。
+ * 这些只是**上限**，正常探测远低于它。
+ */
+const SINGLE_PROBE_TIMEOUT_MS = 9_000;
+const ACP_PROBE_TIMEOUT_MS = 30_000;
+const SDK_COLD_PROBE_TIMEOUT_MS = 120_000;
+const SDK_WARM_PROBE_TIMEOUT_MS = 45_000;
+/** 前端可显式指定预算，但不允许无限等 */
+export const MAX_SINGLE_PROBE_TIMEOUT_MS = 180_000;
+
+/** 单 Agent 探测的失败分类。只有这四类，前端不需要猜。 */
+export type ProbeFailureReason = 'timeout' | 'not-found' | 'permission' | 'unknown';
+
+export interface SingleProbeResult {
+  agentId: string;
+  /** 探测动作本身是否正常完成（`not-installed` 也算完成，原因里标 not-found） */
+  ok: boolean;
+  status: AgentStatus;
+  durationMs: number;
+  probedAt: string;
+  reason?: ProbeFailureReason;
+  error?: string;
+}
+
+/**
+ * A177：agentId 只允许小写字母、数字与连字符。
+ *
+ * 内置 id（workbuddy / doubao / ...）与自建 id（custom-xxxxxxxx）都满足。
+ * 这个校验发生在**任何路径拼接之前**，且探测链路本身不使用 agentId 拼路径，
+ * 因此 `../`、盘符、斜杠、百分号编码一律在入口被拒。
+ */
+export function isValidAgentId(id: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id);
+}
+
+/**
+ * 把一次已完成的探测结果归类为四种失败原因之一（A177）。
+ *
+ * 只在**探测动作失败**时返回原因；`not-installed` 是「探测成功、Agent 不在本机」，
+ * 但对调用方来说仍属于 not-found，所以也给出。
+ */
+export function classifyProbeFailure(status: AgentStatus): ProbeFailureReason | undefined {
+  if (status.probeState === 'timeout') return 'timeout';
+
+  const message = status.message ?? '';
+  if (status.availability === 'not-installed') return 'not-found';
+  if (/ENOENT|not found|未找到|未安装|CLI not found/i.test(message)) return 'not-found';
+  if (/EACCES|EPERM|permission denied|拒绝访问|无权限|没有权限/i.test(message)) return 'permission';
+  if (/Request timeout|timed out|timeout|超时/i.test(message)) return 'timeout';
+  if (status.availability === 'unknown') return 'unknown';
+  return undefined;
+}
+
 class AgentRegistry {
   private providers = new Map<string, AgentProvider>();
   private statuses = new Map<string, AgentStatus>();
@@ -51,7 +114,7 @@ class AgentRegistry {
    * 启动后台探测、名册首次拉取、群聊前的可用性校验都可能同时要求探测同一个
    * Agent，没有这张表就会并发起多个 ACP 进程，互相抢 stdio 并留下孤儿进程。
    */
-  private inflight = new Map<string, Promise<AgentInfo | undefined>>();
+  private inflight = new Map<string, Promise<AgentStatus>>();
   /** 是否已经完成过至少一轮全量探测 */
   private probedOnce = false;
   /** 本机安装前置条件（A71）：启动时预热，toInfo 同步读取 */
@@ -105,6 +168,11 @@ class AgentRegistry {
       provider.descriptor,
       this.statuses.get(id) ?? unknownStatus()
     );
+  }
+
+  /** 只判断是否存在，不组装 AgentInfo（A177：避免单探测链路顺带读别名册信息） */
+  hasAgent(id: string): boolean {
+    return this.providers.has(id);
   }
 
   /**
@@ -257,6 +325,45 @@ class AgentRegistry {
     return Date.now() - at < PROBE_TTL_MS;
   }
 
+  /**
+   * 内部：真正跑一次探测并把结果写回**目标 Agent** 的缓存。
+   *
+   * A177 的隔离性基座：全量探测与单 Agent 探测都只走这一个函数，
+   * 它只接收一个 `id`，没有「顺手把别人也探一遍」的分支。
+   * `probeAll()` 是循环调用 `probeOne()`，**不是**反过来。
+   */
+  private startProbe(id: string, provider: AgentProvider): Promise<AgentStatus> {
+    const task = (async (): Promise<AgentStatus> => {
+      let status: AgentStatus;
+      try {
+        status = await provider.probe();
+      } catch (err) {
+        const message = (err as Error)?.message || String(err);
+        status = {
+          availability: 'unknown',
+          installed: false,
+          message: `探测失败：${message}`,
+          probeState: 'probe-failed',
+          probedAt: new Date().toISOString(),
+        };
+      }
+      this.statuses.set(id, status);
+      this.probedAt.set(id, Date.now());
+      return status;
+    })().finally(() => {
+      // 只清自己这一条；不同 agentId 的 inflight 互不影响
+      this.inflight.delete(id);
+    });
+
+    this.inflight.set(id, task);
+    return task;
+  }
+
+  /** 复用进行中的探测（同一 Agent 并发点击只起一次进程） */
+  private probeTask(id: string, provider: AgentProvider): Promise<AgentStatus> {
+    return this.inflight.get(id) ?? this.startProbe(id, provider);
+  }
+
   /** 探测单个 Agent（同一 Agent 的并发探测会复用同一个 Promise） */
   async probeOne(id: string, force = false): Promise<AgentInfo | undefined> {
     const provider = this.providers.get(id);
@@ -264,31 +371,100 @@ class AgentRegistry {
 
     if (!force && this.isFresh(id)) return this.get(id);
 
-    const existing = this.inflight.get(id);
-    if (existing) return existing;
-
-    const task = (async () => {
-      try {
-        const status = await provider.probe();
-        this.statuses.set(id, status);
-        this.probedAt.set(id, Date.now());
-      } catch (err) {
-        this.statuses.set(id, {
-          availability: 'unknown',
-          installed: false,
-          message: `探测失败：${(err as Error).message}`,
-          probedAt: new Date().toISOString(),
-        });
-        this.probedAt.set(id, Date.now());
-      } finally {
-        this.inflight.delete(id);
-      }
-      return this.get(id);
-    })();
-
-    this.inflight.set(id, task);
-    return task;
+    await this.probeTask(id, provider);
+    return this.get(id);
   }
+
+  /**
+   * A177：单 Agent 探测（供 `POST /api/agents/:agentId/probe` 使用）。
+   *
+   * 与 `probeOne` 的关键差别：
+   * 1. **不调用 `get()`/`toInfo()`** —— 那会触发 `familyHintsFor(id)`，
+   *    顺带扫描同厂其它配置目录。单探测期间只允许碰目标 Agent。
+   * 2. **带可控超时**。超时后只写目标 Agent 的缓存与时间戳，其它 Agent 不动。
+   * 3. **绝不兜底调 `probeAll()`**。调用链固定为
+   *    `probeSingle → probeTask/startProbe → provider.probe()`。
+   */
+  async probeSingle(
+    id: string,
+    opts: { timeoutMs?: number } = {}
+  ): Promise<SingleProbeResult | undefined> {
+    const provider = this.providers.get(id);
+    if (!provider) return undefined;
+
+    const started = Date.now();
+    const hadProbe = this.probedAt.has(id);
+    const timeoutMs = this.singleProbeTimeoutFor(provider, hadProbe, opts.timeoutMs);
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<'timeout'>(resolve => {
+      timer = setTimeout(() => resolve('timeout'), timeoutMs);
+    });
+
+    const task = this.probeTask(id, provider);
+    const winner = await Promise.race([
+      task.then(status => ({ kind: 'done' as const, status })),
+      timeoutPromise.then(kind => ({ kind } as const)),
+    ]);
+    if (timer) clearTimeout(timer);
+
+    const durationMs = Date.now() - started;
+
+    if (winner.kind === 'timeout') {
+      const seconds = Math.max(1, Math.round(timeoutMs / 1000));
+      const status: AgentStatus = {
+        availability: 'unknown',
+        installed: this.statuses.get(id)?.installed ?? false,
+        message: `探测超时：已等待 ${seconds} 秒仍未返回`,
+        probeState: 'timeout',
+        probedAt: new Date().toISOString(),
+      };
+      // 只写目标 Agent；底层探测若后来返回，会以真实结果覆盖这条超时标记
+      this.statuses.set(id, status);
+      this.probedAt.set(id, Date.now());
+      return {
+        agentId: id,
+        ok: false,
+        status,
+        durationMs,
+        probedAt: status.probedAt,
+        reason: 'timeout',
+        error: status.message,
+      };
+    }
+
+    const status = winner.status;
+    const reason = classifyProbeFailure(status);
+    return {
+      agentId: id,
+      ok: reason !== 'timeout' && reason !== 'permission' && reason !== 'unknown',
+      status,
+      durationMs,
+      probedAt: status.probedAt,
+      ...(reason ? { reason } : {}),
+      ...(reason ? { error: status.message } : {}),
+    };
+  }
+
+  /** 按 Agent 类型给单探测预算：SDK 冷启动明显更慢，不能和 CLI 用同一档 */
+  private singleProbeTimeoutFor(
+    provider: AgentProvider,
+    hadProbe: boolean,
+    requested?: number
+  ): number {
+    if (typeof requested === 'number' && Number.isFinite(requested) && requested > 0) {
+      return Math.min(Math.floor(requested), MAX_SINGLE_PROBE_TIMEOUT_MS);
+    }
+    switch (provider.descriptor.kind) {
+      case 'sdk':
+        return hadProbe ? SDK_WARM_PROBE_TIMEOUT_MS : SDK_COLD_PROBE_TIMEOUT_MS;
+      case 'acp':
+        return ACP_PROBE_TIMEOUT_MS;
+      default:
+        return SINGLE_PROBE_TIMEOUT_MS;
+    }
+  }
+
 
   /**
    * 探测全部 Agent（带并发上限）。

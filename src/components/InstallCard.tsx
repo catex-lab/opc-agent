@@ -31,8 +31,8 @@ import type { RegisteredAgent } from '../types';
 
 interface InstallCardProps {
   agent: RegisteredAgent;
-  /** 装完之后重新探测（`POST /api/agents/probe`） */
-  onReprobe?: () => void;
+  /** 装完之后重新探测（A177：只探测当前这一个，`POST /api/agents/:id/probe`） */
+  onReprobe?: (agentId: string) => void;
   /** 跳设置页对应凭据行（`method:'key'` 用） */
   onOpenCredential?: (agentId: string) => void;
   /** 清单页里用：不画外层标题 */
@@ -274,7 +274,7 @@ export function InstallCard({ agent, onReprobe, onOpenCredential, bare }: Instal
             <button
               type="button"
               className="tc-btn-secondary ml-auto"
-              onClick={onReprobe}
+              onClick={() => onReprobe?.(agent.id)}
               data-install-reprobe
             >
               <RefreshCw size={14} />

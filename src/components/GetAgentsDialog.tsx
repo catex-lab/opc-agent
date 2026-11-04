@@ -4,7 +4,7 @@ import { RefreshCw, X } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { InstallCard } from './InstallCard';
 import { useOverflowY } from '../hooks/useOverflowY';
-import { AVAILABILITY_META, availabilityLabelOf, type InstallMethod, type RegisteredAgent } from '../types';
+import { agentStatusViewOf, availabilityLabelOf, type InstallMethod, type RegisteredAgent } from '../types';
 
 /**
  * 「获取 Agent」清单页（A71）。
@@ -217,7 +217,7 @@ export function GetAgentsDialog({
                   <span>· {GROUP_HINT[g.method]}</span>
                 </div>
                 {g.items.map(a => {
-                  const meta = AVAILABILITY_META[a.status.availability];
+                  const meta = agentStatusViewOf(a);
                   return (
                     <div
                       key={a.id}

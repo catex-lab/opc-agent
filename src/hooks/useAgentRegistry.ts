@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RegisteredAgent } from '../types';
+import {
+  createSingleProbeRunner,
+  probeFeedbackFromResult,
+  type AgentProbeFeedback,
+} from '../agentProbe';
 
 /**
  * Agent 注册表 hook。
@@ -7,12 +12,19 @@ import type { RegisteredAgent } from '../types';
  * 数据来自后端 /api/agents。后端在进程内缓存探测结果（TTL 5 分钟），
  * 所以这里可以放心地在挂载时直接拉一次；只有用户点「重新探测」时才
  * 走 POST /api/agents/probe 强制刷新。
+ *
+ * A177：单个 Agent 的「重新探测」走 `probeOne()`（POST /api/agents/:id/probe），
+ * 不再顺带全量。全量按钮仍然保留在通讯录顶部，语义没有变。
  */
 export function useAgentRegistry() {
   const [agents, setAgents] = useState<RegisteredAgent[]>([]);
   const [loading, setLoading] = useState(false);
   const [probing, setProbing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 正在探测中的 agentId 集合：按钮据此进入 loading 并禁用 */
+  const [probingIds, setProbingIds] = useState<Set<string>>(new Set());
+  /** 每个 Agent 最近一次单探测的反馈（时间戳 / 耗时 / 失败原因） */
+  const [probeFeedback, setProbeFeedback] = useState<Record<string, AgentProbeFeedback>>({});
   /** 避免 StrictMode 下重复请求 */
   const fetchedRef = useRef(false);
 
@@ -31,6 +43,54 @@ export function useAgentRegistry() {
     }
   }, []);
 
+  /**
+   * 单 Agent 探测协调器。
+   *
+   * `onSuccess` 只改一个条目（按 agentId 精确匹配），因此其他 Agent 的
+   * 状态、探测时间戳、顺序全部原样保留 —— 这是「单探测隔离性」的 UI 侧保证。
+   */
+  const singleProbeRunner = useMemo(
+    () =>
+      createSingleProbeRunner({
+        onStart: agentId => {
+          setProbingIds(prev => {
+            const next = new Set(prev);
+            next.add(agentId);
+            return next;
+          });
+          setProbeFeedback(prev => ({ ...prev, [agentId]: { state: 'probing' } }));
+        },
+        onSuccess: (agentId, data) => {
+          setAgents(prev =>
+            prev.map(agent => (agent.id === agentId ? { ...agent, status: data.status } : agent))
+          );
+          setProbeFeedback(prev => ({ ...prev, [agentId]: probeFeedbackFromResult(data) }));
+          setProbingIds(prev => {
+            if (!prev.has(agentId)) return prev;
+            const next = new Set(prev);
+            next.delete(agentId);
+            return next;
+          });
+        },
+        onFailure: (agentId, feedback) => {
+          setProbeFeedback(prev => ({ ...prev, [agentId]: feedback }));
+          setProbingIds(prev => {
+            if (!prev.has(agentId)) return prev;
+            const next = new Set(prev);
+            next.delete(agentId);
+            return next;
+          });
+        },
+      }),
+    []
+  );
+
+  /** 只重新探测指定的一个 Agent（同一 Agent 并发点击复用同一个请求） */
+  const probeOne = useCallback(
+    (agentId: string) => singleProbeRunner(agentId),
+    [singleProbeRunner]
+  );
+
   /** 强制重新探测（会真的去跑 ACP 握手 / 鉴权，耗时约 20 秒） */
   const probe = useCallback(async () => {
     setProbing(true);
@@ -40,6 +100,7 @@ export function useAgentRegistry() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAgents(Array.isArray(data.agents) ? data.agents : []);
+      setProbeFeedback({});
     } catch (err) {
       setError((err as Error).message || '探测失败');
     } finally {
@@ -107,6 +168,9 @@ export function useAgentRegistry() {
     error,
     load,
     probe,
+    probeOne,
+    probingIds,
+    probeFeedback,
     getAgent,
   };
 }

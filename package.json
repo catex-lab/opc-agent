@@ -168,7 +168,10 @@
     "verify:a171-update": "tsx scripts/verify-a171-update.ts",
     "verify:a176-update-swap": "tsx scripts/verify-a176-update-swap.ts",
     "verify:a173-kb-ui": "node scripts/verify-a173-kb-ui.mjs",
-    "verify:a174-answer-render": "tsx scripts/verify-a174-answer-render.ts && node scripts/verify-a174.mjs"
+    "verify:a174-answer-render": "tsx scripts/verify-a174-answer-render.ts && node scripts/verify-a174.mjs",
+    "verify:a177-agent-probe": "tsx scripts/verify-a177-agent-probe.ts",
+    "verify:a177-agent-probe-ui": "tsx scripts/verify-a177-agent-probe-ui.tsx",
+    "verify:a178-workbuddy-auth": "tsx scripts/verify-a178-workbuddy-auth.tsx"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.316",

@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Search, Users, X, UserPlus, UserMinus, Plus 
 import { AgentAvatar } from './AgentAvatar';
 import { AgentHoverCard } from './AgentHoverCard';
 import { MENU_ITEM_SM_CLASS } from './menuItem';
-import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
+import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent } from '../types';
 
 /**
  * 群聊右侧成员栏。
@@ -296,7 +296,7 @@ export function GroupMemberPanel({ members, allAgents, onMembersChange }: GroupM
                   {/* 未就绪的标出来：邀请一个连不上的 Agent 进来，
                       下次编排时会因为它不可用而整轮失败，不如先说明 */}
                   {agent.status.availability !== 'ready' && (
-                    <span className="shrink-0 text-caption" style={{ color: AVAILABILITY_META[agent.status.availability].color }}>
+                    <span className="shrink-0 text-caption" style={{ color: agentStatusViewOf(agent).color }}>
                       {availabilityLabelOf(agent)}
                     </span>
                   )}
@@ -319,7 +319,7 @@ export function GroupMemberPanel({ members, allAgents, onMembersChange }: GroupM
         ) : (
           list.map(member => {
             const ready = member.status.availability === 'ready';
-            const meta = AVAILABILITY_META[member.status.availability];
+            const meta = agentStatusViewOf(member);
             // 只剩一个人时不许移出：空群既发不了消息（编排器无对象可派），
             // 也会让用户从群聊里凭空失去这个会话的入口。
             const lastOne = members.length <= 1;

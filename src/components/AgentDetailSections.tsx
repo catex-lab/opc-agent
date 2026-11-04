@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
+import { Loader2, RefreshCw } from 'lucide-react';
 import { InstallCard } from './InstallCard';
 import { AgentCredentialEditor } from './AgentCredentialEditor';
+import { describeProbeFeedback, type AgentProbeFeedback } from '../agentProbe';
 import {
   AVAILABILITY_META,
   CAPABILITY_META,
@@ -47,14 +49,20 @@ export function AgentDetailSections({
   agent,
   onSelectAgent,
   onReprobe,
+  probing,
+  probeFeedback,
   onOpenCredential,
 }: {
   agent: RegisteredAgent;
   /**
-   * 装完之后重新探测。**可选** —— 弹窗里不给这个回调（那里是「看一眼就走」，
-   * 重新探测会整页刷新，用户会失去当前位置）。
+   * 装完之后重新探测。**可选** —— 弹窗里不给这个回调（那里是「看一眼就走」）。
+   * A177：参数是 agentId，调用方只会探测**这一个**条目。
    */
-  onReprobe?: () => void;
+  onReprobe?: (agentId: string) => void;
+  /** 当前 Agent 是否正在探测（按钮 loading + 禁用重复点击） */
+  probing?: boolean;
+  /** 当前 Agent 最近一次单探测的反馈（时间戳 / 耗时 / 失败原因） */
+  probeFeedback?: AgentProbeFeedback;
   /** 跳设置页对应凭据行（`method:'key'` 的条目用） */
   onOpenCredential?: (agentId: string) => void;
   /**
@@ -194,10 +202,58 @@ export function AgentDetailSections({
         <div className={`tc-detail-rows overflow-hidden ${CARD}`} style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
           <DetailRow
             label="状态"
-            // 没上报 message 时退回可用性标签 —— 标签文案只有
-            // availabilityLabelOf 一个来源，不在这里再抄一份
-            value={agent.status.message || availabilityLabelOf(agent)}
+            // 状态词永远在第一位：A177/A178 要求「探测超时」不能被
+            // 探测消息里的 "Request timeout" 原话盖过去，更不能显示成「未登录」
+            value={
+              agent.status.message
+                ? `${availabilityLabelOf(agent)} · ${agent.status.message}`
+                : availabilityLabelOf(agent)
+            }
           />
+          {/* A177：单 Agent 重新探测。放在状态行下面而不是页脚：
+              用户是看到「状态不对」才想重探，入口贴着状态最近；
+              同时这里离「获取」「凭据配置」都只有一屏，修完凭据可以立刻验。 */}
+          {onReprobe && (
+            <div
+              className={`${ROW_X} ${ROW_Y} flex items-start justify-between gap-3 border-t`}
+              style={{ borderColor: 'var(--tc-edge)' }}
+              data-agent-probe-row
+            >
+              <div className="min-w-0">
+                <div className="text-body" style={{ color: 'var(--td-text-color-secondary)' }}>
+                  重新探测这一个 Agent
+                </div>
+                <div
+                  className="mt-0.5 text-secondary break-words"
+                  style={{ color: 'var(--td-text-color-placeholder)' }}
+                  data-agent-probe-result
+                  data-agent-probe-state={
+                    probing ? 'probing' : probeFeedback?.state === 'done' ? 'done' : 'idle'
+                  }
+                >
+                  {probing
+                    ? describeProbeFeedback({ state: 'probing' })
+                    : describeProbeFeedback(probeFeedback) ||
+                      '只探测当前条目，其他 Agent 的状态与时间戳保持不变'}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="tc-btn-secondary shrink-0"
+                onClick={() => onReprobe(agent.id)}
+                disabled={probing}
+                aria-busy={probing}
+                data-agent-reprobe
+              >
+                {probing ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
+                {probing ? '探测中…' : '重新探测'}
+              </button>
+            </div>
+          )}
           {/* 需要登录时给一个一键入口。
               地址由探测以结构化字段给出，不从文案里抠 URL；
               target=_blank 会被主进程的 setWindowOpenHandler 转交
@@ -267,7 +323,10 @@ export function AgentDetailSections({
                 凭据配置
               </div>
               <div className={ROW_X}>
-                <AgentCredentialEditor agentId={agent.id} onSaved={onReprobe} />
+                <AgentCredentialEditor
+                  agentId={agent.id}
+                  onSaved={onReprobe ? () => onReprobe(agent.id) : undefined}
+                />
               </div>
             </div>
           )}

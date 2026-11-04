@@ -977,7 +977,7 @@ const RAW_DEFS: AgentDefinition[] = [
       description: '全能型主控 Agent，可读写文件、执行命令、联网检索，适合担任群聊的调度中枢',
       icon: 'workbuddy',
       color: '#0EC8A9',
-      installHint: '通过 CodeBuddy CLI 登录，或在设置页填入 API Key',
+      installHint: '先在 WorkBuddy 桌面客户端登录（复用 ~/.workbuddy），或在下方凭据配置填 CODEBUDDY_API_KEY',
     },
     /**
      * A155：真正接到 WorkBuddy 国内产品上。
@@ -995,6 +995,19 @@ const RAW_DEFS: AgentDefinition[] = [
       environment: 'internal',
       endpoint: 'https://www.workbuddy.cn',
       configDir: '~/.workbuddy',
+    },
+    /**
+     * A178：让「获取」区的「可填 API Key」有真实入口。
+     *
+     * 之前这条没有 `credential`，于是两处文案互相打脸：
+     * 获取区说「也支持填 API Key」，详情页的凭据配置却说「该 Agent 不支持」。
+     * SDK 探测本身已经认 `CODEBUDDY_API_KEY`（见 sdk.ts 的 envOk），
+     * 这里只是把它接到统一的凭据存储与注入链路（data/agent-credentials.json）。
+     * 桌面端登录态仍是首选路径，Key 是第二条路。
+     */
+    credential: {
+      keyEnv: ['CODEBUDDY_API_KEY'],
+      hint: 'WorkBuddy 桌面客户端登录后会自动复用 ~/.workbuddy 登录态；也可填腾讯云 API Key（写入 CODEBUDDY_API_KEY）',
     },
   },
   {
@@ -2310,7 +2323,7 @@ const INSTALL_INFO: Record<string, AgentInstall> = {
     // 2026-10-31：SDK 自带的 CLI 已随安装包分发（asarUnpack，见
     // electron-builder.yml），bootstrap.cjs 会把它注入 CODEBUDDY_CODE_PATH。
     // 所以打包版不再要求用户另装 CLI，缺的只是登录。
-    note: '走内置 SDK（CLI 已随应用分发）；在应用内登录 WorkBuddy 账号即可，也支持填 API Key',
+    note: '走内置 SDK（CLI 已随应用分发）；先在 WorkBuddy 桌面客户端登录，回来点「重新探测」复用 ~/.workbuddy 登录态；也可在下方「凭据配置」填 CODEBUDDY_API_KEY',
     checkedAt: CHECKED,
     checkedFrom: '官方双版本产品配置（A68 已核：productName / networkEnvironment）',
   },

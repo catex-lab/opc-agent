@@ -6,6 +6,7 @@ import { useAgentRemarks } from '../agentRemarks';
 import {
   AVAILABILITY_META,
   CAPABILITY_META,
+  agentStatusViewOf,
   availabilityLabelOf,
   type RegisteredAgent,
 } from '../types';
@@ -142,7 +143,7 @@ export function AgentHoverCard({ agent, onViewDetail, children }: AgentHoverCard
   // 卸载时清掉计时器，避免「组件没了还 setState」
   useEffect(() => clearTimers, []);
 
-  const meta = AVAILABILITY_META[agent.status.availability];
+  const meta = agentStatusViewOf(agent);
 
   return (
     <span

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentDetailSections } from './AgentDetailSections';
-import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
+import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent } from '../types';
 
 interface AgentDetailModalProps {
   agent: RegisteredAgent | undefined;
@@ -64,7 +64,7 @@ export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps
 
   if (!open || !agent) return null;
 
-  const meta = AVAILABILITY_META[agent.status.availability];
+  const meta = agentStatusViewOf(agent);
 
   return createPortal(
     <div

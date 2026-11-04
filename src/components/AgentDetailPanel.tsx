@@ -5,7 +5,9 @@ import { AgentAvatar } from './AgentAvatar';
 import { AgentDetailSections } from './AgentDetailSections';
 import { AvatarCropDialog } from './AvatarCropDialog';
 import { removeAgentLogo, uploadAgentLogo } from '../avatarApi';
-import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
+import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent } from '../types';
+import type { AgentProbeFeedback } from '../agentProbe';
+import { describeProbeFeedback } from '../agentProbe';
 
 interface AgentDetailPanelProps {
   agent: RegisteredAgent;
@@ -13,8 +15,12 @@ interface AgentDetailPanelProps {
   onStartChat: (agentId: string) => void;
   /** 点「同族关系」里的名字直接切到那条资料（A68）。不传则名字不可点。 */
   onSelectAgent?: (agentId: string) => void;
-  /** 装完之后的重新探测（A71）。整页场景给，弹窗场景不给 */
-  onReprobe?: () => void;
+  /** 装完之后的重新探测（A71/A177）。只探测**当前这一个** Agent */
+  onReprobe?: (agentId: string) => void;
+  /** 当前 Agent 是否正在探测（按钮 loading + 禁用重复点击） */
+  probing?: boolean;
+  /** 当前 Agent 最近一次单探测的结果反馈 */
+  probeFeedback?: AgentProbeFeedback;
   /** 跳设置页对应凭据行（A71，`method:'key'` 用） */
   onOpenCredential?: (agentId: string) => void;
   /** 删除自建 Agent（A114）。只有 `agent.custom` 为真时才出现 */
@@ -49,12 +55,14 @@ export function AgentDetailPanel({
   onStartChat,
   onSelectAgent,
   onReprobe,
+  probing,
+  probeFeedback,
   onOpenCredential,
   onDeleteCustom,
   onAvatarChanged,
 }: AgentDetailPanelProps) {
   const avail = agent.status.availability;
-  const meta = AVAILABILITY_META[avail];
+  const meta = agentStatusViewOf(agent);
   const canChat = avail === 'ready';
   // A114：自建 Agent 才有删除。内置条目是编译进应用的，删了也回不来。
   const canDelete = !!agent.custom && !!onDeleteCustom;
@@ -199,6 +207,8 @@ export function AgentDetailPanel({
             agent={agent}
             onSelectAgent={onSelectAgent}
             onReprobe={onReprobe}
+            probing={probing}
+            probeFeedback={probeFeedback}
             onOpenCredential={onOpenCredential}
           />
         </div>
@@ -244,7 +254,9 @@ export function AgentDetailPanel({
               才退回这句通用说明。 */}
           {!canChat && (
             <p className="mt-2 text-center text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              {agent.status.message || `${availabilityLabelOf(agent)} · 需要先完成登录或修复`}
+              {agent.status.message
+                ? `${availabilityLabelOf(agent)} · ${agent.status.message}`
+                : `${availabilityLabelOf(agent)} · 需要先完成登录或修复`}
             </p>
           )}
 

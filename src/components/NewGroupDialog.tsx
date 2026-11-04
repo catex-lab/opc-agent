@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Search, ChevronDown, ChevronRight, Users, X, Check } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { useAgentRemarks } from '../agentRemarks';
-import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
+import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
 
 interface NewGroupDialogProps {
   open: boolean;
@@ -308,7 +308,7 @@ export function NewGroupDialog({
                     </div>
                     {list.map(a => {
                       const checked = selected.includes(a.id);
-                      const meta = AVAILABILITY_META[a.status.availability];
+                      const meta = agentStatusViewOf(a);
                       return (
                         <button
                           key={a.id}

@@ -6,7 +6,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { WorkspaceBadge } from './WorkspaceBadge';
 import { KbScopeChip } from './kb/KbScopeChip';
 import { MENU_ITEM_TEXT_CLASS } from './menuItem';
-import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent } from '../types';
+import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent } from '../types';
 import type { ScenarioTemplate } from '../scenarios';
 import { useAgentRemarks } from '../agentRemarks';
 
@@ -82,7 +82,7 @@ export function ChatHeader({
   const displayName = (agent && remarks[agent.id]) || agent?.name || fallbackTitle;
 
   const avail = agent?.status.availability;
-  const meta = avail ? AVAILABILITY_META[avail] : null;
+  const meta = agent ? agentStatusViewOf(agent) : null;
 
   const closeMore = () => {
     if (moreRef.current) moreRef.current.open = false;

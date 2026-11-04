@@ -35,6 +35,44 @@ import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 /** 权限请求等待上限，与前端提示一致 */
 const PERMISSION_TIMEOUT = 5 * 60 * 1000;
 
+/**
+ * 登录等待预算。
+ *
+ * SDK 默认等 300 秒（auth.js `timeout = 300000`）：未登录时会先给 authUrl，
+ * 然后一直挂在那里等用户点完。对「探测」来说这是不可接受的 —— 名册会卡 5 分钟。
+ * 收到 authUrl 就已经知道「没登录」了，所以这里把等待压到 8 秒：
+ * 期间真的完成登录就返回 ready；没完成就按「未登录」返回，并带上登录地址。
+ */
+const SDK_LOGIN_WAIT_MS = 8_000;
+
+/** SDK transport 的 initialize 控制请求默认 60s 后抛这个错误（A178 实测） */
+export function isInitializeTimeout(message: string): boolean {
+  return /Request timeout:\s*initialize|initialize.*timed out|initialize.*超时/i.test(message);
+}
+
+/**
+ * A178：SDK 探测失败的四态分类。
+ *
+ * 明确区分「凭据被拒绝」和「探测动作失败」：
+ * - 401/403/invalid key/token expired → 凭据无效
+ * - initialize / request timeout → 探测超时（不是未登录）
+ * - 其它 → 探测失败
+ */
+export function classifySdkProbeFailure(
+  message: string
+): 'timeout' | 'credential-invalid' | 'probe-failed' {
+  if (isInitializeTimeout(message)) return 'timeout';
+  if (
+    /401|403|unauthorized|invalid\s*(api\s*)?(key|token)|token\s*(expired|invalid)|凭据(无效|失效)|认证失败/i.test(
+      message
+    )
+  ) {
+    return 'credential-invalid';
+  }
+  if (/timed? out|timeout|超时/i.test(message)) return 'timeout';
+  return 'probe-failed';
+} 
+
 const DEFAULT_SYSTEM_PROMPT =
   '你是一个专业的 AI 助手，善于帮助用户解决各种问题。请用简洁清晰的方式回答。';
 
@@ -217,18 +255,52 @@ export class SdkAdapter implements AgentProvider {
       process.env.CODEBUDDY_API_KEY || process.env.CODEBUDDY_AUTH_TOKEN
     );
 
-    try {
-      let needsLogin = false;
+    let needsLogin = false;
+    /** 本次探测里是否真的收到过 authUrl —— 用它区分「没登录」和「initialize 超时」 */
+    let authUrlSeen = false;
+
+    const authenticateOnce = async () => {
+      needsLogin = false;
+      authUrlSeen = false;
       // A155：以前这里写死 `environment: 'external'`，所以 WorkBuddy 查的是
       // CodeBuddy 国际站的登录态 —— 用户明明登录了 WorkBuddy，名册却显示未登录。
       // `this.runtime` 带着 internal / workbuddy.cn / ~/.workbuddy 三项。
-      const result = await unstable_v2_authenticate({
+      return unstable_v2_authenticate({
         ...this.runtime,
+        // A178：把 SDK 默认的 300 秒登录等待压到 8 秒（见 SDK_LOGIN_WAIT_MS）
+        timeout: SDK_LOGIN_WAIT_MS,
         onAuthUrl: async (authState: { authUrl?: string }) => {
           needsLogin = true;
+          authUrlSeen = true;
           if (authState?.authUrl) lastAuthUrl = authState.authUrl;
         },
       });
+    };
+
+    try {
+      let result: Awaited<ReturnType<typeof authenticateOnce>>;
+      try {
+        result = await authenticateOnce();
+      } catch (err) {
+        const firstMessage = (err as Error)?.message || String(err);
+        /**
+         * A178 实测结论：WorkBuddy SDK 的 initialize 走
+         * `sendControlRequest`，默认 60000ms 后抛 `Request timeout: initialize`。
+         * 本机冷启动第一次必现（实测 60001ms），紧接着重试一次只需约 31s
+         * 并成功返回已登录用户（emailcatai@gmail.com）。
+         *
+         * 因此这里对「initialize 超时」自动再试一次：不把一次冷启动的
+         * 偶发失败直接判成「未登录」，否则用户会去重登一个本来就好的账号。
+         * 只对 initialize 超时重试，避免网络坏掉时形成 2×60s 的死等。
+         */
+        if (!isInitializeTimeout(firstMessage) || !hasCli) throw err;
+        console.warn('[SDK] initialize 超时，自动重试一次（A178 冷启动补偿）');
+        try {
+          result = await authenticateOnce();
+        } catch (retryErr) {
+          throw Object.assign(retryErr as Error, { __probeRetried: true, __firstMessage: firstMessage });
+        }
+      }
 
       const userinfo = (result as { userinfo?: { userName?: string } } | undefined)?.userinfo;
 
@@ -256,6 +328,7 @@ export class SdkAdapter implements AgentProvider {
       }
     } catch (err) {
       const message = (err as Error)?.message || String(err);
+      const retried = Boolean((err as { __probeRetried?: boolean }).__probeRetried);
 
       // CLI 缺失是独立状态，比「鉴权失败」更前置：用户需要先装 CLI 才能谈登录。
       const cliMissing =
@@ -282,22 +355,58 @@ export class SdkAdapter implements AgentProvider {
           probedAt: now,
         };
       } else {
-        // 鉴权调用本身失败（可能是网络问题，也可能就是未登录）。
-        // 把原因如实带上，不假装是「已登录」。
-        this.status = lastAuthUrl
-          ? {
-              availability: 'needs-auth',
-              installed: true,
-              message: '未登录，请先完成登录',
-              authUrl: lastAuthUrl,
-              probedAt: now,
-            }
-          : {
-              availability: 'needs-auth',
-              installed: true,
-              message: `鉴权检查失败：${message}`,
-              probedAt: now,
-            };
+        // A178：状态词必须能区分「没登录 / 凭据无效 / 超时 / 探测失败」。
+        // SDK 的 initialize 超时属于**探测动作失败**，不是「未登录」：
+        // 实测账号已经登录，只是冷启动没在 SDK 自己的 60 秒内完成。
+        //
+        // 反过来，只要本次探测真的收到了 authUrl，就说明 CLI 明确地说
+        // 「需要登录」；哪怕之后因为 8 秒登录等待超时而抛出
+        // `Authentication timed out`，也应归到「未登录」而不是「探测超时」。
+        const probeState = classifySdkProbeFailure(message);
+        if (authUrlSeen) {
+          this.status = {
+            availability: 'needs-auth',
+            installed: true,
+            message: '未登录，请先在 WorkBuddy 桌面客户端登录（或点「去登录」完成授权）',
+            ...(lastAuthUrl ? { authUrl: lastAuthUrl } : {}),
+            probedAt: now,
+          };
+        } else if (probeState === 'timeout') {
+          this.status = {
+            availability: 'unknown',
+            installed: true,
+            message: retried
+              ? `探测超时：SDK 冷启动 initialize 连续两次未在 60 秒内返回（已自动重试）。请稍后点「重新探测」`
+              : `探测超时：SDK 冷启动 initialize 未在 60 秒内返回。请稍后点「重新探测」`,
+            probeState: 'timeout',
+            probedAt: now,
+          };
+        } else if (probeState === 'credential-invalid') {
+          this.status = {
+            availability: 'needs-auth',
+            installed: true,
+            message: `凭据无效：${message}`,
+            probeState: 'credential-invalid',
+            ...(lastAuthUrl ? { authUrl: lastAuthUrl } : {}),
+            probedAt: now,
+          };
+        } else {
+          this.status = lastAuthUrl
+            ? {
+                availability: 'needs-auth',
+                installed: true,
+                message: '未登录，请先完成登录',
+                authUrl: lastAuthUrl,
+                probedAt: now,
+              }
+            : {
+                availability: 'needs-auth',
+                installed: true,
+                message: `探测失败：${message}`,
+                probeState: 'probe-failed',
+                probedAt: now,
+              };
+        }
       }
     }
 

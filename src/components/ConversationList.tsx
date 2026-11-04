@@ -38,7 +38,7 @@ import {
 } from '../sessionFlags';
 import { useAgentRemarks, setAgentRemark } from '../agentRemarks';
 import { countFor, usePermissionSnapshot } from '../permissions/permissionStore';
-import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
+import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
 
 const LAST_READ_KEY = 'opc:lastRead';
 
@@ -456,7 +456,7 @@ export function ConversationList({
                   {agent && agent.status.availability !== 'ready' && (
                     <span
                       className="mt-1 inline-block text-caption"
-                      style={{ color: AVAILABILITY_META[agent.status.availability].color }}
+                      style={{ color: agentStatusViewOf(agent).color }}
                     >
                       {availabilityLabelOf(agent)}
                     </span>

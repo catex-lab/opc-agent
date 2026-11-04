@@ -495,6 +495,16 @@ export interface AgentStatus {
   /** 最近一次调用失败的原因 */
   lastError?: string;
   probedAt: string;
+  /**
+   * 探测动作本身的结果分类（A177）。
+   *
+   * 与 `availability` 是两个维度：availability 说「能不能用」，
+   * probeState 说「这次探测发生了什么」。最典型的冲突是 SDK 冷启动
+   * initialize 超时：availability 仍是 `needs-auth`（看着像没登录），
+   * probeState 是 `timeout` —— 界面必须显示「探测超时」，
+   * 不能让用户去重登一个其实已经登录好的账号。
+   */
+  probeState?: 'timeout' | 'credential-invalid' | 'probe-failed';
 }
 
 /**
@@ -793,11 +803,49 @@ export const AVAILABILITY_META: Record<
  */
 export function availabilityLabelOf(agent: {
   kind: AgentKind;
-  status: { availability: AgentAvailability };
+  status: { availability: AgentAvailability; probeState?: AgentStatus['probeState'] };
 }): string {
-  const { availability } = agent.status;
-  if (availability === 'needs-auth' && agent.kind === 'http') return '缺 Key';
-  return AVAILABILITY_META[availability].label;
+  const view = agentStatusViewOf(agent);
+  return view.label;
+}
+
+/**
+ * A177/A178：把「探测动作的结果」抬到状态词的第一优先级。
+ *
+ * 为什么必须单独一层：SDK 的 availability 在鉴权失败时会统一落到
+ * `needs-auth`，于是「initialize 超时」和「真的没登录」在界面上长成一样。
+ * 用户看到「未登录」就去反复登录，而实际上账号是好的，只是冷启动没在
+ * SDK 自己的 60 秒预算内完成初始化。这里把 probeState 优先，保证四种
+ * 状态词互不混淆；没有 probeState 时完全沿用旧口径，不影响历史断言。
+ */
+export function agentStatusViewOf(agent: {
+  kind: AgentKind;
+  status: { availability: AgentAvailability; probeState?: AgentStatus['probeState'] };
+}): { key: string; label: string; color: string; dot: string } {
+  const { availability, probeState } = agent.status;
+  if (probeState === 'timeout') {
+    return { key: 'probe-timeout', label: '探测超时', color: 'var(--tc-status-warn)', dot: '#ED7B2F' };
+  }
+  if (probeState === 'credential-invalid') {
+    return { key: 'credential-invalid', label: '凭据无效', color: 'var(--tc-status-danger)', dot: '#E34D59' };
+  }
+  if (probeState === 'probe-failed') {
+    return { key: 'probe-failed', label: '探测失败', color: 'var(--tc-status-danger)', dot: '#E34D59' };
+  }
+
+  const base = AVAILABILITY_META[availability];
+  if (availability === 'needs-auth' && agent.kind === 'http') {
+    return { key: 'needs-key', label: '缺 Key', color: base.color, dot: base.dot };
+  }
+  return { key: availability, label: base.label, color: base.color, dot: base.dot };
+}
+
+/** 状态圆点颜色：与状态词同源，避免「文字说超时、圆点还是橙色未登录」 */
+export function agentStatusDotOf(agent: {
+  kind: AgentKind;
+  status: { availability: AgentAvailability; probeState?: AgentStatus['probeState'] };
+}): string {
+  return agentStatusViewOf(agent).dot;
 }
 
 /* ── A164 扩展（Agent 技能 + MCP 服务）───────────────────────────────────

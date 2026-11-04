@@ -29,7 +29,7 @@ import { NewGroupDialog } from './NewGroupDialog';
 import { GroupAvatar } from './UserAvatar';
 import { useGroupAvatar } from '../sessionFlags';
 import { MENU_ITEM_CLASS } from './menuItem';
-import { AVAILABILITY_META, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
+import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
 
 interface ContactsPanelProps {
   agents: RegisteredAgent[];
@@ -646,8 +646,8 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
           配色走 `--tc-status-*`，浅深两档都过了 4.5:1（见 index.css 那段注释）。 */}
       <span
         className="shrink-0 text-caption"
-        style={{ color: AVAILABILITY_META[agent.status.availability].color }}
-        data-agent-status={agent.status.availability}
+        style={{ color: agentStatusViewOf(agent).color }}
+        data-agent-status={agentStatusViewOf(agent).key}
       >
         {availabilityLabelOf(agent)}
       </span>

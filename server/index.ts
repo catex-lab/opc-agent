@@ -26,7 +26,7 @@ import {
   renameProject,
   updateProjectTask,
 } from "./db.js";
-import { registry } from "./agents/registry.js";
+import { isValidAgentId, registry } from "./agents/registry.js";
 import { scoreAgentSkills } from "./agents/types.js";
 import { agentAcceptsModel, findDef, registerCustomDefs } from "./agents/definitions.js";
 // A155：SDK 产品参数（environment / endpoint / configDir）的唯一展开点。
@@ -849,6 +849,45 @@ app.delete("/api/agents/custom/:agentId", async (req, res) => {
   } catch (error: any) {
     console.error("[CustomAgents] Delete error:", error);
     res.status(500).json({ error: error?.message || "删除自建 Agent 失败" });
+  }
+});
+
+/**
+ * A177：只探测**一个** Agent。
+ *
+ * 为什么单独开一个 POST 而不是给 `/api/agents?probe=1` 加参数：
+ * 全量探测会起 N 个进程（ACP 还有 Python），用户点某个 Agent 的「重新探测」
+ * 时不应该顺带把别人的进程也拉起来。这个接口的调用链被刻意收窄为
+ * `probeSingle → 目标 provider.probe()`，没有 `probeAll()` 兜底分支。
+ *
+ * `agentId` 只走字符集校验（内置 id、自建 `custom-xxxxxxxx` 都满足），
+ * 不参与任何路径拼接，因此不存在路径穿越面。
+ */
+app.post("/api/agents/:agentId/probe", async (req, res) => {
+  try {
+    const agentId = String(req.params.agentId ?? "");
+    if (!isValidAgentId(agentId)) {
+      return res.status(400).json({ error: "agentId 非法" });
+    }
+    if (!registry.hasAgent(agentId)) {
+      return res.status(404).json({ error: "Agent 不存在" });
+    }
+
+    // 允许测试/排障时收窄预算，但上限 180 秒，避免请求永久挂住
+    const raw =
+      (req.body as any)?.timeoutMs ??
+      (req.query as any)?.timeoutMs;
+    const timeoutMs = raw == null ? undefined : Number(raw);
+    if (timeoutMs != null && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+      return res.status(400).json({ error: "timeoutMs 非法" });
+    }
+
+    const result = await registry.probeSingle(agentId, { timeoutMs });
+    if (!result) return res.status(404).json({ error: "Agent 不存在" });
+    res.json(result);
+  } catch (error: any) {
+    console.error("[Agent] Single probe error:", error);
+    res.status(500).json({ error: error?.message || "探测失败" });
   }
 });
 

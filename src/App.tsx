@@ -253,6 +253,20 @@ function AppContent() {
   const { agents: customAgents, addAgent, updateAgent, deleteAgent } = useAgents();
   const { models, selectedModel, setSelectedModel, fetchModels } = useModels();
   const registry = useAgentRegistry();
+  const probeAgentOne = registry.probeOne;
+  /**
+   * A177：单 Agent 探测 + 扩展矩阵重算。
+   *
+   * 探测结束后只重拉扩展列表（重新计算「可分发目标」），**不再触发任何探测**。
+   * 这是 A177 的一条硬约束：矩阵刷新属于展示重算，不允许顺手把全量探测跑一遍。
+   */
+  const handleProbeAgent = useCallback(
+    async (agentId: string) => {
+      const result = await probeAgentOne(agentId);
+      if (result) void reloadExtList();
+    },
+    [probeAgentOne, reloadExtList]
+  );
   const {
     sessions,
     setSessions,
@@ -1714,6 +1728,7 @@ function AppContent() {
                     targets={extDetail.targets}
                     allTargets={ext.targets}
                     matrixStates={ext.matrixStates}
+                    agents={registry.agents}
                     loading={extDetail.loading}
                     error={extDetail.error}
                     onReload={() => void reloadExtDetail()}
@@ -1735,7 +1750,9 @@ function AppContent() {
                     // A68：同族关系里的名字可直接跳到那条资料（例如 Kimi ⇄ Kimi Code CLI）。
                     // 只换 detailAgentId，不碰会话 —— 资料页是只读的，跳转无副作用。
                     onSelectAgent={setDetailAgentId}
-                    onReprobe={registry.probe}
+                    onReprobe={handleProbeAgent}
+                    probing={registry.probingIds.has(detailAgent.id)}
+                    probeFeedback={registry.probeFeedback[detailAgent.id]}
                     onOpenCredential={handleOpenCredential}
                     onDeleteCustom={handleDeleteCustomAgent}
                     onAvatarChanged={registry.load}

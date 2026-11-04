@@ -12,8 +12,9 @@ import type {
   ExtensionSourceRef,
   ExtensionTargetSpec,
   ExtensionTargetState,
+  RegisteredAgent,
 } from '../types';
-import { EXT_MOUNT_LABEL, EXT_NORMALIZE_RULE_LABEL } from '../types';
+import { EXT_MOUNT_LABEL, EXT_NORMALIZE_RULE_LABEL, agentStatusViewOf } from '../types';
 import { useExtensionNormalize } from '../hooks/useExtensions';
 import { ConfirmDialog } from './ConfirmDialog';
 import { InfoHint } from './InfoHint';
@@ -27,6 +28,15 @@ interface ExtensionDetailProps {
   allTargets: ExtensionTargetSpec[];
   /** 六档状态的顺序/文案/可用性 —— 由服务端下发，UI 不硬编码状态顺序 */
   matrixStates: ExtensionMatrixStateMeta[];
+  /**
+   * A177：通讯录里同一份 Agent 状态。
+   *
+   * 矩阵原来只看扩展 targets（文件在不在，按请求时重算），和 Agent 名册
+   * 是两套独立数据；单独探测只更新名册后，两处就会「一个说未安装、
+   * 一个说已注入」。把名册传进来做**同一份共享状态展示**，
+   * 探测结果回写后矩阵立刻跟着变，不需要重新探测。
+   */
+  agents?: RegisteredAgent[];
   loading: boolean;
   error: string | null;
   onReload: () => void;
@@ -112,6 +122,7 @@ export function ExtensionDetail({
   targets,
   allTargets,
   matrixStates,
+  agents,
   loading,
   error,
   onReload,
@@ -121,6 +132,9 @@ export function ExtensionDetail({
   onDelete,
 }: ExtensionDetailProps) {
   const [draft, setDraft] = useState('');
+  /* A177：矩阵与名册共用这一份状态；没有传名册时（旧调用方）退化为空 Map，
+     渲染保持原样，不出现新的占位。 */
+  const agentById = useMemo(() => new Map((agents ?? []).map(a => [a.id, a])), [agents]);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -644,21 +658,44 @@ export function ExtensionDetail({
                                或被注入）。`sealed` / `planned` / `unsupported` 用空心。 */
                             const filled =
                               state === 'ready' || state === 'local-only' || state === 'injected';
+                            /**
+                             * A177：同一份 Agent 状态。矩阵自身回答「这份能力在不在
+                             * 它手里」，这里补一句「这个 Agent 现在是什么状态」。
+                             * 两处读的是同一个 `agents`，探测回写后自然一致；
+                             * 只有非 ready 时才显示，避免 15 行全在喊「在线」。
+                             */
+                            const agentInfo = agentById.get(spec.agentId);
+                            const agentView = agentInfo ? agentStatusViewOf(agentInfo) : undefined;
                             return (
                               <div
                                 key={spec.agentId}
                                 className="ext-matrix-row"
-                                title={`${rowMeta?.hint ?? ''}${spec.note ? `（${spec.note}）` : ''}`}
+                                title={`${rowMeta?.hint ?? ''}${spec.note ? `（${spec.note}）` : ''}${
+                                  agentView ? ` · Agent 状态：${agentView.label}` : ''
+                                }`}
                                 data-ext-matrix-row={spec.agentId}
                                 data-ext-matrix-state={state}
+                                data-ext-matrix-agent-state={agentView?.key}
                               >
-                                {/* 第 1 列：Agent 名。吃掉剩余宽度，超长省略 */}
-                                <span
-                                  className="min-w-0 truncate text-body"
-                                  style={{ color: 'var(--td-text-color-primary)' }}
-                                  data-ext-matrix-agent
-                                >
-                                  {spec.label}
+                                {/* 第 1 列：Agent 名。吃掉剩余宽度，超长省略。
+                                    非 ready 时补一个状态词（与通讯录同源）。 */}
+                                <span className="flex min-w-0 items-baseline gap-1.5">
+                                  <span
+                                    className="min-w-0 truncate text-body"
+                                    style={{ color: 'var(--td-text-color-primary)' }}
+                                    data-ext-matrix-agent
+                                  >
+                                    {spec.label}
+                                  </span>
+                                  {agentView && agentView.key !== 'ready' && (
+                                    <span
+                                      className="shrink-0 text-caption"
+                                      style={{ color: agentView.color }}
+                                      data-ext-matrix-agent-status-label
+                                    >
+                                      {agentView.label}
+                                    </span>
+                                  )}
                                 </span>
                                 {/* 第 2 列：通道说明。固定 80px，中性灰，不参与状态配色 */}
                                 <span
