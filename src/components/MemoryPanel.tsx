@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Textarea, MessagePlugin, Input, Select } from 'tdesign-react';
-import { HintTip } from './HintTip';
+import { InfoHint } from './InfoHint';
 
 /**
  * 记忆（A38）—— Hermes 式四层记忆的设置面板。
@@ -267,7 +267,7 @@ export function MemoryPanel() {
         <h2 className="text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
           记忆
         </h2>
-        <HintTip
+        <InfoHint
           warn
           label="记忆注入范围说明"
           text="只对「模型直连」与 WorkBuddy（SDK）两类注入 —— 它们的系统提示由我们装配。CLI / ACP 类 Agent（Claude Code、Hermes 等）的提示词在它们自己的 harness 里，我们塞不进去，也不该塞。"
@@ -294,7 +294,7 @@ export function MemoryPanel() {
             placeholder="选择作用域"
           />
         </div>
-        <HintTip
+        <InfoHint
           label="作用域说明"
           text="全局记忆注入到所有会话；项目记忆只在工作目录属于该项目时注入，并且排在全局之后（更具体、优先级更高）。用户画像始终是全局的。"
         />
@@ -333,7 +333,7 @@ export function MemoryPanel() {
           <h3 className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
             核心记忆{isProject ? '（本项目）' : '（全局）'}
           </h3>
-          <HintTip label="核心记忆说明" text={BUDGET_HINT} />
+          <InfoHint label="核心记忆说明" text={BUDGET_HINT} />
         </div>
         <Textarea
           value={core}
@@ -359,7 +359,7 @@ export function MemoryPanel() {
           <h3 className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
             用户画像（全局）
           </h3>
-          <HintTip
+          <InfoHint
             label="用户画像说明"
             text="你的技术栈偏好、沟通风格、长期目标。画像要短 —— 长了就等于没画像。约 500 token。这一份始终是全局的：它描述「你这个人」，不随项目变。"
           />

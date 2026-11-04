@@ -16,7 +16,7 @@ import {
 } from 'tdesign-react';
 import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info, UserRound, Plus, PencilLine, Trash2, Check, CircleCheck, CircleX, RefreshCw, Power, Minimize2, HelpCircle } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
-import { HintTip } from './HintTip';
+import { InfoHint } from './InfoHint';
 import { AgentCredentialSettings } from './AgentCredentialSettings';
 import { type CloseBehavior, readCloseBehavior, saveCloseBehavior } from '../closeBehavior';
 import { type LinkOpenMode, readLinkOpenMode, saveLinkOpenMode } from '../answer/linkRouter';
@@ -951,7 +951,7 @@ export function SettingsPage({
               style={{ color: 'var(--td-text-color-primary)' }}
             >
               方式三：Agent API Key
-              <HintTip
+              <InfoHint
                 label="Agent API Key 说明"
                 text="豆包 / Gemini / Kimi 等按 Key 计费的 Agent 在这里填写，保存后立即生效。"
               />
@@ -969,7 +969,7 @@ export function SettingsPage({
               style={{ color: 'var(--td-text-color-primary)' }}
             >
               方式四：自定义模型厂商
-              <HintTip
+              <InfoHint
                 label="自定义模型厂商说明"
                 text="任何 OpenAI / Anthropic / Gemini 兼容的接口都能接：填地址和 Key，拉取模型清单并测试连通后保存。保存后通讯录出现一条联系人，模型下拉列出它全部模型。"
               />
@@ -987,10 +987,14 @@ export function SettingsPage({
         <div>
           <div className="mb-4">
             <h2
-              className="text-lg font-medium"
+              className="flex items-center gap-1.5 text-lg font-medium"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
               模型清单
+              <InfoHint
+                label="模型清单说明"
+                text="清单由各 Agent 自己的命令行 / SDK 实时枚举，官方上新后会跟着变；结果缓存 24 小时，过期自动重取。想立刻看到最新清单就点「刷新」。"
+              />
             </h2>
           </div>
           <ModelCatalogSettings onRefreshed={onModelsRefreshed} />
@@ -1301,9 +1305,9 @@ function CloseBehaviorSetting() {
         <span className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
           关闭窗口时
         </span>
-        <HintTip
+        <InfoHint
           label="关闭窗口行为说明"
-          text="选择「直接退出」时，如果还有 Agent 任务在运行，会先弹一次确认；选择「最小化到托盘」则不会中断任务，进程继续留在托盘里。"
+          text="选择「直接退出」时，如果还有 Agent 任务在运行，会先弹一次确认；选择「最小化到托盘」则不会中断任务，进程继续留在托盘里，托盘右键菜单可以退出。"
         />
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -1347,9 +1351,6 @@ function CloseBehaviorSetting() {
           );
         })}
       </div>
-      <p className="mt-2 text-sm" style={{ color: 'var(--td-text-color-placeholder)' }}>
-        最小化到托盘后应用仍在后台运行，托盘右键菜单可以退出。
-      </p>
     </div>
   );
 }
@@ -1382,9 +1383,9 @@ function LinkOpenModeSetting() {
         <span className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
           链接打开方式
         </span>
-        <HintTip
+        <InfoHint
           label="链接打开方式说明"
-          text="正文里的 http(s) 链接点击时用哪种方式打开。悬停链接时会有完整地址提示，里面也能临时改用另一种方式打开。"
+          text="正文里的 http(s) 链接点击时用哪种方式打开。悬停链接时会有完整地址提示，里面也能临时改用另一种方式打开。应用内打开会占用右侧工作区；窄屏或群聊里会自动改用系统浏览器。"
         />
       </div>
       <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="链接打开方式">
@@ -1414,9 +1415,6 @@ function LinkOpenModeSetting() {
           );
         })}
       </div>
-      <p className="mt-2 text-sm" style={{ color: 'var(--td-text-color-placeholder)' }}>
-        应用内打开会占用右侧工作区；窄屏或群聊里会自动改用系统浏览器。
-      </p>
     </div>
   );
 }
@@ -1488,7 +1486,7 @@ function TransparencySlider({ resetToken = 0 }: { resetToken?: number }) {
           {/* A37：原来这里是三行说明文字，现在收进一个 i 图标。
               玻璃不可用时图标转警示色 —— 那时滑杆是禁用的，
               用户需要一个「为什么不能拖」的入口。 */}
-          <HintTip
+          <InfoHint
             label="界面透明度说明"
             warn={!glassOn}
             text={
@@ -1630,7 +1628,7 @@ function GlowSettings({ resetToken = 0 }: { resetToken?: number }) {
           <span className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
             鼠标光斑
           </span>
-          <HintTip
+          <InfoHint
             label="鼠标光斑说明"
             text="跟随光标移动的玻璃反光。默认关闭，想要玻璃质感时打开；录屏、演示或觉得晃眼就保持关闭。"
           />
@@ -1764,7 +1762,7 @@ function GlowRange({
             {label}
           </span>
           {/* A37：`hint` 不再渲染成标签下方的小字，收进 i 图标 */}
-          {hint && <HintTip label={`${label}说明`} text={hint} />}
+          {hint && <InfoHint label={`${label}说明`} text={hint} />}
         </span>
         <span className="text-caption tabular-nums" style={{ color: 'var(--td-text-color-secondary)' }}>
           {value}

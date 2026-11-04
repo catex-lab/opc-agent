@@ -3,6 +3,7 @@ import { MessagePlugin } from 'tdesign-react';
 import { useUserProfile, saveUserProfile } from '../userProfile';
 import { removeUserAvatar, uploadUserAvatar } from '../avatarApi';
 import { AvatarPickerGrid, UserAvatar } from './UserAvatar';
+import { InfoHint } from './InfoHint';
 import { AvatarCropDialog } from './AvatarCropDialog';
 
 /**
@@ -150,7 +151,13 @@ export function ProfilePanel() {
               className="mb-1.5 flex items-center justify-between text-body font-medium"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              <span>昵称</span>
+              <span className="flex items-center gap-1.5">
+                昵称
+                <InfoHint
+                  label="昵称说明"
+                  text="最多 24 字。保存后 Agent 会在 systemPrompt 里看到「与你对话的人叫××」，可以直接用这个称呼 —— 正在进行的对话不会变，下一轮才带上。"
+                />
+              </span>
               {savedAt && (
                 <span className="text-caption" style={{ color: 'var(--td-brand-color)' }}>
                   已保存
@@ -181,16 +188,18 @@ export function ProfilePanel() {
                  聚焦时没有任何反馈（outline-none 把 TDesign 默认环也杀了）。 */
               className="tc-input w-full px-3 py-2 text-body"
             />
-            <p className="mt-1.5 text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              最多 24 字。保存后 Agent 会在 systemPrompt 里看到「与你对话的人叫××」，
-              可以直接用这个称呼 —— <strong style={{ color: 'var(--td-text-color-secondary)' }}>正在进行的对话不会变</strong>，
-              下一轮才带上。
-            </p>
           </div>
 
           <div>
-            <div className="mb-1.5 text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+            <div
+              className="mb-1.5 flex items-center gap-1.5 text-body font-medium"
+              style={{ color: 'var(--td-text-color-primary)' }}
+            >
               头像
+              <InfoHint
+                label="头像说明"
+                text="上传的图片优先于预设；点上面的预设会切回预设头像。没有头像时用昵称首字；昵称也没有就显示「我」。"
+              />
             </div>
             <AvatarPickerGrid
               value={profile.avatar}
@@ -198,9 +207,6 @@ export function ProfilePanel() {
                 MessagePlugin.error(`头像保存失败：${err instanceof Error ? err.message : String(err)}`)
               )}
             />
-            <p className="mt-1.5 text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              上传的图片优先于预设；点上面的预设会切回预设头像。没有头像时用昵称首字；昵称也没有就显示「我」。
-            </p>
           </div>
         </div>
       </div>

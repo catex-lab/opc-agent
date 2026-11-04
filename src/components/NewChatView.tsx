@@ -6,6 +6,7 @@ import { Model, Agent, PermissionMode } from '../types';
 import { ScenarioTemplate, enforcementGap } from '../scenarios';
 import { AgentAvatar } from './AgentAvatar';
 import { PermissionGapNotice } from './PermissionGapNotice';
+import { InfoHint } from './InfoHint';
 import { pickDirectory, hasNativeDialogs } from '../workspace';
 
 /** 场景图标键 → lucide 组件。数据层只存字符串键，映射留在 UI（避免数据耦合 UI 库） */
@@ -280,8 +281,15 @@ export function NewChatView({
         */}
         {reasoningLevels && onSetReasoning && (
           <div className="mb-6" data-reasoning-select>
-            <label className="block text-body-lg font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>
+            <label
+              className="mb-2 flex items-center gap-1.5 text-body-lg font-medium"
+              style={{ color: 'var(--td-text-color-primary)' }}
+            >
               思考强度 <span style={{ color: 'var(--td-text-color-placeholder)' }}>(可选)</span>
+              <InfoHint
+                label="思考强度说明"
+                text={`档位由官方 CLI 提供（${reasoningLevels.length} 档）；换模型后档位表会跟着变`}
+              />
             </label>
             <Tooltip
               content={
@@ -331,9 +339,6 @@ export function NewChatView({
                 ))}
               </Select>
             </Tooltip>
-            <p className="text-secondary mt-1.5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              档位由官方 CLI 提供（{reasoningLevels.length} 档）；换模型后档位表会跟着变
-            </p>
           </div>
         )}
 

@@ -12,7 +12,7 @@
  *
  * - **风险类常驻**：只替换代码层、不碰 data/、校验失败就不装 —— 这些是
  *   用户必须事先知道的后果，不塞进提示浮层。
- * - **口径类收起**：为什么不做安装包更新，是解释而不是风险，放 HintTip。
+ * - **口径类收起**：为什么不做安装包更新，是解释而不是风险，放 InfoHint。
  *
  * 浏览器开发态没有 preload 桥，整块降级成「仅在桌面版可用」，
  * 不渲染任何假状态。
@@ -21,7 +21,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Check, Download, RefreshCw, RotateCcw } from 'lucide-react';
 import type { UpdateState } from '../../shared/update';
 import { UPDATE_RELEASES_PAGE } from '../../shared/update';
-import { HintTip } from './HintTip';
+import { InfoHint } from './InfoHint';
 
 interface UpdateBridge {
   update?: {
@@ -129,7 +129,7 @@ export function UpdateCard() {
       <div className="tc-about-eyebrow">
         <RefreshCw />
         更新
-        <HintTip
+        <InfoHint
           label="更新方式说明"
           text="本项目没有代码签名证书，NSIS 安装包每次都会触发 UAC / SmartScreen 警告。所以常规更新只替换代码层 resources/app.asar；只有 Electron 运行时也变了，才会提示下载完整安装包。"
         />

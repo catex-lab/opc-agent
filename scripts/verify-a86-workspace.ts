@@ -468,7 +468,12 @@ async function runUiChecks(base: string, sid: string, mark: string) {
     await page.screenshot({ path: '.render-check/a172-html-preview.png' });
 
     // 沙箱内：文字能看到（srcDoc 真的渲染），但脚本没执行、外链没加载
-    const frame = page.frames().find(f => f !== page.mainFrame() && f.url().startsWith('about:srcdoc'));
+    // srcdoc 文档由浏览器异步建立，给它一个短暂的落定窗口，避免读在 frame 创建前
+    let frame = page.frames().find(f => f !== page.mainFrame() && f.url().startsWith('about:srcdoc'));
+    for (let i = 0; !frame && i < 20; i += 1) {
+      await page.waitForTimeout(200);
+      frame = page.frames().find(f => f !== page.mainFrame() && f.url().startsWith('about:srcdoc'));
+    }
     ok(!!frame, 'UI：srcdoc iframe 真的建了独立文档');
     if (frame) {
       const ran = await frame.evaluate(() => (window as unknown as { __opcScriptRan?: boolean }).__opcScriptRan === true);

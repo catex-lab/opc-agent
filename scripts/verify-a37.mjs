@@ -324,7 +324,7 @@ console.log('\n[4] 四个说明收进提示图标');
   ok(!panelText.includes('100% 为设计值'), '光斑亮度说明不在正文里');
 
   const tips = await page.evaluate(() =>
-    [...document.querySelectorAll('.tc-hint-tip')].map(el => el.getAttribute('data-hint-tip'))
+    [...document.querySelectorAll('[data-info-hint]')].map(el => el.getAttribute('data-info-hint'))
   );
   ok(tips.length >= 4, '至少有 4 个提示图标', String(tips.length));
   ok(tips.some(t => t && t.includes('界面透明度')), '界面透明度有提示图标', tips.join(' / '));
@@ -333,13 +333,13 @@ console.log('\n[4] 四个说明收进提示图标');
   ok(tips.some(t => t && t.includes('光斑亮度')), '光斑亮度有提示图标');
 
   // 悬停出文案
-  const sizeTip = page.locator('[data-hint-tip="光斑大小说明"]');
+  const sizeTip = page.locator('[data-info-hint="光斑大小说明"]');
   if (await sizeTip.count()) {
     await sizeTip.first().hover();
     await page.waitForTimeout(600);
     const tipText = await page.evaluate(() => {
-      const pops = [...document.querySelectorAll('.t-tooltip, [class*="tooltip"]')];
-      return pops.map(p => p.textContent || '').join(' | ');
+      const pop = document.querySelector('[data-info-hint-panel]');
+      return pop?.textContent || '';
     });
     ok(/设计值/.test(tipText), '悬停提示图标能看到原文', tipText.slice(0, 40));
   } else {

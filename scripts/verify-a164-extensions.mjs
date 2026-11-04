@@ -646,6 +646,8 @@ try {
       await page.locator('[data-ext-drift-apply-all]').click();
       await page.waitForSelector('[data-ext-drift]', { state: 'detached', timeout: 25000 });
       ok(true, '全部应用后差异提示消失（不是「应用了但徽章还挂着」）');
+      // 应用后列表由 onRefresh 异步重拉，等行真正渲染出来再断言，避免读在刷新前
+      await page.waitForSelector('[data-ext-row="skill:delta"]', { state: 'visible', timeout: 25000 });
       ok(await page.locator('[data-ext-row="skill:delta"]').isVisible(), '列表里出现了 delta');
 
       /* 冲突：本地改过 + 源又变了 ⇒ 这一行**不许**给「应用」（会丢用户的编辑） */

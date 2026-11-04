@@ -140,11 +140,6 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
 
   return (
     <div className="space-y-3" data-model-catalog>
-      <p className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-        清单由各 Agent 自己的命令行 / SDK 实时枚举，官方上新后会跟着变；
-        结果缓存 24 小时，过期自动重取。想立刻看到最新清单就点「刷新」。
-      </p>
-
       {loading ? (
         <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
           正在读取模型清单…

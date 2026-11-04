@@ -10,13 +10,18 @@ export interface InfoHintItem {
 }
 
 export interface InfoHintProps {
-  items: InfoHintItem[];
+  /** 术语表形态；与 `text` 二选一 */
+  items?: InfoHintItem[];
+  /** 单段说明形态；与 `items` 二选一 */
+  text?: string;
   /** 触发按钮与浮层的无障碍名，如「挂载能力说明」 */
   label: string;
   title?: string;
   /** 浮层底部的一句补充，如「六档口径见 PLAN-EXTENSIONS.md §9」 */
   note?: string;
   className?: string;
+  /** 警示态：用于「当前不可用」这类需要被看见的说明 */
+  warn?: boolean;
 }
 
 /**
@@ -40,10 +45,14 @@ export interface InfoHintProps {
  * ## 视觉
  *
  * 图标是 16px 细线圆圈 i，单色（`--td-text-color-placeholder`），
- * **不参与状态色体系** —— 它只是「这里有解释」，不是警告。正文用 `text-body`，
+ * **默认不参与状态色体系** —— 它只是「这里有解释」，不是警告；仅当传入
+ * `warn`（如「功能当前不可用」）才转警示色。正文用 `text-body`，
  * 与页面正文同级，不做放大。
+ *
+ * 既有术语表形态（`items`）与单段说明形态（`text`）共用同一套交互，
+ * 不允许再出现第二种 tooltip 组件。
  */
-export function InfoHint({ items, label, title, note, className }: InfoHintProps) {
+export function InfoHint({ items, text, label, title, note, className, warn }: InfoHintProps) {
   const [open, setOpen] = useState(false);
   const [locked, setLocked] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
@@ -139,7 +148,9 @@ export function InfoHint({ items, label, title, note, className }: InfoHintProps
         aria-describedby={open ? panelId : undefined}
         title={label}
         className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[var(--tc-hover-chrome)] ${className ?? ''}`}
-        style={{ color: 'var(--td-text-color-placeholder)' }}
+        style={{
+          color: warn ? 'var(--td-warning-color)' : 'var(--td-text-color-placeholder)',
+        }}
         onMouseEnter={hoverOpen}
         onMouseLeave={hoverClose}
         onFocus={() => {
@@ -156,7 +167,8 @@ export function InfoHint({ items, label, title, note, className }: InfoHintProps
             setOpen(true);
           }
         }}
-        data-info-hint
+        data-info-hint={label}
+        data-warn={warn ? '1' : undefined}
       >
         <Info size={16} strokeWidth={1.5} />
       </button>
@@ -193,16 +205,22 @@ export function InfoHint({ items, label, title, note, className }: InfoHintProps
                   {title}
                 </p>
               )}
-              <ul className="space-y-1.5">
-                {items.map(item => (
-                  <li key={item.term} className="text-body leading-5">
-                    <span className="font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
-                      {item.term}
-                    </span>
-                    <span style={{ color: 'var(--td-text-color-secondary)' }}> {item.definition}</span>
-                  </li>
-                ))}
-              </ul>
+              {items && items.length > 0 ? (
+                <ul className="space-y-1.5">
+                  {items.map(item => (
+                    <li key={item.term} className="text-body leading-5">
+                      <span className="font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
+                        {item.term}
+                      </span>
+                      <span style={{ color: 'var(--td-text-color-secondary)' }}> {item.definition}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : text ? (
+                <p className="text-body leading-5" style={{ color: 'var(--td-text-color-secondary)' }}>
+                  {text}
+                </p>
+              ) : null}
               {note && (
                 <p
                   className="mt-2 text-caption leading-5"
