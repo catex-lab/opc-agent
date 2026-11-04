@@ -246,7 +246,9 @@ export function UpdateCard() {
               </div>
             )}
 
-            {phase === 'error' && error && (
+            {/* 有错误就画出来，不跟着 phase 走：上一次交接失败的提示要在
+                「发现新版本」旁边常驻，直到用户自己点「下载更新」重试。 */}
+            {error && (
               state.legacyManualUpdate ? (
                 // 旧版客户端内置旧公钥，验签必然失败 —— 这不是网络问题，
                 // 也不该让它伪装成普通错误。只给一句结论 + 一个动作。

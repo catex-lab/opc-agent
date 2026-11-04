@@ -345,9 +345,15 @@ ok(aboutSource.includes("from './UpdateCard'"), '关于页引入 UpdateCard');
 ok(aboutSource.includes('<UpdateCard'), '关于页渲染 UpdateCard');
 
 const stale = read('src/components/UpdateCard.tsx');
-for (const phase of ['checking', 'latest', 'available', 'downloading', 'ready', 'error']) {
+for (const phase of ['checking', 'latest', 'available', 'downloading', 'ready']) {
   ok(stale.includes(`'${phase}'`), `更新卡片有 ${phase} 状态`);
 }
+// 1.0.6 起失败提示不再绑在 phase === 'error' 上：交接失败要和新版本信息
+// 同时在「available」里常驻，否则启动 5 秒后的自动检查一清就看不见了。
+ok(
+  stale.includes('{error && (') && stale.includes('data-update-error'),
+  '更新卡片按 error 字段渲染失败提示（不再依赖 phase）'
+);
 ok(stale.includes('data-update-check'), '检查更新按钮带测试锚点');
 ok(stale.includes('data-update-progress'), '下载进度带测试锚点');
 ok(stale.includes('legacyManualUpdate'), '更新卡片根据旧版标记切换文案');

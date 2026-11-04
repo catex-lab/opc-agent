@@ -406,12 +406,15 @@ class UpdateController {
         },
       });
     } else if (marker.state === 'failed') {
+      // 这条必须让用户一直看得见：交接 helper 失败时文件根本没换，桌面版
+      // 重启后仍是旧版本。以前它只在启动后 5 秒内存在，随后自动检查把它清掉，
+      // 用户看到的就是「重启了还是旧版本、界面还提示有新版本」。
       this.set({
         phase: 'error',
         legacyManualUpdate: false,
         error: {
           code: 'apply-failed',
-          message: `上次更新没有装好：${marker.error ?? '未知原因'}`,
+          message: `上次更新没有装好：${marker.error ?? '未知原因'}。可以重新下载并重试；若反复失败，请先关闭所有 OPC Agent 窗口，或手动下载完整包。`,
           manualUrl: releasesPageUrl(),
         },
       });
@@ -426,9 +429,15 @@ class UpdateController {
       this.set({ phase: 'idle' });
       return this.getState();
     }
+    // 启动时的 5 秒自动检查不能把「上次更新没装好」清掉：那是用户必须看到的
+    // 事实，只有他自己点「下载更新」重试时才应消失。
+    const stickyApplyError =
+      this.state.error?.code === 'apply-failed' || this.state.error?.code === 'rollback'
+        ? this.state.error
+        : undefined;
     this.set({
       phase: 'checking',
-      error: undefined,
+      error: stickyApplyError,
       progress: undefined,
       legacyManualUpdate: false,
     });
@@ -484,7 +493,8 @@ class UpdateController {
         requiresFull: decision.requiresFull,
       };
       this.pending = { version: manifest.version, asset: manifest.assets.asar, stagedPath: '' };
-      this.set({ phase: 'available', release, checkedAt: new Date().toISOString(), error: undefined });
+      // 这里同样不清 error：上一次交接失败的提示要和新版本信息一起显示
+      this.set({ phase: 'available', release, checkedAt: new Date().toISOString() });
       return this.getState();
     } catch (e) {
       if (e instanceof UpdateFailed) this.fail(e.code, e.message);
