@@ -14,6 +14,9 @@
  *   C 失败：占用超过重试预算 → 必须显式 failed（旧 asar 原封不动）
  *   E 消解：失败记录版本 ≤ 当前版本 → 判定为已消解，状态文件与残留被清理
  *   F 忽略：只有 apply-failed / rollback 能忽略，且走同一套清理
+ *   G 长占用：持有者超过旧的 20 秒预算 → 60 秒内必须等到并换成功
+ *   H 残留进程：安装目录里的旧实例 → 先等、超时按路径结束，再交换
+ *   I 外部持有：不在安装目录的进程 → 只把持有者名字写进失败文案，不杀
  *
  * 另外 A/C 还顺带钉住「成功与失败都不留残渣」：成功后状态文件不常驻，
  * 失败后暂存包/健康文件/job/helper 都被清掉，只留 apply-state.json 当证据。
@@ -25,7 +28,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -101,6 +104,10 @@ function makeSandbox(label: string, healthTimeoutMs: number, lockTimeoutMs: numb
         helperPath: helper,
         jobPath,
         appExe: NODE,
+        // 安装目录故意指到一个空目录：本条闸门的「我们自己」只按路径认
+        installDir: join(base, 'install'),
+        startedAt: new Date().toISOString(),
+        processWaitMs: 0,
         healthTimeoutMs,
         lockTimeoutMs,
       },
@@ -150,6 +157,20 @@ function readMarker(sb: Sandbox): { state?: string; version?: string; error?: st
   } catch {
     return {};
   }
+}
+
+function patchJob(sb: Sandbox, patch: Record<string, unknown>): void {
+  const job = JSON.parse(readFileSync(sb.jobPath, 'utf8'));
+  writeFileSync(sb.jobPath, JSON.stringify({ ...job, ...patch }, null, 2));
+}
+
+function isAlive(child: ChildProcess): boolean {
+  return child.exitCode === null && child.signalCode === null;
+}
+
+async function waitDead(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (!isAlive(child)) return true;
+  return waitExit(child, timeoutMs);
 }
 
 function waitExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
@@ -238,6 +259,84 @@ async function scenarioC(): Promise<void> {
   ok(existsSync(sb.marker), '失败时保留 apply-state.json（下次启动要展示原因）');
   ok(!existsSync(sb.staged), '失败时清掉暂存包（不留可误用的残片）');
   ok(!existsSync(sb.helper) && !existsSync(sb.jobPath), '失败时清理 helper 与 job 临时文件');
+  cleanup(sb);
+}
+
+/* ══════════════ 真机 1.0.7→1.0.8 失败的两类持有者 ══════════════ */
+
+async function scenarioG(): Promise<void> {
+  console.log('\n[G] 占用超过旧的 20 秒预算 → 新预算（60 秒）内必须换成功');
+  const sb = makeSandbox('G', 8_000, 60_000);
+  const sentinel = join(sb.base, 'locker.ready');
+  const locker = startLocker(sb.target, 22_000, sentinel);
+  await waitFor(() => existsSync(sentinel), 8_000);
+
+  const t0 = Date.now();
+  const { child } = startHelper(sb);
+  const swapped = await waitFor(() => readFileSync(sb.target, 'utf8') === NEW, 30_000);
+  const elapsed = Date.now() - t0;
+  ok(swapped, '20 秒后仍被占用，但在 60 秒预算内等到锁释放并完成交换', readFileSync(sb.target, 'utf8'));
+  ok(elapsed > 20_000, '确认真的等了 20 秒以上（不是侥幸提前成功）', `${elapsed}ms`);
+  writeFileSync(sb.health, JSON.stringify({ version: '1.0.9' }));
+  await waitExit(child, 10_000);
+  try {
+    locker.kill();
+  } catch {
+    /* 已退出 */
+  }
+  ok(!existsSync(sb.marker) && !existsSync(sb.backup), '成功后仍不留状态文件与 .bak');
+  cleanup(sb);
+}
+
+async function scenarioH(): Promise<void> {
+  console.log('\n[H] 安装目录里的残留进程 → 先等、超时按路径定向结束');
+  const sb = makeSandbox('H', 8_000, 6_000);
+  const install = join(sb.base, 'install');
+  mkdirSync(install, { recursive: true });
+  const stubExe = join(install, 'opc-stub.exe');
+  copyFileSync(NODE, stubExe);
+  const stub = spawn(stubExe, ['-e', 'setTimeout(()=>{}, 60000)'], { stdio: 'ignore' });
+  await sleep(300);
+  patchJob(sb, {
+    installDir: install,
+    startedAt: new Date(Date.now() + 500).toISOString(),
+    processWaitMs: 2_000,
+  });
+
+  const t0 = Date.now();
+  const { child } = startHelper(sb);
+  const swapped = await waitFor(() => readFileSync(sb.target, 'utf8') === NEW, 15_000);
+  const elapsed = Date.now() - t0;
+  ok(swapped, '残留进程被结束、锁释放后完成交换', readFileSync(sb.target, 'utf8'));
+  ok(elapsed >= 1_500, '先等一段时间再动手，不是发现就杀', `${elapsed}ms`);
+  ok(await waitDead(stub, 2_000), '安装目录内的残留进程被定向结束', `exit=${stub.exitCode}`);
+  writeFileSync(sb.health, JSON.stringify({ version: '1.0.9' }));
+  await waitExit(child, 10_000);
+  ok(!existsSync(sb.marker), '成功确认后状态文件不常驻');
+  cleanup(sb);
+}
+
+async function scenarioI(): Promise<void> {
+  console.log('\n[I] 外部进程持有 → 只提示持有者名字，绝不终止');
+  const sb = makeSandbox('I', 8_000, 3_000);
+  const sentinel = join(sb.base, 'locker.ready');
+  const locker = startLocker(sb.target, 30_000, sentinel);
+  await waitFor(() => existsSync(sentinel), 8_000);
+
+  const { child } = startHelper(sb);
+  await waitExit(child, 20_000);
+  const marker = readMarker(sb);
+  ok(marker.state === 'failed', '外部占用时显式失败，不伪装成功', JSON.stringify(marker));
+  ok(!!marker.error && marker.error.includes('持有者'), '失败文案列出「谁持有」', marker.error);
+  ok(!!marker.error && /pid \d+/.test(marker.error), '持有者带 pid，用户能定位进程', marker.error);
+  ok(isAlive(locker), '外部进程没有被终止', `exit=${locker.exitCode}`);
+  ok(readFileSync(sb.target, 'utf8') === OLD, '旧 asar 原封不动');
+  ok(existsSync(sb.marker), '失败时保留 apply-state.json 供界面展示');
+  try {
+    locker.kill();
+  } catch {
+    /* 已退出 */
+  }
   cleanup(sb);
 }
 
@@ -340,6 +439,13 @@ function staticAsserts(): void {
 
   const card = readFileSync(join('src', 'components', 'UpdateCard.tsx'), 'utf8');
   ok(card.includes('{error && ('), '关于页只要存在 error 就渲染（不跟 phase 走）');
+
+  const helperSrc = readFileSync(join('electron', 'updater', 'swap-helper-source.ts'), 'utf8');
+  ok(helperSrc.includes('guardInstallDir') && helperSrc.includes('listInstallDirProcesses'), 'helper 交换前检查安装目录里的残留进程');
+  ok(helperSrc.includes('listHolders'), '失败时用 Restart Manager 列出真正持有者');
+  ok(helperSrc.includes("err.code === 'ESRCH'"), '只把 ESRCH 当「旧进程已退出」，EPERM 继续等');
+  ok(updater.includes('installDir: dirname(process.execPath)'), '控制器把安装目录写进 job');
+  ok(updater.includes('lockTimeoutMs: 60_000') && updater.includes('processWaitMs: 20_000'), 'job 显式带 60 秒锁预算与 20 秒进程等待');
 }
 
 async function main(): Promise<void> {
@@ -348,6 +454,9 @@ async function main(): Promise<void> {
   await scenarioA();
   await scenarioB();
   await scenarioC();
+  await scenarioG();
+  await scenarioH();
+  await scenarioI();
   scenarioE();
   scenarioF();
   console.log(`\n结果：${pass} 通过，${fail} 失败`);

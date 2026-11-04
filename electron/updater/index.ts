@@ -37,7 +37,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { once } from 'node:events';
 import type { UpdateAsset, UpdateManifest, UpdateReleaseInfo, UpdateState } from '../../shared/update.js';
 import { checkAssetUrl, evaluateManifest, isLegacyPubkeyFailure, parseManifest } from '../../shared/update-manifest.js';
@@ -624,7 +624,13 @@ class UpdateController {
           helperPath,
           jobPath,
           appExe: process.execPath,
+          // 安装目录：helper 只按这个路径认「我们自己的进程」，不按名字全局杀
+          installDir: dirname(process.execPath),
+          // 更新起点：早于这个时间启动的本目录进程 = 我们的残留，超时后可定向结束
+          startedAt: new Date().toISOString(),
           healthTimeoutMs: HEALTH_TIMEOUT_MS,
+          lockTimeoutMs: 60_000,
+          processWaitMs: 20_000,
         },
         null,
         2
