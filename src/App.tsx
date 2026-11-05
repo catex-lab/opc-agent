@@ -25,6 +25,8 @@ import { exportSessionToMarkdown } from './utils/exportSession';
 import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project, type AgentModelSource, type ExtensionKind } from './types';
 
 import { NavRail, type NavKey } from './components/NavRail';
+import { KnowledgeBasePanel, readSavedKbScope } from './components/kb/KnowledgeBasePanel';
+import type { KbScope } from './components/kb/types';
 import { TitleBar } from './components/TitleBar';
 import { CursorGlow } from './components/CursorGlow';
 import { ConversationList, markSessionRead } from './components/ConversationList';
@@ -287,6 +289,22 @@ function AppContent() {
     clearSessionMessages,
     isMessagesLoaded,
   } = useSessions();
+
+  // C1：全局知识库入口。导航条上原先没有知识库，只能先进一条会话、
+  // 再从会话头的芯片打开 —— 没有会话时这个功能等于不存在。
+  // 全局入口以当前会话（没有则最近一条会话）为锚点：检索范围、本会话
+  // 索引状态都需要一个具体的 sessionId，这里不发明「无会话」模式。
+  const [kbOpen, setKbOpen] = useState(false);
+  const [kbGlobalScope, setKbGlobalScope] = useState<KbScope>('workspace');
+  const kbAnchorSession = currentSessionId
+    ? sessions.find(item => item.id === currentSessionId)
+    : sessions[0];
+
+  const openKnowledgeBase = useCallback(() => {
+    if (!kbAnchorSession) return;
+    setKbGlobalScope(readSavedKbScope(kbAnchorSession.id));
+    setKbOpen(true);
+  }, [kbAnchorSession]);
 
   /**
    * useChat 与 ChatPage 目前仍按 CustomAgent 的形态取数据（systemPrompt /
@@ -1602,8 +1620,23 @@ function AppContent() {
           active={isSettingsPage ? 'settings' : nav}
           onNavigate={handleNavigate}
           onOpenSettings={handleOpenSettings}
+          onOpenKnowledge={openKnowledgeBase}
+          knowledgeDisabled={!kbAnchorSession}
           compact={compact}
         />
+
+        {/* C1：全局知识库面板。与会话头里的入口共用一套组件与状态语义，
+            区别只在于锚点会话由 App 决定。 */}
+        {kbAnchorSession && (
+          <KnowledgeBasePanel
+            open={kbOpen}
+            sessionId={kbAnchorSession.id}
+            sessionTitle={kbAnchorSession.title || '新对话'}
+            scope={kbGlobalScope}
+            onScopeChange={setKbGlobalScope}
+            onClose={() => setKbOpen(false)}
+          />
+        )}
 
         {/* A37：设置不再替换主内容，而是浮在它上面（见下面的弹窗）。
             主界面继续渲染 —— 遮罩后面能看见原来的会话，关掉就接着看。 */}

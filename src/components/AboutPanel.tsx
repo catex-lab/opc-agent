@@ -48,6 +48,7 @@ import {
   ChevronRight,
   ChevronDown,
   Package,
+  ExternalLink,
 } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
 import UpdateCard from './UpdateCard';
@@ -210,7 +211,10 @@ export default function AboutPanel() {
           （verify:a141 按这个锚点读「点个星」+「不收费/不收集」文案，
           以及内部的 `data-about-star-cta` 按钮）。 */}
       <div className="tc-about-zone tc-about-star-zone" data-about-star>
-        <div className="tc-about-eyebrow">支持</div>
+        <div className="tc-about-eyebrow">
+          <Star aria-hidden="true" />
+          支持
+        </div>
         {/* 一句话、不折行（不插 <br>）：两句话是同一段注脚，断在中间会让
             第二句读起来像另一条独立声明。宽度不够时按容器自然换行。 */}
         <p className="tc-about-quiet">
@@ -231,7 +235,10 @@ export default function AboutPanel() {
 
       {/* ── 官方入口：列表行 ───────────────────────────────────── */}
       <div className="tc-about-zone">
-        <div className="tc-about-eyebrow">官方入口</div>
+        <div className="tc-about-eyebrow">
+          <ExternalLink aria-hidden="true" />
+          官方入口
+        </div>
         <div className="tc-about-rows">
           {LINKS.map(({ key, href, label, hint, Icon }) => (
             <a

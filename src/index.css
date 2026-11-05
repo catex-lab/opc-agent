@@ -4967,8 +4967,8 @@ html[data-opc-glass='1'] t-chat-sender {
   padding: 2px 6px;
   border-radius: 5px;
   background-color: var(--td-bg-color-component);
-  color: var(--td-text-color-secondary);
-  font-size: 11px;
+  color: var(--tc-text-caption);
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.01em;
 }
@@ -4976,9 +4976,9 @@ html[data-opc-glass='1'] t-chat-sender {
 /* 运行时信息：与名称/版本同一行，但降到次级字色，不抢主信息 */
 .tc-about-build {
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.01em;
-  color: var(--td-text-color-placeholder);
+  color: var(--tc-text-caption);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4995,15 +4995,19 @@ html[data-opc-glass='1'] t-chat-sender {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10.5px;
+  /* A2/E2：眉标原为 10.5px + placeholder 灰（2.52:1），是全页最读不清的一行。
+     字号抬到 12px、颜色换 caption 档（5.10:1），并收窄字距避免「虚」。
+     眉标是分区标签，不是正文，12px 已足够区分层级。 */
+  font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.16em;
-  color: var(--td-text-color-placeholder);
+  letter-spacing: 0.12em;
+  color: var(--tc-text-caption);
 }
 
 .tc-about-eyebrow svg {
-  width: 12px;
-  height: 12px;
+  /* B4：眉标图标与 12px 文字同高，单色继承文字色，不引入第二个色相。 */
+  width: 14px;
+  height: 14px;
 }
 
 /* ── 隐私三卡：一行标题 + 一句说明，始终可见 ──────────────────────
@@ -5032,6 +5036,9 @@ html[data-opc-glass='1'] t-chat-sender {
 
 .tc-about-privacy-card-title {
   margin: 0 0 4px;
+  /* 三张卡在 3 列布局里只有 ~180px，「只会发给你自己配置的模型服务商」
+     在 13px 会折成两行（a138 的「标题必须一行」会红）。标题保持 12px，
+     A2 的字号收益落在眉标与正文说明上。 */
   font-size: 12px;
   font-weight: 500;
   line-height: 1.4;
@@ -5041,9 +5048,12 @@ html[data-opc-glass='1'] t-chat-sender {
 
 .tc-about-privacy-card-body {
   margin: 0;
+  /* A2：隐私正文是合规信息，不能靠 placeholder 灰「弱化」到读不清。
+     12px + caption（对 chrome 4.68:1），比原来的 secondary 4.35 提升一档，
+     且与标题同字号、仅靠字重区分层级。 */
   font-size: 12px;
   line-height: 1.65;
-  color: var(--td-text-color-secondary);
+  color: var(--tc-text-caption);
   overflow-wrap: anywhere;
 }
 
@@ -5054,9 +5064,9 @@ html[data-opc-glass='1'] t-chat-sender {
   /* 原来锁 430px：一句话被硬折成两行，后半句读起来像另一条声明。
      注脚是**一句话**，宽度交给容器，放得下就一行、放不下自然折。 */
   max-width: 100%;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.65;
-  color: var(--td-text-color-placeholder);
+  color: var(--tc-text-caption);
 }
 
 .tc-about-quiet b {
@@ -5110,9 +5120,9 @@ html[data-opc-glass='1'] t-chat-sender {
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.01em;
-  color: var(--td-text-color-placeholder);
+  color: var(--tc-text-caption);
 }
 
 .tc-about-row-go {
@@ -5124,9 +5134,9 @@ html[data-opc-glass='1'] t-chat-sender {
 
 /* ── 页脚：法务小字 + 许可清单 ─────────────────────────────────── */
 .tc-about-legal {
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.75;
-  color: var(--td-text-color-placeholder);
+  color: var(--tc-text-caption);
 }
 
 .tc-about-legal b {
@@ -5144,9 +5154,9 @@ html[data-opc-glass='1'] t-chat-sender {
   gap: 6px;
   list-style: none;
   cursor: pointer;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
-  color: var(--td-text-color-secondary);
+  color: var(--tc-text-caption);
 }
 
 .tc-about-lic > summary::-webkit-details-marker {
@@ -6207,4 +6217,75 @@ html[data-opc-glass='1'] t-chat-sender {
   border-top: 1px solid rgb(var(--color-border));
   border-radius: 0;
   background-color: transparent;
+}
+
+/* ===== D3：扩展列表骨架屏 =====
+   形状刻意贴近真实行：36px 头像位 + 两行文字（第二行更短）+ 右侧开关位，
+   这样真实数据到达时不会出现「结构跳一下」的位移。闪烁频率 1.4s，
+   并遵守 reduced-motion。 */
+.tc-ext-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 6px;
+}
+
+.tc-ext-skel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px;
+  border-radius: var(--tc-radius-chip);
+  animation: tc-skel-pulse 1.4s ease-in-out infinite;
+}
+
+.tc-ext-skel-avatar {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 10px;
+  background-color: var(--tc-fill-hover);
+}
+
+.tc-ext-skel-lines {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.tc-ext-skel-line,
+.tc-ext-skel-toggle {
+  display: block;
+  background-color: var(--tc-fill-hover);
+}
+
+.tc-ext-skel-line {
+  width: 46%;
+  height: 13px;
+  border-radius: 6px;
+}
+
+.tc-ext-skel-line.is-short {
+  width: 26%;
+  height: 11px;
+}
+
+.tc-ext-skel-toggle {
+  width: 34px;
+  height: 18px;
+  flex: none;
+  border-radius: 9px;
+}
+
+@keyframes tc-skel-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.9; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-ext-skel-row {
+    animation: none;
+  }
 }

@@ -142,6 +142,12 @@ export function KnowledgeBasePanel({
   const refreshStatus = useCallback(async () => {
     const seq = ++seqRef.current;
     const next = await fetchKbStatus();
+    // 服务端未启用知识库时会返回 200 + 空对象，旧代码直接把它当状态用，
+    // 全局入口点开就白屏（Cannot read properties of undefined）。
+    // 返回结构不完整时按错误处理，让面板走错误态而不是崩掉整个应用。
+    if (!next || typeof next.chunkCount !== 'number' || !next.policy) {
+      throw new KbApiError('知识库服务未就绪', 503);
+    }
     if (seq !== seqRef.current) return null;
     setStatus(next);
     return next;
@@ -161,7 +167,7 @@ export function KnowledgeBasePanel({
     (async () => {
       try {
         const [nextStatus, sessionList, agentMap, toolPolicyNext] = await Promise.all([
-          fetchKbStatus(),
+          refreshStatus(),
           fetchSessionSummaries(),
           fetchAgentNames(),
           fetchKbToolPolicy(),
@@ -188,8 +194,8 @@ export function KnowledgeBasePanel({
   // 策略没打开时，已保存的范围必须退回本工作区，避免界面显示一个实际检索不到的范围。
   useEffect(() => {
     if (!status) return;
-    if (scope === 'project' && !status.policy.allowProject) onScopeChange('workspace');
-    if (scope === 'all' && !status.policy.allowAll) onScopeChange('workspace');
+    if (scope === 'project' && !status?.policy?.allowProject) onScopeChange('workspace');
+    if (scope === 'all' && !status?.policy?.allowAll) onScopeChange('workspace');
   }, [status, scope, onScopeChange]);
 
   // 范围变了之后旧结果不再具代表性，清掉避免「范围写 A、结果来自 B」。
@@ -242,7 +248,7 @@ export function KnowledgeBasePanel({
     }
   }, [applyScope, pendingScope, refreshStatus]);
 
-  const disabledInfo = status?.disabledSessions.find(item => item.sessionId === sessionId);
+  const disabledInfo = status?.disabledSessions?.find(item => item.sessionId === sessionId);
 
   const toggleSession = useCallback(
     async (indexed: boolean) => {

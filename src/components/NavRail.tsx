@@ -1,4 +1,4 @@
-import { MessageCircle, Users, Menu, FolderKanban, Boxes } from 'lucide-react';
+import { MessageCircle, Users, Menu, FolderKanban, Boxes, Database } from 'lucide-react';
 
 export type NavKey = 'chats' | 'projects' | 'contacts' | 'extensions';
 
@@ -6,6 +6,10 @@ interface NavRailProps {
   active: NavKey | 'settings';
   onNavigate: (key: NavKey) => void;
   onOpenSettings: () => void;
+  /** C1：全局知识库入口 —— 跨会话检索与索引维护，不属于任何一栏内页 */
+  onOpenKnowledge: () => void;
+  /** 没有任何会话时没有可锚定的范围，入口置灰并说明原因 */
+  knowledgeDisabled?: boolean;
   /** 窄屏（单栏模式）下收窄，把像素让给内容 */
   compact?: boolean;
 }
@@ -30,6 +34,8 @@ export function NavRail({
   active,
   onNavigate,
   onOpenSettings,
+  onOpenKnowledge,
+  knowledgeDisabled = false,
   compact = false,
 }: NavRailProps) {
   /**
@@ -69,13 +75,14 @@ export function NavRail({
 
   return (
     <nav
-      // 宽度：56px（窄屏 48px）。原来是 64 / 56 —— 44px 的按钮居中在 64px 的
-      // 栏里，左右各留 10px 空白，加上按钮自身的内边距，图标离窗口左缘足足
-      // 有 22px，整条栏看着像「一条宽灰带子上点了两个小图标」。
-      // 收到 56 之后左右各 6px，按钮几乎顶满栏宽，视觉重心才落在图标上。
+      data-nav-rail
+      // 宽度：74px（窄屏 48px）。C3 之前是 56px —— 只放得下 20px 图标，
+      // 用户必须 hover 看 title 才知道每一栏是什么。74px 给图标下面留出
+      // 一行 10px 文字标签（聊天 / 项目 / 通讯录 / 扩展 / 知识库 / 设置），
+      // 导航从「猜图标」变成可读。窄屏仍收 48px、只留图标，把像素让给内容。
       // ⚠️ 改这里必须同步改 TitleBar 的 railWidth（那边靠同宽把应用标记
       //    对准导航图标的中轴），两处不一致标记就会歪。
-      className={`flex shrink-0 flex-col items-center gap-1.5 py-3 ${compact ? 'w-[48px]' : 'w-[56px]'}`}
+      className={`flex shrink-0 flex-col items-center gap-1.5 py-3 ${compact ? 'w-[48px]' : 'w-[74px]'}`}
       style={{
         // A92：导航条从「框架面」里再拆出一档（--tc-surface-rail），是外框的
         // 最外层。原来它和会话列表共用 chrome，两栏 ΔL* = 0，只靠一条 1px
@@ -110,10 +117,11 @@ export function NavRail({
                  「不该有底色的」按钮，而不是靠维护一份页面名单）。 */
               aria-current={active ? 'page' : undefined}
               className={`
-                relative flex h-11 w-11 items-center justify-center rounded-xl
+                relative flex items-center justify-center rounded-xl
                 transition-all duration-200 ease-out
                 focus-visible:outline-none focus-visible:ring-2
                 focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
+                ${compact ? 'h-11 w-11' : 'h-[54px] w-[62px] flex-col gap-1'}
                 ${active
                   ? 'text-[var(--td-brand-color)]'
                   : 'text-[var(--td-text-color-secondary)] hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
@@ -136,9 +144,42 @@ export function NavRail({
                 style={{ backgroundColor: 'var(--td-brand-color)' }}
               />
               <Icon size={20} strokeWidth={active ? 2.5 : 2} />
+              {/* C3：宽屏给文字标签。56px 只放得下图标，用户要靠 hover 的
+                  title 才知道每一栏是什么；74px 后图标下面多一行 10px 标签，
+                  「聊天 / 项目 / 通讯录 / 扩展」一眼可读。窄屏 48px 保留纯图标。 */}
+              {!compact && (
+                <span className="text-[10px] leading-none">{label}</span>
+              )}
             </button>
           );
         })}
+
+        {/* C1：全局知识库入口。知识库不属于某一栏内页，它跨会话检索，
+            原先只能先打开一条会话、再从会话头的芯片进去 —— 没有会话时
+            根本找不到入口。这里给一个常驻入口，用最近一条会话作为锚点。 */}
+        <button
+          type="button"
+          onClick={onOpenKnowledge}
+          disabled={knowledgeDisabled}
+          title={knowledgeDisabled ? '先打开一条会话，再检索知识库' : '知识库'}
+          aria-label="知识库"
+          data-nav-knowledge
+          className={`
+            relative flex items-center justify-center rounded-xl
+            text-[var(--td-text-color-secondary)]
+            transition-all duration-200 ease-out
+            focus-visible:outline-none focus-visible:ring-2
+            focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
+            ${compact ? 'h-11 w-11' : 'h-[54px] w-[62px] flex-col gap-1'}
+            ${knowledgeDisabled
+              ? 'cursor-not-allowed opacity-40'
+              : 'hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
+            }
+          `}
+        >
+          <Database size={20} strokeWidth={2} />
+          {!compact && <span className="text-[10px] leading-none">知识库</span>}
+        </button>
       </div>
 
       <div className="flex-1" />
@@ -152,10 +193,11 @@ export function NavRail({
           aria-label="设置"
           aria-current={isActive('settings') ? 'page' : undefined}
           className={`
-            relative flex h-11 w-11 items-center justify-center rounded-xl
+            relative flex items-center justify-center rounded-xl
             transition-all duration-200
             focus-visible:outline-none focus-visible:ring-2
             focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
+            ${compact ? 'h-11 w-11' : 'h-[54px] w-[62px] flex-col gap-1'}
             ${isActive('settings')
               ? 'text-[var(--td-brand-color)]'
               : 'text-[var(--td-text-color-secondary)] hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
@@ -178,6 +220,7 @@ export function NavRail({
               分区，汉堡菜单更贴近「展开一列菜单」的语义；齿轮则更像
               「调参数」，与这个入口实际承载的内容不一致。 */}
           <Menu size={20} strokeWidth={isActive('settings') ? 2.5 : 2} />
+          {!compact && <span className="text-[10px] leading-none">设置</span>}
         </button>
       </div>
     </nav>

@@ -294,6 +294,30 @@ console.log('\n[4] 打包产物不再含「深度求索」');
   ok(!hit, 'dist/assets 里没有「深度求索」', hit || 'clean');
 }
 
+// ============= [4b] Agent 资料页正文列宽 =============
+// A3（需求）：560 → 760px。560 在 1440 窗口里是一条细长窄栏，右侧大段空白；
+// 760 才装得下能力矩阵与权限说明的两列。这里直接量内层列的盒宽。
+//
+// 注意：通讯录没有独立路由（`/contacts` 不存在，深链只有 chat/projects/
+// extensions/settings）。所以先落在 `/`（默认聊天栏），再点导航栏的
+// 「通讯录」切过去。早先这里直接 goto `/contacts` 会落进 SPA 兜底页，
+// `[data-agent-row]` 永远等不到。
+console.log('\n[4b] Agent 资料页正文列宽 760px');
+{
+  const { ctx, page } = await newPage();
+  await page.goto(base + '/', { waitUntil: 'networkidle' });
+  await page.locator('[data-nav-rail] button[aria-label="通讯录"]').click();
+  await page.waitForSelector('[data-agent-row]', { timeout: 10000 });
+  await page.locator('[data-agent-row]').first().click();
+  await page.waitForSelector('[data-agent-detail-col]', { timeout: 8000 });
+  const detailWidth = await page.evaluate(() => {
+    const el = document.querySelector('[data-agent-detail-col]');
+    return el ? el.getBoundingClientRect().width : 0;
+  });
+  ok(detailWidth >= 759 && detailWidth <= 761, 'Agent 资料列宽 760px（原 560px）', `实测 ${Math.round(detailWidth)}px`);
+  await ctx.close();
+}
+
 // ============= [5] 控制台 =============
 console.log('\n[5] 控制台');
 ok(errors.length === 0, '没有 console.error / pageerror', errors.slice(0, 3).join(' | ') || '0');

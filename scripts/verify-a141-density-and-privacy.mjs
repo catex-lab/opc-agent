@@ -482,6 +482,45 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
     `标题 ${typeScale.titles.join('/')} / 正文 ${typeScale.bodies.join('/')}`
   );
 
+  /* A2 / E2 / B4（需求）：分区眉标原先 10.5px + placeholder 灰（2.52:1），
+     是全页最读不清的一行；且「支持 / 官方入口」两个眉标没有图标。
+     新期望：字号 ≥12px、与页面底色对比度 ≥4.5:1、三个眉标都带单色图标。 */
+  const eyebrow = await page.evaluate(() => {
+    const el = document.querySelector('.tc-about-eyebrow');
+    if (!el) return null;
+    const toRgb = c => c.match(/[\d.]+/g).slice(0, 3).map(Number);
+    const lum = rgb => {
+      const v = rgb.map(x => {
+        const n = x / 255;
+        return n <= 0.03928 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+    };
+    const fg = toRgb(getComputedStyle(el).color);
+    const bg = toRgb(getComputedStyle(document.body).backgroundColor);
+    const [a, b] = [lum(fg), lum(bg)].sort((x, y) => y - x);
+    return {
+      size: parseFloat(getComputedStyle(el).fontSize),
+      contrast: (a + 0.05) / (b + 0.05),
+      labels: [...document.querySelectorAll('.tc-about-eyebrow')].map(node => ({
+        text: node.textContent.trim(),
+        icons: node.querySelectorAll('svg').length,
+      })),
+    };
+  });
+  ok(eyebrow && eyebrow.size >= 12, '眉标字号 ≥12px（原 10.5px）', `实测 ${eyebrow?.size}px`);
+  ok(eyebrow && eyebrow.contrast >= 4.5, '眉标对比度 ≥4.5:1（原 2.52:1）', `实测 ${eyebrow?.contrast?.toFixed(2)}:1`);
+  const wanted = ['隐私', '支持', '官方入口'];
+  const labelled = wanted.map(text => ({
+    text,
+    icons: eyebrow?.labels.find(item => item.text === text)?.icons ?? 0,
+  }));
+  ok(
+    labelled.every(item => item.icons >= 1),
+    '分区眉标都带单色图标（支持 / 官方入口 不再只有文字）',
+    labelled.map(item => `${item.text}:${item.icons}`).join(' / ')
+  );
+
   // 入口：href 必须是真地址，不能是占位
   const links = await page.locator('[data-about-link]').evaluateAll(els => els.map(el => ({
     key: el.getAttribute('data-about-link'),
@@ -645,6 +684,42 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
   const src = await readFile(join(ROOT, 'src/components/ChatInput.tsx'), 'utf8');
   const bare = (src.match(/suffixIcon=\{<ChevronDown\s*\/>\}/g) || []).length;
   ok(bare === 0, '源码里没有「无 size 的 suffixIcon 箭头」（24px 默认值）', `${bare} 处`);
+
+  /* C1 / C3（需求）：导航条 56 → 74px，每栏补 10px 文字标签，
+     并新增一个常驻的全局知识库入口（无会话时置灰）。 */
+  const rail = await page.evaluate(() => {
+    const nav = document.querySelector('[data-nav-rail]');
+    if (!nav) return null;
+    const buttons = [...nav.querySelectorAll('button')];
+    return {
+      width: nav.getBoundingClientRect().width,
+      labels: buttons.map(b => {
+        const span = [...b.querySelectorAll('span')].find(node => node.textContent.trim());
+        return { text: span ? span.textContent.trim() : '', size: span ? parseFloat(getComputedStyle(span).fontSize) : null };
+      }),
+      knowledge: !!nav.querySelector('[data-nav-knowledge]'),
+    };
+  });
+  ok(rail && rail.width >= 74, '导航条宽度 ≥74px（原 56px）', `实测 ${rail?.width}px`);
+  ok(rail && rail.knowledge, '导航条有全局知识库入口');
+  const requiredLabels = ['聊天', '项目', '通讯录', '扩展', '知识库', '设置'];
+  ok(
+    rail && requiredLabels.every(text => rail.labels.some(item => item.text === text)),
+    '六栏都有文字标签（不再靠 hover 猜图标）',
+    rail ? rail.labels.map(item => item.text || '(空)').join(' / ') : '无'
+  );
+  ok(
+    rail && rail.labels.every(item => item.size === null || item.size === 10),
+    '导航文字标签统一 10px',
+    rail ? rail.labels.map(item => item.size).join(' / ') : '无'
+  );
+  const knowledgeDisabled = await page.locator('[data-nav-knowledge]').isDisabled();
+  ok(!knowledgeDisabled, '有会话时知识库入口可点');
+  await page.locator('[data-nav-knowledge]').click();
+  await page.waitForSelector('[data-kb-panel]', { timeout: 8000 });
+  ok(true, '点击知识库入口打开知识库面板');
+  await page.keyboard.press('Escape');
+  await page.locator('[data-kb-panel]').waitFor({ state: 'detached', timeout: 8000 });
 
   await ctx.close();
 }

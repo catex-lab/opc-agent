@@ -121,7 +121,7 @@ export function AgentDetailPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {/* pt-3：窄条已经把标题栏省掉了，这里再留 32px 会把「上提」抵消掉 */}
-        <div className="mx-auto w-full max-w-[560px] px-4 pb-8 pt-3 sm:px-6">
+        <div className="mx-auto w-full max-w-[760px] px-4 pb-8 pt-3 sm:px-6" data-agent-detail-col>
           {/* 头部：头像 / 名称 / 状态 */}
           <div className="flex flex-col items-center text-center">
             <AgentAvatar
@@ -215,7 +215,7 @@ export function AgentDetailPanel({
       </div>
 
       {/* 底部主操作：固定在页脚，滚动时不会跑掉。
-          内层与正文同宽同列 —— 正文是 560px 居中的信息列，按钮如果铺满
+          内层与正文同宽同列 —— 正文是 760px 居中的信息列，按钮如果铺满
           整条页脚（1440 窗口下约 1030px），会出现「一根巨长的蓝条托着一个
           窄栏」的割裂感。页脚底色仍然整条铺满，只把按钮收进同一列。 */}
       <div
@@ -227,8 +227,8 @@ export function AgentDetailPanel({
       >
         {/* 内层补上 px-6，与正文列的内边距一致 —— 否则按钮会比上面的卡片
             左右各宽 24px，看着像没对齐 */}
-        <div className="mx-auto w-full max-w-[560px] px-4 sm:px-6">
-          {/* A45（反馈）：「发消息」原来 `w-full` 铺满 560px 的信息列，
+        <div className="mx-auto w-full max-w-[760px] px-4 sm:px-6">
+          {/* A45（反馈）：「发消息」原来 `w-full` 铺满 760px 的信息列，
               1440 窗口下是一根 500 多像素的实心长条，比整页任何一块内容都
               抢眼 —— 它只是一个动作按钮，不该占一行的宽度。
               改成按内容自适应、整行居中：宽度跟着「图标 + 四个字」走，

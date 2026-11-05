@@ -487,9 +487,21 @@ export function ExtensionPanel({
             {error}
           </p>
         ) : loading && total === 0 ? (
-          <p className="px-3 py-6 text-body" style={{ color: 'var(--td-text-color-placeholder)' }}>
-            正在读取扩展…
-          </p>
+          /* D3：读取扩展要扫描本机多个 Agent 目录，冷启时列表会空 1–2 秒。
+             原先只有一行灰字，看起来像「加载失败后的残留」；骨架屏先把
+             列表的形态给出来（头像 + 两行 + 右侧开关），再被真实行替换。 */
+          <div className="tc-ext-skeleton" role="status" aria-label="正在读取扩展…" data-ext-skeleton>
+            {[0, 1, 2, 3].map(index => (
+              <div className="tc-ext-skel-row" aria-hidden="true" key={index}>
+                <span className="tc-ext-skel-avatar" />
+                <span className="tc-ext-skel-lines">
+                  <span className="tc-ext-skel-line" />
+                  <span className="tc-ext-skel-line is-short" />
+                </span>
+                <span className="tc-ext-skel-toggle" />
+              </div>
+            ))}
+          </div>
         ) : total === 0 ? (
           /* 空态必须说清「这些条目从哪来」。用户第一反应会是「怎么装」，
              而这里的正确答案是「装在你自己的 Agent 里，然后点导入」。 */

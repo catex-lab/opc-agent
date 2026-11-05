@@ -380,6 +380,26 @@ try {
     try {
       const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
+      // D3（需求）：冷启扫描本机目录时列表先给骨架屏，且骨架形状可数（4 行）。
+      // 用路由延迟把「加载中」这一帧拉长，避免靠运气撞上短暂的空窗。
+      const slowPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      await slowPage.route(
+        url => url.pathname.startsWith('/api/extensions'),
+        async route => {
+          await new Promise(r => setTimeout(r, 700));
+          await route.continue();
+        }
+      );
+      await slowPage.goto(`${base}/extensions`, { waitUntil: 'domcontentloaded' });
+      await slowPage.waitForSelector('[data-ext-skeleton]', { timeout: 8000 });
+      ok(
+        (await slowPage.locator('.tc-ext-skel-row').count()) === 4,
+        '★ 扩展冷启显示 4 行骨架屏（不是一行灰字）'
+      );
+      await slowPage.waitForSelector('[data-ext-skeleton]', { state: 'detached', timeout: 25000 });
+      ok((await slowPage.locator('[data-ext-row]').count()) > 0, '骨架结束后列表渲染真实行');
+      await slowPage.close();
+
       // 列表徽章：×2（[3] 的界面半边）
       await page.goto(`${base}/extensions`, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('[data-ext-source-count]', { timeout: 25000 });
