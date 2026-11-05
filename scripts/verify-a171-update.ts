@@ -653,9 +653,17 @@ ok(
   '隐私卡配色走主题令牌（随浅深主题变化）'
 );
 ok(!/\.tc-about-privacy-card[^}]*#[0-9a-fA-F]{3,8}/.test(css), '隐私卡没有硬编码十六进制色值');
+// 原期望：`color: var(--td-text-color-placeholder)`。
+// 新期望：`color: var(--tc-text-caption)`，且不得再用 placeholder。
+// 依据：A2/E2 把次级文字从 placeholder 灰（10.5px 下 2.52:1）抬到 caption 档
+// （12px 下 5.10:1）；运行时信息正是这类「次级但仍要读清」的文字，跟着一起换。
 ok(
-  /\.tc-about-build\s*\{[^}]*color:\s*var\(--td-text-color-placeholder\)/.test(css),
+  /\.tc-about-build\s*\{[^}]*color:\s*var\(--tc-text-caption\)/.test(css),
   '运行时信息用次级字色（不抢名称与版本）'
+);
+ok(
+  !/\.tc-about-build\s*\{[^}]*color:\s*var\(--td-text-color-placeholder\)/.test(css),
+  '运行时信息不再用低对比的 placeholder 灰'
 );
 
 
