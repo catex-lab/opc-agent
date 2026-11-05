@@ -549,14 +549,37 @@ class AgentRegistry {
    */
   prewarm(id: string, ctx: SendContext): void {
     try {
-      // 只在「确认可用」时预热：未探测 / 未登录 / 未安装都不该白起一个
-      // ≈24MB 的进程（起来也会卡在鉴权上，最后还得被超时清掉）
-      if (this.statuses.get(id)?.availability !== 'ready') return;
-      // A115：与 stream() 同样过一次 withUserIdentity。
-      // 不只是为了「预热也能带上称呼」—— sdk 适配器按 systemPrompt 的
-      // **指纹**决定要不要重建会话池，两边不一致会让首条消息被判成
-      // 「结构性不符」而重建，预热白做（见 sdk.ts 的建池键注释）。
-      this.providers.get(id)?.prewarm?.({ ...ctx, systemPrompt: withUserIdentity(ctx.systemPrompt) });
+      const fire = () => {
+        try {
+          this.providers.get(id)?.prewarm?.({ ...ctx, systemPrompt: withUserIdentity(ctx.systemPrompt) });
+        } catch (err) {
+          console.error('[Registry] prewarm 失败（忽略）:', (err as Error).message);
+        }
+      };
+
+      const availability = this.statuses.get(id)?.availability;
+      if (availability === 'ready') {
+        fire();
+        return;
+      }
+
+      // 重启后的首次全量探测要几十秒（实测 15 个 Agent ≈48s），而用户往往
+      // 在这个窗口里就已经点进会话了。旧实现此时读到的是 undefined/unknown，
+      // 直接放弃预热 —— 等探测落定时预热窗口早过去了，首条消息只能冷启动。
+      // 这里挂到进行中的探测上：探测结果若是 ready 立刻预热，否则照旧不预热
+      // （未登录 / 未安装仍然不白起进程）。
+      if (availability === undefined || availability === 'unknown') {
+        const pending = this.inflight.get(id);
+        if (pending) {
+          void pending
+            .then(status => {
+              if (status.availability === 'ready') fire();
+            })
+            .catch(() => {
+              /* 探测失败不预热，也不冒泡 */
+            });
+        }
+      }
     } catch (err) {
       // 预热纯属优化：任何异常都不该冒到请求层
       console.error('[Registry] prewarm 失败（忽略）:', (err as Error).message);

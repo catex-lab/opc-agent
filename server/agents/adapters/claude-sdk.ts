@@ -28,8 +28,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import type { CanUseTool, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  SDKMessage,
+  Options as ClaudeOptions,
+  WarmQuery,
+} from '@anthropic-ai/claude-agent-sdk';
 import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 
 /**
@@ -77,6 +83,54 @@ const require = createRequire(
 
 /** 权限请求等待上限，与 WorkBuddy 通道保持同值 */
 const PERMISSION_TIMEOUT = 5 * 60 * 1000;
+
+/**
+ * 预热（A-性能）：把「进程启动 + initialize 握手 + MCP 注册」提前到用户
+ * 打开会话的时刻。
+ *
+ * ## 为什么值得
+ *
+ * 本机实测（`claude` 未登录也能走到 initialize 完成）：
+ *   冷进程 init 10.2s（首次从磁盘读 ~几百 MB 的 CLI 包）
+ *   温进程 init 3.3s
+ *   `startup()` 预置一个 spare 只要 1.8~2.1s
+ * 而 `query()` 每轮都新起一个进程 —— 也就是说「首条指令」和「每轮答复」
+ * 都在为同一件事付钱。预热后 `WarmQuery.query(prompt)` 直接复用那个已
+ * 完成握手的进程，首条消息只剩模型推理。
+ *
+ * ## 边界
+ *
+ * 1. **一个 spare 只服务一条消息**（SDK 的 `WarmQuery` 是一次性的）。
+ *    所以这里只预热「打开会话后的第一条」，后续消息退回普通 `query()`，
+ *    与改造前一致 —— 不引入常驻进程池，避免内存与孤儿进程风险。
+ * 2. **宿主级选项在预热时就冻结**（cwd / model / resume / 权限档 /
+ *    systemPrompt / MCP）。`warmKeyOf` 把这些全部编进键里；任何一项变了
+ *    （例如用户改了模型、或记忆文件变了导致提示词指纹变）就丢弃 spare、
+ *    走普通路径。**宁可不用，也不让预热把配置带歪。**
+ * 3. 预热是纯优化：`startup()` 失败、超时、SDK 版本不认识该 API，
+ *    一律静默回落到 `query()`。
+ */
+const CLAUDE_PREWARM_TIMEOUT = 60 * 1000;
+/** spare 闲置多久后回收（用户打开会话却一直不发消息的情况） */
+const CLAUDE_PREWARM_IDLE_MS = 5 * 60 * 1000;
+
+interface ClaudeWarmEntry {
+  key: string;
+  /** 预热结果；null = 失败/超时/不支持，调用方直接走普通路径 */
+  ready: Promise<WarmQuery | null>;
+  /** 预热进程自己的中断器：claim 之后 send 的 abort 要能传到它 */
+  controller: AbortController;
+  /**
+   * 审批桥的占位。预热时进程已经建好并冻结了 canUseTool，而真正的桥
+   * （绑定本轮 queue）只能在 send 时才存在 —— 所以用一个可变引用转发，
+   * 预热期（还没有 prompt）不会有任何审批请求进来。
+   */
+  bridge: { current: CanUseTool | null };
+  stderrLines: string[];
+  /** 闲置回收定时器 */
+  idleTimer: ReturnType<typeof setTimeout> | null;
+}
+
 
 /**
  * 找 SDK 自带的 claude 可执行文件。
@@ -148,6 +202,8 @@ export class ClaudeSdkAdapter implements AgentProvider {
    * 作用域与 WorkBuddy 通道一致：本会话 + 本次应用运行。
    */
   private approvalMemory = new Map<string, { allow: Set<string>; deny: Set<string> }>();
+  /** 当前的预热 spare（只留一个：同时打开多个会话时以最后一次为准） */
+  private warm: ClaudeWarmEntry | null = null;
 
   constructor(def: AgentDefinition) {
     this.descriptor = def.descriptor;
@@ -193,11 +249,14 @@ export class ClaudeSdkAdapter implements AgentProvider {
     const sessionId = ctx.sessionId;
     let aborted = false;
     const controller = new AbortController();
+    /** 命中预热时指向 spare 自己的中断器（声明必须在 abort 之前：linkAbort 可能同步触发） */
+    let warmController: AbortController | null = null;
 
     const abort = () => {
       aborted = true;
       this.replies.clear(sessionId);
       controller.abort();
+      warmController?.abort();
       queue.close();
     };
     this.active.set(sessionId, { abort });
@@ -224,37 +283,37 @@ export class ClaudeSdkAdapter implements AgentProvider {
       withMemoryContext(ctx.systemPrompt ?? '', ctx.memoryCwd),
       this.descriptor.id
     );
+    const warmEntry = this.takeWarm(ctx, binary, extraPrompt);
 
     void (async () => {
       let tokens = 0;
       let cost: number | undefined;
+      let claimed: ClaudeWarmEntry | null = null;
       try {
-        const { query } = await loadSdk();
-        const q = query({
-          prompt: ctx.prompt,
-          options: {
-            cwd: ctx.cwd || process.cwd(),
-            ...(ctx.model ? { model: ctx.model } : {}),
-            ...(ctx.resumeToken ? { resume: ctx.resumeToken } : {}),
-            ...claudePermissionMode(ctx),
-            ...(binary ? { pathToClaudeCodeExecutable: binary } : {}),
-            abortController: controller,
-            canUseTool,
-            // A176：知识库检索是只读能力，sessionId 由宿主塞进子进程环境；
-            // 工具的权限放行在 sdkApproval 里按 mcp__kb__ 前缀单独处理。
-            mcpServers: {
-              [KB_MCP_SERVER_NAME]: kbMcpServerSpec(ctx.sessionId, this.descriptor.id),
-            },
-            systemPrompt: extraPrompt
-              ? { type: 'preset', preset: 'claude_code', append: extraPrompt }
-              : { type: 'preset', preset: 'claude_code' },
-            stderr: (data: string) => {
+        const sdk = await loadSdk();
+        let q: AsyncIterable<SDKMessage> | null = null;
+
+        // 预热命中：进程已完成 initialize 与 MCP 握手，claim 后只剩推理。
+        if (warmEntry) {
+          const spare = await warmEntry.ready;
+          if (spare) {
+            warmEntry.bridge.current = canUseTool;
+            warmController = warmEntry.controller;
+            claimed = warmEntry;
+            q = spare.query(ctx.prompt);
+          }
+        }
+
+        if (!q) {
+          q = sdk.query({
+            prompt: ctx.prompt,
+            options: this.claudeOptions(ctx, extraPrompt, binary, controller, canUseTool, data => {
               // 只留最后几行：CLI 的诊断经常带整段堆栈，全存会把日志撑爆
               stderrLines.push(data);
               if (stderrLines.length > 30) stderrLines.shift();
-            },
-          },
-        });
+            }),
+          });
+        }
 
         for await (const msg of q) {
           const mapped = mapClaudeSdkMessage(msg, ctx, queue);
@@ -289,7 +348,7 @@ export class ClaudeSdkAdapter implements AgentProvider {
         }
       } catch (err) {
         if (!aborted) {
-          const detail = stderrLines.join('').trim();
+          const detail = (claimed?.stderrLines ?? stderrLines).join('').trim();
           queue.push({
             type: 'error',
             message: `${(err as Error)?.message || String(err)}${detail ? `（stderr: ${detail.slice(-500)}）` : ''}`,
@@ -311,6 +370,159 @@ export class ClaudeSdkAdapter implements AgentProvider {
     }
   }
 
+  /**
+   * 预热：起一个已完成 initialize/MCP 握手的 spare，供下一条消息 claim。
+   *
+   * 由注册表在「打开会话 / 新建会话」时调用（见 `registry.prewarm`）。
+   * 失败、超时、旧版 SDK 不认 `startup()` 都只是「没有 spare」，
+   * 不影响任何一次真实发送。
+   */
+  prewarm(ctx: SendContext): void {
+    try {
+      const binary = bundledBinary();
+      if (!binary) return;
+      const extraPrompt = withExtensionsContext(
+        withMemoryContext(ctx.systemPrompt ?? '', ctx.memoryCwd),
+        this.descriptor.id
+      );
+      const key = this.warmKeyOf(ctx, binary, extraPrompt);
+      if (this.warm?.key === key) return;
+      this.closeWarm();
+
+      const controller = new AbortController();
+      const bridge: { current: CanUseTool | null } = { current: null };
+      const stderrLines: string[] = [];
+      const entry: ClaudeWarmEntry = {
+        key,
+        ready: Promise.resolve(null),
+        controller,
+        bridge,
+        stderrLines,
+        idleTimer: null,
+      };
+
+      /* canUseTool 在预热时就冻结进进程，但真正的审批桥依赖本轮 queue。
+         用一个可变引用转发：预热期不会有任何审批请求（还没有 prompt）；
+         claim 后 send 立刻把真正的桥写进来。 */
+      const proxy = ((
+        toolName: string,
+        input: Record<string, unknown>,
+        options: unknown
+      ) => {
+        const fn = bridge.current;
+        if (!fn) {
+          return Promise.resolve({
+            behavior: 'deny' as const,
+            message: '预热进程尚未绑定审批通道',
+            interrupt: false,
+          });
+        }
+        return (fn as (...a: unknown[]) => Promise<unknown>)(toolName, input, options);
+      }) as unknown as CanUseTool;
+
+      entry.ready = loadSdk()
+        .then(sdk => {
+          if (typeof sdk.startup !== 'function') return null;
+          return sdk.startup({
+            options: this.claudeOptions(ctx, extraPrompt, binary, controller, proxy, data => {
+              stderrLines.push(data);
+              if (stderrLines.length > 30) stderrLines.shift();
+            }),
+            initializeTimeoutMs: CLAUDE_PREWARM_TIMEOUT,
+          });
+        })
+        .then(handle => {
+          if (this.warm !== entry || !handle) {
+            handle?.close();
+            return null;
+          }
+          entry.idleTimer = setTimeout(() => {
+            if (this.warm === entry) this.closeWarm();
+          }, CLAUDE_PREWARM_IDLE_MS);
+          entry.idleTimer.unref?.();
+          return handle;
+        })
+        .catch(() => null);
+
+      this.warm = entry;
+    } catch {
+      /* 预热纯优化：任何异常都不该冒到请求层 */
+    }
+  }
+
+  /** 取走可用的 spare；配置键对不上就丢弃（宁可重起，也不让 spare 带旧配置跑） */
+  private takeWarm(
+    ctx: SendContext,
+    binary: string | null,
+    extraPrompt: string
+  ): ClaudeWarmEntry | null {
+    const entry = this.warm;
+    if (!entry) return null;
+    if (!binary || entry.key !== this.warmKeyOf(ctx, binary, extraPrompt)) {
+      this.closeWarm();
+      return null;
+    }
+    this.warm = null;
+    if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    return entry;
+  }
+
+  private closeWarm(): void {
+    const entry = this.warm;
+    this.warm = null;
+    if (!entry) return;
+    if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    void entry.ready.then(handle => handle?.close()).catch(() => {
+      /* 已经死掉的 spare：忽略 */
+    });
+  }
+
+  /**
+   * 预热键。必须覆盖 `claudeOptions` 在预热时就冻结的**所有**宿主级选项：
+   * 少一项就可能让 spare 带着旧配置接客（例如换了模型却仍用旧进程）。
+   */
+  private warmKeyOf(ctx: SendContext, binary: string, extraPrompt: string): string {
+    return [
+      this.descriptor.id,
+      binary,
+      ctx.cwd || '',
+      ctx.model || '',
+      ctx.resumeToken || '',
+      ctx.permissionMode || 'default',
+      ctx.sessionId,
+      createHash('sha1').update(extraPrompt).digest('hex').slice(0, 16),
+    ].join('\u0001');
+  }
+
+  /** `query()` 与 `startup()` 共用的选项构造（两处必须完全一致，否则预热白做） */
+  private claudeOptions(
+    ctx: SendContext,
+    extraPrompt: string,
+    binary: string | null,
+    abortController: AbortController,
+    canUseTool: CanUseTool,
+    stderr: (data: string) => void
+  ): ClaudeOptions {
+    return {
+      cwd: ctx.cwd || process.cwd(),
+      ...(ctx.model ? { model: ctx.model } : {}),
+      ...(ctx.resumeToken ? { resume: ctx.resumeToken } : {}),
+      ...claudePermissionMode(ctx),
+      ...(binary ? { pathToClaudeCodeExecutable: binary } : {}),
+      abortController,
+      canUseTool,
+      // A176：知识库检索是只读能力，sessionId 由宿主塞进子进程环境；
+      // 工具的权限放行在 sdkApproval 里按 mcp__kb__ 前缀单独处理。
+      mcpServers: {
+        [KB_MCP_SERVER_NAME]: kbMcpServerSpec(ctx.sessionId, this.descriptor.id),
+      },
+      systemPrompt: extraPrompt
+        ? { type: 'preset', preset: 'claude_code', append: extraPrompt }
+        : { type: 'preset', preset: 'claude_code' },
+      stderr,
+    };
+  }
+
   abort(sessionId: string): void {
     this.active.get(sessionId)?.abort();
     this.active.delete(sessionId);
@@ -321,6 +533,7 @@ export class ClaudeSdkAdapter implements AgentProvider {
   }
 
   dispose(): void {
+    this.closeWarm();
     for (const entry of this.active.values()) entry.abort();
     this.active.clear();
     this.replies.clear();

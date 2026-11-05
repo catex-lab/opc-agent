@@ -584,6 +584,32 @@ export function projectMemoryStats(cwd: string | null | undefined): ProjectMemor
 }
 
 /**
+ * 装配结果的内存缓存。
+ *
+ * 为什么需要：这段装配在**每一轮**对话里都会被调用，而且一份消息通常会调
+ * 两到三次（`configKeyOf` 算指纹一次、真正拼 systemPrompt 一次、建立/复用
+ * 会话时再一次）。实测每次都重读三个文件 + 两次 token 估算，合计 ≈11ms，
+ * 一轮就要白付 20~35ms。缓存键是「文件 mtime + 大小」，所以编辑记忆后
+ * 下一次调用立刻失效 —— 这一层不改变「改完即生效」的语义，只是省掉重复读。
+ */
+interface MemorySnapshot {
+  stamp: string;
+  text: string;
+}
+const memoryContextCache = new Map<string, MemorySnapshot>();
+/** 缓存上限。按 cwd 分键，正常使用远达不到；超了丢最旧的一条。 */
+const MEMORY_CACHE_MAX = 50;
+
+function fileStamp(p: string): string {
+  try {
+    const st = fs.statSync(p);
+    return `${st.mtimeMs}:${st.size}`;
+  } catch {
+    return '-';
+  }
+}
+
+/**
  * 装配注入上下文。**会话启动时冻结一次**：
  * 一轮对话中途改了 MEMORY.md，不影响正在跑的这轮 —— 否则同一个会话里
  * 前后两次工具调用看到的世界观不一致，比没有记忆更难排查。
@@ -598,8 +624,22 @@ export function projectMemoryStats(cwd: string | null | undefined): ProjectMemor
 export function assembleMemoryContext(
   opts: { includeUser?: boolean; cwd?: string | null } = {}
 ): string {
-  ensureDirs();
   const includeUser = opts.includeUser !== false;
+  const scope = projectScope(opts.cwd);
+  const cacheKey = `${opts.cwd ?? ''}\u0000${includeUser ? 1 : 0}`;
+  const stampOf = () =>
+    [
+      fileStamp(CORE_MEMORY_PATH),
+      includeUser ? fileStamp(USER_PROFILE_PATH) : '-',
+      scope ? fileStamp(scope.corePath) : '-',
+    ].join('|');
+
+  // 命中判断放在 ensureDirs 之前：Windows 上四次 existsSync/mkdirSync 实测
+  // 要 3~4ms，而缓存命中时目录必然已经存在（文件被删会先让 stamp 失配）。
+  const cached = memoryContextCache.get(cacheKey);
+  if (cached && cached.stamp === stampOf()) return cached.text;
+
+  ensureDirs();
   const core = truncateToBudget(readCoreMemory(), CORE_MEMORY_BUDGET);
   const parts = ['## 用户长期记忆（跨项目生效，只读，来自 opc-agent 记忆层）', '', core.text];
   if (includeUser) {
@@ -613,7 +653,6 @@ export function assembleMemoryContext(
   // ⚠️ 必须先判 scope 再读。`readCoreMemory(undefined)` 读到的是**全局**
   // 记忆，直接传下去会把全局内容当成项目内容再注入一遍（标题还是
   // 「当前项目记忆」）。这条是写验证脚本时抓出来的。
-  const scope = projectScope(opts.cwd);
   if (scope) {
     const projectCore = readCoreMemory(opts.cwd);
     if (projectCore.trim()) {
@@ -627,7 +666,13 @@ export function assembleMemoryContext(
     }
   }
 
-  return parts.join('\n');
+  const text = parts.join('\n');
+  if (memoryContextCache.size >= MEMORY_CACHE_MAX) {
+    const oldest = memoryContextCache.keys().next().value;
+    if (oldest !== undefined) memoryContextCache.delete(oldest);
+  }
+  memoryContextCache.set(cacheKey, { stamp: stampOf(), text });
+  return text;
 }
 
 function firstHeading(md: string): string {

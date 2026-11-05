@@ -27,7 +27,7 @@ import {
   updateProjectTask,
 } from "./db.js";
 import { isValidAgentId, registry } from "./agents/registry.js";
-import { scoreAgentSkills } from "./agents/types.js";
+import { scoreAgentSkills, type PermissionMode } from "./agents/types.js";
 import { agentAcceptsModel, findDef, registerCustomDefs } from "./agents/definitions.js";
 // A155：SDK 产品参数（environment / endpoint / configDir）的唯一展开点。
 // 适配器与这里的两个路由共用它，避免「一处修好、另一处仍是 external」。
@@ -1246,6 +1246,7 @@ function prewarmForSession(session: {
   model?: string | null;
   system_prompt?: string | null;
   sdk_session_id?: string | null;
+  permission_mode?: string | null;
 }): void {
   try {
     if ((session.kind ?? 'direct') !== 'direct') return;
@@ -1260,8 +1261,9 @@ function prewarmForSession(session: {
       memoryCwd: session.cwd || undefined,
       model: session.model ?? undefined,
       resumeToken: session.sdk_session_id,
-      // 权限模式在首轮会被热更新（mode-only），这里给默认值即可
-      permissionMode: 'default',
+      // 权限模式用会话自己存的那档：claude 的 prewarm 会把权限档冻结进
+      // spare，这里若固定写 'default'，非默认档的会话就永远命中不了预热。
+      permissionMode: (session.permission_mode as PermissionMode | null) || 'default',
       allowedTools: [],
     });
   } catch {
