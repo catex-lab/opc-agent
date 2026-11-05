@@ -397,7 +397,30 @@ export function KnowledgeBasePanel({
         </header>
 
         <div className="kb-body">
-          {loading ? <p className="kb-loading">正在读取索引状态…</p> : null}
+          {loading ? (
+            /* D3：原先只有一行「正在读取索引状态…」，冷启时看起来像加载失败后的残留。
+               骨架按加载完成后的首屏两块铺：检索区（标题 / 说明 / 输入 + 按钮）与
+               5 个状态卡（与真实 .kb-stats 同一套网格，数据到达时不发生结构位移）。
+               视觉上不显示任何文字，语义由 role=status + aria-label 承担。 */
+            <div className="kb-skeleton" role="status" aria-label="正在读取索引状态…" data-kb-skeleton>
+              <div className="kb-skel-section" aria-hidden="true">
+                <span className="kb-skel-fill kb-skel-line is-title" />
+                <span className="kb-skel-fill kb-skel-line is-desc" />
+                <div className="kb-skel-search">
+                  <span className="kb-skel-fill kb-skel-input" />
+                  <span className="kb-skel-fill kb-skel-btn" />
+                </div>
+              </div>
+              <div className="kb-stats" aria-hidden="true">
+                {[0, 1, 2, 3, 4].map(index => (
+                  <div className="kb-stat kb-skel-stat" data-kb-skel-stat key={index}>
+                    <span className="kb-skel-fill kb-skel-line is-label" />
+                    <span className="kb-skel-fill kb-skel-line is-value" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {error ? (
             <div className="kb-error" role="alert">
               <AlertTriangle size={14} strokeWidth={1.5} aria-hidden="true" />

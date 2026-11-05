@@ -104,10 +104,73 @@
   overflow-y: auto;
 }
 
-.kb-loading {
-  margin: 0;
-  font-size: var(--text-body);
-  color: var(--td-text-color-secondary);
+/* ===== D3：知识库加载骨架 =====
+   形状对齐加载完成后的首屏两块：检索区（标题 / 说明 / 输入 + 按钮）与
+   5 个状态卡（直接复用 .kb-stats 的网格，所以窄宽的列数变化也一致）。
+   骨架块只承担「形态预告」，不显示任何文字；语义走 role=status + aria-label。
+   闪烁沿用扩展骨架的 tc-skel-pulse（定义在 index.css），并遵守 reduced-motion。 */
+.kb-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.kb-skel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kb-skel-fill {
+  display: block;
+  background-color: var(--tc-fill-hover);
+  animation: tc-skel-pulse 1.4s ease-in-out infinite;
+}
+
+.kb-skel-line {
+  height: 12px;
+  border-radius: 6px;
+}
+
+.kb-skel-line.is-title {
+  width: 76px;
+  height: 13px;
+}
+
+.kb-skel-line.is-desc {
+  width: 62%;
+}
+
+.kb-skel-search {
+  display: flex;
+  gap: 8px;
+}
+
+.kb-skel-input {
+  flex: 1;
+  height: 32px;
+  border-radius: var(--tc-radius-chip);
+}
+
+.kb-skel-btn {
+  width: 76px;
+  height: 30px;
+  border-radius: var(--tc-radius-chip);
+}
+
+.kb-skel-line.is-label {
+  width: 60%;
+  height: 11px;
+}
+
+.kb-skel-line.is-value {
+  width: 42%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kb-skel-fill {
+    animation: none;
+  }
 }
 
 .kb-error {

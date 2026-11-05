@@ -123,6 +123,11 @@ let disabledReason = scenario === 'auto' ? 'auto_failure' : scenario === 'manual
 let chunkCount = scenario === 'empty' ? 0 : 386;
 let sizeBytes = scenario === 'empty' ? 0 : 1887436;
 let lastBackfillAt = scenario === 'empty' ? null : '2026-11-03T02:18:00.000Z';
+/**
+ * D3：state=loading 把 /api/kb/status 首次响应推迟 5s，用来定格加载骨架。
+ * 只延迟一次 —— 后续刷新仍按即时返回，避免把「加载完成」也拖住。
+ */
+let statusDelay = scenario === 'loading' ? 5000 : 0;
 
 const calls = [];
 window.__kbCalls = calls;
@@ -227,7 +232,14 @@ window.fetch = async function (input, init) {
     if (body && body.allowAll) allowAll = true;
     return json({ allowProject: allowProject, allowAll: allowAll });
   }
-  if (url.indexOf('/api/kb/status') >= 0) return json(statusPayload());
+  if (url.indexOf('/api/kb/status') >= 0) {
+    if (statusDelay > 0) {
+      const wait = statusDelay;
+      statusDelay = 0;
+      await new Promise(resolve => setTimeout(resolve, wait));
+    }
+    return json(statusPayload());
+  }
   // kb.search 逐 Agent 开关（31b4533）后新增的独立端点；夹具缺它时面板拿到
   // 兜底的空对象，在 toolPolicy.agents.map 处直接崩，整块面板都挂不上。
   if (url.indexOf('/api/kb/tool-policy') >= 0) {
@@ -847,6 +859,42 @@ try {
     ok(true, `群聊 ${width}px 浅 / 深截图`, join(HEADER_SHOTS, `group-${width}-light.png`));
     await page.close();
   }
+
+  console.log('\n[11] D3：知识库加载骨架');
+  // 这里不能沿用 openPanel：它会注入 `animation: none !important` 来定格截图，
+  // 而骨架的脉冲恰恰要验证「动效存在」。加载态本身是静态结构，不加冻结也稳定。
+  const skel = await context.newPage();
+  await skel.goto(`${base}/index.html?state=loading`, { waitUntil: 'load' });
+  await skel.waitForSelector('[data-kb-skeleton]');
+  const skelInfo = await skel.evaluate(() => {
+    const root = document.querySelector('[data-kb-skeleton]');
+    const stats = document.querySelector('.kb-stats');
+    const fill = document.querySelector('.kb-skel-fill');
+    return {
+      role: root ? root.getAttribute('role') : null,
+      aria: root ? root.getAttribute('aria-label') : null,
+      text: root ? root.innerText.trim() : null,
+      stats: document.querySelectorAll('[data-kb-skel-stat]').length,
+      columns: stats ? getComputedStyle(stats).gridTemplateColumns.split(' ').filter(Boolean).length : 0,
+      animation: fill ? getComputedStyle(fill).animationName : null,
+      legacy: document.querySelectorAll('.kb-loading').length,
+    };
+  });
+  ok(skelInfo.role === 'status', '骨架承担 role=status', skelInfo.role || '');
+  ok(skelInfo.aria === '正在读取索引状态…', '骨架有可读的 aria 文本', skelInfo.aria || '');
+  ok(skelInfo.text === '', '骨架不显示可见文字（不再只有一句灰字）', JSON.stringify(skelInfo.text));
+  ok(skelInfo.legacy === 0, '旧的单行加载语已移除');
+  ok(skelInfo.stats === 5, '状态卡骨架按知识库实际 5 个区块铺满', `${skelInfo.stats} 个`);
+  ok(skelInfo.columns === 5, '骨架状态卡与真实 .kb-stats 同一套网格', `${skelInfo.columns} 列`);
+  ok(!!skelInfo.animation && skelInfo.animation !== 'none', '骨架块带脉冲动效', skelInfo.animation || '');
+  await skel.screenshot({ path: join(SHOTS, 'kb-skeleton-light.png') });
+  await skel.evaluate(() => document.documentElement.classList.add('dark'));
+  await skel.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await skel.screenshot({ path: join(SHOTS, 'kb-skeleton-dark.png') });
+  ok(true, '加载态浅 / 深截图', join(SHOTS, 'kb-skeleton-light.png'));
+  await skel.waitForSelector('.kb-stat-value', { timeout: 10000 });
+  ok((await skel.locator('[data-kb-skeleton]').count()) === 0, '加载完成后骨架消失，交回真实内容');
+  await skel.close();
 
   for (const page of [ready, autoPage, manualPage, emptyPage]) await page.close();
 } finally {
