@@ -80,10 +80,22 @@
 
 /* ---------- 关键步骤与收拢出口 ---------- */
 
+/* F2：关键步骤不再写「常驻」两个字。
+   行头的左侧 3px 竖条 + 行尾一个 7px 方块 —— 竖条说「这一步被钉住了」，
+   方块是它的锚点；两个形状都用主文本色，单色、无彩色。 */
 .tc-trace .tc-trace-pin {
   flex-shrink: 0;
-  color: var(--td-text-color-placeholder);
-  letter-spacing: 0.01em;
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background-color: var(--td-text-color-primary);
+}
+
+/* 只给「行头」加竖条：直接加在 `.tc-step` 上会和左侧 20px 位置上的
+   圆点/连接线撞在一起（圆点在 left: 1px，正好压在竖条上）。 */
+.tc-trace .tc-step[data-trace-critical] .tc-step-head {
+  box-shadow: inset 3px 0 0 var(--td-text-color-primary);
+  padding-left: 7px;
 }
 
 .tc-trace .tc-trace-foldtag {

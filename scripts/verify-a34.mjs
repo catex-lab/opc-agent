@@ -153,6 +153,12 @@ console.log('\n[1] 响应式收口：长代码行不再撑宽整列');
     ok(overflow.answerRight <= overflow.listRight + 1, '答案块右缘在列表内', `${Math.round(overflow.answerRight)} ≤ ${Math.round(overflow.listRight)}`);
     ok(overflow.answerRight <= overflow.scrollRight + 1, '答案块右缘在可视区内', `${Math.round(overflow.answerRight)} ≤ ${Math.round(overflow.scrollRight)}`);
   }
+  // A4：消息列上限 720px（原 800px）—— 1440 宽窗口下长行更早换行，阅读行宽收窄
+  const listMax = await page.evaluate(() => {
+    const el = document.querySelector('[data-msg-list]');
+    return el ? getComputedStyle(el).maxWidth : null;
+  });
+  ok(listMax === '720px', 'A4 消息列 max-width = 720px（原 800px）', listMax ?? '缺失');
   await page.screenshot({ path: join(OUT, 'a34-overflow.png') });
   await ctx.close();
 }
@@ -185,13 +191,25 @@ console.log('\n[2] 代码块：A55 后按钮精简');
     kept.join(',')
   );
 
-  // B3：工具卡耗时（夹具里 Bash 跑了 1200ms）
-  // 过程流改版后一轮结束默认收成一条摘要，步骤只在展开态渲染 —— 先点开再断言，
-  // 否则「1.2s」根本不在 DOM 里（不是没做，是被折叠藏起来了）。
+  // B3 + D2/F3：工具卡耗时口径
+  // 过程流改版后一轮结束默认收成一条摘要，步骤只在展开态渲染 —— 先点开再看。
+  /* F3 改口径：
+     原期望：`工具卡显示耗时 1.2s`（每个步骤行都挂耗时）
+     新期望：步骤行（1200ms < 3s）**不挂**耗时；1.2s 只出现在摘要条的
+             「工具 X」总耗时上（D2 前缀）。
+     依据：逐行 1.2s 是噪音，值得看的是「哪一步慢」；总耗时仍在摘要条上。 */
   await page.locator('[data-steps-bar]').first().click();
   await page.waitForTimeout(500);
-  const dur = await page.locator('text=1.2s').count();
-  ok(dur > 0, '工具卡显示耗时 1.2s', String(dur));
+  const stepMeta = await page.evaluate(() => {
+    const step = document.querySelector('[data-tool-step]');
+    return step?.querySelector('.tc-trace-meta')?.textContent?.trim() ?? null;
+  });
+  ok(stepMeta === null, 'F3：<3s 的步骤行不挂耗时（不再出现 1.2s）', String(stepMeta));
+  const barMeta = await page.evaluate(() => {
+    const bar = document.querySelector('[data-steps-bar]');
+    return bar?.querySelector('.tc-trace-meta')?.textContent?.trim() ?? null;
+  });
+  ok(barMeta === '工具 3.2s', 'D2：总耗时在摘要条上并带「工具」前缀（1200ms 步骤 + 2000ms 思考）', String(barMeta));
 
   // A159：代码块右上角复制按钮背景透明。
   // 按钮在 `t-chat-md-content` 的 shadow DOM 里，且 **悬停代码块时才创建**

@@ -58,7 +58,12 @@ const SESSIONS = [
 ];
 
 const now = Date.now();
-/** 三个工具步骤：纯文本解析 / 结构化 / 老数据无 source，外加一个嵌套思考节点 */
+/** 三个工具步骤：纯文本解析 / 结构化 / 老数据无 source，外加一个嵌套思考节点
+ *
+ *  F3 之后「<3s 的步骤不挂耗时」是产品口径，所以前两步故意拉到 ≥3s：
+ *  [3] 要比较「耗时贴同一右缘」至少得有两条 meta，否则这条断言会失去意义
+ *  （不是放宽断言，是把夹具改成仍然能测到该行为的样子）。第三步保持 <3s，
+ *  顺便守住「短步骤没有 meta」这条新口径。 */
 const MESSAGES = [
   { id: 'm1', session_id: 's1', role: 'user', content: '跑一下测试', created_at: new Date(now - 6e4).toISOString() },
   {
@@ -68,12 +73,12 @@ const MESSAGES = [
       {
         id: 'b1', type: 'tool', toolId: 't1', name: 'bash', status: 'completed',
         input: { command: 'npm test' }, source: 'parsed_text',
-        output: '3 passed', startedAt: now - 5800, endedAt: now - 5200,
+        output: '3 passed', startedAt: now - 5800, endedAt: now - 2600,
       },
       {
         id: 'b2', type: 'tool', toolId: 't2', name: 'write', status: 'completed',
         input: { file_path: 'src/components/SettingsPage.tsx', content: 'export const a = 1;' },
-        source: 'structured_cli', output: 'ok', startedAt: now - 5000, endedAt: now - 4800,
+        source: 'structured_cli', output: 'ok', startedAt: now - 6400, endedAt: now - 3000,
       },
       {
         id: 'b3', type: 'tool', toolId: 't3', name: 'read', status: 'completed',
@@ -209,6 +214,11 @@ const edges = await page.evaluate(() => {
 ok(edges.length >= 2, '取到多个步骤行', `${edges.length} 行`);
 ok(Math.max(...edges) - Math.min(...edges) <= 1, '各行耗时距右缘一致',
   edges.map(e => `${e}px`).join(' / '));
+const shortStep = await page.evaluate(() => {
+  const step = document.querySelector('[data-tool-step="t3"]');
+  return step ? !!step.querySelector('.tc-trace-meta') : true;
+});
+ok(shortStep === false, 'F3：<3s 的步骤不挂耗时（t3 只有 200ms）');
 
 console.log('\n[4] 来源标签不抢右缘');
 const srcGeo = await page.evaluate(() => {
@@ -240,11 +250,16 @@ const dot = await page.evaluate(() => {
 ok(dot.headH === 28, '行头高度 28px（14px 字 / 行高 1.7 + 4px 内边距）', `实测 ${dot.headH}px`);
 ok(dot.off <= 1.5, '圆点圆心与行头中心重合', `偏差 ${dot.off.toFixed(1)}px`);
 
-console.log('\n[6] 三条状态条高度一致');
+console.log('\n[6] 状态条高度一致');
+/* D1 改口径：
+   原期望：`bars.length >= 3`（汇总行 + 验证条 + 文件核对条三条并列）
+   新期望：`bars.length >= 2`（汇总行 + 「本轮核对」合并条）
+   依据：验证与文件核对并成一条，默认收起时分层面板不在 DOM 里；
+         这条断言守的是「摘要行与核对行高度一致」，而不是行数。 */
 const bars = await page.evaluate(() =>
   [...document.querySelectorAll('[data-steps-bar], .tc-verify-bar')].map(b =>
     Math.round(b.getBoundingClientRect().height)));
-ok(bars.length >= 3, '取到汇总行 + 验证条 + 文件核对条', `${bars.length} 条`);
+ok(bars.length >= 2, '取到汇总行 + 本轮核对条', `${bars.length} 条`);
 ok(Math.max(...bars) - Math.min(...bars) <= 1, '高度一致', bars.join(' / '));
 
 console.log('\n[7] A100 来源标注行为不回退');

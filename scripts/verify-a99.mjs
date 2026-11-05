@@ -171,20 +171,33 @@ await ctx.route('**/api/**', async route => {
 await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
 await page.waitForTimeout(1200);
 
-console.log('\n[1] 面板存在且默认未核对');
-const panel = page.locator('[data-file-evidence]').first();
-ok((await panel.count()) === 1, '改过文件的消息下面出现文件核对条');
-ok((await panel.getAttribute('data-file-evidence')) === 'idle', '初始状态是 idle', await panel.getAttribute('data-file-evidence'));
-const title = await panel.locator('.tc-verify-title').first().textContent();
-ok((title ?? '').includes('未核对'), '标题明确写着「未核对」', (title ?? '').trim());
+console.log('\n[1] 合并行存在，默认收起且明确写「文件未核对」');
+const auditBar = page.locator('[data-round-audit-bar]').first();
+ok((await page.locator('[data-round-audit]').count()) === 1, '改过文件的消息下面出现「本轮核对」行');
+ok((await auditBar.count()) === 1, '合并行有可点击的条');
+ok((await auditBar.getAttribute('aria-expanded')) === 'false', '默认收起（aria-expanded=false）');
+const auditMeta = ((await page.locator('[data-round-audit-meta]').first().textContent()) ?? '').trim();
+ok(auditMeta.includes('文件未核对'), '合并行写明「文件未核对」（显式状态，不靠留白）', auditMeta);
+/* D1 改口径：
+   原期望：页面一打开就能看到 `[data-file-evidence]` 这个独立的「文件核对」条
+   新期望：它收在「本轮核对」合并行里，展开前不渲染
+   依据：两条并列的状态行（0 验证 / 未核对）各自都是「没有结论的结论」，
+         合并成一行后默认收起，信息在展开后一点没少（下面 [3][4][5] 全部照旧）。 */
+ok((await page.locator('[data-file-evidence]').count()) === 0, '合并行收起时核对面板不渲染');
 
 console.log('\n[2] 没展开就不读盘');
 ok(evidenceCalls === 0, '默认不请求 /api/files/evidence', `${evidenceCalls} 次`);
 
 console.log('\n[3] 展开后自动核对');
+await auditBar.click();
+await page.waitForTimeout(400);
+const panel = page.locator('[data-file-evidence]').first();
+ok((await panel.count()) === 1, '展开合并行后核对面板出现');
+ok(evidenceCalls === 0, '展开合并行只是露出入口，仍不读盘', `${evidenceCalls} 次`);
+ok((await panel.getAttribute('data-file-evidence')) === 'idle', '面板初始状态是 idle', await panel.getAttribute('data-file-evidence'));
 await panel.locator('.tc-verify-bar').click();
 await page.waitForTimeout(600);
-ok(evidenceCalls === 1, '展开后只核对一次', `${evidenceCalls} 次`);
+ok(evidenceCalls === 1, '展开面板后只核对一次', `${evidenceCalls} 次`);
 ok((await panel.getAttribute('data-file-evidence')) === 'done', '状态变成 done', await panel.getAttribute('data-file-evidence'));
 
 const rows = page.locator('[data-file-verdict]');
@@ -215,6 +228,10 @@ const headColor = await panel
 ok(headColor !== 'rgb(0, 0, 0)', '告警文字有独立颜色（不是默认黑）', headColor);
 const alarm = await panel.locator('.tc-verify-note.is-error').count();
 ok(alarm >= 1, '正文里有告警句', String(alarm));
+
+// D1：核对结果要回写到合并行 —— 收起后仍然能看到「文件有对不上」
+const auditMeta2 = ((await page.locator('[data-round-audit-meta]').first().textContent()) ?? '').trim();
+ok(auditMeta2.includes('文件有对不上'), '合并行的第三个字段同步成「文件有对不上」', auditMeta2);
 
 console.log('\n[6] 与验证条并存');
 const verifyBars = await page.locator('[data-verify-status]').count();

@@ -4495,6 +4495,15 @@ html[data-opc-glass='1'] t-chat-sender {
   flex-shrink: 0;
   color: var(--td-text-color-placeholder);
 }
+/* D1：合并行（本轮核对）展开后的详情容器。
+   两个子面板各自带自己的 bar（与合并行同一套 .tc-verify-bar 样式），
+   这里只负责纵向间距，让它们读起来是「同一块里的两条」。 */
+.tc-round-audit-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 2px;
+}
 .tc-verify-body {
   margin-top: 6px;
   padding: 10px 12px;

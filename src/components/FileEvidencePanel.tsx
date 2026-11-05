@@ -66,6 +66,12 @@ interface EvidenceResponse {
 export interface FileEvidencePanelProps {
   sessionId: string;
   messageId: string;
+  /**
+   * D1：向「本轮核对」合并行回报核对结果（是否已核对 / 是否有对不上）。
+   * 合并行收起后仍要显示「文件已核对」，所以状态留在父级，而不是随
+   * 本组件卸载一起丢掉。
+   */
+  onStateChange?: (state: { done: boolean; alarm: boolean }) => void;
 }
 
 /** 判定 → 展示文案 + 颜色。文案刻意用「结论」而不是「状态词」，用户不用猜。 */
@@ -79,7 +85,7 @@ const VERDICT_META: Record<FileVerdict, { text: string; color: string; tone: 'ok
   skipped: { text: '未核对', color: 'var(--td-text-color-placeholder)', tone: 'meh' },
 };
 
-export function FileEvidencePanel({ sessionId, messageId }: FileEvidencePanelProps) {
+export function FileEvidencePanel({ sessionId, messageId, onStateChange }: FileEvidencePanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<EvidenceResponse | null>(null);
@@ -112,6 +118,12 @@ export function FileEvidencePanel({ sessionId, messageId }: FileEvidencePanelPro
   const items = data?.items ?? [];
   const summary = data?.summary;
   const alarm = summary?.alarm ?? null;
+
+  // D1：把「是否已核对 / 有没有对不上」上报给合并行。只在真正变化时更新，
+  // 避免父级 setState → 重渲染 → effect 再跑的抖动。
+  useEffect(() => {
+    onStateChange?.({ done: !!summary, alarm: !!alarm });
+  }, [summary, alarm, onStateChange]);
 
   const head = loading
     ? { icon: Loader2, text: '核对中', color: 'var(--td-brand-color)', spin: true }

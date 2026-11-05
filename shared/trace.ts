@@ -320,8 +320,11 @@ export function buildTrace(blocks: readonly Block[]): TraceItem[] {
 
 // ============= 活动摘要 =============
 
+/** F1：会写盘的动词 —— 摘要里算作「改了 N 个文件」的那一档 */
+const EDIT_VERBS = ['编辑', '写入', '删除'];
+
 export interface TraceSummary {
-  /** 「查看文件、修改：SettingsPage.tsx」 */
+  /** 「改了 1 个文件 · 成功」 */
   text: string;
   /** 去重后的动作词，按出现顺序 */
   verbs: string[];
@@ -333,23 +336,39 @@ export interface TraceSummary {
 /**
  * 把整条轨迹压成一句话。
  *
- * 参考图那行 `查看文件、修改：SettingsPage.tsx` 的信息密度很高：动词说「干了什么」，
- * 冒号后说「动在哪」。这里保持同一结构，文件多于 2 个时折成「等 N 个文件」——
- * 一行放不下五个文件名，硬塞会把行高撑成两行，反而比折叠更难扫。
+ * F1 之前的写法是**动作清单**（`编辑、已读取、检查：SettingsPage.tsx`）：
+ * 用户要读完这句、再在脑子里做一次推理，才能得出「这轮到底成没成」。
+ * 现在改成**结果语义**：`改了 1 个文件 · 成功` / `读完 2 个文件 · 成功` ——
+ * 动词退到「改 / 读」两档，宾语换成数量，句尾直接给结论；
+ * 具体改了哪个文件、跑了什么命令，都在下一层的步骤列表里（没有丢）。
+ *
+ * 结果词按最坏情况取：还在跑就不说成功，有一步报错就是失败，
+ * 有一步没回传就如实写「结果未回传」。
  */
 export function summarizeTrace(items: readonly TraceItem[]): TraceSummary {
   const verbs: string[] = [];
   const files: string[] = [];
+  const editedFiles: string[] = [];
   let added = 0;
   let removed = 0;
+  let hasError = false;
+  let hasRunning = false;
+  let hasInterrupted = false;
 
   const walk = (list: readonly TraceItem[]) => {
     for (const it of list) {
       if (it.kind === 'tool') {
         if (!verbs.includes(it.verb)) verbs.push(it.verb);
+        if (it.status === 'error') hasError = true;
+        if (it.status === 'running') hasRunning = true;
+        if (it.status === 'interrupted') hasInterrupted = true;
         if (it.path) {
           const name = baseName(it.path);
           if (!files.includes(name)) files.push(name);
+          // 「改了」只算真的会写盘的动作；读了同一个文件不算改了它。
+          if (EDIT_VERBS.includes(it.verb) && !editedFiles.includes(name)) {
+            editedFiles.push(name);
+          }
         }
         if (it.diff) {
           added += it.diff.added;
@@ -362,12 +381,23 @@ export function summarizeTrace(items: readonly TraceItem[]): TraceSummary {
   walk(items);
 
   const verbsText = verbs.slice(0, 3).join('、') + (verbs.length > 3 ? ' 等' : '');
-  const filesText = files.length
-    ? files.slice(0, 2).join('、') + (files.length > 2 ? ` 等 ${files.length} 个文件` : '')
-    : '';
+  const outcome = hasRunning
+    ? '进行中'
+    : hasError
+      ? '失败'
+      : hasInterrupted
+        ? '结果未回传'
+        : '成功';
+
+  // 有了「改」就不再提「读」：改文件前必然读过它，两个数一起说反而要用户自己减。
+  const head = editedFiles.length
+    ? `改了 ${editedFiles.length} 个文件`
+    : files.length
+      ? `读完 ${files.length} 个文件`
+      : verbsText;
 
   return {
-    text: filesText ? `${verbsText}：${filesText}` : verbsText,
+    text: head ? `${head} · ${outcome}` : outcome,
     verbs,
     files,
     diff: { added, removed },

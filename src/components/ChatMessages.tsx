@@ -10,8 +10,7 @@ import { shouldFoldProcess } from '../trace/fold';
 import { BackgroundTasksPill } from './BackgroundTasksPill';
 import { useBackgroundTasks } from '../hooks/useBackgroundTasks';
 import { formatHandledDuration, hasFileEdits, lingeringToolBlocks } from '../../shared/trace';
-import { VerifyPanel } from './VerifyPanel';
-import { FileEvidencePanel } from './FileEvidencePanel';
+import { RoundAudit } from './RoundAudit';
 import { useVerifications } from '../hooks/useVerifications';
 import { installCherryCodeIconFix } from './cherryCodeIcon';
 import { installAnswerLinkDecor } from '../answer/linkDecor';
@@ -1502,9 +1501,14 @@ export function ChatMessages({
   return (
     <div
       ref={rootRef}
-      className="flex min-w-0 max-w-[800px] mx-auto flex-col gap-6"
+      /* A4：800 → 720。800px 在 14px 正文上约 55 个汉字一行，眼睛回扫时
+         要回头找下一行的起点；720 落在 45 字上下，长回答的「行首定位」
+         明显更稳。同时在窄窗里侧栏/工作区一挤就落到浮层抽屉（C2），
+         720 也是那一档下不用折行的宽度。
+         改宽必须同步更新 verify:a174 / a34 的断言语义。 */
+      className="flex min-w-0 max-w-[720px] mx-auto flex-col gap-6"
       /* 消息行容器的稳定锚点。此前 `verify:groupchat` 是按
-         `max-w-3xl` 这个**宽度类名**找它的，宽度一改成 `max-w-[800px]`
+         `max-w-3xl` 这个**宽度类名**找它的，宽度一改成固定值
          整段断言就静默空转（rows=[]，于是「作者名标签」全红而看不出原因）。
          宽度是设计变量，不该被测试依赖 —— 留个 data 钩子。 */
       data-msg-list
@@ -1701,35 +1705,30 @@ export function ChatMessages({
               />
             )}
 
-            {/* A97：验证状态条。只在这条回答**真的改过文件**时出现 ——
-                纯问答不需要「跑测试」入口。未验证也照样显示（它是显式状态），
+            {/* D1：核对行。只在这条回答**真的改过文件**时出现 ——
+                纯问答不需要「跑测试」入口。什么都不做也照样显示（它是显式状态），
                 不能因为没数据就整块消失，否则用户会默认「应该没问题」，
-                而这正是「Agent 说完成就算完成」那个洞。 */}
+                而这正是「Agent 说完成就算完成」那个洞。
+                内容已并成一行「本轮核对」，展开才是原来的验证 / 文件核对面板。 */}
             {message.role === 'assistant' &&
               !message.isStreaming &&
               !message.error &&
               !!message.id &&
               !!currentSessionId &&
               hasFileEdits(toBlocks(message)) && (
-                <VerifyPanel
+                /* D1：验证 + 文件核对并成一条「本轮核对」。
+                   原先是两条并列的状态行（A97 验证 / A99 文件核对），
+                   每条都带标题与说明；一轮改过文件的回答下面因此常驻
+                   三行（过程摘要 + 验证 + 核对），而九成时间内容是
+                   「0 验证 / 未核对」。展开后仍是原来那两个面板本身。 */
+                <RoundAudit
                   sessionId={currentSessionId}
                   messageId={message.id}
                   cwd={sessionCwd}
                   rows={verifications.filter(v => v.message_id === message.id)}
+                  stepCount={toBlocks(message).filter(b => b.type === 'tool').length}
                   onUpdated={refreshVerifications}
                 />
-              )}
-
-            {/* A99：文件核对。与上面那条「验证」并排 ——
-                验证回答「能不能跑」，核对回答「到底有没有落地」，
-                两件事互不替代。同样只在这轮真的改过文件时出现。 */}
-            {message.role === 'assistant' &&
-              !message.isStreaming &&
-              !message.error &&
-              !!message.id &&
-              !!currentSessionId &&
-              hasFileEdits(toBlocks(message)) && (
-                <FileEvidencePanel sessionId={currentSessionId} messageId={message.id} />
               )}
 
             {/* P6 成本统计：耗时 / 费用 / token 一行小字，跟在气泡下面。

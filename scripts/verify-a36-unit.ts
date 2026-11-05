@@ -164,14 +164,36 @@ console.log('\n[4] summarizeTrace：一句话摘要');
     tool('Bash', { command: 'npm test', description: '跑测试' }),
   ]);
   const s = summarizeTrace(items);
-  ok(s.text === '编辑、已读取、检查：SettingsPage.tsx', '摘要 = 动词 + 冒号 + 文件名', s.text);
+  /* F1 改口径：
+     原期望：`编辑、已读取、检查：SettingsPage.tsx`
+     新期望：`改了 1 个文件 · 成功`
+     依据：摘要改成结果语义 —— 这个夹具里 Edit 改了 1 个文件、其余步骤都完成，
+           所以是「改了 1 个文件」+「成功」；读同一个文件不再另算「读完」。 */
+  ok(s.text === '改了 1 个文件 · 成功', '摘要 = 改了 N 个文件 · 成功', s.text);
   ok(s.diff.added === 109 && s.diff.removed === 16, '摘要里的 diff 是各步骤之和', `+${s.diff.added} -${s.diff.removed}`);
 
   const many = buildTrace(
     Array.from({ length: 5 }, (_, i) => tool('Read', { file_path: `/p/f${i}.ts` }))
   );
   const sm = summarizeTrace(many);
-  ok(sm.text.includes('等 5 个文件'), '文件多于 2 个时折成「等 N 个文件」', sm.text);
+  /* 原期望：`等 5 个文件`（动作清单里的截断写法）
+     新期望：`读完 5 个文件 · 成功`
+     依据：没有写盘动作时，「读完 N 个文件」就是这轮的全部结论。 */
+  ok(sm.text === '读完 5 个文件 · 成功', '没有写盘动作 → 读完 N 个文件', sm.text);
+
+  // F1 的结论档：进行中 / 失败 / 结果未回传 —— 按最坏情况取，不谎称成功
+  const running = summarizeTrace(
+    buildTrace([tool('Read', { file_path: '/p/a.ts' }, { status: 'running', endedAt: undefined })])
+  );
+  ok(running.text.endsWith('进行中'), '仍有步骤在跑 → 进行中', running.text);
+  const failed = summarizeTrace(
+    buildTrace([tool('Read', { file_path: '/p/a.ts' }, { status: 'failed', endedAt: 1600 })])
+  );
+  ok(failed.text.endsWith('失败'), '有一步报错 → 失败', failed.text);
+  const interrupted = summarizeTrace(
+    buildTrace([tool('Read', { file_path: '/p/a.ts' }, { status: 'interrupted', endedAt: 1600 })])
+  );
+  ok(interrupted.text.endsWith('结果未回传'), '有一步没回传 → 结果未回传', interrupted.text);
 }
 
 // ============= [5] 时长文案 =============

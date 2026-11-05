@@ -304,6 +304,28 @@ function detailOf(item: TraceItem): ReactNode {
 /** 折叠过渡时长（ms）。改这里必须同步 traceFold.css 与 index.css 的 `.tc-trace-fold`。 */
 const FOLD_MS = 220;
 
+/**
+ * F4：贴底跟随的时间预算（ms）。
+ *
+ * 原来是「连续 12 帧」。帧数是**帧率的函数**：120Hz 屏上 12 帧只有 100ms，
+ * 180ms 的明细展开动画还没走完就停了（当前步被顶到折叠线以下）；
+ * 掉帧的机器上 12 帧又能拖到 400ms+，白白占着主线程。
+ *
+ * 这条轨迹里跟「高度还在长」有关的动画只有两个：明细展开 180ms、
+ * 折叠 220ms（FOLD_MS）。所以预算做成 `FOLD_MS + 120 = 340ms`：
+ * 覆盖最长的那条动画，再留一帧余量给布局抖动。每帧贴底，到点即停，
+ * 跨平台表现一致 —— 不再依赖跑了多少帧。
+ */
+const PIN_BUDGET_MS = FOLD_MS + 120;
+
+/**
+ * F3：单步耗时低于这个值就不显示。
+ *
+ * 工具步骤大多在 1 秒上下，逐行拖一个「1.2s」等于给每行加一段噪音；
+ * 真正值得看的是「这一步为什么慢」。总耗时仍留在摘要条上（带「工具」前缀）。
+ */
+const STEP_DURATION_VISIBLE_MS = 3000;
+
 /** 关键步骤的 tooltip —— 说明它为什么不像别的步骤那样收起 */
 const CRITICAL_TITLE: Record<string, string> = {
   write: '写入/编辑步骤：完成后仍保持展开',
@@ -385,7 +407,12 @@ function StepRow({
           '结果未回传'
         : item.status === 'error'
           ? '失败'
-          : formatStepDuration(item.durationMs) ?? '';
+          : // F3：< 3s 不显示。状态词（执行中 / 失败 / 未回传）照旧常驻，
+            // 只有「耗时」这一档受预算约束 —— 短步骤的 1.2s 是纯噪音，
+            // 长步骤的耗时才是「为什么慢」的线索。
+            item.durationMs != null && item.durationMs >= STEP_DURATION_VISIBLE_MS
+            ? formatStepDuration(item.durationMs) ?? ''
+            : '';
   const stepState =
     item.status === 'running'
       ? 'running'
@@ -429,9 +456,10 @@ function StepRow({
         {item.target && <span className="tc-trace-target">{item.target}</span>}
         {item.diff && <DiffTag diff={item.diff} />}
         {critical && (
-          <span className="tc-trace-pin" data-trace-pin={item.criticalReason}>
-            常驻
-          </span>
+          // F2：不再写「常驻」两个字 —— 一个 7px 方块 + 左侧 3px 竖条
+          // 就够表达「这一步不会跟着收起」。文字退场的理由是：它占的宽度
+          // 比它承载的信息多，而且每行都写一遍，读起来像标签墙。
+          <span className="tc-trace-pin" data-trace-pin={item.criticalReason} aria-hidden="true" />
         )}
         {/* A100：事件来源标签。**只标纯文本解析那一种** —— 原生 / 结构化
             输出是绝大多数，逐条标出来反而把轨迹刷满噪音；而「解析出来的」
@@ -631,21 +659,27 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
   /**
    * 流式中贴底：新步骤永远在末尾，不贴底就看不到它。
    *
-   * 不能只拍一次：新步骤的明细是 180ms 高度动画，拍第一帧时它还没长出来，
+   * 不能只拍一次：新步骤的明细有 180ms 高度动画，拍第一帧时它还没长出来，
    * 等到动画结束又没有依赖变化可触发 —— 结果就是「当前步被顶到折叠线以下」。
-   * 这里连续跟约 200ms（12 帧）直到高度稳定；依赖用 `items`（而不是
-   * `items.length`），输出持续追加时也会重新贴底。
+   * F4：预算按**时间**给（PIN_BUDGET_MS = 340ms），不再数帧 —— 见常量注释。
+   * 依赖用 `items`（而不是 `items.length`），输出持续追加时也会重新贴底。
    */
   useEffect(() => {
     if (!running || !expanded || !scrollEl) return;
-    let frame = 0;
     let raf = 0;
+    let stopped = false;
+    const startedAt = performance.now();
     const pin = () => {
       scrollEl.scrollTop = scrollEl.scrollHeight;
-      if (frame++ < 12) raf = requestAnimationFrame(pin);
+      if (!stopped && performance.now() - startedAt < PIN_BUDGET_MS) {
+        raf = requestAnimationFrame(pin);
+      }
     };
     pin();
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+    };
   }, [running, expanded, showBody, rows, scrollEl]);
 
   if (rows.length === 0) return null;
@@ -728,7 +762,7 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
             <span className="tc-diff-del">-{summary.diff.removed}</span>
           </span>
         )}
-        {durationText && <span className="tc-trace-meta">{durationText}</span>}
+        {durationText && <span className="tc-trace-meta">工具 {durationText}</span>}
       </div>
 
       {showBody && (

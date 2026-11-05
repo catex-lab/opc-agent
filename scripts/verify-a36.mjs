@@ -260,10 +260,22 @@ console.log('\n[2] 完成态默认收起，点开才出现步骤');
   ok((await page.locator('[data-trace-scroll]').count()) === 1, '展开后出现步骤容器');
 
   // ---- [3] 活动摘要 ----
+  /* F1 改口径：
+     原期望：`编辑、已读取、检查：SettingsPage.tsx`（动作清单 + 冒号 + 文件名）
+     新期望：`改了 2 个文件 · 结果未回传`（结果语义：数量 + 结论）
+     依据：动作清单要用户自己再推理一次才知道「成没成」。本夹具里 Edit + Write
+           各改 1 个文件（所以是「改了 2 个文件」）；最后一步 Bash 只有
+           startedAt、没有 endedAt，完成态下不能谎称成功 → 结论是「结果未回传」。 */
   const summary = await page.locator('[data-trace-summary]').first().innerText();
-  ok(summary.includes('编辑') && summary.includes('已读取') && summary.includes('检查'), '摘要含多个动作词', summary);
-  ok(summary.includes('SettingsPage.tsx'), '摘要按文件聚合（列出文件名）', summary);
-  ok(summary.includes('、') && summary.includes('：'), '摘要结构 = 动词、动词：文件', summary);
+  ok(summary.includes('改了 2 个文件'), '摘要按结果语义写「改了 N 个文件」', summary);
+  ok(summary.includes('结果未回传'), '句尾给结论（最后一步没回传 → 结果未回传，不谎称成功）', summary);
+  ok(!summary.includes('、') && !summary.includes('：'), '不再是「动词、动词：文件」的清单结构', summary);
+
+  // ---- D2：总耗时挂在摘要条上，带「工具」前缀 ----
+  // 四个工具步 600 + 100 + 3000 + 300，加上开头那段思考 3000ms = 7000ms → 7.0s
+  // （嵌套在 t3 下面的思考归父级，不再单独累加）
+  const totalMeta = (await page.locator('[data-steps-bar] .tc-trace-meta').first().textContent()) ?? '';
+  ok(totalMeta.trim() === '工具 7.0s', '摘要条耗时带「工具」前缀', totalMeta.trim());
 
   // ---- [4] 步骤行 ----
   const steps = await page.evaluate(() => {
@@ -292,6 +304,68 @@ console.log('\n[2] 完成态默认收起，点开才出现步骤');
 
   const totalDiff = await page.locator('[data-diff-total]').first().getAttribute('data-diff-total');
   ok(totalDiff === '+139 -16', '汇总行是各步骤之和（+109+30）', String(totalDiff));
+
+  // ---- D2 / F3：单步耗时只在 ≥3s 时出现 ----
+  const metas = await page.evaluate(() => {
+    const out = [];
+    for (const step of document.querySelectorAll('[data-tool-step]')) {
+      const m = step.querySelector('.tc-trace-meta');
+      out.push({
+        id: step.getAttribute('data-tool-step'),
+        text: m?.textContent?.trim() ?? '',
+      });
+    }
+    return out;
+  });
+  const metaOf = id => metas.find(m => m.id === id) ?? { text: '(missing)' };
+  ok(metaOf('t3').text === '3.0s', '≥3s 的步骤保留耗时（3000ms → 3.0s）', metaOf('t3').text);
+  ok(metaOf('t1').text === '', 'F3：<3s 的步骤不挂耗时（600ms 不再显示 600ms）', JSON.stringify(metaOf('t1').text));
+  ok(metaOf('t2').text === '', 'F3：100ms 同样不显示', JSON.stringify(metaOf('t2').text));
+  ok(metaOf('t5').text === '结果未回传', 'F3 只砍「耗时」，状态词仍然常驻', metaOf('t5').text);
+
+  // ---- F2：关键步骤用形状表达，不再写「常驻」两个字 ----
+  const pins = await page.evaluate(() => {
+    const out = [];
+    for (const step of document.querySelectorAll('[data-tool-step]')) {
+      const pin = step.querySelector('[data-trace-pin]');
+      const head = step.querySelector('.tc-step-head');
+      const hs = getComputedStyle(head);
+      out.push({
+        id: step.getAttribute('data-tool-step'),
+        critical: step.getAttribute('data-trace-critical'),
+        hasPin: !!pin,
+        pinText: pin?.textContent ?? '',
+        pinW: pin ? Math.round(pin.getBoundingClientRect().width) : 0,
+        pinH: pin ? Math.round(pin.getBoundingClientRect().height) : 0,
+        pinRadius: pin ? getComputedStyle(pin).borderTopLeftRadius : '',
+        pinBg: pin ? getComputedStyle(pin).backgroundColor : '',
+        headShadow: hs.boxShadow,
+        headPadLeft: parseFloat(hs.paddingLeft),
+      });
+    }
+    return out;
+  });
+  const editPin = pins.find(p => p.id === 't1');
+  const readPin = pins.find(p => p.id === 't2');
+  ok(editPin.critical === 'write' && editPin.hasPin, '写入/编辑步骤挂关键标记', String(editPin.critical));
+  ok(editPin.pinText === '', '不再写「常驻」两个字（纯形状）', JSON.stringify(editPin.pinText));
+  ok(
+    editPin.pinW === 7 && editPin.pinH === 7 && editPin.pinRadius === '1px',
+    '行尾方块 7×7 / 圆角 1px',
+    `${editPin.pinW}×${editPin.pinH} r=${editPin.pinRadius}`
+  );
+  ok(editPin.pinBg !== 'rgba(0, 0, 0, 0)', '方块用主文本色（单色、无彩色）', editPin.pinBg);
+  ok(
+    editPin.headShadow.includes('inset') && editPin.headShadow.includes('3px'),
+    '行头带 inset 3px 竖条',
+    editPin.headShadow.slice(0, 60)
+  );
+  ok(
+    Math.abs(editPin.headPadLeft - 7) <= 0.5,
+    '行头左内边距 7px（竖条不压在 left:1px 的圆点上）',
+    `${editPin.headPadLeft}px`
+  );
+  ok(!readPin.hasPin && readPin.critical === null, '普通读取不挂关键标记', String(readPin.critical));
 
   // ---- [5] 思考归并 ----
   // 依据：src/trace/rows.ts 的 buildTraceRows 把答案前的 thinking 也压进同一条行序列；
@@ -548,8 +622,26 @@ console.log('\n[8b] 结果未回传与已隐去的思考');
   await ctx.close();
 }
 
-// ============= [9] 控制台 =============
-console.log('\n[9] 控制台');
+// ============= [9] F4 贴底跟随预算 =============
+/* 贴底预算是**时间**而不是帧数，DOM 层量不出来（340ms 后停止贴底是时序行为）。
+   这里退一步做源码级断言：两个常量必须满足「折叠动画 220ms + 120ms 余量」，
+   且不再出现按帧计数的循环 —— 防止有人把 340ms 又改回「12 帧」。 */
+console.log('\n[9] F4 贴底跟随按时间预算（源码级）');
+{
+  const src = await readFile(join(ROOT, 'src/components/AgentTrace.tsx'), 'utf8');
+  const fold = src.match(/const FOLD_MS = (\d+);/);
+  const budget = src.match(/const PIN_BUDGET_MS = FOLD_MS \+ (\d+);/);
+  ok(!!fold && !!budget, '两个常量都在（FOLD_MS / PIN_BUDGET_MS）', `${fold?.[1] ?? 'missing'} / ${budget?.[1] ?? 'missing'}`);
+  ok(
+    !!fold && !!budget && Number(fold[1]) + Number(budget[1]) === 340,
+    '预算 = 折叠动画 220ms + 120ms 余量 = 340ms',
+    fold && budget ? `${fold[1]} + ${budget[1]}` : 'missing'
+  );
+  ok(!/frames\s*<\s*12|i\s*<\s*12/.test(src), '不再按帧数计预算（120Hz 屏上 12 帧只有 100ms）');
+}
+
+// ============= [10] 控制台 =============
+console.log('\n[10] 控制台');
 {
   const real = errors.filter(e => !/favicon|Download the React DevTools/i.test(e));
   ok(real.length === 0, '无控制台错误', real.slice(0, 3).join(' | ') || '0');
