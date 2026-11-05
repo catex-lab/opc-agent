@@ -501,6 +501,62 @@ async function runUiChecks(base: string, sid: string, mark: string) {
     const rememberedIframe = await page.locator('[data-html-preview-iframe]').count();
     ok(rememberedIframe === 0, 'UI：二次打开同一 html 仍记住源码视图', String(rememberedIframe));
 
+    // ⑥ C2：窄窗（900×800）工作区改浮层抽屉 —— 不再占列宽
+    //
+    // 原行为：900 窗口里「会话列 250 + 工作区 300」之后，回答列只剩 202px。
+    // 新行为：抽屉 360px 浮在聊天列上方（带遮罩 + 左向投影），聊天列拿回
+    // 整段列宽；关掉抽屉就是全宽聊天。
+    await page.locator('[data-file-preview-close]').click();
+    await SLEEP(300);
+    await page.setViewportSize({ width: 900, height: 800 });
+    await SLEEP(900);
+    const drawer = await page.evaluate(() => {
+      const col = document.querySelector('[data-tc-column="workspace"]') as HTMLElement | null;
+      const scrim = document.querySelector('[data-workspace-scrim]') as HTMLElement | null;
+      const chat = document.querySelector('[data-tc-column="chat"]') as HTMLElement | null;
+      if (!col || !chat || !chat.parentElement) return null;
+      const cr = col.getBoundingClientRect();
+      const chr = chat.getBoundingClientRect();
+      const rr = chat.parentElement.getBoundingClientRect();
+      const cs = getComputedStyle(col);
+      return {
+        isDrawer: col.dataset.workspaceDrawer === 'true',
+        width: Math.round(cr.width),
+        position: cs.position,
+        shadow: cs.boxShadow,
+        scrimBg: scrim ? getComputedStyle(scrim).backgroundColor : '',
+        chatWidth: Math.round(chr.width),
+        rowWidth: Math.round(rr.width),
+        drawerLeft: Math.round(cr.left),
+        chatRight: Math.round(chr.right),
+      };
+    });
+    ok(!!drawer, 'C2：窄窗下面板仍在渲染（不是直接消失）');
+    if (drawer) {
+      ok(drawer.isDrawer, 'C2：工作面标记为抽屉（data-workspace-drawer=true）');
+      ok(drawer.width === 360, 'C2：抽屉宽 360px（宽屏列宽为 300px 设计值）', `${drawer.width}px`);
+      ok(drawer.position === 'absolute', 'C2：抽屉脱离列布局（position=absolute）', drawer.position);
+      ok(drawer.shadow !== 'none' && drawer.shadow !== '', 'C2：抽屉有左向投影（分层可辨）', drawer.shadow);
+      ok(/rgba\(0, 0, 0, 0\.38\)/.test(drawer.scrimBg), 'C2：抽屉后方有遮罩（--tc-scrim 38%）', drawer.scrimBg);
+      ok(drawer.chatWidth >= drawer.rowWidth - 1, 'C2：聊天列拿回整段列宽（抽屉不占列宽）', `聊天 ${drawer.chatWidth} / 行 ${drawer.rowWidth}`);
+      ok(drawer.drawerLeft < drawer.chatRight, 'C2：抽屉确实浮在聊天列之上（几何重叠）', `抽屉左 ${drawer.drawerLeft} < 聊天右 ${drawer.chatRight}`);
+      await page.screenshot({ path: '.render-check/c2-workspace-drawer.png' });
+    }
+    // 关掉抽屉 → 聊天仍全宽，工作面消失
+    await page.locator('[data-workspace-toggle="collapse"]').click();
+    await SLEEP(500);
+    const afterClose = await page.evaluate(() => {
+      const chat = document.querySelector('[data-tc-column="chat"]') as HTMLElement | null;
+      const col = document.querySelector('[data-tc-column="workspace"]');
+      return {
+        hasPanel: !!col,
+        chatWidth: chat ? Math.round(chat.getBoundingClientRect().width) : 0,
+        rowWidth: chat?.parentElement ? Math.round(chat.parentElement.getBoundingClientRect().width) : 0,
+      };
+    });
+    ok(!afterClose.hasPanel, 'C2：抽屉关闭后面板不再渲染');
+    ok(afterClose.chatWidth >= afterClose.rowWidth - 1, 'C2：抽屉关闭后聊天保持全宽', `${afterClose.chatWidth} / ${afterClose.rowWidth}`);
+
     ok(pageErrors.length === 0, 'UI：页面零错误', pageErrors.slice(0, 2).join(' | '));
   } catch (e) {
     ok(false, 'UI：验证过程抛错', e instanceof Error ? e.message : String(e));

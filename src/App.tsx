@@ -1513,15 +1513,26 @@ function AppContent() {
   /**
    * A77：工作区面板什么时候真的渲染。
    *
-   * 三个条件缺一不可：
+   * 两个条件缺一不可：
    *   - 用户把它展开着（偏好）；
-   *   - 不是窄屏单栏模式 —— 300px 的面板会把聊天区挤成一条缝；
    *   - 是**一对一**会话。群聊成员各有各的 cwd，一个面板只能指向其中
    *     某一个，那等于谎报一个不存在的「共同工作目录」——与 A63 不在
    *     群聊头部放工作区徽标是同一条理由。
+   *
+   * 早先还有第三个条件「不是窄屏单栏模式」。C2 起窄屏不再等于「没有面板」：
+   * 面板改成浮层抽屉，列宽不吃紧，所以这一条去掉了。
    */
+  /**
+   * C2：窄窗里工作区不再占列宽，改成浮层抽屉。
+   *
+   * 900 是既有「三栏还撑得住」的下限：再窄下去，会话列 250 + 工作区 300
+   * 之后回答列只剩 200 上下，正文被压成一条竖缝（900 窗口实测 202px）。
+   * 这条线以下把工作区抬成 360px 抽屉浮在聊天列上方 —— 会话列与回答列
+   * 拿回整段宽度，抽屉关掉就是全宽的聊天。
+   */
+  const drawerWorkspace = useMediaQuery('(max-width: 900px)');
   const showWorkspace =
-    workspaceOpen && !compact && !!currentSession && currentSession.kind !== 'group';
+    workspaceOpen && !!currentSession && currentSession.kind !== 'group';
 
   /**
    * A174：正文外链「在应用内打开」的**面板开关**这一半。
@@ -1539,7 +1550,7 @@ function AppContent() {
          共同工作目录）。这里**不能**用 `showWorkspace` 判 —— 它要求
          `workspaceOpen` 已经为真，而面板通常正是被这次点击才打开的，
          用当前值判等于自己否掉自己。 */
-      const canOpenPanel = !compact && !!currentSession && currentSession.kind !== 'group';
+      const canOpenPanel = !!currentSession && currentSession.kind !== 'group';
       if (!canOpenPanel) {
         clearPendingWorkspaceUrl();
         void openInSystemBrowser(url);
@@ -1555,7 +1566,7 @@ function AppContent() {
     };
     window.addEventListener(WORKSPACE_OPEN_URL_EVENT, onOpenRequest);
     return () => window.removeEventListener(WORKSPACE_OPEN_URL_EVENT, onOpenRequest);
-  }, [compact, currentSession]);
+  }, [currentSession]);
 
   /** 单栏模式的返回：回到列表（清掉会话与资料页） */
   const handleBackToList = useCallback(() => {
@@ -1795,7 +1806,7 @@ function AppContent() {
                      缝里露出的是外层画布（内容面白）。
                      min-w-0 不可省 —— 长标题/长行文本会把 flex 子项顶宽，
                      聊天列不会收缩，面板会被挤出视口。 */
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-row" style={{ gap: 'var(--tc-column-gap)' }}>
+                  <div className="relative flex min-h-0 min-w-0 flex-1 flex-row" style={{ gap: 'var(--tc-column-gap)' }}>
                     {/* 聊天列。单独套一层而不是让 header/ChatPage 直接当 main 的子节点：
                         右侧工作区面板要作为**兄弟列**并排，横向容器必须在这一层。 */}
                     <div
@@ -1825,10 +1836,10 @@ function AppContent() {
                           // 会谎报一个不存在的「共同工作目录」。
                           cwd={currentSession.cwd}
                           onCwdChange={cwd => void setSessionCwd(currentSession.id, cwd)}
-                          // A77：工作区面板开关。只在宽屏给（窄屏下面板不渲染，
-                          // 给一个点了没反应的按钮就是假控件）。
+                          // A77：工作区面板开关。窄屏（≤900）下它是一个浮层
+                          // 抽屉（C2），不再是「点了没反应的假控件」。
                           workspaceOpen={workspaceOpen}
-                          onToggleWorkspace={compact ? undefined : toggleWorkspace}
+                          onToggleWorkspace={toggleWorkspace}
                           onDelete={() => handleDeleteSession(currentSession.id)}
                           onBack={compact ? handleBackToList : undefined}
                           sessionId={currentSession.id}
@@ -1887,11 +1898,22 @@ function AppContent() {
                     </Suspense>
                     </div>
 
-                    {/* A77：工作区面板（右侧兄弟列）。 */}
+                    {/* A77：工作区面板（右侧兄弟列）。
+                        C2：窄窗时它不是一列，而是浮在聊天列上方的抽屉 ——
+                        先铺一层遮罩（点它即关闭），再把面板抬到 z-30。 */}
+                    {showWorkspace && drawerWorkspace && (
+                      <div
+                        className="absolute inset-0 z-20"
+                        data-workspace-scrim
+                        style={{ backgroundColor: 'var(--tc-scrim)' }}
+                        onClick={toggleWorkspace}
+                      />
+                    )}
                     {showWorkspace && (
                       <WorkspacePanel
                         sessionId={currentSession.id}
                         cwd={currentSession.cwd}
+                        drawer={drawerWorkspace}
                         onClose={toggleWorkspace}
                       />
                     )}

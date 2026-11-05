@@ -11,6 +11,8 @@
  *   [8] 探测不到命令 → 说明原因，不给一个必然失败的空跑
  *   [9] 没改过文件的回答不挂验证条（纯问答不该出现「跑测试」）
  *   [10] 控制台无错误
+ *   [11] 控制台
+ *   [12] C2：窄窗（≤900）工作区变成浮层抽屉（360px + 遮罩 + 投影）
  *
  * 全离线：静态服务器托管 dist/ + Playwright 拦 /api/** 喂夹具。
  * 运行：node scripts/verify-a97.mjs（需先 npm run build）
@@ -225,12 +227,55 @@ await ctx.route('**/api/**', async route => {
   return json({});
 });
 
+/**
+ * D1：验证面板现在是「本轮核对」合并行里的一层。
+ * 原先页面一打开 `[data-verify-status]` 就在；现在要先展开合并行。
+ * 这里把「展开」收进 open()，其余断言全部保持原样 —— 展开只是多一次点击，
+ * 面板本身的行为（状态词、命令列表、运行、落库）一点没变。
+ */
+async function expandAudit() {
+  const bar = page.locator('[data-round-audit-bar]').first();
+  if ((await bar.count()) === 0) return;
+  if ((await bar.getAttribute('aria-expanded')) !== 'true') {
+    await bar.click();
+    await page.waitForTimeout(300);
+  }
+}
+
 async function open(sessionId) {
   await page.goto(`${base}/chat/${sessionId}`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(700);
+  await expandAudit();
 }
 
 const panel = () => page.locator('[data-verify-status]').first();
+
+// ── [0] D1：两条状态行并成一条「本轮核对」 ─────────────────────
+console.log('\n[0] D1：验证与文件核对并成一条');
+await page.goto(`${base}/chat/s1`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(700);
+ok((await page.locator('[data-round-audit-bar]').count()) === 1, '只有一条核对行');
+ok(
+  (await page.locator('.tc-verify-bar').count()) === 1,
+  '默认状态条 1 条（原：验证条 + 文件核对条 = 2）',
+  String(await page.locator('.tc-verify-bar').count())
+);
+ok((await page.locator('[data-verify-status]').count()) === 0, '验证面板默认不渲染（不制造噪音）');
+ok((await page.locator('[data-file-evidence]').count()) === 0, '文件核对面板也默认收起');
+const auditMeta = ((await page.locator('[data-round-audit-meta]').textContent()) ?? '').trim();
+ok(
+  /^\d+ 步 · 0 验证 · 文件未核对$/.test(auditMeta),
+  '摘要 = N 步 · 0 验证 · 文件未核对',
+  auditMeta
+);
+await page.locator('[data-round-audit-bar]').click();
+await page.waitForTimeout(350);
+ok((await page.locator('[data-verify-status]').count()) === 1, '展开后验证面板出现');
+ok((await page.locator('[data-file-evidence]').count()) === 1, '展开后文件核对面板出现');
+ok(
+  ((await page.locator('[data-round-audit-meta]').textContent()) ?? '').includes('文件未核对'),
+  '未跑核对时摘要仍如实写「文件未核对」'
+);
 
 // ── [1] 未验证是显式状态 ──────────────────────────────────────────
 console.log('\n[1] 未验证是显式状态');
@@ -356,6 +401,88 @@ ok(onlyChecked, '唯一一条即使属于 slow 档也默认勾上');
 const runBtn = page.locator('.tc-verify-btn.is-primary');
 ok((await runBtn.count()) === 1, '有运行按钮');
 ok((await runBtn.isDisabled()) === false, '按钮可用（不是一打开就是灰的）');
+
+// ── [12] C2：窄窗工作区改成浮层抽屉 ─────────────────────────────
+console.log('\n[12] C2：窄窗（≤900）工作区变浮层抽屉');
+await page.setViewportSize({ width: 1440, height: 1000 });
+await open('s1');
+// 先把可能残留的展开态收起来，保证从「关」到「开」
+if ((await page.locator('[data-workspace-toggle="collapse"]').count()) > 0) {
+  await page.locator('[data-workspace-toggle="collapse"]').first().click();
+  await page.waitForTimeout(250);
+}
+ok((await page.locator('[data-workspace-drawer]').count()) === 0, '宽窗：面板收起时没有抽屉标记');
+await page.locator('[data-workspace-toggle="expand"]').first().click();
+await page.waitForTimeout(400);
+const wide = await page.evaluate(() => {
+  const panel = document.querySelector('[data-tc-column="workspace"]');
+  const scrim = document.querySelector('[data-workspace-scrim]');
+  return {
+    width: panel ? Math.round(panel.getBoundingClientRect().width) : 0,
+    drawer: panel ? panel.hasAttribute('data-workspace-drawer') : null,
+    scrim: !!scrim,
+  };
+});
+ok(wide.drawer === false, '宽窗展开：仍是并排列（无 drawer 标记）', String(wide.drawer));
+ok(wide.width === 300, '宽窗列宽 300px（--tc-workspace-width）', String(wide.width));
+ok(wide.scrim === false, '宽窗不铺遮罩（列不压聊天）');
+
+await page.setViewportSize({ width: 900, height: 800 });
+await page.waitForTimeout(400);
+const draw = await page.evaluate(() => {
+  const panel = document.querySelector('[data-workspace-drawer]');
+  if (!panel) return { missing: true };
+  const pr = panel.getBoundingClientRect();
+  const row = panel.parentElement.getBoundingClientRect();
+  const chat = document.querySelector('[data-chat-scroll]');
+  const chatColumn = document.querySelector('[data-tc-column="chat"]');
+  const cr = chat ? chat.getBoundingClientRect() : null;
+  const col = chatColumn ? chatColumn.getBoundingClientRect() : null;
+  const scrim = document.querySelector('[data-workspace-scrim]');
+  const cs = getComputedStyle(panel);
+  return {
+    missing: false,
+    width: Math.round(pr.width),
+    position: cs.position,
+    radius: cs.borderTopLeftRadius,
+    shadow: cs.boxShadow,
+    scrimBg: scrim ? getComputedStyle(scrim).backgroundColor : null,
+    chatW: col ? Math.round(col.width) : 0,
+    rowW: Math.round(row.width),
+    overlap: cr ? Math.round((cr.right - pr.left)) : 0,
+  };
+});
+ok(!draw.missing, '900px：面板切换成抽屉（data-workspace-drawer）');
+if (!draw.missing) {
+  ok(draw.width === 360, '抽屉宽 360px', String(draw.width));
+  ok(draw.position === 'absolute', '抽屉脱离 flex 列（absolute）', draw.position);
+  ok(draw.radius === '12px', '抽屉圆角走令牌 --tc-radius-float = 12px', draw.radius);
+  ok(draw.shadow !== 'none', '抽屉带投影（--tc-shadow-drawer）', draw.shadow.slice(0, 48));
+  ok(draw.scrimBg === 'rgba(0, 0, 0, 0.38)', '铺半透明遮罩 --tc-scrim（浅色 0.38）', String(draw.scrimBg));
+  ok(Math.abs(draw.chatW - draw.rowW) <= 1, '聊天列不再被挤窄（抽屉脱离流）', `${draw.chatW} / ${draw.rowW}`);
+  ok(draw.overlap > 0, '抽屉浮在聊天列上方（不是并排）', `${draw.overlap}px 重叠`);
+}
+await page.screenshot({ path: join(OUT, 'c2-workspace-drawer.png') });
+
+// 点收起：抽屉消失、聊天列保持全宽
+await page.locator('[data-workspace-toggle="collapse"]').first().click();
+await page.waitForTimeout(350);
+const closed = await page.evaluate(() => {
+  const drawer = document.querySelector('[data-workspace-drawer]');
+  const scrim = document.querySelector('[data-workspace-scrim]');
+  const col = document.querySelector('[data-tc-column="chat"]');
+  const row = col?.parentElement?.getBoundingClientRect();
+  return {
+    drawer: !!drawer,
+    scrim: !!scrim,
+    chatW: col ? Math.round(col.getBoundingClientRect().width) : 0,
+    rowW: row ? Math.round(row.width) : 0,
+  };
+});
+ok(closed.drawer === false && closed.scrim === false, '收起后抽屉与遮罩一起消失');
+ok(Math.abs(closed.chatW - closed.rowW) <= 1, '收起后聊天列仍是全宽', `${closed.chatW} / ${closed.rowW}`);
+await page.setViewportSize({ width: 1440, height: 1000 });
+await page.waitForTimeout(300);
 
 // ── [11] 控制台 ────────────────────────────────────────────────
 console.log('\n[11] 控制台');

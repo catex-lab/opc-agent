@@ -1,5 +1,6 @@
 import { getAgentLogo, fallbackColor } from '../agentLogos';
 import { AVAILABILITY_META, type AgentAvailability } from '../types';
+import { StatusDot } from './StatusDot';
 
 /**
  * Agent 头像。
@@ -180,21 +181,22 @@ export function AgentAvatar({
        * 去掉描边后靠两点保证可辨识：
        *   1. 位置在头像圆**外侧**且与圆相切（见上面 dotGap 的推导）——
        *      底色是行背景而不是 logo，绿点压在绿色 logo 上消失的问题没有了；
-       *   2. 颜色本身是饱和的语义色（在线绿 / 未登录橙 / 故障红）。
-       * 未接入类的灰点（#C6C6C6）在浅色下偏淡，但它对应的是「这个 Agent 不可用」，
-       * 弱一点反而符合语义，不需要再加回来。 */}
+       *   2. 颜色本身是语义色（在线绿 / 未登录橙 / 故障红），且 B1 起统一走
+       *      `--tc-status-*` 令牌，深色主题下跟着提亮。
+       * 未接入类的灰点在浅色下偏淡，但它对应的是「这个 Agent 不可用」，
+       * 弱一点反而符合语义，不需要再加回来。
+       *
+       * B1：圆点交给 `StatusDot` 画 —— 在线是实心 + 1.5px 同色外环，
+       * 非在线是空心环（透明底 + 1.5px 描边）。「能不能用」由形状承担，
+       * 不再只靠颜色；A25 要求的「白描边」仍然没有回来。 */}
       {showStatus && meta && (
-        <span
-          className="absolute rounded-full"
-          data-status-dot
-          data-status={meta.label}
-          style={{
-            width: dotSize,
-            height: dotSize,
-            right: -dotGap,
-            bottom: -dotGap,
-            backgroundColor: meta.dot,
-          }}
+        <StatusDot
+          className="absolute"
+          color={meta.dot}
+          shape={meta.dotShape}
+          size={dotSize}
+          statusLabel={meta.label}
+          style={{ right: -dotGap, bottom: -dotGap }}
         />
       )}
     </div>

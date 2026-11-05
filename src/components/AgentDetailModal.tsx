@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
+import { StatusDot } from './StatusDot';
 import { AgentDetailSections } from './AgentDetailSections';
 import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent } from '../types';
 
@@ -104,10 +105,7 @@ export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps
               {agent.name}
             </h2>
             <div className="mt-1 flex items-center gap-1.5 text-secondary">
-              <span
-                className="h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ backgroundColor: meta.dot }}
-              />
+              <StatusDot color={meta.dot} shape={meta.dotShape} size={6} statusLabel={meta.label} />
               <span style={{ color: meta.color }}>{availabilityLabelOf(agent)}</span>
               {agent.vendor && (
                 <span

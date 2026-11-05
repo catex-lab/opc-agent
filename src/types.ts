@@ -773,20 +773,39 @@ export const EVENT_CAPABILITY_META: Record<
  * 浅色 2.86…），而这些词是 11px —— 只有颜色没有文字时更糟，只有文字却看不清
  * 同样等于没有。令牌的浅/深两档都算过对比度，见 index.css 那段注释。
  *
- * `dot` 是**图形**（头像右下角 8px 圆点），要求 3:1 即可，保留原值不动 ——
- * 小圆点不需要文字级的对比度，提亮反而会在深色下显得发光。
+ * `dot` 是**图形**（头像右下角 8px 圆点）：B1 起与 `color` 同源，一律
+ * 引用 `--tc-status-*` 令牌 —— 原先这里写裸 hex（#00A870 / #ED7B2F /
+ * #E34D59 / #C6C6C6），深色主题下那几颗点不会跟着提亮，与旁边的状态词
+ * 对不上。同时新增 `dotShape`：**在线 = 实心、非在线 = 空心环**，
+ * 让「能不能用」这件事不只靠颜色（色弱用户同样能分出来）。
  */
+export type StatusDotShape = 'solid' | 'hollow';
+
 export const AVAILABILITY_META: Record<
   AgentAvailability,
-  { label: string; color: string; dot: string }
+  { label: string; color: string; dot: string; dotShape: StatusDotShape }
 > = {
-  ready: { label: '在线', color: 'var(--tc-status-ok)', dot: '#00A870' },
-  'needs-auth': { label: '未登录', color: 'var(--tc-status-warn)', dot: '#ED7B2F' },
-  'needs-setup': { label: '需修复', color: 'var(--tc-status-danger)', dot: '#E34D59' },
-  unreachable: { label: '网络不通', color: 'var(--tc-status-danger)', dot: '#E34D59' },
-  'not-installed': { label: '未安装', color: 'var(--tc-status-muted)', dot: '#C6C6C6' },
-  unsupported: { label: '不可用', color: 'var(--tc-status-muted)', dot: '#C6C6C6' },
-  unknown: { label: '未探测', color: 'var(--tc-status-muted)', dot: '#C6C6C6' },
+  ready: {
+    label: '在线', color: 'var(--tc-status-ok)', dot: 'var(--tc-status-ok)', dotShape: 'solid',
+  },
+  'needs-auth': {
+    label: '未登录', color: 'var(--tc-status-warn)', dot: 'var(--tc-status-warn)', dotShape: 'hollow',
+  },
+  'needs-setup': {
+    label: '需修复', color: 'var(--tc-status-danger)', dot: 'var(--tc-status-danger)', dotShape: 'hollow',
+  },
+  unreachable: {
+    label: '网络不通', color: 'var(--tc-status-danger)', dot: 'var(--tc-status-danger)', dotShape: 'hollow',
+  },
+  'not-installed': {
+    label: '未安装', color: 'var(--tc-status-muted)', dot: 'var(--tc-status-muted)', dotShape: 'hollow',
+  },
+  unsupported: {
+    label: '不可用', color: 'var(--tc-status-muted)', dot: 'var(--tc-status-muted)', dotShape: 'hollow',
+  },
+  unknown: {
+    label: '未探测', color: 'var(--tc-status-muted)', dot: 'var(--tc-status-muted)', dotShape: 'hollow',
+  },
 };
 
 /**
@@ -821,7 +840,7 @@ export function availabilityLabelOf(agent: {
 export function agentStatusViewOf(agent: {
   kind: AgentKind;
   status: { availability: AgentAvailability; probeState?: AgentStatus['probeState'] };
-}): { key: string; label: string; color: string; dot: string } {
+}): { key: string; label: string; color: string; dot: string; dotShape: StatusDotShape } {
   const { availability, probeState } = agent.status;
   // 配色直接借用既有档位（warn / danger），不在这里再写一份 hex：
   // 状态词换了、颜色语义没换，圆点与标签自然保持同一套令牌。
@@ -837,9 +856,15 @@ export function agentStatusViewOf(agent: {
 
   const base = AVAILABILITY_META[availability];
   if (availability === 'needs-auth' && agent.kind === 'http') {
-    return { key: 'needs-key', label: '缺 Key', color: base.color, dot: base.dot };
+    return {
+      key: 'needs-key', label: '缺 Key',
+      color: base.color, dot: base.dot, dotShape: base.dotShape,
+    };
   }
-  return { key: availability, label: base.label, color: base.color, dot: base.dot };
+  return {
+    key: availability, label: base.label,
+    color: base.color, dot: base.dot, dotShape: base.dotShape,
+  };
 }
 
 /** 状态圆点颜色：与状态词同源，避免「文字说超时、圆点还是橙色未登录」 */

@@ -201,6 +201,14 @@ interface WorkspacePanelProps {
   /** 会话绑定的工作目录；null / undefined = 未绑定，面板给出指引而不是退回进程目录 */
   cwd?: string | null;
   onClose: () => void;
+  /**
+   * C2：窄窗抽屉模式。
+   *
+   * 宽屏下它是并排的第三列，宽度由 `--tc-workspace-width` 决定（可拖）；
+   * 窄窗下列宽已经不够分，它抬成 360px 浮层盖在聊天列上，不参与列宽分配，
+   * 也不提供宽度手柄（拖窄了只会让正文更挤）。
+   */
+  drawer?: boolean;
 }
 
 /** 目录名：同时兼容 `/` 与 `\`，末尾分隔符不算一段 */
@@ -219,7 +227,7 @@ function formatSize(bytes: number | undefined): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps) {
+export function WorkspacePanel({ sessionId, cwd, onClose, drawer = false }: WorkspacePanelProps) {
   /** 相对 cwd 的路径，'' = 根目录 */
   const [rel, setRel] = useState('');
   /**
@@ -405,27 +413,33 @@ export function WorkspacePanel({ sessionId, cwd, onClose }: WorkspacePanelProps)
   return (
     <aside
       // relative：宽度手柄要绝对定位在左边缘上（见 WorkspaceResizer）
-      className="relative flex min-h-0 shrink-0 flex-col"
+      // drawer：脱离列布局，贴右缘浮在聊天列上方
+      className={`flex min-h-0 shrink-0 flex-col${drawer ? ' absolute inset-y-0 right-0 z-30' : ' relative'}`}
       // A105：给栏目一个稳定锚点（verify-surface 断言圆角用）。
       // 这两块都是匿名 div，靠结构选择器定位会在任何一次布局调整后失效。
       data-tc-column="workspace"
+      data-workspace-drawer={drawer ? 'true' : undefined}
       style={{
         // 宽度走 CSS 变量：拖动时每帧改变量不触发 React 重渲染（文件树、
         // WebContentsView 宿主都在这棵树里）。没拖过时退回 300px 设计值。
-        width: 'var(--tc-workspace-width, 300px)',
+        // C2：抽屉是固定 360px —— 盖在正文上的一层，拖宽只会把聊天挤掉。
+        width: drawer ? '360px' : 'var(--tc-workspace-width, 300px)',
         // A103：微圆角。左缘原先是一条 1px `--tc-split` 边线 —— 现在它与
         // 聊天列之间有 6px 缝，边线连同圆角一起换成几何分隔，故移除。
         // A95：工作区用专用面（比对话区差一档）。此前这里写的是
         // --tc-surface-content，和中间对话区完全同色，两侧只靠 1px 线分开 ——
         // 「在读」和「在写」两块分不清，扫一眼找不到光标在哪半边。
         backgroundColor: 'var(--tc-surface-aside)',
-        borderRadius: 'var(--tc-column-radius)',
+        borderRadius: drawer ? 'var(--tc-radius-float)' : 'var(--tc-column-radius)',
+        // C2：抽屉浮在内容之上，需要投影把「层」讲清楚（与遮罩配套）。
+        boxShadow: drawer ? 'var(--tc-shadow-drawer)' : undefined,
       }}
       aria-label="工作区文件"
     >
       {/* A82：宽度拖拽手柄。绝对定位且往左探出 2px，不占布局宽度 —— 与
-          左侧 SidebarResizer 同一条理由（占位会让面板和聊天区多一条缝）。 */}
-      <WorkspaceResizer />
+          左侧 SidebarResizer 同一条理由（占位会让面板和聊天区多一条缝）。
+          C2：抽屉模式没有可拖的列宽，手柄一并去掉。 */}
+      {!drawer && <WorkspaceResizer />}
       <PanelHeader
         compact
         level="column"

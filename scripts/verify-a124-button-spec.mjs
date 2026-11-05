@@ -520,8 +520,17 @@ async function main() {
           document.querySelector('[data-agent-detail-page]') ||
           document.querySelector('[data-agent-detail-overlay] [role="dialog"]') ||
           document.querySelector('[data-agent-detail-overlay]');
+        // 头像上的状态点是绝对定位的外切圆点；文字状态行前那颗是行内点。
+        let avatarDots = -1;
+        let inlineDots = -1;
+        if (dlg) {
+          const dots = [...dlg.querySelectorAll('[data-status-dot]')];
+          avatarDots = dots.filter(d => getComputedStyle(d).position === 'absolute').length;
+          inlineDots = dots.filter(d => getComputedStyle(d).position !== 'absolute').length;
+        }
         return {
-          dotsInDialog: dlg ? dlg.querySelectorAll('[data-status-dot]').length : -1,
+          avatarDots,
+          inlineDots,
           hasTextStatus: /在线|未登录|缺 Key|需修复|未安装/.test(dlg ? dlg.innerText : ''),
         };
       });
@@ -801,7 +810,18 @@ async function main() {
     );
 
     ok(detail.opened, '资料页能打开（否则下面两条是空断言）');
-    ok(detail.opened && detail.dotsInDialog === 0, '资料页头像右下角不再有状态点', `实测 ${detail.dotsInDialog} 颗`);
+    /* 原期望：资料页里 `[data-status-dot]` 数量为 0 —— 用一个「属性存在与否」
+       的代理来断言「头像右下角没有点」。
+       新期望：只数**绝对定位的外切点**（头像上的那种）为 0；文字状态行前那颗
+       行内点允许存在，且必须有。
+       依据：B1 把五处状态点统一成 `StatusDot` 之后，文字状态行前那颗原本不带
+       标记的 8px 圆点也带上了 `data-status-dot`，代理断言把它一起误伤；
+       而「头像右下角不叠点、状态只写在文字行」这条产品口径并没有变。 */
+    ok(
+      detail.opened && detail.avatarDots === 0,
+      '资料页头像上没有状态点（只数绝对定位外切点）',
+      `头像点 ${detail.avatarDots} / 行内点 ${detail.inlineDots}`
+    );
     ok(detail.opened && detail.hasTextStatus, '文字状态行仍在（去掉点不能把信息一起去掉）');
 
     // 源码契约：几何只允许在 index.css 一处定义

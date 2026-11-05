@@ -2,6 +2,7 @@ import { ChevronLeft, MessageSquarePlus, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { MessagePlugin } from 'tdesign-react';
 import { AgentAvatar } from './AgentAvatar';
+import { StatusDot } from './StatusDot';
 import { AgentDetailSections } from './AgentDetailSections';
 import { AvatarCropDialog } from './AvatarCropDialog';
 import { removeAgentLogo, uploadAgentLogo } from '../avatarApi';
@@ -150,7 +151,7 @@ export function AgentDetailPanel({
               </p>
             )}
             <div className="mt-2 flex items-center gap-1.5 text-body" style={{ color: meta.color }}>
-              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta.dot }} />
+              <StatusDot color={meta.dot} shape={meta.dotShape} size={8} statusLabel={meta.label} />
               {availabilityLabelOf(agent)}
             </div>
             {/* A160：头像入口只在资料页（用户确认的交互位置）。

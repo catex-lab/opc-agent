@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { MoreHorizontal, PanelRight } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
+import { StatusDot } from './StatusDot';
 import { AgentDetailModal } from './AgentDetailModal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { WorkspaceBadge } from './WorkspaceBadge';
@@ -143,7 +144,7 @@ export function ChatHeader({
               style={{ color: meta.color }}
               title={agent?.status.message || (agent ? availabilityLabelOf(agent) : meta.label)}
             >
-              <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ backgroundColor: meta.dot }} />
+              <StatusDot color={meta.dot} shape={meta.dotShape} size={6} statusLabel={meta.label} />
               {agent ? availabilityLabelOf(agent) : meta.label}
             </span>
           ) : (

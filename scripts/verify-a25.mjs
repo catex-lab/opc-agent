@@ -1,7 +1,8 @@
 /**
  * A25 四条反馈的验证。
  *
- *   [1] 状态圆点**不描边**（在线点不再带一圈容器色描边）
+ *   [1] 状态圆点**不描边**（在线点不再带一圈容器色描边）；
+ *       B1 起按形状分档：在线 = 实心无描边，非在线 = 1.5px 空心环
  *   [2] 板块分割线取消（`--tc-divider` = transparent），控件描边仍在
  *   [3] 透明度全局化：抬升面（气泡/卡片/弹窗）与 TDesign 容器族一起变，
  *       拉到 100% 时 alpha 归零 —— 但**文字仍是不透明的实色**
@@ -129,9 +130,14 @@ console.log('\n[1] 状态圆点：不描边');
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
 
+  // 只收头像上的圆点（AgentAvatar 用绝对定位外切在头像上）。B1 之后
+  // 会话头也改用同一个 StatusDot 组件，全局选择器会把它一起收进来，
+  // 而它的父节点是会话头（34px），几何断言就没意义了。
   const collect = () =>
     page.evaluate(() =>
-      Array.from(document.querySelectorAll('[data-status-dot]')).map(el => {
+      Array.from(document.querySelectorAll('[data-status-dot]'))
+        .filter(el => getComputedStyle(el).position === 'absolute')
+        .map(el => {
         const cs = getComputedStyle(el);
         const r = el.getBoundingClientRect();
         // 头像外框 = 状态点的父节点（AgentAvatar 的 relative 容器）
@@ -142,6 +148,7 @@ console.log('\n[1] 状态圆点：不描边');
         const dy = r.top + r.height / 2 - cy;
         return {
           status: el.dataset.status,
+          shape: el.dataset.statusShape,
           border: `${cs.borderTopWidth} ${cs.borderTopStyle} ${cs.borderTopColor}`,
           width: Math.round(r.width),
           height: Math.round(r.height),
@@ -156,15 +163,91 @@ console.log('\n[1] 状态圆点：不描边');
   const inList = await collect();
   ok(inList.length > 0, '会话列表的头像带状态圆点', `${inList.length} 个`);
 
+  // B1：会话头（6px）现在也画同一颗点 —— 形状语义在那里同样生效
+  const headerDot = await page.evaluate(() => {
+    const wrap = document.querySelector('[data-chat-status]');
+    const el = wrap?.querySelector('[data-status-dot]');
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    return {
+      status: el.dataset.status,
+      shape: el.dataset.statusShape,
+      width: Math.round(el.getBoundingClientRect().width),
+      bg: cs.backgroundColor,
+      border: `${cs.borderTopWidth} ${cs.borderTopStyle}`,
+    };
+  });
+  ok(!!headerDot, 'B1：会话头也用同一颗状态圆点');
+  if (headerDot) {
+    ok(headerDot.width === 6, 'B1：会话头圆点是 6px（原 h-1.5）', `${headerDot.width}px`);
+    ok(
+      headerDot.shape === 'solid' && !!headerDot.bg && headerDot.bg !== 'rgba(0, 0, 0, 0)',
+      'B1：会话头在线点是实心（不透明底色）',
+      `${headerDot.status} / ${headerDot.shape} / ${headerDot.bg}`
+    );
+  }
+
   await page.click('nav button[title="通讯录"]');
   await page.waitForTimeout(1000);
   const inContacts = await collect();
   ok(inContacts.length > 0, '通讯录的头像也带状态圆点', `${inContacts.length} 个`);
 
   const dots = [...inList, ...inContacts];
-  ok(dots.every(d => d.border.split(' ')[0] === '0px'), '所有圆点都没有描边', [...new Set(dots.map(d => d.border))].join(' | '));
-  ok(dots.every(d => d.width === d.height), '圆点仍是正圆（去掉描边没改几何）', [...new Set(dots.map(d => `${d.width}×${d.height}`))].join(' '));
-  ok(dots.every(d => /^rgb\(/.test(d.bg)), '圆点底色仍是不透明语义色（rgb 无 alpha 分量）', [...new Set(dots.map(d => d.bg))].join(' | '));
+  /**
+   * B1 改了这里的期望（原「所有圆点都没有描边 / 底色不透明」→ 按形状分档）：
+   *
+   *   原期望：`dots.every(border === '0px')` + `dots.every(bg 是 rgb)`
+   *   新期望：在线 = 实心（无描边、不透明底色，A25 的结论原样保留）；
+   *           非在线 = 空心环（1.5px 描边、透明底色）
+   *   依据：B1 要求「状态只靠形状区分」，实心 / 空心是这件事唯一的载体。
+   *         白描边（A25 删掉的那圈）仍然没有回来 —— 空心环用的是语义色，
+   *         不是用来「切开背景」的白圈。几何（正圆、落在头像外）不变。
+   */
+  const solid = dots.filter(d => d.shape === 'solid');
+  const hollow = dots.filter(d => d.shape === 'hollow');
+  ok(solid.length > 0 && hollow.length > 0, 'B1：两种形状都出现在界面上', `实心 ${solid.length} / 空心 ${hollow.length}`);
+  ok(
+    dots.every(d => (d.status === '在线') === (d.shape === 'solid')),
+    'B1：在线 = 实心，非在线 = 空心（形状与状态一一对应）',
+    dots.map(d => `${d.status}:${d.shape}`).join(' | ')
+  );
+  ok(
+    solid.every(d => d.border.split(' ')[0] === '0px'),
+    'B1：在线圆点没有描边（A25 结论不变）',
+    [...new Set(solid.map(d => d.border))].join(' | ')
+  );
+  ok(
+    solid.every(d => /^rgb\(/.test(d.bg)),
+    'B1：在线圆点底色是不透明语义色（rgb 无 alpha 分量）',
+    [...new Set(solid.map(d => d.bg))].join(' | ')
+  );
+  ok(
+    hollow.every(d => parseFloat(d.border.split(' ')[0]) >= 1 && d.border.split(' ')[1] === 'solid'),
+    'B1：非在线圆点是实线空心环（1.5px 设计值，DPR=1 下计算为 1px）',
+    [...new Set(hollow.map(d => d.border))].join(' | ')
+  );
+  ok(
+    hollow.every(d => d.bg === 'rgba(0, 0, 0, 0)'),
+    'B1：非在线圆点中心透明（空心，不是第二颗实心点）',
+    [...new Set(hollow.map(d => d.bg))].join(' | ')
+  );
+  // B1 的另一半：颜色必须来自令牌。把 `--tc-status-ok` 解析成 rgb，
+  // 再比对在线点的实际底色 —— 这条能抓到「又把 hex 写回组件里」。
+  const okToken = await page.evaluate(() => {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue('--tc-status-ok').trim();
+    const probe = document.createElement('div');
+    probe.style.color = raw;
+    document.body.appendChild(probe);
+    const rgb = getComputedStyle(probe).color;
+    probe.remove();
+    return rgb;
+  });
+  ok(
+    solid.filter(d => d.status === '在线').every(d => d.bg === okToken),
+    'B1：在线圆点底色取自 --tc-status-ok 令牌',
+    `令牌 ${okToken} / 实测 ${[...new Set(solid.map(d => d.bg))].join(' | ')}`
+  );
+  ok(dots.every(d => d.width === d.height), '圆点仍是正圆（形状分档没改几何）', [...new Set(dots.map(d => `${d.width}×${d.height}`))].join(' '));
   // 去掉描边之后，唯一保证「绿点不压在绿 logo 上」的机制就是外切定位
   ok(
     dots.every(d => d.centerDist >= d.radius),
