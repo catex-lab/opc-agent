@@ -11,7 +11,11 @@
  * 运行：npx tsx scripts/verify-agent-routing.ts
  */
 import net from 'net';
-import { resolveModelForAgent, PLATFORM_DEFAULT_MODEL } from '../server/model-routing.js';
+import {
+  resolveModelForAgent,
+  PLATFORM_DEFAULT_MODEL,
+  SDK_DEFAULT_MODEL,
+} from '../server/model-routing.js';
 import { allHostsUnreachable, checkHostReachable } from '../server/agents/probe.js';
 import { findDef } from '../server/agents/definitions.js';
 import type { PermissionMode } from '../server/agents/types.js';
@@ -50,10 +54,19 @@ function ok(cond: boolean, label: string, detail?: string) {
 {
   const D = PLATFORM_DEFAULT_MODEL;
 
-  // SDK 类：平台默认模型只对它有意义
-  eq(resolveModelForAgent('workbuddy', 'claude-opus-4'), 'claude-opus-4', 'SDK：应沿用显式请求值');
-  eq(resolveModelForAgent('workbuddy', undefined), D, 'SDK：缺省应回落到平台默认模型');
-  eq(resolveModelForAgent('workbuddy', ''), D, 'SDK：空串应视作未指定');
+  // SDK 类：缺省交给 SDK 自己的默认别名（default-model / Auto），
+  // 不再回落到已下线的 claude-sonnet-4。
+  eq(
+    resolveModelForAgent('workbuddy', 'claude-opus-4'),
+    'claude-opus-4',
+    'SDK：清单未就绪时，显式请求值仍原样沿用（不猜）'
+  );
+  eq(
+    resolveModelForAgent('workbuddy', undefined),
+    SDK_DEFAULT_MODEL,
+    'SDK：缺省应回落到 SDK 默认模型 default-model'
+  );
+  eq(resolveModelForAgent('workbuddy', ''), SDK_DEFAULT_MODEL, 'SDK：空串应视作未指定');
 
   // 白名单类（opencode）：只有命中白名单才采用
   const oc = findDef('opencode')!;

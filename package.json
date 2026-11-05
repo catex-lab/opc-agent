@@ -38,6 +38,7 @@
     "verify:orchestrator": "tsx scripts/verify-orchestrator.ts",
     "verify:routing": "tsx scripts/verify-agent-routing.ts",
     "verify:model-catalog": "tsx scripts/verify-model-catalog.ts",
+    "verify:a179-sdk-model-default": "tsx scripts/verify-a179-sdk-model-default.ts",
     "verify:wb-config": "tsx scripts/verify-wb-product-config.ts",
     "verify:workspace": "tsx scripts/verify-workspace.ts",
     "verify:a77-fs": "tsx scripts/verify-a77-fs.ts",

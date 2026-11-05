@@ -148,8 +148,11 @@ import type { CapabilityProfile } from "../shared/capabilities.js";
 import type { RunEvent } from "../shared/blocks.js";
 import {
   resolveModelForAgent,
+  resolveStoredModelForAgent,
   setCatalogModelLookup,
-  PLATFORM_DEFAULT_MODEL,
+  setPlatformModelLookup,
+  SDK_DEFAULT_MODEL,
+  SDK_MODEL_FALLBACK,
 } from "./model-routing.js";
 import { ensureCatalogLoaded, getCatalogSummary, getDefaultModelForAgent, invalidateCatalog, isCatalogModel, loadCatalog } from "./agents/modelCatalog.js";
 import { readAgentConfigModels } from "./agents/agentConfigModels.js";
@@ -234,8 +237,11 @@ app.use(express.json());
 let cachedModels: ModelOption[] = [];
 /** SDK 自己声明的默认模型（`isDefault`），拿到之后优先于平台常量 */
 let sdkDefaultModel: string | undefined;
-// 平台默认模型：只对 SDK 类 Agent 有意义。模型路由规则见 model-routing.ts
-const defaultModel = PLATFORM_DEFAULT_MODEL;
+// SDK 未加载时的默认值：用 SDK 自己的默认别名，不用已下线的具体型号。
+// 模型路由规则见 model-routing.ts
+const defaultModel = SDK_DEFAULT_MODEL;
+/** 让「旧会话失效模型」判定拿到当前 SDK 清单（清单未就绪时返回 null） */
+setPlatformModelLookup(() => (cachedModels.length > 0 ? cachedModels.map(m => m.modelId) : null));
 
 // 健康检查
 app.get("/api/health", (req, res) => {
@@ -489,18 +495,15 @@ app.get("/api/models", async (req, res) => {
   try {
     const { models } = await loadSdkModels();
     res.json({
-      models: models.length > 0 ? models : [
-        { modelId: "claude-sonnet-4", name: "Claude Sonnet 4" }
-      ],
+      // 兜底只给 SDK 自己的默认别名，不硬编码具体型号 ——
+      // 否则 SDK 加载失败时界面会冒出已下线的假选项。
+      models: models.length > 0 ? models : [...SDK_MODEL_FALLBACK],
       defaultModel: sdkDefaultModel ?? defaultModel
     });
   } catch (error: any) {
     console.error("[Models] Error:", error);
     res.json({
-      models: [
-        { modelId: "claude-sonnet-4", name: "Claude Sonnet 4" },
-        { modelId: "claude-opus-4", name: "Claude Opus 4" }
-      ],
+      models: [...SDK_MODEL_FALLBACK],
       defaultModel: sdkDefaultModel ?? defaultModel,
       error: error?.message || String(error)
     });
@@ -1979,8 +1982,9 @@ app.post("/api/chat", async (req, res) => {
 
   // 会话里存的模型可能是修复前的历史遗留值：那时所有会话都被写成了平台
   // 默认模型（claude-sonnet-4），对非 SDK Agent 来说那并不是用户的选择。
-  // 统一交给 resolveModelForAgent 判断是否该采用。
-  const resolvedModel = resolveModelForAgent(
+  // `resolveStoredModelForAgent` 还会把 Tencent SDK 清单里已下线的旧名回退成
+  // undefined（不传 --model，交给 SDK 默认）。
+  const resolvedModel = resolveStoredModelForAgent(
     agentId,
     model || session?.model || undefined
   );
