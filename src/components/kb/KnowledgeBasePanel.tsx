@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, Database, Lock, RotateCcw, Search, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Database, Lock, RotateCcw, Search, X } from 'lucide-react';
 import type {
   KbBackfillResult,
   KbScope,
@@ -86,11 +86,58 @@ export function KnowledgeBasePanel({
   const [searchError, setSearchError] = useState('');
   const [busy, setBusy] = useState<BusyKind>('');
   const [confirmRebuild, setConfirmRebuild] = useState(false);
+  /** A1：设置分组默认收起 —— 首屏先给检索，范围/会话/工具/维护按需展开 */
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [toolPolicy, setToolPolicy] = useState<KbToolPolicy | null>(null);
   const [toolBusy, setToolBusy] = useState('');
   const [toolFeedback, setToolFeedback] = useState('');
   const seqRef = useRef(0);
+  const panelRef = useRef<HTMLElement | null>(null);
+
+  // E1：弹层此前只有 role=dialog + aria-modal，键盘用户实际被困在背后 ——
+  // 没有 Esc 关闭、没有 aria-labelledby、打开后焦点还在触发按钮上。
+  // 这里补齐三件事：Esc 关闭、焦点移入、Tab 只在面板内循环。
+  useEffect(() => {
+    if (!open) return;
+    const focusables = () => {
+      const root = panelRef.current;
+      if (!root) return [] as HTMLElement[];
+      return Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter(node => node.getClientRects().length > 0);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const list = focusables();
+      if (!list.length) return;
+      const first = list[0];
+      const last = list[list.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      const inside = !!active && !!panelRef.current?.contains(active);
+      if (event.shiftKey && (!inside || active === first)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (!inside || active === last)) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    const frame = requestAnimationFrame(() => panelRef.current?.focus());
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [open, onClose]);
 
   const refreshStatus = useCallback(async () => {
     const seq = ++seqRef.current;
@@ -109,6 +156,7 @@ export function KnowledgeBasePanel({
     setSearchError('');
     setFeedback(null);
     setConfirmRebuild(false);
+    setSettingsOpen(false);
     setToolFeedback('');
     (async () => {
       try {
@@ -317,10 +365,12 @@ export function KnowledgeBasePanel({
   return (
     <div className="kb-overlay" data-kb-panel-overlay onClick={onClose}>
       <section
+        ref={panelRef}
+        tabIndex={-1}
         className="kb-panel"
         role="dialog"
         aria-modal="true"
-        aria-label="知识库"
+        aria-labelledby="kb-panel-title"
         data-kb-panel
         onClick={event => event.stopPropagation()}
       >
@@ -330,7 +380,7 @@ export function KnowledgeBasePanel({
               <Database size={14} strokeWidth={1.5} aria-hidden="true" />
               跨 Agent 知识库
             </span>
-            <h2 className="kb-title">检索与索引</h2>
+            <h2 className="kb-title" id="kb-panel-title">检索与索引</h2>
             <p className="kb-sub">
               {sessionTitle || (sessionId ? `会话 ${sessionId.slice(0, 8)}` : '当前会话')}
             </p>
@@ -363,6 +413,72 @@ export function KnowledgeBasePanel({
 
           {status ? (
             <>
+              {/* A1：检索是这一页的主功能，原先排在四个设置分区之后，
+                  首屏折叠线以下看不到（实测检索框 y=843，面板高 852）。
+                  现在提到最前，设置收进下面的分组行。 */}
+              <section className="kb-section" data-kb-search-section>
+                <div className="kb-section-head">
+                  <h3 className="kb-section-title">检索</h3>
+                  <p className="kb-section-desc">在「{KB_SCOPE_LABEL[scope]}」范围内搜索对话，来源卡只读脱敏摘要。</p>
+                </div>
+                <div className="kb-search">
+                  <input
+                    className="kb-input"
+                    data-kb-search-input
+                    value={query}
+                    onChange={event => setQuery(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') void runSearch();
+                    }}
+                    placeholder={notIndexed ? '建立索引后可检索' : '搜索对话内容'}
+                    disabled={notIndexed || searching}
+                  />
+                  <button
+                    type="button"
+                    className="kb-btn kb-btn-primary"
+                    data-kb-search-action
+                    disabled={notIndexed || searching || !query.trim()}
+                    onClick={() => void runSearch()}
+                  >
+                    <Search size={14} strokeWidth={1.5} aria-hidden="true" />
+                    {searching ? '检索中…' : '检索'}
+                  </button>
+                </div>
+                {searchError ? <p className="kb-inline-error">{searchError}</p> : null}
+                {searchResult ? (
+                  <div className="kb-results" data-kb-results>
+                    <p className="kb-results-meta">
+                      返回 {searchResult.hits.length} 条 · 注入 {searchResult.tokensUsed} tokens
+                      {searchResult.filteredOut > 0
+                        ? ` · 过滤 ${searchResult.filteredOut} 条`
+                        : ''}
+                    </p>
+                    {searchResult.hits.length === 0 ? (
+                      <p className="kb-empty-hits">没有检索到相关记录，可以换关键词或放宽范围。</p>
+                    ) : (
+                      searchResult.hits.map((hit, index) => (
+                        <KbHitCard
+                          key={hit.citationId}
+                          hit={hit}
+                          index={index}
+                          agentName={
+                            agents[hit.authorAgentId || hit.agentId || ''] ||
+                            hit.authorAgentId ||
+                            hit.agentId ||
+                            '未记录 Agent'
+                          }
+                          sessionTitle={
+                            sessions[hit.sessionId]?.title ||
+                            (sessions[hit.sessionId] ? '未命名会话' : `会话 ${hit.sessionId.slice(0, 8)}`)
+                          }
+                          onOpenConversation={openConversation}
+                        />
+                      ))
+                    )}
+                  </div>
+                ) : null}
+              </section>
+
               <div className="kb-stats" data-kb-stats>
                 <div className="kb-stat" data-kb-stat="chunks">
                   <span className="kb-stat-label">已索引切片</span>
@@ -414,6 +530,42 @@ export function KnowledgeBasePanel({
                 </div>
               ) : null}
 
+              {/* 操作反馈放在折叠区之外：空态「先建索引」等入口即使设置分组
+                  收起，也要能看到结果，不能把回复藏进未展开的分组里。 */}
+              {feedback ? (
+                <p
+                  className={`kb-feedback${feedback.kind === 'err' ? ' is-error' : ''}`}
+                  data-kb-feedback
+                  role={feedback.kind === 'err' ? 'alert' : 'status'}
+                >
+                  {feedback.kind === 'ok' ? (
+                    <Check size={13} strokeWidth={1.5} aria-hidden="true" />
+                  ) : (
+                    <AlertTriangle size={13} strokeWidth={1.5} aria-hidden="true" />
+                  )}
+                  {feedback.text}
+                </p>
+              ) : null}
+
+              <section
+                className="kb-section kb-settings"
+                data-kb-settings-fold
+                data-open={settingsOpen ? 'true' : 'false'}
+              >
+                <button
+                  type="button"
+                  className="kb-settings-toggle"
+                  data-kb-settings-toggle
+                  aria-expanded={settingsOpen}
+                  aria-controls="kb-settings-body"
+                  onClick={() => setSettingsOpen(value => !value)}
+                >
+                  <h3 className="kb-section-title">知识库设置</h3>
+                  <span className="kb-settings-toggle-desc">范围 · 本会话 · 主动检索 · 回填与重建</span>
+                  <ChevronDown className="kb-settings-chev" size={16} strokeWidth={1.5} aria-hidden="true" />
+                </button>
+                {settingsOpen ? (
+                  <div className="kb-settings-body" id="kb-settings-body" data-kb-settings-body>
               <section className="kb-section" data-kb-scope-section>
                 <div className="kb-section-head">
                   <h3 className="kb-section-title">检索范围</h3>
@@ -585,69 +737,6 @@ export function KnowledgeBasePanel({
                 </section>
               ) : null}
 
-              <section className="kb-section" data-kb-search-section>
-                <div className="kb-section-head">
-                  <h3 className="kb-section-title">检索</h3>
-                  <p className="kb-section-desc">在「{KB_SCOPE_LABEL[scope]}」范围内搜索对话，来源卡只读脱敏摘要。</p>
-                </div>
-                <div className="kb-search">
-                  <input
-                    className="kb-input"
-                    data-kb-search-input
-                    value={query}
-                    onChange={event => setQuery(event.target.value)}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter') void runSearch();
-                    }}
-                    placeholder={notIndexed ? '建立索引后可检索' : '搜索对话内容'}
-                    disabled={notIndexed || searching}
-                  />
-                  <button
-                    type="button"
-                    className="kb-btn kb-btn-primary"
-                    data-kb-search-action
-                    disabled={notIndexed || searching || !query.trim()}
-                    onClick={() => void runSearch()}
-                  >
-                    <Search size={14} strokeWidth={1.5} aria-hidden="true" />
-                    {searching ? '检索中…' : '检索'}
-                  </button>
-                </div>
-                {searchError ? <p className="kb-inline-error">{searchError}</p> : null}
-                {searchResult ? (
-                  <div className="kb-results" data-kb-results>
-                    <p className="kb-results-meta">
-                      返回 {searchResult.hits.length} 条 · 注入 {searchResult.tokensUsed} tokens
-                      {searchResult.filteredOut > 0
-                        ? ` · 过滤 ${searchResult.filteredOut} 条`
-                        : ''}
-                    </p>
-                    {searchResult.hits.length === 0 ? (
-                      <p className="kb-empty-hits">没有检索到相关记录，可以换关键词或放宽范围。</p>
-                    ) : (
-                      searchResult.hits.map((hit, index) => (
-                        <KbHitCard
-                          key={hit.citationId}
-                          hit={hit}
-                          index={index}
-                          agentName={
-                            agents[hit.authorAgentId || hit.agentId || ''] ||
-                            hit.authorAgentId ||
-                            hit.agentId ||
-                            '未记录 Agent'
-                          }
-                          sessionTitle={
-                            sessions[hit.sessionId]?.title ||
-                            (sessions[hit.sessionId] ? '未命名会话' : `会话 ${hit.sessionId.slice(0, 8)}`)
-                          }
-                          onOpenConversation={openConversation}
-                        />
-                      ))
-                    )}
-                  </div>
-                ) : null}
-              </section>
-
               <section className="kb-section" data-kb-maintenance>
                 <div className="kb-section-head">
                   <h3 className="kb-section-title">回填与重建</h3>
@@ -685,7 +774,12 @@ export function KnowledgeBasePanel({
                 </div>
                 {confirmRebuild ? (
                   <div className="kb-notice kb-notice-danger" data-kb-rebuild-confirm>
-                    <p>重建只会重新生成索引，不影响聊天记录。已有检索结果会在重建期间暂时不可用。</p>
+                    {/* D4：破坏性操作要给出**量化后果**，不能只说「重新生成索引」。
+                        数字来自当前索引状态，是这次操作真实会清空的量。 */}
+                    <p>
+                      重建会清空 {status.chunkCount.toLocaleString('zh-CN')} 个切片并重新生成；
+                      不影响聊天记录，检索约 40s 不可用。
+                    </p>
                     <div className="kb-inline-actions">
                       <button type="button" className="kb-btn" onClick={() => setConfirmRebuild(false)}>
                         取消
@@ -696,19 +790,8 @@ export function KnowledgeBasePanel({
                     </div>
                   </div>
                 ) : null}
-                {feedback ? (
-                  <p
-                    className={`kb-feedback${feedback.kind === 'err' ? ' is-error' : ''}`}
-                    data-kb-feedback
-                    role={feedback.kind === 'err' ? 'alert' : 'status'}
-                  >
-                    {feedback.kind === 'ok' ? (
-                      <Check size={13} strokeWidth={1.5} aria-hidden="true" />
-                    ) : (
-                      <AlertTriangle size={13} strokeWidth={1.5} aria-hidden="true" />
-                    )}
-                    {feedback.text}
-                  </p>
+              </section>
+                  </div>
                 ) : null}
               </section>
             </>

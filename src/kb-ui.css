@@ -17,7 +17,7 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: color-mix(in srgb, #000 38%, transparent);
+  background: var(--tc-scrim);
   backdrop-filter: blur(2px);
 }
 
@@ -26,7 +26,7 @@
   flex-direction: column;
   width: min(680px, 100%);
   max-height: calc(100vh - 48px);
-  border-radius: 14px;
+  border-radius: var(--tc-radius-panel);
   border: 1px solid color-mix(in srgb, var(--tc-ink) 10%, transparent);
   background: var(--tc-surface-raised);
   box-shadow: var(--td-shadow-3);
@@ -136,7 +136,7 @@
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1px;
   border: 1px solid color-mix(in srgb, var(--tc-ink) 8%, transparent);
-  border-radius: 10px;
+  border-radius: var(--tc-radius-card);
   overflow: hidden;
   background: color-mix(in srgb, var(--tc-ink) 8%, transparent);
 }
@@ -191,9 +191,65 @@
 
 .kb-section-desc {
   margin: 0;
-  font-size: var(--text-caption);
+  /* B3：分区说明承担正文级解释，11px + placeholder 灰只有 4.74:1 且视觉上
+     比 14px 正文明显「虚一档」。抬到 13px / caption 档（5.10:1 白底）。 */
+  font-size: 13px;
   line-height: 1.5;
+  color: var(--tc-text-caption);
+}
+
+/* A1：设置折叠行。检索置顶后，范围 / 本会话 / 主动检索 / 回填与重建
+   收进一条可展开的分组行，首屏只保留检索与索引概览。 */
+.kb-settings {
+  gap: 0;
+}
+
+.kb-settings-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.kb-settings-toggle:focus-visible {
+  outline: 2px solid var(--td-brand-color);
+  outline-offset: 2px;
+  border-radius: var(--tc-radius-chip);
+}
+
+.kb-settings-toggle .kb-section-title {
+  font-size: var(--text-body-lg);
+}
+
+.kb-settings-toggle-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--tc-text-caption);
+}
+
+.kb-settings-chev {
+  margin-left: auto;
+  align-self: center;
   color: var(--td-text-color-secondary);
+  transition: transform 0.18s ease-out;
+}
+
+.kb-settings[data-open="true"] .kb-settings-chev {
+  transform: rotate(180deg);
+}
+
+.kb-settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-top: 14px;
 }
 
 .kb-row-actions {
@@ -428,7 +484,7 @@
 
 .kb-notice {
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--tc-radius-chip);
   border: 1px solid color-mix(in srgb, var(--td-warning-color) 38%, transparent);
   background: color-mix(in srgb, var(--td-warning-color) 8%, transparent);
   font-size: var(--text-body-lg);
@@ -442,6 +498,10 @@
 .kb-notice-danger {
   border-color: color-mix(in srgb, var(--td-error-color) 38%, transparent);
   background: color-mix(in srgb, var(--td-error-color) 7%, transparent);
+  /* D4：重建确认是破坏性操作，除了红底再加一道左侧实心危险条 ——
+     深色主题下 7% 的红底几乎看不见，纯靠底色分不出「确认」和「提示」。 */
+  border-left: 3px solid var(--td-error-color);
+  padding-left: 10px;
 }
 
 /* ---------- 会话级开关 ---------- */

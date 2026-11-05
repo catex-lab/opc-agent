@@ -226,6 +226,8 @@ select:focus-visible {
   /* 遮罩 */
   --td-mask-active: rgba(0, 0, 0, 0.6);
   --td-mask-disabled: rgba(255, 255, 255, 0.6);
+  /* E3：应用级遮罩（知识库弹层等）。深浅各一档，组件里不再写死 #000。 */
+  --tc-scrim: rgba(0, 0, 0, 0.38);
   
   /* 阴影 —— 腾讯式的「两层叠加」：一层贴边定轮廓，一层扩散给高度。
      不用 Tailwind 那种三层堆叠，避免多层半透明叠加后边缘发灰。 */
@@ -239,6 +241,20 @@ select:focus-visible {
   --td-radius-medium: 8px;
   --td-radius-large: 12px;
   --td-radius-extraLarge: 16px;
+
+  /* B2：组件圆角收口为四档，组件只取这四条，不再各写各的数值。
+   *   panel  14px  弹层 / 气泡（知识库面板、用户气泡）
+   *   float  12px  悬浮层 / 菜单（TDesign large 也映射到这里）
+   *   card   10px  卡片（隐私条目卡、统计卡）
+   *   chip    8px  标签 / 小控件（TDesign medium 映射到这里）
+   * 原先是 14 / 12 / 10 / 8 / 6 五档并存，6 这一档没有组件在用，
+   * 直接在 --td-radius-default 上归并到 8，不再新增第六种观感。 */
+  --tc-radius-panel: 14px;
+  --tc-radius-float: 12px;
+  --tc-radius-card: 10px;
+  --tc-radius-chip: 8px;
+  --td-radius-medium: var(--tc-radius-chip);
+  --td-radius-large: var(--tc-radius-float);
 
   /* Agent 头像底衬（见 components/AgentAvatar.tsx）
      必须是浅色且两个主题下都保持浅色：hermes / zcode / qoder 的官方 SVG
@@ -611,6 +627,8 @@ select:focus-visible {
   
   /* 遮罩 - 深色模式 */
   --td-mask-active: rgba(0, 0, 0, 0.8);
+  /* E3：深色下弹层更暗一档，避免深底上「压不住」背后的内容。 */
+  --tc-scrim: rgba(0, 0, 0, 0.55);
   --td-mask-disabled: rgba(38, 38, 38, 0.6);
   
   /* 阴影 - 深色模式：透明度提高，否则在 #1c1c1c 上完全看不出浮层 */
@@ -900,6 +918,13 @@ select:focus-visible {
   --tc-status-danger: #C0392B;   /* 4.99:1 */
   --tc-status-muted: #6E6E6E;    /* 4.68:1（比 secondary 深一档：secondary 对 chrome 只有 4.35） */
 
+  /* ── 说明文字（E2 / A2 / B3）──
+   * 分区眉标、知识库分区说明、隐私卡正文这类「解释性小字」统一取这一档。
+   * 旧值是 --td-text-color-placeholder（#A3A3A3）：对白底只有 2.52:1，
+   * 10.5px 的眉标实际读不清。这里换成 4.5:1 之上的深灰，字号另由组件
+   * 抬到 12–13px；两处一起改才算修好（只改字号仍然灰得发虚）。 */
+  --tc-text-caption: #6E6E6E;    /* 5.10:1 @ #ffffff · 4.68:1 @ #f5f5f5 */
+
   /* ── 扩展开关（用户确认的绿色方案）──
    *
    * 这两条只服务「开关」这一种控件：开启 = --ext-on，含敏感内容的条目开启 =
@@ -961,6 +986,10 @@ select:focus-visible {
   --tc-status-warn: #E89B4A;
   --tc-status-danger: #F0716B;
   --tc-status-muted: #a3a3a3;
+
+  /* E2：深色档说明文字。旧值 placeholder(#8B8B8B) 对 #1c1c1c 只有 3.97:1；
+   * 这档对 #121212 是 7.97:1、对 #262626 是 6.44:1。 */
+  --tc-text-caption: #A9A9A9;
 
   /* 扩展开关：深色下把绿提亮，淡染底仍由 color-mix 生成 */
   --ext-on: color-mix(in oklab, #2ea043 78%, white 22%);
@@ -3189,7 +3218,7 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
 .tc-bubble-user {
   background-color: var(--td-brand-color);
   color: var(--tc-on-brand);
-  border-radius: 14px 14px 4px 14px;
+  border-radius: var(--tc-radius-panel) var(--tc-radius-panel) 4px var(--tc-radius-panel);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px -2px var(--td-brand-color-light);
   /* A136：字号与行高必须与助手正文**同档**。
    *
@@ -4997,7 +5026,7 @@ html[data-opc-glass='1'] t-chat-sender {
   min-width: 0;
   padding: 11px 13px;
   border: 1px solid var(--tc-edge);
-  border-radius: 10px;
+  border-radius: var(--tc-radius-card);
   background-color: var(--td-bg-color-component);
 }
 

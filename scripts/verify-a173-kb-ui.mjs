@@ -278,15 +278,17 @@ window.fetch = async function (input, init) {
 
 function Fixture() {
   const [scope, setScope] = useState('workspace');
+  // E1：夹具要能真实反映「关闭」—— 否则 Esc 关不掉也没人发现。
+  const [open, setOpen] = useState(true);
   return (
     <MemoryRouter>
       <KnowledgeBasePanel
-        open
+        open={open}
         sessionId="s1"
         sessionTitle="重构权限中间件"
         scope={scope}
         onScopeChange={setScope}
-        onClose={function () {}}
+        onClose={() => setOpen(false)}
         onOpenConversation={function (sessionId, messageId) {
           window.__kbOpened = { sessionId: sessionId, messageId: messageId };
         }}
@@ -502,6 +504,45 @@ async function openHeader(mode, width, theme) {
 try {
   console.log('\n[1] 默认范围');
   const ready = await openPanel('ready');
+  // A1（需求）：检索是主功能，必须排在索引概览之前且首屏可见；
+  // 范围 / 本会话 / 主动检索 / 回填与重建收进默认收起的「知识库设置」。
+  const layout = await ready.evaluate(() => {
+    const y = sel => {
+      const el = document.querySelector(sel);
+      return el ? el.getBoundingClientRect().top : null;
+    };
+    return {
+      search: y('[data-kb-search-section]'),
+      stats: y('[data-kb-stats]'),
+      visible: !!document.querySelector('[data-kb-search-input]')?.getClientRects().length,
+    };
+  });
+  ok(!!layout.search && !!layout.stats && layout.search < layout.stats, '检索区排在索引概览之前', `search=${layout.search} stats=${layout.stats}`);
+  ok(layout.visible, '首屏可直接操作检索输入');
+  ok(
+    (await ready.locator('[data-kb-settings-fold]').getAttribute('data-open')) === 'false',
+    '知识库设置默认收起'
+  );
+  ok((await ready.locator('[data-kb-settings-body]').count()) === 0, '收起时不渲染设置正文');
+  ok(
+    (await ready.locator('[data-kb-settings-toggle]').getAttribute('aria-expanded')) === 'false',
+    '收起行 aria-expanded=false'
+  );
+  // E1（需求）：弹层由标题 id 命名，打开后焦点在面板内。
+  ok(
+    (await ready.locator('[data-kb-panel]').getAttribute('aria-labelledby')) === 'kb-panel-title',
+    '弹层由标题 id 命名（aria-labelledby）'
+  );
+  ok(
+    await ready.evaluate(() => !!document.activeElement?.closest('[data-kb-panel]')),
+    '打开后焦点移入面板'
+  );
+  await ready.locator('[data-kb-settings-toggle]').click();
+  ok(
+    (await ready.locator('[data-kb-settings-fold]').getAttribute('data-open')) === 'true',
+    '点击后设置展开'
+  );
+  ok((await ready.locator('[data-kb-settings-body]').count()) === 1, '展开后渲染设置正文');
   ok(
     (await ready.locator('[data-kb-scope="workspace"]').getAttribute('aria-checked')) === 'true',
     '默认选中「本工作区」'
@@ -561,6 +602,7 @@ try {
 
   console.log('\n[5] 自动停 / 手动关');
   const autoPage = await openPanel('auto');
+  await autoPage.locator('[data-kb-settings-toggle]').click();
   const autoBadge = await autoPage.locator('[data-kb-stop-reason]').innerText();
   ok(autoBadge.includes('自动停'), '自动停有独立标签');
   ok(
@@ -578,6 +620,7 @@ try {
   ok(!!restoreCall && restoreCall.body.indexed === true, '恢复索引调用 PATCH indexed=true');
 
   const manualPage = await openPanel('manual');
+  await manualPage.locator('[data-kb-settings-toggle]').click();
   const manualText = await manualPage.locator('[data-kb-session-section]').innerText();
   ok(manualText.includes('你手动关'), '手动关有独立标签');
   ok(
@@ -587,13 +630,31 @@ try {
   ok(manualText.includes('恢复索引'), '手动关也提供恢复入口');
 
   console.log('\n[6] 重建提示与空态');
-  ok((await ready.locator('[data-kb-rebuild]').innerText()).includes('重建索引'), '重建入口可见');
-  await ready.locator('[data-kb-rebuild]').click();
-  await ready.waitForSelector('[data-kb-rebuild-confirm]');
-  const confirmText = await ready.locator('[data-kb-rebuild-confirm]').innerText();
+  // A1 之后回填/重建收在设置分组里，这里新开一页并展开，避免被前面的交互状态干扰。
+  const rebuildPage = await openPanel('ready');
+  await rebuildPage.locator('[data-kb-settings-toggle]').click();
+  ok((await rebuildPage.locator('[data-kb-rebuild]').innerText()).includes('重建索引'), '重建入口可见');
+  await rebuildPage.locator('[data-kb-rebuild]').click();
+  await rebuildPage.waitForSelector('[data-kb-rebuild-confirm]');
+  const confirmText = await rebuildPage.locator('[data-kb-rebuild-confirm]').innerText();
   ok(confirmText.includes('不影响聊天记录'), '重建前提示不影响聊天记录');
-  await ready.getByRole('button', { name: '取消' }).click();
-  await ready.locator('[data-kb-rebuild-confirm]').waitFor({ state: 'detached' });
+  // D4（需求）：破坏性操作要量化后果（清空多少切片），不能只说「重新生成」。
+  ok(/重建会清空\s*386\s*个切片/.test(confirmText), '重建提示写明会清空的切片数量', confirmText);
+  ok(
+    await rebuildPage.locator('[data-kb-rebuild-confirm]').evaluate(el => {
+      const s = getComputedStyle(el);
+      return s.borderLeftWidth === '3px' && s.borderLeftStyle === 'solid';
+    }),
+    '重建确认有左侧危险色实心条'
+  );
+  await rebuildPage.getByRole('button', { name: '取消' }).click();
+  await rebuildPage.locator('[data-kb-rebuild-confirm]').waitFor({ state: 'detached' });
+
+  console.log('\n[6b] Esc 关闭');
+  const escPage = await openPanel('ready');
+  await escPage.keyboard.press('Escape');
+  await escPage.locator('[data-kb-panel]').waitFor({ state: 'detached' });
+  ok(true, 'Esc 关闭知识库弹层');
 
   console.log('\n[7] 浅 / 深主题截图');
   // 新开一页保持默认策略（本项目 / 全部仍上锁），只做一次检索，截图更贴近首次打开。
