@@ -923,6 +923,14 @@ select:focus-visible {
   --tc-status-danger: #C0392B;   /* 4.99:1 */
   --tc-status-muted: #6E6E6E;    /* 4.68:1（比 secondary 深一档：secondary 对 chrome 只有 4.35） */
 
+  /* 在线圆点专用浅绿。
+     --tc-status-ok 是 11px 状态词的深绿（按文字 4.5:1 选的），拿它画 8px
+     实心圆点在亮色下偏墨、和页面整体不协调。圆点是图形而不是文字，恢复
+     原来的浅绿 #00A870（对白底 3.09:1，满足非文本 3:1）；状态区分仍靠形状，
+     颜色只做辅助，所以这里不追求文字级对比度。
+     状态词（「在线」两个字）继续用 --tc-status-ok，不受影响。 */
+  --tc-status-dot-ok: #00A870;   /* 3.09:1 @ #ffffff · 2.84:1 @ #f5f5f5 */
+
   /* ── 说明文字（E2 / A2 / B3）──
    * 分区眉标、知识库分区说明、隐私卡正文这类「解释性小字」统一取这一档。
    * 旧值是 --td-text-color-placeholder（#A3A3A3）：对白底只有 2.52:1，
@@ -991,6 +999,10 @@ select:focus-visible {
   --tc-status-warn: #E89B4A;
   --tc-status-danger: #F0716B;
   --tc-status-muted: #a3a3a3;
+
+  /* 深色在线圆点：沿用 B1 的提亮值，观感不变；与状态词同值是有意的 ——
+     深色底上这个绿已经足够亮，拆开只会制造两套难维护的近色。 */
+  --tc-status-dot-ok: #35B98A;
 
   /* E2：深色档说明文字。旧值 placeholder(#8B8B8B) 对 #1c1c1c 只有 3.97:1；
    * 这档对 #121212 是 7.97:1、对 #262626 是 6.44:1。 */

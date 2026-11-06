@@ -685,34 +685,52 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
   const bare = (src.match(/suffixIcon=\{<ChevronDown\s*\/>\}/g) || []).length;
   ok(bare === 0, '源码里没有「无 size 的 suffixIcon 箭头」（24px 默认值）', `${bare} 处`);
 
-  /* C1 / C3（需求）：导航条 56 → 74px，每栏补 10px 文字标签，
-     并新增一个常驻的全局知识库入口（无会话时置灰）。 */
+  /* C1 / C3（需求，已按真机反馈收回 C3 的文字标签）：导航条宽度保持 74px，
+     图标下方**不再有文字标签**；每个图标仍必须带可访问名称（aria-label 或
+     title）与悬停提示，不能变成无语文的图标墙。宽度不收窄的理由：按钮本身
+     62px 宽、两侧各留 6px，且 TitleBar 的 railWidth 同为 74px 对中轴。 */
   const rail = await page.evaluate(() => {
     const nav = document.querySelector('[data-nav-rail]');
     if (!nav) return null;
     const buttons = [...nav.querySelectorAll('button')];
     return {
       width: nav.getBoundingClientRect().width,
-      labels: buttons.map(b => {
+      items: buttons.map(b => {
         const span = [...b.querySelectorAll('span')].find(node => node.textContent.trim());
-        return { text: span ? span.textContent.trim() : '', size: span ? parseFloat(getComputedStyle(span).fontSize) : null };
+        return {
+          name: b.getAttribute('aria-label') || b.getAttribute('title') || '',
+          hasIcon: !!b.querySelector('svg'),
+          text: span ? span.textContent.trim() : '',
+        };
       }),
       knowledge: !!nav.querySelector('[data-nav-knowledge]'),
     };
   });
-  ok(rail && rail.width >= 74, '导航条宽度 ≥74px（原 56px）', `实测 ${rail?.width}px`);
+  ok(rail && rail.width >= 74, '导航条宽度保持 ≥74px（只去文字，不收窄，与 TitleBar 同宽）', `实测 ${rail?.width}px`);
   ok(rail && rail.knowledge, '导航条有全局知识库入口');
-  const requiredLabels = ['聊天', '项目', '通讯录', '扩展', '知识库', '设置'];
+  ok(rail && rail.items.length === 6, '导航条仍是六个入口', rail ? `${rail.items.length} 个` : '无');
+  const requiredNames = ['聊天', '项目', '通讯录', '扩展', '知识库', '设置'];
   ok(
-    rail && requiredLabels.every(text => rail.labels.some(item => item.text === text)),
-    '六栏都有文字标签（不再靠 hover 猜图标）',
-    rail ? rail.labels.map(item => item.text || '(空)').join(' / ') : '无'
+    rail && requiredNames.every(name => rail.items.some(item => item.name === name)),
+    '六个入口都有可访问名称（aria-label 或 title）',
+    rail ? rail.items.map(item => item.name || '(无)').join(' / ') : '无'
   );
   ok(
-    rail && rail.labels.every(item => item.size === null || item.size === 10),
-    '导航文字标签统一 10px',
-    rail ? rail.labels.map(item => item.size).join(' / ') : '无'
+    rail && rail.items.every(item => item.hasIcon),
+    '每个入口都保留图标',
+    rail ? rail.items.map(item => (item.hasIcon ? '有' : '无')).join(' / ') : '无'
   );
+  ok(
+    rail && rail.items.every(item => item.text === ''),
+    '图标下不再有文字标签',
+    rail ? rail.items.map(item => item.text || '(空)').join(' / ') : '无'
+  );
+  // 截图留证：浅 / 深两套下都只剩图标；只切 html 的 dark 类，不动产品状态。
+  await page.locator('[data-nav-rail]').screenshot({ path: join(OUT, 'nav-rail-icon-only-light.png') });
+  await page.evaluate(() => document.documentElement.classList.add('dark'));
+  await page.waitForTimeout(200);
+  await page.locator('[data-nav-rail]').screenshot({ path: join(OUT, 'nav-rail-icon-only-dark.png') });
+  await page.evaluate(() => document.documentElement.classList.remove('dark'));
   const knowledgeDisabled = await page.locator('[data-nav-knowledge]').isDisabled();
   ok(!knowledgeDisabled, '有会话时知识库入口可点');
   await page.locator('[data-nav-knowledge]').click();

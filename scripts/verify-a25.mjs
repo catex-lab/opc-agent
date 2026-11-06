@@ -231,10 +231,10 @@ console.log('\n[1] 状态圆点：不描边');
     'B1：非在线圆点中心透明（空心，不是第二颗实心点）',
     [...new Set(hollow.map(d => d.bg))].join(' | ')
   );
-  // B1 的另一半：颜色必须来自令牌。把 `--tc-status-ok` 解析成 rgb，
+  // B1 的另一半：颜色必须来自令牌。把 `--tc-status-dot-ok` 解析成 rgb，
   // 再比对在线点的实际底色 —— 这条能抓到「又把 hex 写回组件里」。
   const okToken = await page.evaluate(() => {
-    const raw = getComputedStyle(document.documentElement).getPropertyValue('--tc-status-ok').trim();
+    const raw = getComputedStyle(document.documentElement).getPropertyValue('--tc-status-dot-ok').trim();
     const probe = document.createElement('div');
     probe.style.color = raw;
     document.body.appendChild(probe);
@@ -244,8 +244,15 @@ console.log('\n[1] 状态圆点：不描边');
   });
   ok(
     solid.filter(d => d.status === '在线').every(d => d.bg === okToken),
-    'B1：在线圆点底色取自 --tc-status-ok 令牌',
+    'B1：在线圆点底色取自 --tc-status-dot-ok 令牌',
     `令牌 ${okToken} / 实测 ${[...new Set(solid.map(d => d.bg))].join(' | ')}`
+  );
+  // 用户看真机后要求亮色恢复原来的浅绿：锁死 #00A870，防止以后又被
+  // 「统一状态色」顺手改回深绿；深色档另有一条断言（见下方截图块）。
+  ok(
+    okToken === 'rgb(0, 168, 112)',
+    '亮色在线圆点恢复浅绿 #00A870',
+    okToken
   );
   ok(dots.every(d => d.width === d.height), '圆点仍是正圆（形状分档没改几何）', [...new Set(dots.map(d => `${d.width}×${d.height}`))].join(' '));
   // 去掉描边之后，唯一保证「绿点不压在绿 logo 上」的机制就是外切定位
@@ -265,6 +272,29 @@ console.log('\n[1] 状态圆点：不描边');
       });
     }
   }
+  // 深色档核对：深色在线点必须仍是提亮值 #35B98A，不能在改亮色时被一起
+  // 带偏；同时留一张深色截图。切换只改 html 的 dark 类，不写产品状态。
+  await page.evaluate(() => document.documentElement.classList.add('dark'));
+  await page.waitForTimeout(200);
+  const darkInfo = await page.evaluate(() => {
+    const token = getComputedStyle(document.documentElement).getPropertyValue('--tc-status-dot-ok').trim();
+    const probe = document.createElement('div');
+    probe.style.color = token;
+    document.body.appendChild(probe);
+    const rgb = getComputedStyle(probe).color;
+    probe.remove();
+    const dot = Array.from(document.querySelectorAll('[data-status-dot]'))
+      .filter(el => getComputedStyle(el).position === 'absolute' && el.dataset.status === '在线')
+      .map(el => getComputedStyle(el).backgroundColor);
+    return { token: rgb, dots: dot };
+  });
+  ok(
+    darkInfo.token === 'rgb(53, 185, 138)' && darkInfo.dots.every(bg => bg === darkInfo.token),
+    '深色在线圆点保持提亮值 #35B98A（改亮色没带偏深色）',
+    `${darkInfo.token} / ${[...new Set(darkInfo.dots)].join(' | ')}`
+  );
+  await shot(page, 'a25-status-dots-dark');
+  await page.evaluate(() => document.documentElement.classList.remove('dark'));
   await ctx.close();
 }
 

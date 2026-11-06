@@ -76,10 +76,13 @@ export function NavRail({
   return (
     <nav
       data-nav-rail
-      // 宽度：74px（窄屏 48px）。C3 之前是 56px —— 只放得下 20px 图标，
-      // 用户必须 hover 看 title 才知道每一栏是什么。74px 给图标下面留出
-      // 一行 10px 文字标签（聊天 / 项目 / 通讯录 / 扩展 / 知识库 / 设置），
-      // 导航从「猜图标」变成可读。窄屏仍收 48px、只留图标，把像素让给内容。
+      // 宽度：74px（窄屏 48px）。这里只做纯图标栏 —— 图标下方不再放文字
+      // 标签（用户看真机后要求去掉）。可读性由按钮自身的 aria-label + title
+      // 承担，鼠标悬停有原生提示，辅助技术读到的仍是「聊天 / 项目 / 通讯录 /
+      // 扩展 / 知识库 / 设置」。
+      // 宽度保持 74px：按钮本身 62px 宽，两侧各留 6px 呼吸位，去掉文字后
+      // 并不空旷；更重要的是 TitleBar 的 railWidth 也写死 74，靠同宽把应用
+      // 标记对准图标中轴，只收窄这一处会让标记歪掉。
       // ⚠️ 改这里必须同步改 TitleBar 的 railWidth（那边靠同宽把应用标记
       //    对准导航图标的中轴），两处不一致标记就会歪。
       className={`flex shrink-0 flex-col items-center gap-1.5 py-3 ${compact ? 'w-[48px]' : 'w-[74px]'}`}
@@ -144,12 +147,6 @@ export function NavRail({
                 style={{ backgroundColor: 'var(--td-brand-color)' }}
               />
               <Icon size={20} strokeWidth={active ? 2.5 : 2} />
-              {/* C3：宽屏给文字标签。56px 只放得下图标，用户要靠 hover 的
-                  title 才知道每一栏是什么；74px 后图标下面多一行 10px 标签，
-                  「聊天 / 项目 / 通讯录 / 扩展」一眼可读。窄屏 48px 保留纯图标。 */}
-              {!compact && (
-                <span className="text-[10px] leading-none">{label}</span>
-              )}
             </button>
           );
         })}
@@ -178,7 +175,6 @@ export function NavRail({
           `}
         >
           <Database size={20} strokeWidth={2} />
-          {!compact && <span className="text-[10px] leading-none">知识库</span>}
         </button>
       </div>
 
@@ -220,7 +216,6 @@ export function NavRail({
               分区，汉堡菜单更贴近「展开一列菜单」的语义；齿轮则更像
               「调参数」，与这个入口实际承载的内容不一致。 */}
           <Menu size={20} strokeWidth={isActive('settings') ? 2.5 : 2} />
-          {!compact && <span className="text-[10px] leading-none">设置</span>}
         </button>
       </div>
     </nav>

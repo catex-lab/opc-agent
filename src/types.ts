@@ -786,7 +786,7 @@ export const AVAILABILITY_META: Record<
   { label: string; color: string; dot: string; dotShape: StatusDotShape }
 > = {
   ready: {
-    label: '在线', color: 'var(--tc-status-ok)', dot: 'var(--tc-status-ok)', dotShape: 'solid',
+    label: '在线', color: 'var(--tc-status-ok)', dot: 'var(--tc-status-dot-ok)', dotShape: 'solid',
   },
   'needs-auth': {
     label: '未登录', color: 'var(--tc-status-warn)', dot: 'var(--tc-status-warn)', dotShape: 'hollow',
