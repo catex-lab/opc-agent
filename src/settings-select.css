@@ -266,3 +266,41 @@
     margin-top: 8px;
   }
 }
+
+/* 登录配置右上「刷新」：次级描边按钮。
+   参考图（1.5× 截图）实测按钮 105×46px、图标 19px、文字 18px、左右内边距 18px，
+   换算到 CSS px：70×30.7 → 高 30、图标 13、字 12、内边距 12；圆角取参考图约
+   6px 全分辨率像素并归到我们既有 6px 档。只作用于这一颗按钮。
+   热区：30px 高（≥ 24px 可访问性下限），不靠负 margin 缩视觉。 */
+.t-button--variant-outline.opc-refresh-login {
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 0 12px !important;
+  border-radius: 6px !important;
+  font-size: 12px !important;
+  line-height: 18px !important;
+  min-width: 0 !important;
+}
+
+.opc-refresh-login .t-button__text {
+  font-size: 12px !important;
+}
+
+.opc-refresh-login .t-button__icon svg,
+.opc-refresh-login svg {
+  width: 13px !important;
+  height: 13px !important;
+}
+
+/* hover 保持中性：不跟随全局 outline 的品牌色描边，只抬一层底色。 */
+.opc-refresh-login:hover {
+  border-color: var(--td-component-stroke) !important;
+  color: var(--td-text-color-primary) !important;
+  background-color: var(--td-bg-color-component) !important;
+}
+
+.opc-refresh-login:disabled {
+  background-color: transparent !important;
+  border-color: var(--td-component-stroke) !important;
+}
+

@@ -721,18 +721,24 @@ export function SettingsPage({
                 登录配置
               </h2>
             </div>
-            <Button 
-              variant="text" 
-              icon={<RefreshCw />}
+            <Button
+              /* 参考图的「刷新」是**次级描边按钮**：与主按钮同排，但图标/文字小一档、
+                  整体略矮。量图（1.5× 截图）后换算：按钮 105×46px → 70×30.7 CSS px，
+                  图标 19px → 13px、文字 18px → 12px、左右内边距 18px → 12px，圆角对齐
+                 我们 6px 档。尺寸落在 settings-select.css 的 .opc-refresh-login，
+                  描边沿用全局 outline 的 --td-component-stroke 低对比档。 */
+              variant="outline"
+              size="small"
+              className="opc-refresh-login"
+              icon={<RefreshCw size={13} />}
               onClick={checkLoginStatus}
               loading={loginStatus.checking}
+              aria-label="刷新"
               /* A116（反馈）：「暗色模式下，图标、文字使用亮白色，不要灰色，
                  例如刷新按钮图标及文案」。
-                 ⚠️ 这里**不能**用内联 style 改色：index.css 的
-                 `.t-button--variant-text { color: ... !important }` 带 !important，
-                 而内联样式没有 !important 时压不过类规则的 !important
-                 （实测内联写了也仍是 secondary #a3a3a3，见 verify-a116-ui [3]）。
-                 改色落在 index.css 的 `[data-refresh-login]` 选择器上。 */
+                 ⚠️ 全局 `.t-button--variant-outline { color: ... !important }`
+                 已经把 color 钉在 primary 档，内联 style 压不过 !important，
+                 所以这里不再写内联色值，避免误导后来的人。 */
               data-refresh-login
             >
               刷新
