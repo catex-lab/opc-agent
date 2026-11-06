@@ -685,10 +685,11 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
   const bare = (src.match(/suffixIcon=\{<ChevronDown\s*\/>\}/g) || []).length;
   ok(bare === 0, '源码里没有「无 size 的 suffixIcon 箭头」（24px 默认值）', `${bare} 处`);
 
-  /* C1 / C3（需求，已按真机反馈收回 C3 的文字标签）：导航条宽度保持 74px，
-     图标下方**不再有文字标签**；每个图标仍必须带可访问名称（aria-label 或
-     title）与悬停提示，不能变成无语文的图标墙。宽度不收窄的理由：按钮本身
-     62px 宽、两侧各留 6px，且 TitleBar 的 railWidth 同为 74px 对中轴。 */
+  /* C1 / C3（需求，已按真机反馈收回 C3 的文字标签、并收窄栏宽）：导航条宽度
+     64px = 按钮 52px + 两侧各 6px 呼吸位；图标下方**不再有文字标签**；每个
+     图标仍必须带可访问名称（aria-label 或 title）与悬停提示，不能变成无语文
+     的图标墙。TitleBar 的 railWidth 同为 64px，两处同宽才对得上中轴。
+     ⚠️ 断言写死 64 而不是 ≥：放宽成「≥64」等于允许它慢慢长回 74。 */
   const rail = await page.evaluate(() => {
     const nav = document.querySelector('[data-nav-rail]');
     if (!nav) return null;
@@ -726,7 +727,7 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
       knowledge: !!nav.querySelector('[data-nav-knowledge]'),
     };
   });
-  ok(rail && rail.width >= 74, '导航条宽度保持 ≥74px（只去文字，不收窄，与 TitleBar 同宽）', `实测 ${rail?.width}px`);
+  ok(rail && rail.width === 64, '导航条宽度收到 64px（52px 按钮 + 两侧 6px，与 TitleBar 同宽）', `实测 ${rail?.width}px`);
   ok(rail && rail.knowledge, '导航条有全局知识库入口');
   ok(rail && rail.items.length === 6, '导航条仍是六个入口', rail ? `${rail.items.length} 个` : '无');
   const requiredNames = ['聊天', '项目', '通讯录', '扩展', '知识库', '设置'];
@@ -746,9 +747,10 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
     rail ? rail.items.map(item => item.text || '(空)').join(' / ') : '无'
   );
   /* D1：图标边缘清晰度。lucide 的 viewBox 是 24，渲染到 20px 时缩放系数
-     0.8333，2px 描边折算 1.667px、路径坐标落小数像素，抗锯齿把边缘摊成
-     2–3px（亮/深都发虚）。口径：渲染尺寸 = viewBox（缩放 1）、有效描边
-     ≥1.25 CSS px（实测 2 / 选中 2.5），且图标盒落在整数 CSS 像素。 */
+     0.8333，描边折算成小数、路径坐标落小数像素，抗锯齿把边缘摊成 2–3px
+     （亮/深都发虚）。口径：渲染尺寸 = viewBox（缩放 1）、有效描边
+     ≥1.25 CSS px（1.75 / 选中 2.25 —— 真机嫌 2 厚重，只降描边不缩盒子）、
+     且图标盒落在整数 CSS 像素。 */
   ok(
     rail && rail.items.every(item => item.icon && item.icon.w === item.icon.viewBox && item.icon.h === item.icon.viewBox),
     '图标按 viewBox 自然尺寸渲染（24×24，不是 20px 非整数缩放）',
@@ -760,8 +762,8 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
     rail ? [...new Set(rail.items.map(item => (item.icon ? item.icon.scale : 0)))].map(v => v.toFixed(4)).join(' | ') : '无'
   );
   ok(
-    rail && rail.items.every(item => item.icon && item.icon.effective >= 1.25 && [2, 2.5].includes(item.icon.effective)),
-    '有效描边 ≥1.25 CSS px（2 / 选中 2.5）',
+    rail && rail.items.every(item => item.icon && item.icon.effective >= 1.25 && [1.75, 2.25].includes(item.icon.effective)),
+    '有效描边 ≥1.25 CSS px（1.75 / 选中 2.25）',
     rail ? [...new Set(rail.items.map(item => (item.icon ? item.icon.effective : 0)))].map(v => v.toFixed(2)).join(' | ') : '无'
   );
   ok(

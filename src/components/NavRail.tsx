@@ -19,12 +19,15 @@ interface NavRailProps {
  * 只放最高频的几个入口，不承载任何业务内容。
  *
  * 设计要点：
- *   • 按钮 54×62（窄屏 44×44）+ 24px 图标，节奏一致
+ *   • 按钮 54×52（窄屏 44×44）+ 24px 图标，节奏一致
  *   • 图标一律 24px：lucide 的 viewBox 是 24，渲染 24 时缩放系数为 1，
- *     2px 描边就是整 2 CSS px（2× 屏 4 设备 px）。此前用 20px 会得到
- *     0.8333 倍的非整数缩放，描边折算成 1.667px（2× 屏 3.333 设备 px），
- *     路径坐标也落在小数像素上，抗锯齿把边缘摊成 2–3 px，两种主题下都发虚。
+ *     描边按整数倍数落屏。此前用 20px 会得到 0.8333 倍的非整数缩放，描边
+ *     折算成 1.667px，路径坐标也落在小数像素上，抗锯齿把边缘摊成 2–3 px，
+ *     两种主题下都发虚。
  *     ⚠️ 不要为了「视觉大小」把它改回 20/22 这类非 24 整数倍的尺寸。
+ *     真机反馈「图标太厚重」时走的是**降描边 + 收栏宽**（2 → 1.75，
+ *     见下方 button 里的 strokeWidth），而不是缩小盒子 —— 盒子一缩小，
+ *     缩放系数立刻变成小数，边缘重新发虚。
  *   • 激活态用「左侧 3px 品牌色指示条 + 浅色背景」双重标识，位置感明确
  *   • hover 有微妙的背景色抬升，交互反馈即时
  *   • focus-visible 带品牌色 ring，键盘导航友好
@@ -81,16 +84,16 @@ export function NavRail({
   return (
     <nav
       data-nav-rail
-      // 宽度：74px（窄屏 48px）。这里只做纯图标栏 —— 图标下方不再放文字
+      // 宽度：64px（窄屏 48px）。这里只做纯图标栏 —— 图标下方不再放文字
       // 标签（用户看真机后要求去掉）。可读性由按钮自身的 aria-label + title
       // 承担，鼠标悬停有原生提示，辅助技术读到的仍是「聊天 / 项目 / 通讯录 /
       // 扩展 / 知识库 / 设置」。
-      // 宽度保持 74px：按钮本身 62px 宽，两侧各留 6px 呼吸位，去掉文字后
-      // 并不空旷；更重要的是 TitleBar 的 railWidth 也写死 74，靠同宽把应用
-      // 标记对准图标中轴，只收窄这一处会让标记歪掉。
+      // 64 = 按钮 52 + 两侧各 6px 呼吸位。原先 74（按钮 62）在真机上看偏宽，
+      // 纯图标栏不需要给文字留横向空间，收回到 52 后节奏更紧。
+      // 窄屏 48 不动：那里按钮已是 44×44，两侧只有 2px，再收就压到按钮。
       // ⚠️ 改这里必须同步改 TitleBar 的 railWidth（那边靠同宽把应用标记
       //    对准导航图标的中轴），两处不一致标记就会歪。
-      className={`flex shrink-0 flex-col items-center gap-1.5 py-3 ${compact ? 'w-[48px]' : 'w-[74px]'}`}
+      className={`flex shrink-0 flex-col items-center gap-1.5 py-3 ${compact ? 'w-[48px]' : 'w-[64px]'}`}
       style={{
         // A92：导航条从「框架面」里再拆出一档（--tc-surface-rail），是外框的
         // 最外层。原来它和会话列表共用 chrome，两栏 ΔL* = 0，只靠一条 1px
@@ -129,7 +132,7 @@ export function NavRail({
                 transition-all duration-200 ease-out
                 focus-visible:outline-none focus-visible:ring-2
                 focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
-                ${compact ? 'h-11 w-11' : 'h-[54px] w-[62px] flex-col gap-1'}
+                ${compact ? 'h-11 w-11' : 'h-[54px] w-[52px]'}
                 ${active
                   ? 'text-[var(--td-brand-color)]'
                   : 'text-[var(--td-text-color-secondary)] hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
@@ -151,7 +154,10 @@ export function NavRail({
                 }`}
                 style={{ backgroundColor: 'var(--td-brand-color)' }}
               />
-              <Icon size={24} strokeWidth={active ? 2.5 : 2} />
+              {/* 描边 1.75 / 选中 2.25：真机上 2px 偏厚重。缩小时仍落在整数
+                  坐标（盒子不变，只改描边），有效描边 1.75 CSS px ≥1.25。
+                  ⚠️ 不要用 opacity 压重量 —— 那会让边缘又被抗锯齿抹开。 */}
+              <Icon size={24} strokeWidth={active ? 2.25 : 1.75} />
             </button>
           );
         })}
@@ -172,14 +178,14 @@ export function NavRail({
             transition-all duration-200 ease-out
             focus-visible:outline-none focus-visible:ring-2
             focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
-            ${compact ? 'h-11 w-11' : 'h-[54px] w-[62px] flex-col gap-1'}
+            ${compact ? 'h-11 w-11' : 'h-[54px] w-[52px]'}
             ${knowledgeDisabled
               ? 'cursor-not-allowed opacity-40'
               : 'hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
             }
           `}
         >
-          <Database size={24} strokeWidth={2} />
+          <Database size={24} strokeWidth={1.75} />
         </button>
       </div>
 
@@ -198,7 +204,7 @@ export function NavRail({
             transition-all duration-200
             focus-visible:outline-none focus-visible:ring-2
             focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
-            ${compact ? 'h-11 w-11' : 'h-[54px] w-[62px] flex-col gap-1'}
+            ${compact ? 'h-11 w-11' : 'h-[54px] w-[52px]'}
             ${isActive('settings')
               ? 'text-[var(--td-brand-color)]'
               : 'text-[var(--td-text-color-secondary)] hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
@@ -220,7 +226,7 @@ export function NavRail({
           {/* 三条横线（Menu）而非齿轮：设置已经从「一个图标位」变成一组
               分区，汉堡菜单更贴近「展开一列菜单」的语义；齿轮则更像
               「调参数」，与这个入口实际承载的内容不一致。 */}
-          <Menu size={24} strokeWidth={isActive('settings') ? 2.5 : 2} />
+          <Menu size={24} strokeWidth={isActive('settings') ? 2.25 : 1.75} />
         </button>
       </div>
     </nav>
