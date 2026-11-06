@@ -650,19 +650,24 @@ try {
     await page.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded', timeout: 120000 });
     await page.locator('[data-settings-section="appearance"]').click();
     await page.waitForSelector('[data-link-open-setting]', { timeout: 60000 });
+    await page.waitForSelector('[data-link-open-select]', { timeout: 60000 });
     ok((await page.locator('[data-link-open-setting]').count()) === 1, '设置页有「链接打开方式」区块');
     ok((await page.locator('[data-link-open-option="system"]').count()) === 1, '有「系统浏览器」选项');
     ok((await page.locator('[data-link-open-option="in-app"]').count()) === 1, '有「应用内打开」选项');
-    const beforeSel = await page.locator('[data-link-open-option="system"]').getAttribute('aria-checked');
-    ok(beforeSel === 'true', '默认选中系统浏览器（不改变老行为）', beforeSel);
-    await page.locator('[data-link-open-option="in-app"]').click();
+    const beforeSel = await page.evaluate(() => document.querySelector('[data-link-open-select]').value);
+    ok(beforeSel === 'system', '默认选中系统浏览器（不改变老行为）', beforeSel);
+    await page.locator('[data-link-open-select]').selectOption('in-app');
     await page.waitForTimeout(300);
-    const after = await page.evaluate(() => ({
-      stored: localStorage.getItem('opc.link-open-mode'),
-      inApp: document.querySelector('[data-link-open-option="in-app"]').getAttribute('aria-checked'),
-      system: document.querySelector('[data-link-open-option="system"]').getAttribute('aria-checked'),
-    }));
-    ok(after.inApp === 'true' && after.system === 'false', '选中态切换正确', `${after.inApp}/${after.system}`);
+    const after = await page.evaluate(() => {
+      const select = document.querySelector('[data-link-open-select]');
+      return {
+        stored: localStorage.getItem('opc.link-open-mode'),
+        value: select.value,
+        inApp: select.querySelector('option[value="in-app"]').selected,
+        system: select.querySelector('option[value="system"]').selected,
+      };
+    });
+    ok(after.value === 'in-app' && after.inApp === true && after.system === false, '选中态切换正确', `${after.value}/${after.inApp}/${after.system}`);
     ok(after.stored === 'in-app', '偏好写进 localStorage 镜像（落盘由 A135 链路保证）', after.stored);
     ok(pageErrors.length === 0, '设置页没有运行时报错', pageErrors.join(' | '));
     await ctx.close();

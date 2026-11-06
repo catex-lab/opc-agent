@@ -14,7 +14,8 @@ import {
   Select,
   Switch
 } from 'tdesign-react';
-import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info, UserRound, Plus, PencilLine, Trash2, Check, CircleCheck, CircleX, RefreshCw, Power, Minimize2, HelpCircle } from 'lucide-react';
+import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info, UserRound, Plus, PencilLine, Trash2, Check, CircleCheck, CircleX, RefreshCw, Power, Minimize2, HelpCircle, ChevronDown } from 'lucide-react';
+import '../settings-select.css';
 import { PanelHeader } from './PanelHeader';
 import { InfoHint } from './InfoHint';
 import { AgentCredentialSettings } from './AgentCredentialSettings';
@@ -1298,59 +1299,41 @@ const CLOSE_BEHAVIOR_OPTIONS: Array<{
 
 function CloseBehaviorSetting() {
   const [behavior, setBehavior] = useState<CloseBehavior>(readCloseBehavior);
+  const current =
+    CLOSE_BEHAVIOR_OPTIONS.find(option => option.value === behavior) ?? CLOSE_BEHAVIOR_OPTIONS[0];
+  const CurrentIcon = current.Icon;
 
   return (
-    <div className="mt-6" data-close-behavior-setting>
-      <div className="mb-3 flex items-center gap-1.5">
-        <span className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+    <div className="opc-enum-setting" data-close-behavior-setting>
+      <div className="opc-enum-setting__head">
+        <label className="opc-enum-setting__label" htmlFor="opc-close-behavior">
           关闭窗口时
-        </span>
+        </label>
         <InfoHint
           label="关闭窗口行为说明"
           text="选择「直接退出」时，如果还有 Agent 任务在运行，会先弹一次确认；选择「最小化到托盘」则不会中断任务，进程继续留在托盘里，托盘右键菜单可以退出。"
         />
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {CLOSE_BEHAVIOR_OPTIONS.map(({ value, label, hint, Icon }) => {
-          const selected = behavior === value;
-          return (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setBehavior(saveCloseBehavior(value))}
-              aria-pressed={selected}
-              title={hint}
-              // 探针锚点：文案会改，data 属性不会
-              data-close-behavior={value}
-              className="flex items-center gap-3 rounded-lg p-3 text-left transition-all"
-              style={{
-                backgroundColor: selected ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-component)',
-                border: `1px solid ${selected ? 'var(--td-brand-color)' : 'transparent'}`,
-              }}
-            >
-              <span
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${selected ? 'tc-chip-brand' : ''}`}
-                style={
-                  selected
-                    ? undefined
-                    : {
-                        backgroundColor: 'var(--td-bg-color-container)',
-                        color: 'var(--td-text-color-secondary)',
-                      }
-                }
-              >
-                <Icon size={18} />
-              </span>
-              <span
-                className="min-w-0 text-body-lg font-medium"
-                style={{ color: 'var(--td-text-color-primary)' }}
-              >
-                {label}
-              </span>
-            </button>
-          );
-        })}
+      {/* 原生 select：键盘（Tab / 方向键 / Esc）、朗读与表单语义都由浏览器负责；
+          选中项的图标放在控件左侧，取代原来三张横向铺开的卡片。 */}
+      <div className="opc-select">
+        <CurrentIcon className="opc-select__leading" size={15} aria-hidden="true" />
+        <select
+          id="opc-close-behavior"
+          className="opc-select__native"
+          data-close-behavior-select
+          value={behavior}
+          onChange={event => setBehavior(saveCloseBehavior(event.target.value as CloseBehavior))}
+        >
+          {CLOSE_BEHAVIOR_OPTIONS.map(({ value, label, hint }) => (
+            <option key={value} value={value} title={hint} data-close-behavior={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="opc-select__chevron" size={15} aria-hidden="true" />
       </div>
+      <p className="opc-enum-setting__hint">{current.hint}</p>
     </div>
   );
 }
@@ -1377,44 +1360,38 @@ const LINK_OPEN_OPTIONS: Array<{
 
 function LinkOpenModeSetting() {
   const [mode, setMode] = useState<LinkOpenMode>(readLinkOpenMode);
+  const current = LINK_OPEN_OPTIONS.find(option => option.value === mode) ?? LINK_OPEN_OPTIONS[0];
+  const CurrentIcon = current.Icon;
+
   return (
-    <div className="mt-6" data-link-open-setting>
-      <div className="mb-3 flex items-center gap-1.5">
-        <span className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+    <div className="opc-enum-setting" data-link-open-setting>
+      <div className="opc-enum-setting__head">
+        <label className="opc-enum-setting__label" htmlFor="opc-link-open-mode">
           链接打开方式
-        </span>
+        </label>
         <InfoHint
           label="链接打开方式说明"
           text="正文里的 http(s) 链接点击时用哪种方式打开。悬停链接时会有完整地址提示，里面也能临时改用另一种方式打开。应用内打开会占用右侧工作区；窄屏或群聊里会自动改用系统浏览器。"
         />
       </div>
-      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="链接打开方式">
-        {LINK_OPEN_OPTIONS.map(({ value, label, hint, Icon }) => {
-          const selected = mode === value;
-          return (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              title={hint}
-              data-link-open-option={value}
-              onClick={() => setMode(saveLinkOpenMode(value))}
-              className="flex items-center gap-2 rounded-lg px-3 py-2 text-body transition-colors"
-              style={{
-                backgroundColor: selected ? 'var(--tc-hover-chrome)' : 'transparent',
-                border: `1px solid ${selected ? 'var(--tc-edge-strong, var(--tc-edge))' : 'var(--tc-edge)'}`,
-                color: selected
-                  ? 'var(--td-text-color-primary)'
-                  : 'var(--td-text-color-secondary)',
-              }}
-            >
-              <Icon size={15} aria-hidden="true" />
+      <div className="opc-select">
+        <CurrentIcon className="opc-select__leading" size={15} aria-hidden="true" />
+        <select
+          id="opc-link-open-mode"
+          className="opc-select__native"
+          data-link-open-select
+          value={mode}
+          onChange={event => setMode(saveLinkOpenMode(event.target.value as LinkOpenMode))}
+        >
+          {LINK_OPEN_OPTIONS.map(({ value, label, hint }) => (
+            <option key={value} value={value} title={hint} data-link-open-option={value}>
               {label}
-            </button>
-          );
-        })}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="opc-select__chevron" size={15} aria-hidden="true" />
       </div>
+      <p className="opc-enum-setting__hint">{current.hint}</p>
     </div>
   );
 }

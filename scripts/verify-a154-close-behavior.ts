@@ -258,19 +258,22 @@ try {
       await page.locator('[data-settings-section="appearance"]').first().click();
       await page.waitForSelector('[data-close-behavior-setting]', { timeout: 15000 });
 
-      const opts = await page.evaluate(() =>
-        [...document.querySelectorAll('[data-close-behavior]')].map(el => ({
-          value: el.getAttribute('data-close-behavior'),
-          pressed: el.getAttribute('aria-pressed'),
-          text: (el.textContent || '').trim(),
-        }))
-      );
-      ok(opts.length === 3, '三档都在', opts.map(o => o.value).join('/'));
-      ok(opts.every(o => o.text.length > 0), '每档都有可见标签', opts.map(o => o.text).join(' / '));
-      ok(opts.some(o => o.value === 'tray' && o.pressed === 'true'), '★ 注入值 tray 在页面上是选中态',
-        JSON.stringify(opts.map(o => `${o.value}:${o.pressed}`)));
+      const opts = await page.evaluate(() => {
+        const select = document.querySelector('[data-close-behavior-select]') as HTMLSelectElement | null;
+        return {
+          count: document.querySelectorAll('[data-close-behavior]').length,
+          value: select?.value ?? '',
+          items: [...document.querySelectorAll('[data-close-behavior]')].map(el => ({
+            value: el.getAttribute('data-close-behavior'),
+            text: (el.textContent || '').trim(),
+          })),
+        };
+      });
+      ok(opts.count === 3, '三档都在', opts.items.map(o => o.value).join('/'));
+      ok(opts.items.every(o => o.text.length > 0), '每档都有可见标签', opts.items.map(o => o.text).join(' / '));
+      ok(opts.value === 'tray', '★ 注入值 tray 在下拉里是选中态', `select.value=${opts.value}`);
 
-      await page.locator('[data-close-behavior="ask"]').click();
+      await page.locator('[data-close-behavior-select]').selectOption('ask');
       await page.waitForTimeout(700); // 偏好 PATCH 有 250ms 防抖
       const local = await page.evaluate(() => localStorage.getItem('opc.close-behavior'));
       ok(local === 'ask', '★ 点击后 localStorage 镜像同步写', String(local));

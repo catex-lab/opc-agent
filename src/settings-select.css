@@ -1,0 +1,109 @@
+/* ── 设置页枚举型选项的下拉形态 ─────────────────────────────────────────
+ *
+ * 只服务「关闭窗口时」「链接打开方式」两项，独立成文件，避免和导航栏
+ * / index.css 的并行改动抢同一段样式。
+ *
+ * 用原生 <select>：键盘（Tab / 方向键 / Esc）、朗读与表单语义都由
+ * 浏览器负责；描边、底色、浮层配色全部走既有令牌，亮/深两套自动成立。
+ * 图标用单色线形（lucide），颜色取 --td-text-color-secondary。
+ */
+
+.opc-enum-setting {
+  margin-top: 24px;
+}
+
+.opc-enum-setting__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.opc-enum-setting__label {
+  font-size: var(--text-body);
+  font-weight: 500;
+  color: var(--td-text-color-primary);
+}
+
+.opc-enum-setting__hint {
+  /* 两行高固定预留：切换选项时说明文字长短不一，不预留会让下面的
+     透明度/光斑设置整体上下跳。 */
+  min-height: calc(1.6em * 2);
+  margin: 4px 0 0;
+  font-size: var(--text-body);
+  line-height: 1.6;
+  color: var(--td-text-color-secondary);
+}
+
+.opc-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 300px;
+  height: 32px;
+  border: 1px solid var(--tc-edge);
+  border-radius: var(--td-radius-default);
+  background-color: var(--td-bg-color-container);
+  color: var(--td-text-color-primary);
+  transition:
+    border-color var(--duration-fast) var(--ease-tencent),
+    box-shadow var(--duration-fast) var(--ease-tencent);
+}
+
+.opc-select:hover {
+  border-color: var(--tc-edge-strong);
+}
+
+/* 焦点环：与设置页输入框同一口径 —— 描边只加深一档，真正提示焦点的是
+   阴影；原生 select 的默认 outline 关掉，避免叠加出第二圈。 */
+.opc-select:focus-within {
+  border-color: var(--tc-edge-strong);
+  box-shadow: var(--tc-focus-shadow);
+}
+
+.opc-select__native {
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  padding: 0 32px 0 34px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--td-text-color-primary);
+  font-family: inherit;
+  font-size: var(--text-body);
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* 原生展开的菜单由系统绘制，color-scheme 让它跟随应用主题（独立于系统）。 */
+.opc-select__native {
+  color-scheme: light;
+}
+
+:root.dark .opc-select__native {
+  color-scheme: dark;
+}
+
+.opc-select__native option {
+  background-color: var(--td-bg-color-container);
+  color: var(--td-text-color-primary);
+}
+
+.opc-select__leading,
+.opc-select__chevron {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--td-text-color-secondary);
+}
+
+.opc-select__leading {
+  left: 11px;
+}
+
+.opc-select__chevron {
+  right: 10px;
+}
