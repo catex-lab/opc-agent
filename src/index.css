@@ -189,18 +189,31 @@ select:focus-visible {
   /* 背景色 - 浅色模式 */
   --td-bg-color-page: #ffffff;
   --td-bg-color-container: #fafafa;
-  --td-bg-color-container-hover: #f5f5f5;
+  /* 控件填充面（浅色）：参考图里下拉胶囊 / 未选卡片实测 #F5F6F7 ——
+     一块**没有描边**的浅灰面，比纯白画布暗 3.2%。只把这一族的基色挪过去，
+     结构不动（仍是填充面）。 */
+  --td-bg-color-container-hover: #f5f6f7;
   --td-bg-color-container-active: #eeeeee;
-  --td-bg-color-secondarycontainer: #f5f5f5;
+  --td-bg-color-secondarycontainer: #f5f6f7;
   --td-bg-color-secondarycontainer-hover: #eeeeee;
-  --td-bg-color-component: #f5f5f5;
+  --td-bg-color-component: #f5f6f7;
   --td-bg-color-component-hover: #eeeeee;
   --td-bg-color-component-disabled: #f5f5f5;
   
-  /* 文字色 - 浅色模式 */
-  --td-text-color-primary: #171717;
+  /* 文字色 - 浅色模式
+   *
+   * 2026-11-06 按亮色参考图重定第一、三档（底色取框架面 #F9FAFB）：
+   *   一档 参考 #0F1115（弹窗标题 / 条目标签 / 导航图标的实测最暗像素）
+   *        → 我们 #0f1115（18.1:1，原 #171717 是 16.7:1）
+   *   二档 参考 #ADB2B8 —— 对 #F9FAFB 只有 **2.04:1**，远低于我们的口径，
+   *        **不照搬**，沿用 #737373（4.28:1）
+   *   三档 参考 #81858C（分区标题 / 时间戳 / 辅助说明）→ 3.55:1；
+   *        我们原来的 #a3a3a3 对 #F9FAFB 只有 2.1:1，**比参考图还低**，
+   *        所以这一档跟参考图走（#81858c），对比度反而提高。
+   * 三档的冷色偏移（B 通道高 2~6）与暗色同源，两套主题的中性色是同一支。 */
+  --td-text-color-primary: #0f1115;
   --td-text-color-secondary: #737373;
-  --td-text-color-placeholder: #a3a3a3;
+  --td-text-color-placeholder: #81858c;
   --td-text-color-disabled: #d4d4d4;
   --td-text-color-anti: #ffffff;
   
@@ -291,9 +304,10 @@ select:focus-visible {
    * 头部与消息同色、只留一条 1px 分隔线，视觉上才是一整块。而左侧列表栏保持
    * chrome，才分得清「框架」与「内容」。
    *
-   * 浅色取 #f5f5f5（比内容面暗 4%）：再深就会显得整条左栏发灰、像被禁用；
-   * 再浅（原 #fafafa）则和内容面分不开。 */
-  --tc-surface-chrome: #f5f5f5;
+   * 浅色取 #f9fafb（对内容面 #ffffff 是 ΔL* 1.8）：这是参考图亮色侧栏
+   * 与画布的实际差值。再深就会显得整条左栏发灰、像被禁用；再浅则和
+   * 内容面分不开（旧值 #f5f5f5 是 ΔL* 3.5，比参考图重一倍）。 */
+  --tc-surface-chrome: #f9fafb;
   --tc-surface-content: #ffffff;
   --tc-surface-raised: #ffffff;
   /**
@@ -304,40 +318,39 @@ select:focus-visible {
    * 同色会让用户扫一眼分不出「光标现在在哪半边」。
    *
    * 取值刻意**只差一档**：浅色 #f7f7f5 对内容面 #ffffff 是 **ΔL\* 2.8**
-   * （对 chrome #f5f5f5 只差 0.7，但两者从不相邻，无妨）。差太多会让右侧
+   * （对 chrome #f9fafb 只差 1.0，但两者从不相邻，无妨）。差太多会让右侧
    * 看起来像「另一张纸贴上来」，而那正是本项目一直在避免的「色块拼贴」感；
    * 差这一档再由 1px 分栏线一起交代，就足够分出「在读 / 在写」。
    *
-   * 深色 #1c1d1f 对内容面 #121212 是 **ΔL\* 5.2**（比浅色那档大）——
+   * 深色 #1c1d1f 对内容面 #151517 是 **ΔL\* 3.4**（比浅色那档大）——
    * 暗底下小差异会被环境光吃掉，这是暗色主题的常规补偿。它与 chrome
-   * #1b1b1b 只差 0.5 L\*，同样不相邻。
+   * #1b1b1c 只差 0.5 L\*，同样不相邻。
    *
    * ⚠️ 玻璃态四处必须一起换（见 `html[data-opc-glass='1']`），
    * 漏掉会让工作区在透明模式下变成唯一的不透明块。 */
   --tc-surface-aside: #f7f7f5;
   /**
-   * A92：导航条单独一档（外框的「最外层」）。
+   * A92 曾把导航条单独排成「外框最外层」一档（浅色 #ececec / 深色 #232323），
+   * 理由是「导航条和列表栏同为 chrome 时 ΔL* = 0，会被读成一整块灰」。
    *
-   * 原来导航条和会话列表共用 chrome，两栏色差 **ΔL\* = 0.00**，只靠一条
-   * 1px 分隔线撑着 —— 264px 的列表栏和 56px 的导航条被读成「一整块灰」，
-   * 导航条看起来像列表左边的留白，而不是独立的一层。
+   * 2026-11-06 按亮/暗两张主界面参考图把那一条收回：参考图里**标题栏、
+   * 导航和列表本来就在同一列、同一个底面**（亮 #F9FAFB / 暗 #1B1B1C），
+   * 导航图标是直接画在这个面上，没有第三档。照搬这一层之后：
    *
-   * 现在按「离内容面越远越靠后」排成四档，每档 ΔL* 约 3~4：
+   *   亮色  rail = chrome #f9fafb (98.2) → content #ffffff (100)
+   *   深色  content #151517 (6.8) → chrome = rail #1b1b1c (9.8)
    *
-   *   浅色  rail #ececec (93.4) → chrome #f5f5f5 (96.5) → content #fff (100)
-   *   深色  content #121212 (5.5) → chrome #1b1b1b (9.8) → rail #232323 (13.7)
+   * A92 担心的「零色差」在本项目已经不成立：A103 把两栏拆开并塞进 6px
+   * 的缝（缝里露的是内容面 #ffffff / #151517），加上 8px 圆角，导航条
+   * 和列表栏之间始终有一条**暗/亮一档**的沟 —— 边界由结构和缝交代，
+   * 不再靠「再给导航条多加一档灰」。多那一档的代价是外框比参考图亮
+   * 3.9 L*，整窗看起来「上了两层色板」，正是这次要消掉的东西。
    *
-   * 深色这一档**取更亮**而不是更暗，是因为本项目深色主题的方向是
-   * 「亮 = 靠前」（见下方深色块注释）：内容面最暗、浮起面最亮，导航条
-   * 作为外框最外层再亮一档，四档才单调，不会出现「越外越暗」的倒挂。
-   * 这也和 VS Code 深色一致（活动栏 #333 > 侧栏 #252526 > 编辑区 #1e1e1e）。
-   *
-   * ⚠️ 别再往下深：浅色低于 #e9e9e9（ΔL* > 4.2）整条栏会发灰像禁用态；
-   *    深色高于 #262626 会和 `--tc-surface-raised` 撞档，浮起面就压不住它。
+   * ⚠️ 别再加回第三档：要给导航条分界，改缝宽/圆角，不要改色阶。
    * ⚠️ 玻璃态下四档必须一起换（见 `html[data-opc-glass='1']` 两处），
    *    漏掉会让导航条在透明模式下变成唯一的不透明块。
    */
-  --tc-surface-rail: #ececec;
+  --tc-surface-rail: #f9fafb;
   /* 标题条专用的表面色。A24 起三个窗口按钮也由页面画（见 TitleBar.tsx），
      标题条与按钮同属一个 DOM，于是这里可以**跟着框架面一起变半透明** ——
      不再需要「玻璃态下改成实色」那条例外。
@@ -345,16 +358,18 @@ select:focus-visible {
      A94：取值从 `--tc-surface-chrome` 改成 `--tc-surface-rail`。
      起因是 A92 把导航条拆成 rail 一档之后，标题条左端那 56px 也跟着铺了
      rail，于是窗口顶部出现**一根 56px 宽、从顶端贯到底的竖线**：右边是
-     chrome(#F5F5F5)、左边是 rail(#ECECEC)，ΔL* 3.1，中间连 1px 线都没有
-     （`--tc-divider` 是 transparent），看上去像一块贴上去的灰条。
+     chrome、左边是 rail，中间连 1px 线都没有（`--tc-divider` 是
+     transparent），看上去像一块贴上去的灰条。
 
      现在让整条标题条也走 rail，框架（标题条 + 导航条）合成一个 L 形同色块，
      竖线彻底消失，只剩标题条下沿一条**水平**的框架/内容边界 —— 一条边，
      而且是从左到右贯通的完整一条，不是半截。
 
-     四档因此收敛成三档，仍然是单调的：
-       浅色 rail 93.4 → chrome 96.5 → content 100
-       深色 content 5.5 → chrome 9.8 → rail 13.7
+     2026-11-06：rail 与 chrome 同值之后，标题条 = 导航条 = 列表栏 = 框架面，
+     整个「L + 列表」读成一块（这正是参考图的读法），只剩标题条下沿那条
+     水平边界把框架和内容分开：
+       浅色 chrome/rail 98.2 → content 100
+       深色 content 6.8 → chrome/rail 9.8
      这也顺手补掉了原来「标题条与列表栏同为 chrome、彼此没有分界」的弱点：
      顶部横条现在读得出来是一条横条，而不是一块漂着应用名的空白。
 
@@ -411,10 +426,16 @@ select:focus-visible {
    * 定的。第一版取的是 0.06/0.10/0.16，实测在会话列表里选中行与悬停行
    * 只差 10 级，两行并排几乎看不出哪一行是「当前会话」—— 而这一档差
    * 恰恰是「选中回显」唯一的存在方式（选中行没有边框、没有图标）。
-   * 小于 6 级在普通屏上看不出，大于 20 级整块界面会发脏，15 级是中间值。 */
-  --tc-fill-hover: rgba(0, 0, 0, 0.06);
-  --tc-fill-selected: rgba(0, 0, 0, 0.12);
-  --tc-fill-pressed: rgba(0, 0, 0, 0.18);
+   * 小于 6 级在普通屏上看不出，大于 20 级整块界面会发脏，15 级是中间值。
+   *
+   * 2026-11-06 按亮色参考图重定步长：悬停 4%、选中 8%、按下 14%
+   * （白底上依次约 #F5F6F6 / #ECECEC / #DDDEE0，相邻两档仍差 15 级左右）。
+   * 参考图的选中胶囊实测 #EBEEF2（7.8% 墨）—— 旧的 0.12 比它重一半，
+   * 并排看会显得「压着一块灰板」；新值与原步长口径一致，只是整体下移一档，
+   * 「选中 ≠ 悬停」仍然成立（4% → 8% 正好一倍）。 */
+  --tc-fill-hover: rgba(15, 17, 21, 0.04);
+  --tc-fill-selected: rgba(15, 17, 21, 0.08);
+  --tc-fill-pressed: rgba(15, 17, 21, 0.14);
 
   /* 旧名保留为别名：20+ 处引用不必逐个改，语义与值都跟着上面走。 */
   --tc-hover-chrome: var(--tc-fill-hover);
@@ -583,13 +604,11 @@ select:focus-visible {
   /* A75：与浅色同一套三档（见 :root 的 --tc-fill-* 说明）。
    *
    * 深色下「变亮」才是「更靠前」，所以三档是白色的三档透明度。
-   * selected 取 rgba(229,229,229,0.12) —— 与改动前的 --td-brand-color-light
-   * 完全同值，深色主题的选中观感零变化；变的是 hover 与 selected 现在
-   * 明确分档（0.07 / 0.12），不再像浅色那样挤在一起。 */
+   * 2026-11-06：按参考图重定为 0.09 / 0.20 / 0.30（见下方 --tc-fill-*）。 */
   --td-brand-color-light: var(--tc-fill-selected);
-  --td-brand-color-light-hover: rgba(229, 229, 229, 0.18);
-  --td-brand-color-1: rgba(229, 229, 229, 0.12);
-  --td-brand-color-2: rgba(229, 229, 229, 0.2);
+  --td-brand-color-light-hover: rgba(229, 232, 242, 0.28);
+  --td-brand-color-1: rgba(229, 232, 242, 0.20);
+  --td-brand-color-2: rgba(229, 232, 242, 0.32);
   --td-brand-color-6: #e5e5e5;
   --td-brand-color-7: #fafafa;
   --td-brand-color-8: #c6c6c6;
@@ -600,34 +619,54 @@ select:focus-visible {
   --tc-logo-tile: #ffffff;
   --tc-logo-mark: #000000;
   
-  /* 背景色 - 深色模式 */
+  /* 背景色 - 深色模式
+   * 2026-11-06：TDesign 的「控件填充面」跟着 `--tc-surface-raised` 抬到
+   * #2c2c2e（参考图里输入面板 / 弹窗 / 未选卡片都是这一档），hover 再亮
+   * 一档到参考图的「已选卡片」#353638。不跟着改的话，同一个输入框在
+   * 两套令牌下会是两个颜色（#262626 vs #2c2c2e）。 */
   --td-bg-color-page: #121212;
   --td-bg-color-container: #1c1c1c;
-  --td-bg-color-container-hover: #262626;
-  --td-bg-color-container-active: #303030;
-  --td-bg-color-secondarycontainer: #262626;
-  --td-bg-color-secondarycontainer-hover: #303030;
-  --td-bg-color-component: #262626;
-  --td-bg-color-component-hover: #303030;
-  --td-bg-color-component-disabled: #262626;
+  --td-bg-color-container-hover: #2c2c2e;
+  --td-bg-color-container-active: #353638;
+  --td-bg-color-secondarycontainer: #2c2c2e;
+  --td-bg-color-secondarycontainer-hover: #353638;
+  --td-bg-color-component: #2c2c2e;
+  --td-bg-color-component-hover: #353638;
+  --td-bg-color-component-disabled: #2c2c2e;
   
-  /* 文字色 - 深色模式 */
-  --td-text-color-primary: #fafafa;
-  --td-text-color-secondary: #a3a3a3;
-  --td-text-color-placeholder: #737373;
+  /* 文字色 - 深色模式
+   *
+   * 2026-11-06 按参考图取样重定三档（底色取框架面 #1B1B1C，与参考图同值，
+   * 对比度可直接对照）：
+   *   一档 参考 #F9FAFB（实测最亮像素）→ 我们 #F9FAFB，对框架面 15.4:1
+   *   二档 参考 #ADB2B8（分区标题 / 辅助说明 / 时间戳）→ 我们 #ADB2B8，8.1:1
+   *   三档 参考 #81858C（会话标题这类次级文本）→ 我们 #81858C，4.6:1
+   * 三档都比原来亮一档（#FAFAFA→ 不变、#A3A3A3 → #ADB2B8、#737373 → #81858C），
+   * 对比度也全部高于既有口径（原三档分别约 15.3 / 7.1 / 3.7），没有为了让
+   * 截图「像」而牺牲可读性 —— 参考图的三档本来也比我们的亮。 */
+  --td-text-color-primary: #f9fafb;
+  --td-text-color-secondary: #adb2b8;
+  --td-text-color-placeholder: #81858c;
   --td-text-color-disabled: #525252;
   --td-text-color-anti: #171717;
   
   /* 边框色 - 深色模式
    *
-   * A83：从 #404040（在 #1b1b1b 上约 17% 白）降到 8.5% 白。
+   * A83：最初从 #404040（在 #1b1b1b 上约 17% 白）降到 8.5% 白。
    * 深色下低 alpha 的线比浅色更容易「糊掉」，所以比浅色的 7% 高一档 ——
    * 两个主题的**视觉**强度才是相等的（和字重降一档是同一个道理：
-   * 亮底上的深线、暗底上的亮线，感知强度不对称）。 */
-  --td-border-level-1-color: rgb(255 255 255 / 0.085);
-  --td-border-level-2-color: rgb(255 255 255 / 0.14);
-  --td-component-stroke: rgb(255 255 255 / 0.085);
-  --td-component-border: rgb(255 255 255 / 0.085);
+   * 亮底上的深线、暗底上的亮线，感知强度不对称）。
+   * 8.5% 后来被真机反馈成「边界太弱」（浮层与框架面几乎连成一片），
+   * 于是 2026-11-06 再抬到 14%（见下）。 */
+  /* 2026-11-06：按参考图的描边再亮一档（参考弹窗/输入面板的 1px 线实测
+   * #565658，落在 #2C2C2E 上约 20% 白）。我们只抬到 14% —— 参考图那档线
+   * 在 150% 截图里本来就被抗锯齿掺过色，直接照搬会在 100% 下显得发白；
+   * 14% 是「亮一档但仍是一条灰线」的上限，verify-surface 的 ≤0.21 上限
+   * 也仍然满足。 */
+  --td-border-level-1-color: rgb(255 255 255 / 0.14);
+  --td-border-level-2-color: rgb(255 255 255 / 0.18);
+  --td-component-stroke: rgb(255 255 255 / 0.14);
+  --td-component-border: rgb(255 255 255 / 0.14);
   
   /* 遮罩 - 深色模式 */
   --td-mask-active: rgba(0, 0, 0, 0.8);
@@ -649,21 +688,43 @@ select:focus-visible {
 
   /* 表面层级（深色）。深色下「亮 = 靠前」：内容面最暗，框架面亮一档，
      浮起面再亮一档。浅色下则相反（亮 = 靠后）。这是两种主题不能共用
-     一组数值的根本原因。 */
-  --tc-surface-chrome: #1b1b1b;
-  --tc-surface-content: #121212;
-  --tc-surface-raised: #262626;
+     一组数值的根本原因。
+   *
+   * ── 2026-11-06：按两张参考图（DeepSeek Harness 主界面 + 设置弹窗，暗色）
+   *    取样重定这一组。参考图的层级只有三层，方向和我们的完全一致：
+   *      框架面（标题栏 = 侧栏 = 列表）      #1B1B1C  L* 9.8
+   *      内容面（主画布 / 空白区）            #151517  L* 6.8   ΔL* −3.0
+   *      浮起面（输入面板 / 弹窗 / 卡片）      #2C2C2E  L* 18.1  ΔL* +8.3
+   *    三档的冷色偏移（B 通道比 R/G 高 1~2）也一并取过来 —— 参考图的
+   *    中性色不是纯灰，纯灰在暗底上会显得发黄（与白字并排尤其明显）。
+   *    ⚠️ 只改了深色这一组，浅色八档一个没动（见 :root 的数值）。
+   *
+   *    导航条（rail）从 #232323 并到框架面 #1B1B1C：参考图里导航和列表
+   *    本来就在同一列，同色是对的。我们虽拆成两列，但两列之间隔着 6px
+   *    的缝（缝里露的是内容面，ΔL* 3.0），加上 8px 圆角，边界仍在 ——
+   *    所以不再需要 A92 那第三条额外的亮阶（那一阶让 rail 比参考图的
+   *    整个侧栏还亮 3.9 L*）。 */
+  --tc-surface-chrome: #1b1b1c;
+  --tc-surface-content: #151517;
+  --tc-surface-raised: #2c2c2e;
   /* A95：右侧工作区专用面（理由见 :root 的 --tc-surface-aside）。
-     深色取 #1c1d1f：对内容面 #121212 是 ΔL* 5.2，仍比 chrome #1b1b1b
-     只差 0.5 L*（两者不相邻），「内容 → 工作区」的递进方向不变。 */
+     深色取 #1c1d1f：对内容面 #151517 是 ΔL* 4.1，对 chrome #1b1b1c 只差
+     0.5 L*（两者不相邻），「内容 → 工作区」的递进方向不变。
+     这个面在参考图里没有对应物，保持原值不动。 */
   --tc-surface-aside: #1c1d1f;
-  /* A92：导航条 = 外框最外层，深色下再亮一档（理由与边界见 :root 同名令牌） */
-  --tc-surface-rail: #232323;
+  /* 导航条 = 外框最外层：与框架面同值（说明见上面的层级注释）。 */
+  --tc-surface-rail: #1b1b1c;
   /* A75：与浅色同一套三档（见 :root 的 --tc-fill-* 说明）。
-   * 深色下「变亮 = 更靠前」，所以三档是白色的三档透明度。 */
-  --tc-fill-hover: rgba(255, 255, 255, 0.07);
-  --tc-fill-selected: rgba(229, 229, 229, 0.12);
-  --tc-fill-pressed: rgba(255, 255, 255, 0.18);
+   * 深色下「变亮 = 更靠前」，所以三档是白色的三档透明度。
+   *
+   * 2026-11-06 按参考图重定：弹窗侧栏选中胶囊实测 #43454A（L* 29.3，
+   * 相对 #1B1B1C 的 ΔL* 19.5），是整张图里最强的一块「选中」。折算到
+   * 我们 0.20 的白（带一点冷偏移，B 分量高 13）落在 #434547 ——同一档。
+   * hover / pressed 跟着按比例拉开（0.09 / 0.30），保证「选中 ≠ 悬停」
+   * 仍然成立（A75 的排序断言靠的是这三条的大小关系）。 */
+  --tc-fill-hover: rgba(255, 255, 255, 0.09);
+  --tc-fill-selected: rgba(229, 232, 242, 0.20);
+  --tc-fill-pressed: rgba(255, 255, 255, 0.30);
   --tc-hover-chrome: var(--tc-fill-hover);
 
   /* A115：与浅色同一套四档（见 :root 的 --tc-perm-* 说明）。
@@ -676,15 +737,25 @@ select:focus-visible {
    * 关系不会忽然变强或变弱。 */
   --tc-ink: #ffffff;
   /* 描边比浅色略重：深色下低 alpha 的白比低 alpha 的黑更容易被「吃掉」，
-   * 4.5% 白在 #121212 上几乎不可见，5.5% 才勉强顶得住。 */
-  --tc-edge: rgb(255 255 255 / 0.055);
-  --tc-edge-strong: rgb(255 255 255 / 0.085);
+   * 4.5% 白在 #121212 上几乎不可见，5.5% 才勉强顶得住。
+   * 2026-11-06：底色换成参考图的 #151517 后，这两档各抬一档
+   * （7% / 14%），与 --td-component-stroke 同值 —— 参考图的输入面板描边
+   * 就是这一档（说明见 --td-border-level-1-color 上方）。 */
+  --tc-edge: rgb(255 255 255 / 0.07);
+  --tc-edge-strong: rgb(255 255 255 / 0.14);
   /* 内高光在深色下要很克制：4.5% 白。再亮就是一圈发光的顶边，
    * 深色界面里会显得「塑料感」。 */
   --tc-bevel: inset 0 1px 0 rgb(255 255 255 / 0.045);
   /* 焦点阴影：白晕 + 更重的下投影。深色下投影本来就要加重才浮得起来
-   * （见 --shadow-card-dark 的说明），光环则靠 6% 白。 */
-  --tc-focus-ring: rgb(255 255 255 / 0.06);
+   * （见 --shadow-card-dark 的说明），光环则靠 7.5% 白。
+   * 2026-11-06：浮起面从 #262626 抬到 #2C2C2E，6% 白在它上面已经掉到
+   * 1.8:1，抬到 7.5% 才保住「看得见但不发光」。
+   *
+   * A190 的输入框焦点环（--opc-focus-ring，0.14 白）同理：新底色下
+   * 对浮起面只剩 1.9:1，这里把同一档再提一档到 0.17（2.0:1）。
+   * 只在 index.css 的深色块里覆盖 —— focus-contract.css 本轮不动。 */
+  --tc-focus-ring: rgb(255 255 255 / 0.075);
+  --opc-focus-ring: rgb(255 255 255 / 0.17);
   --tc-focus-shadow:
     0 0 0 3px var(--tc-focus-ring),
     0 6px 18px -6px rgb(0 0 0 / 0.5);
@@ -747,6 +818,51 @@ select:focus-visible {
    *    加这一档的同时补了闸门（verify:uiux-tokens），
    *    以后想再要「大一号」必须先改这里、并说明为什么现有八档不够。 */
   --text-display: 22px;
+
+  /* ── 语义排版四档（按参考图实测换算，2026-11-06）──────────────────
+   *
+   * 参考图是 DeepSeek Harness 设置弹窗（暗色），Windows 150% 缩放下的截图
+   * （原图 1924×1234），CSS = 原图像素 / 1.5。每档字号由「字的墨迹高度」反推
+   * （中文字形墨迹约占 0.9em）：
+   *   弹窗主标题   墨迹 22px → 14.7 CSS → 16px
+   *   分区标题     墨迹 20px → 13.3 CSS → 14px
+   *   条目主标签   墨迹 20px → 13.3 CSS → 14px
+   *   辅助说明     墨迹 17px → 11.3 CSS → 12px
+   * 行高按参考图的行距：条目行 20（44 高的行里上下各 12 的呼吸），
+   * 辅助说明与条目基线相差 24 → 取 18 行高 + 6 间距。
+   * 字重：主标题/分区 600，条目 500，说明 400。字间距 0（参考图为中性无扩排；
+   * 说明文字留 0.01em，沿用既有 .tc-hint 的口径，避免整片小字挤在一起）。
+   *
+   * 颜色一律引用既有 --td-text-color-*，**不新增色值**；参考图用的是中性色阶
+   * （实测：正文 #EFF0F2 / 分区 #E4E5E5 / 说明 #9A9EA4），我们的三档文字令牌
+   * 同属中性色阶，语义一一对应，不需要为它再造一套灰。
+   *
+   * ⚠️ 只有四档。不要按「这个标题想再大 2px」新增第五档 ——
+   *    先证明现有四档不够，再改这里（verify:uiux-tokens 会检查字号来源）。
+   */
+  --tc-type-title-size: var(--text-title-lg);      /* 16px：页面 / 弹窗主标题 */
+  --tc-type-title-line: 24px;
+  --tc-type-title-weight: 600;
+  --tc-type-title-tracking: 0;
+  --tc-type-title-color: var(--td-text-color-primary);
+
+  --tc-type-section-size: var(--text-body-lg);     /* 14px：分区标题 */
+  --tc-type-section-line: 20px;
+  --tc-type-section-weight: 600;
+  --tc-type-section-tracking: 0;
+  --tc-type-section-color: var(--td-text-color-primary);
+
+  --tc-type-item-size: var(--text-body-lg);        /* 14px：条目主标签 */
+  --tc-type-item-line: 20px;
+  --tc-type-item-weight: 500;
+  --tc-type-item-tracking: 0;
+  --tc-type-item-color: var(--td-text-color-primary);
+
+  --tc-type-help-size: var(--text-secondary);      /* 12px：辅助说明 */
+  --tc-type-help-line: 18px;
+  --tc-type-help-weight: 400;
+  --tc-type-help-tracking: 0.01em;
+  --tc-type-help-color: var(--td-text-color-placeholder);
 
   /* ── 行高（与字号绑定，避免每处手写）── */
   --leading-tight: 1.4;
@@ -1014,20 +1130,23 @@ select:focus-visible {
   --ext-warn: #d29922;
 
   /* A159：能力 / 场景标签的深色档。不是把浅色值提亮一点，而是重算过
-     对比度（对 10% / 12% 同色底，背景含 #1b1b1b / #1c1c1c / #262626）。 */
-  --tc-cap-chat: #E5E5E5;        /* 9.17:1 @ 10% 同色底 / #262626 */
+     对比度（对 10% / 12% 同色底，背景含 #1b1b1c / #1c1d1f / #2c2c2e）。
+     2026-11-06：浮起面从 #262626 抬到 #2c2c2e（参考图取值）之后，三档
+     对「10% 同色底」的对比度掉到 4.45 / 4.18 / 4.43，低于 4.5 下限 ——
+     所以这三档各提亮一格（其余七档不动，它们余量够）。 */
+  --tc-cap-chat: #E5E5E5;        /* 9.17:1 @ 10% 同色底 / #2c2c2e */
   --tc-cap-code: #45BCCF;        /* 5.64:1 */
-  --tc-cap-write: #B78AEB;       /* 4.80:1 */
+  --tc-cap-write: #BC90ED;       /* 4.7:1（提亮前 4.45） */
   --tc-cap-tools: #34B989;       /* 5.16:1 */
-  --tc-cap-image: #F0716B;       /* 4.53:1 */
+  --tc-cap-image: #F27E78;       /* 4.6:1（提亮前 4.18） */
   --tc-cap-search: #F2A24F;      /* 6.02:1 */
 
-  --tc-scn-work: #7AA9F5;        /* 5.11:1 @ 12% 同色底 / #262626 */
+  --tc-scn-work: #7AA9F5;        /* 5.11:1 @ 12% 同色底 / #2c2c2e */
   --tc-scn-qa: #59C3F2;          /* 5.97:1 */
   --tc-scn-dev: #34B989;         /* 4.96:1 */
   --tc-scn-code: #A79CF5;        /* 5.08:1 */
   --tc-scn-write: #BE95F0;       /* 5.11:1 */
-  --tc-scn-image: #F47E76;       /* 4.78:1 */
+  --tc-scn-image: #F7877F;       /* 4.8:1（提亮前 4.43） */
 }
 
 
@@ -1452,12 +1571,15 @@ svg.t-icon {
   color: var(--td-text-color-primary);
 }
 
-/* 分区标题：小号字重 600 + 次级色，腾讯典型的节标题样式 */
+/* 分区标题：走语义层级第 2 档（14 / 20 / 600）。
+   原先是 15px / 600 / 0.01em —— 参考图实测分区标题与条目主标签同为 14px，
+   分层靠字重而不是字号；15 比条目大一档会让「分区」比「内容」更抢眼。 */
 .tc-section-title {
-  font-size: var(--text-title);
-  font-weight: 600;
-  color: var(--td-text-color-primary);
-  letter-spacing: 0.01em;
+  font-size: var(--tc-type-section-size);
+  line-height: var(--tc-type-section-line);
+  font-weight: var(--tc-type-section-weight);
+  color: var(--tc-type-section-color);
+  letter-spacing: var(--tc-type-section-tracking);
   /* A83：标题用 balance 而不是 pretty —— 标题最多两三行，平衡断行让
      两行长度接近，不会出现「第二行只有两个字」的孤行。 */
   text-wrap: balance;
@@ -1472,11 +1594,39 @@ h4 {
   text-wrap: balance;
 }
 
-/* 弱化说明文字 */
+/* 语义层级第 1 档（16 / 24 / 600）：页面 / 弹窗 / 栏区主标题。
+   参考图实测弹窗标题墨迹 22px → 14.7 CSS → 取 16px；落点见 PanelHeader
+   的栏级标题与设置页弹窗（后者的文件本轮由另一条线持有，未改）。 */
+.tc-type-title {
+  font-size: var(--tc-type-title-size);
+  line-height: var(--tc-type-title-line);
+  font-weight: var(--tc-type-title-weight);
+  letter-spacing: var(--tc-type-title-tracking);
+  color: var(--tc-type-title-color);
+}
+
+/* 语义层级第 3 档（14 / 20 / 500）：条目主标签。
+   落点见 TitleBar 的应用名（它覆盖颜色为 secondary，只借字号/字重）。
+   原先是「继承外壳的 13px」—— 参考图里应用名与列表条目同属第 3 档。 */
+.tc-type-item {
+  font-size: var(--tc-type-item-size);
+  line-height: var(--tc-type-item-line);
+  font-weight: var(--tc-type-item-weight);
+  letter-spacing: var(--tc-type-item-tracking);
+  color: var(--tc-type-item-color);
+}
+
+/* 弱化说明文字：语义层级第 4 档（12 / 18 / 400）。
+   2026-11-06：颜色仍走 placeholder 令牌，但**令牌本身**按参考图抬了一档
+   （暗色 #737373 → #81858c，亮色 #a3a3a3 → #81858c）——
+   两套主题的说明文字现在是同一个中性灰，对暗色框架面 4.6:1、
+   对亮色框架面 3.55:1，两个数字都比改动前高（原 3.7 / 2.1）。 */
 .tc-hint {
-  font-size: var(--text-secondary);
-  color: var(--td-text-color-placeholder);
-  line-height: var(--leading-normal);
+  font-size: var(--tc-type-help-size);
+  line-height: var(--tc-type-help-line);
+  font-weight: var(--tc-type-help-weight);
+  letter-spacing: var(--tc-type-help-tracking);
+  color: var(--tc-type-help-color);
 }
 
 /* 资料页的信息行容器：只在相邻行之间画分割线，首行不画。
@@ -1726,18 +1876,19 @@ h4 {
  * TDesign 那一族为什么要逐个覆盖：弹窗、下拉、Select 面板都是组件库自己
  * 用 `--td-bg-color-container` 画的，不覆盖的话它们会是整屏唯一不透明的
  * 几块，和 `--tc-surface-raised` 的卡片差一截色。base 色沿用各主题原来的
- * 取值（浅 #fafafa / #f5f5f5，深 #1c1c1c / #262626），只换 alpha。
+ * 取值（浅 #f9fafb / #ffffff，深 #1b1b1c / #2c2c2e），只换 alpha。
  */
 html[data-opc-glass='1'] {
-  --tc-surface-chrome: rgb(245 245 245 / var(--opc-chrome-alpha, 0.72));
+  --tc-surface-chrome: rgb(249 250 251 / var(--opc-chrome-alpha, 0.72));
   --tc-surface-content: rgb(255 255 255 / var(--opc-content-alpha, 0.82));
   --tc-surface-raised: rgb(255 255 255 / var(--opc-raised-alpha, 0.878));
   /* A95：工作区跟着内容面一起透（同 alpha）—— 它本来就是内容面的近邻，
      透明度不同步会让两块在玻璃态下一块透一块不透。 */
   --tc-surface-aside: rgb(247 247 245 / var(--opc-content-alpha, 0.82));
-  /* A92：导航条同档透明，只换基色（#ececec）。用同一个 chrome alpha，
-     否则玻璃态下导航条与列表的「透多少」会不一致，接缝更明显。 */
-  --tc-surface-rail: rgb(236 236 236 / var(--opc-chrome-alpha, 0.72));
+  /* A92：导航条同档透明，只换基色。2026-11-06 起与框架面同值
+     （#f9fafb），用同一个 chrome alpha，否则玻璃态下导航条与列表的
+     「透多少」会不一致，接缝更明显。 */
+  --tc-surface-rail: rgb(249 250 251 / var(--opc-chrome-alpha, 0.72));
   /**
    * A27：浮层底色**不再取内容面**，改用独立的 `--opc-overlay-alpha`
    * （下限 0.9，见 `src/uiPrefs.ts` 的 OVERLAY_ALPHA_FLOOR）。
@@ -1893,13 +2044,16 @@ html[data-opc-glass='1'].dark .tc-bubble-user {
 }
 
 html[data-opc-glass='1'].dark {
-  --tc-surface-chrome: rgb(27 27 27 / var(--opc-chrome-alpha, 0.72));
-  --tc-surface-content: rgb(18 18 18 / var(--opc-content-alpha, 0.84));
-  --tc-surface-raised: rgb(38 38 38 / var(--opc-raised-alpha, 0.878));
+  /* 2026-11-06：基色与不透明模式的三层同值（#1b1b1c / #151517 / #2c2c2e），
+     否则玻璃模式与普通模式的层级会分叉 —— 这是 uiux-tokens 里
+     「玻璃态四处必须一起换」那条注释的现实理由。 */
+  --tc-surface-chrome: rgb(27 27 28 / var(--opc-chrome-alpha, 0.72));
+  --tc-surface-content: rgb(21 21 23 / var(--opc-content-alpha, 0.84));
+  --tc-surface-raised: rgb(44 44 46 / var(--opc-raised-alpha, 0.878));
   /* A95：工作区跟着内容面一起透（同 alpha），理由同浅色玻璃处。 */
   --tc-surface-aside: rgb(28 29 31 / var(--opc-content-alpha, 0.84));
-  /* A92：导航条同档透明，只换基色（#232323） */
-  --tc-surface-rail: rgb(35 35 35 / var(--opc-chrome-alpha, 0.72));
+  /* A92：导航条同档透明，只换基色（与框架面同值，见表面层级注释） */
+  --tc-surface-rail: rgb(27 27 28 / var(--opc-chrome-alpha, 0.72));
   --tc-glass-bg: rgb(38 38 38 / var(--opc-overlay-alpha, 0.9));
   --tc-overlay-surface: rgb(28 28 28 / var(--opc-overlay-alpha, 0.9));
   --tc-overlay-surface-strong: rgb(38 38 38 / var(--opc-overlay-alpha, 0.9));
@@ -1926,13 +2080,13 @@ html[data-opc-glass='1'].dark {
   --tc-halo: rgb(0 0 0 / var(--tc-halo-alpha));
 
   --td-bg-color-container: rgb(28 28 28 / var(--opc-raised-alpha, 0.878));
-  --td-bg-color-container-hover: rgb(38 38 38 / var(--opc-raised-alpha, 0.878));
-  --td-bg-color-container-active: rgb(48 48 48 / var(--opc-raised-alpha, 0.878));
-  --td-bg-color-secondarycontainer: rgb(38 38 38 / var(--opc-raised-alpha, 0.878));
-  --td-bg-color-secondarycontainer-hover: rgb(48 48 48 / var(--opc-raised-alpha, 0.878));
-  --td-bg-color-component: rgb(38 38 38 / var(--opc-raised-alpha, 0.878));
-  --td-bg-color-component-hover: rgb(48 48 48 / var(--opc-raised-alpha, 0.878));
-  --td-bg-color-component-active: rgb(48 48 48 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-container-hover: rgb(44 44 46 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-container-active: rgb(53 54 56 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-secondarycontainer: rgb(44 44 46 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-secondarycontainer-hover: rgb(53 54 56 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-component: rgb(44 44 46 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-component-hover: rgb(53 54 56 / var(--opc-raised-alpha, 0.878));
+  --td-bg-color-component-active: rgb(53 54 56 / var(--opc-raised-alpha, 0.878));
 
   --td-bg-color-specialcomponent: var(--tc-surface-raised);
   --td-bg-color-component-disabled: rgb(255 255 255 / 0.05);

@@ -70,10 +70,11 @@ const SLEEP = ms => new Promise(r => setTimeout(r, ms));
 /** 与 electron/main.ts 的 TITLE_BAR_HEIGHT、index.css 的 --tc-titlebar-height 同源 */
 const TITLE_BAR_HEIGHT = 40;
 /** 标题条与三个窗口按钮所在的那一档。A94 起它等于 `--tc-surface-rail`
- *  （浅色 #ececec / 深色 #232323），不再是 `--tc-surface-chrome`。
+ *  （浅色 #ececec / 深色 #1b1b1c；2026-11-06 起深色 rail 与框架面同值，
+ *  不再是原来的 #232323），不再是 `--tc-surface-chrome`。
  *  ⚠️ 这两个数是**像素采样**的期望值，不是令牌原文 —— 改令牌必须同步改这里，
  *     否则会得到「按钮底色不对」的假红。 */
-const TITLEBAR = { light: [236, 236, 236], dark: [35, 35, 35] };
+const TITLEBAR = { light: [236, 236, 236], dark: [27, 27, 28] };
 
 /** 取打包版 exe 路径：默认用最新的 release-*，避免拿旧包测出绿结果 */
 function exeFromArgs() {
@@ -590,9 +591,9 @@ try {
     const el = document.querySelector('[data-titlebar]');
     return el ? getComputedStyle(el).backgroundColor : null;
   });
-  // A94：标题条走 rail 档，深色下是 #232323（rgb(35,35,35)），
-  // 不再是 chrome 的 #1b1b1b。断言仍守「页面侧跟着系统主题一起变」。
-  ok(barDark === 'rgb(35, 35, 35)', '标题条 CSS 也进入深色 #232323（rail 档）', barDark ?? 'n/a');
+  // A94：标题条走 rail 档，2026-11-06 起深色是 #1b1b1c（rgb(27,27,28)，
+  // 与框架面同值），不再是原来的 #232323。
+  ok(barDark === 'rgb(27, 27, 28)', '标题条 CSS 也进入深色 #1b1b1c（框架面档）', barDark ?? 'n/a');
 
   const shotDark = captureWindow(hwnd, path.join(shotDir, 'dark.png'));
   const capDark = regionStats(shotDark.img, ...captionBox(shotDark.img));

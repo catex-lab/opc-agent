@@ -176,8 +176,10 @@ const summary = await page.evaluate(() => {
 ok(summary != null, '轨迹汇总行存在', summary ? `${summary.color} / ${summary.fontSize}` : 'missing');
 if (summary) {
   ok(
-    summary.color === 'rgb(163, 163, 163)',
-    '汇总行颜色 = placeholder (#a3a3a3)',
+    summary.color === 'rgb(129, 133, 140)',
+    // 2026-11-06：深色 placeholder 按参考图三档从 #a3a3a3 抬到 #81858c
+    // （对框架面 4.6:1，高于原来的 3.7:1），断言值随令牌同步。
+    '汇总行颜色 = placeholder (#81858c)',
     summary.color
   );
   ok(
@@ -201,7 +203,7 @@ const verb = await page.evaluate(() => {
   const el = document.querySelector('.tc-trace-verb');
   return el ? getComputedStyle(el).color : null;
 });
-ok(verb === 'rgb(163, 163, 163)', '步骤动词颜色 = placeholder', verb);
+ok(verb === 'rgb(129, 133, 140)', '步骤动词颜色 = placeholder', verb);
 
 const target = await page.evaluate(() => {
   const el = document.querySelector('.tc-trace-target');
@@ -288,7 +290,7 @@ const detail = await page.evaluate(() => {
 });
 ok(detail != null, '步骤明细存在');
 if (detail) {
-  ok(detail.color === 'rgb(163, 163, 163)', '步骤明细颜色 = placeholder', detail.color);
+  ok(detail.color === 'rgb(129, 133, 140)', '步骤明细颜色 = placeholder', detail.color);
   const bgLum = detail.bg;
   ok(
     bgLum.includes('0.03') || bgLum.includes('rgb(4') || bgLum.includes('rgb(7'),
@@ -319,7 +321,7 @@ if (noteSpan) {
     noteSpan.bg
   );
   ok(
-    noteSpan.color === 'rgb(163, 163, 163)',
+    noteSpan.color === 'rgb(129, 133, 140)',
     '编排叙述行颜色 = placeholder',
     noteSpan.color
   );

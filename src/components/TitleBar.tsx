@@ -184,9 +184,12 @@ export function TitleBar({ compact = false }: { compact?: boolean }) {
           <AppLogo size={16} />
         </span>
       </span>
-      {/* pl-4 让应用名与左栏标题（PanelHeader 的 px-4）落在同一条竖线上 */}
+      {/* pl-4 让应用名与左栏标题（PanelHeader 的 px-4）落在同一条竖线上。
+          应用名走语义层级第 3 档（14 / 20 / 500）；颜色保持次级 —— 参考图的
+          「标题」是弹窗标题，窗口外壳没有应用名可比，只取字号/字重、不取亮度，
+          免得窗口顶栏抢走内容的注意力。 */}
       <span
-        className="truncate pl-4 text-secondary font-medium tracking-tight"
+        className="tc-type-item truncate pl-4"
         style={{ color: 'var(--td-text-color-secondary)' }}
       >
         OPC Agent

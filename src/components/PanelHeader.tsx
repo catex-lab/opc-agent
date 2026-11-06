@@ -226,11 +226,12 @@ export function PanelHeader({
         >
           <div className="flex items-center gap-2">
             <TitleTag
-              // compact（会话头部）固定 16px：会话名就是这个量级。
+              // compact（会话头部）走语义层级第 1 档（16 / 24 / 600，见
+              // index.css 的 .tc-type-title）：会话名就是这个量级。
               // 用 text-page（17px）在 52px 单行里会显得头重脚轻，
               // 而且和下面的消息正文只差 3px，层级拉不开。
-              className={`truncate font-semibold ${
-                compact || !isPage ? 'text-title-lg' : 'text-page'
+              className={`truncate ${
+                compact || !isPage ? 'tc-type-title' : 'text-page font-semibold'
               }`}
               style={{ color: 'var(--td-text-color-primary)' }}
             >

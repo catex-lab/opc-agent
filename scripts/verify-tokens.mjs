@@ -305,8 +305,8 @@ const checks = [
   // 前两条证明导航条用了 rail，后两条证明列表栏没跟着一起漂。
   ['浅色 导航条 = #ececec（比列表栏深一档）', rgb(light.railBg), 'rgb(236, 236, 236)'],
   ['浅色 列表栏仍是框架面 #f5f5f5', rgb(light.chromeToken), '#f5f5f5'],
-  ['深色 导航条 = #232323（比列表栏亮一档）', rgb(dark.railBg), 'rgb(35, 35, 35)'],
-  ['深色 列表栏仍是框架面 #1b1b1b', rgb(dark.chromeToken), '#1b1b1b'],
+  ['深色 导航条与列表栏同为框架面 #1b1b1c（参考图里导航和列表在同一列、同色）', rgb(dark.railBg), 'rgb(27, 27, 28)'],
+  ['深色 列表栏 = #1b1b1c（按参考图取冷偏移一档）', rgb(dark.chromeToken), '#1b1b1c'],
   // A19 已移除导航图标角标，未读角标对比度不再断言
   // 遍历性断言：整棵 DOM 里不许出现任何蓝色系渲染色。
   ['浅色 全 DOM 无蓝色渲染色', light.blueCount === 0 ? '0 处' : `${light.blueCount} 处：${light.blueHits.join(' | ')}`, '0 处'],

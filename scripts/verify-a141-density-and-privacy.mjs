@@ -685,11 +685,11 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
   const bare = (src.match(/suffixIcon=\{<ChevronDown\s*\/>\}/g) || []).length;
   ok(bare === 0, '源码里没有「无 size 的 suffixIcon 箭头」（24px 默认值）', `${bare} 处`);
 
-  /* C1 / C3（需求，已按真机反馈收回 C3 的文字标签、并收窄栏宽）：导航条宽度
-     64px = 按钮 52px + 两侧各 6px 呼吸位；图标下方**不再有文字标签**；每个
-     图标仍必须带可访问名称（aria-label 或 title）与悬停提示，不能变成无语文
-     的图标墙。TitleBar 的 railWidth 同为 64px，两处同宽才对得上中轴。
-     ⚠️ 断言写死 64 而不是 ≥：放宽成「≥64」等于允许它慢慢长回 74。 */
+  /* C1 / C3（需求，已按真机反馈收回 C3 的文字标签、并两次收窄栏宽）：导航条
+     宽度 56px = 按钮 44px + 两侧各 6px 呼吸位；图标下方**不再有文字标签**；
+     每个图标仍必须带可访问名称（aria-label 或 title）与悬停提示，不能变成
+     无语文的图标墙。TitleBar 的 railWidth 同为 56px，两处同宽才对得上中轴。
+     ⚠️ 断言写死 56 而不是 ≥：放宽成「≥56」等于允许它慢慢长回 64/74。 */
   const rail = await page.evaluate(() => {
     const nav = document.querySelector('[data-nav-rail]');
     if (!nav) return null;
@@ -757,8 +757,8 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
        现状 24/1.75 → 2 / 1 / 1 / 1 px（1×, 1.25×, 1.5×, 2×）
        现在 20/2+nss → 1 / 1 / 0 / 0 px
      口径：渲染尺寸 20、viewBox 24、缩放 20/24、vector-effect 必须是
-     non-scaling-stroke、有效描边 ≥1.25 CSS px（2 / 选中 2.5）、
-     且图标盒落在整数 CSS 像素。 */
+     non-scaling-stroke、有效描边恒为 2 CSS px（选中态**不加粗**，与参考图
+     一致）、且图标盒落在整数 CSS 像素。 */
   ok(
     rail && rail.items.every(item => item.icon && item.icon.w === 20 && item.icon.h === 20 && item.icon.viewBox === 24),
     '图标按 20px 盒子渲染（viewBox 仍是 24）',
@@ -775,9 +775,29 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
     rail ? [...new Set(rail.items.map(item => (item.icon ? item.icon.vectorEffect : '无')))].join(' | ') : '无'
   );
   ok(
-    rail && rail.items.every(item => item.icon && item.icon.effective >= 1.25 && [2, 2.5].includes(item.icon.effective)),
-    '有效描边 ≥1.25 CSS px（2 / 选中 2.5）',
+    rail && rail.items.every(item => item.icon && item.icon.effective >= 1.25),
+    '所有图标有效描边 ≥ 1.25 CSS px（发虚下限）',
     rail ? [...new Set(rail.items.map(item => (item.icon ? item.icon.effective : 0)))].map(v => v.toFixed(2)).join(' | ') : '无'
+  );
+  /* 选中态这一轮改成参考图的中性胶囊（中性主文字色 + 不加粗 + 无左侧色条），
+     但**本轮按指令没有重建 dist** —— 落屏的还是上一轮产物（active 描边 2.5、
+     品牌色文字、左侧 3px 色条、按钮高 46）。拿旧产物去断言新口径只会得到
+     「红得没有意义」的结果，所以这两条改成源码契约（与 [6] 段读 ChatInput.tsx
+     的先例同源）：它读的是磁盘上的源码，与 dist 新旧无关。
+     ⚠️ 不许改成 `effective === 2` 的运行时断言 —— 那要求必须先 build；
+     也不许放宽成 `>= 1`（等于允许回到发虚的 1px 以下）。 */
+  const railSrc = await readFile(join(ROOT, 'src/components/NavRail.tsx'), 'utf8');
+  ok(
+    !/strokeWidth=\{\s*2\.5\s*\}/.test(railSrc),
+    '源码里不再有 2.5 描边（选中态不加粗，与参考图实测一致）'
+  );
+  ok(
+    !/text-\[var\(--td-brand-color\)\]/.test(railSrc),
+    '源码里不再用品牌色强调选中项（改用中性主文字色）'
+  );
+  ok(
+    !/scale-y-100|rounded-full bg-\[var\(--td-brand-color\)\]/.test(railSrc),
+    '源码里没有左侧品牌色指示条'
   );
   ok(
     rail && rail.items.every(item => item.icon && item.icon.leftFrac === 0 && item.icon.topFrac === 0),

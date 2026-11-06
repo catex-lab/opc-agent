@@ -19,7 +19,10 @@ interface NavRailProps {
  * 只放最高频的几个入口，不承载任何业务内容。
  *
  * 设计要点：
- *   • 按钮 46×44（窄屏 44×44）+ 20px 图标，节奏一致
+ *   • 按钮 40×44（窄屏 44×44）+ 20px 图标，节奏一致
+ *     尺寸取自参考图（DeepSeek Harness 设置弹窗，150% 截图像素 /1.5）：
+ *     选中胶囊 40 高、图标盒 20、图标到文字 10、胶囊左右内边距各 12。
+ *     我们的栏没有文字，44 宽 = 12 + 20 + 12，与参考图的胶囊内边距同口径。
  *   • 图标 20px：真机第二轮反馈「图标还是太宽」，从 24 再收一档。
  *     盒子缩小必然让 viewBox(24) 的缩放系数变成 0.8333（非整数），所以描边
  *     改用 `vector-effect: non-scaling-stroke`（见 index.css 里
@@ -27,7 +30,12 @@ interface NavRailProps {
  *     实测四种缩放下的边缘过渡都比 24 盒 / 1.75 描边更小，不是「拿模糊换小」。
  *     ⚠️ 不要删那条 CSS：删掉之后描边会折成 1.67px 并落在小数设备像素，
  *        边缘重新发虚（verify:a141 会断言 vector-effect）。
- *   • 激活态用「左侧 3px 品牌色指示条 + 浅色背景」双重标识，位置感明确
+ *   • 选中态 = 中性填充胶囊 + 图标提亮到主文字色，**不用品牌色**。
+ *     参考图的选中行没有左侧色条、没有彩色，图标粗细也不变（实测选中/未选中
+ *     的图标亮度差 0.008、笔画都在 2px），区分完全靠一块中性胶囊。
+ *     我们此前用「左侧 3px 品牌色指示条 + 选中加粗到 2.5」——两处都比参考图重，
+ *     已去掉：加粗让选中项比其它项显大，色条又把中性色阶变成了彩色强调。
+ *     ⚠️ 不要把色条或加粗加回来：选中态的可断言标识是 aria-current + 胶囊底色。
  *   • hover 有微妙的背景色抬升，交互反馈即时
  *   • focus-visible 带品牌色 ring，键盘导航友好
  *   • 角标 18px/11px，确保两位数清晰可读
@@ -128,13 +136,13 @@ export function NavRail({
                  「不该有底色的」按钮，而不是靠维护一份页面名单）。 */
               aria-current={active ? 'page' : undefined}
               className={`
-                relative flex items-center justify-center rounded-xl
+                relative flex items-center justify-center rounded-lg
                 transition-all duration-200 ease-out
                 focus-visible:outline-none focus-visible:ring-2
                 focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
-                ${compact ? 'h-11 w-11' : 'h-[46px] w-[44px]'}
+                ${compact ? 'h-11 w-11' : 'h-[40px] w-[44px]'}
                 ${active
-                  ? 'text-[var(--td-brand-color)]'
+                  ? 'text-[var(--td-text-color-primary)]'
                   : 'text-[var(--td-text-color-secondary)] hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
                 }
               `}
@@ -147,17 +155,11 @@ export function NavRail({
                 active ? { backgroundColor: 'var(--tc-fill-selected)' } : undefined
               }
             >
-              {/* 左侧激活指示条 */}
-              <span
-                className={`pointer-events-none absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full transition-transform duration-200 ${
-                  active ? 'scale-y-100' : 'scale-y-0'
-                }`}
-                style={{ backgroundColor: 'var(--td-brand-color)' }}
-              />
-              {/* 20 盒 + 描边 2 / 选中 2.5：盒子缩小后缩放系数是 0.8333，
-                  靠 index.css 的 non-scaling-stroke 让描边仍按 2 CSS px 落屏。
+              {/* 20 盒 + 描边 2（选中态**不加粗**）：盒子缩小后缩放系数是
+                  0.8333，靠 index.css 的 non-scaling-stroke 让描边仍按 2 CSS px
+                  落屏。参考图里选中项与其它项笔画一致，加粗会让它显大一号。
                   ⚠️ 不要用 opacity 压重量 —— 那会让边缘又被抗锯齿抹开。 */}
-              <Icon size={20} strokeWidth={active ? 2.5 : 2} />
+              <Icon size={20} strokeWidth={2} />
             </button>
           );
         })}
@@ -173,12 +175,12 @@ export function NavRail({
           aria-label="知识库"
           data-nav-knowledge
           className={`
-            relative flex items-center justify-center rounded-xl
+            relative flex items-center justify-center rounded-lg
             text-[var(--td-text-color-secondary)]
             transition-all duration-200 ease-out
             focus-visible:outline-none focus-visible:ring-2
             focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
-            ${compact ? 'h-11 w-11' : 'h-[46px] w-[44px]'}
+            ${compact ? 'h-11 w-11' : 'h-[40px] w-[44px]'}
             ${knowledgeDisabled
               ? 'cursor-not-allowed opacity-40'
               : 'hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
@@ -200,13 +202,13 @@ export function NavRail({
           aria-label="设置"
           aria-current={isActive('settings') ? 'page' : undefined}
           className={`
-            relative flex items-center justify-center rounded-xl
+            relative flex items-center justify-center rounded-lg
             transition-all duration-200
             focus-visible:outline-none focus-visible:ring-2
             focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
-            ${compact ? 'h-11 w-11' : 'h-[46px] w-[44px]'}
+            ${compact ? 'h-11 w-11' : 'h-[40px] w-[44px]'}
             ${isActive('settings')
-              ? 'text-[var(--td-brand-color)]'
+              ? 'text-[var(--td-text-color-primary)]'
               : 'text-[var(--td-text-color-secondary)] hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
             }
           `}
@@ -217,16 +219,10 @@ export function NavRail({
               : undefined
           }
         >
-          <span
-            className={`pointer-events-none absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full transition-transform duration-200 ${
-              isActive('settings') ? 'scale-y-100' : 'scale-y-0'
-            }`}
-            style={{ backgroundColor: 'var(--td-brand-color)' }}
-          />
           {/* 三条横线（Menu）而非齿轮：设置已经从「一个图标位」变成一组
               分区，汉堡菜单更贴近「展开一列菜单」的语义；齿轮则更像
               「调参数」，与这个入口实际承载的内容不一致。 */}
-          <Menu size={20} strokeWidth={isActive('settings') ? 2.5 : 2} />
+          <Menu size={20} strokeWidth={2} />
         </button>
       </div>
     </nav>
