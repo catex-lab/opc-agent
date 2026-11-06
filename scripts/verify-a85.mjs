@@ -340,7 +340,9 @@ const summaryDark = await page.evaluate(() => {
   const el = document.querySelector('.tc-trace-summary');
   return el ? getComputedStyle(el).color : null;
 });
-ok(summaryDark === 'rgb(115, 115, 115)', '深色下汇总行仍走 placeholder', summaryDark);
+// 2026-11-06：深色 placeholder 从 #737373 抬到 #81858C（与参考图三档一致），
+// 深色下这条仍守「汇总行走 placeholder 令牌」，值随令牌同步。
+ok(summaryDark === 'rgb(129, 133, 140)', '深色下汇总行仍走 placeholder', summaryDark);
 
 await browser.close();
 server.closeAllConnections?.();

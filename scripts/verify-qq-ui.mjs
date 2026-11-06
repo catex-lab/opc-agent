@@ -418,15 +418,15 @@ console.log('\n[6b] 拖拽调整左侧二栏宽度');
 }
 await go('/chat/s1');
 {
-  // A103：会话头部从 content(白) 改回 chrome 灰（#f5f5f5）—— 与最左导航条
-  // 同色系，比消息区差一档。原来断言「头部与消息区同色」是有意的「QQ 做法」，
-  // 用户明确要求反转，所以这里反过来钉「差一档」。
+  // A103：会话头部从 content(白) 改回 chrome 灰 —— 与最左导航条同色系，
+  // 比消息区差一档。2026-11-06 按参考图把框架面收到 #f9fafb（导航/标题条/
+  // 列表栏同值），期望随之同步；仍然是「头部 == 框架面 != 消息区」。
   const header = await page.locator('main header').first().evaluate(el => getComputedStyle(el).backgroundColor);
   const column = await page.locator('main [data-tc-column="chat"]').first().evaluate(el => getComputedStyle(el).backgroundColor);
-  ok(header === 'rgb(245, 245, 245)', '会话头部用 chrome 灰（A103：与最左栏同色系）', header);
+  ok(header === 'rgb(249, 250, 251)', '会话头部用框架面灰（A103：与最左栏同色系）', header);
   ok(column === 'rgb(255, 255, 255)', '消息区仍是内容面纯白（与头部差一档）', column);
   const listHeaderBg = await page.locator('header').first().evaluate(el => getComputedStyle(el).backgroundColor);
-  ok(listHeaderBg === 'rgb(245, 245, 245)', '左栏标题栏仍是框架面 #f5f5f5', listHeaderBg);
+  ok(listHeaderBg === 'rgb(249, 250, 251)', '左栏标题栏仍是框架面 #f9fafb', listHeaderBg);
 }
 
 // ============= [7] 自绘标题栏 =============
@@ -455,9 +455,8 @@ console.log('\n[7] 自绘标题栏');
   ok(bar?.token === '40px', '标题条高度令牌 = 40px', bar?.token ?? 'n/a');
   ok(bar?.height === 40, '标题条实际高度 = 40px', bar ? `${bar.height}px` : 'n/a');
   ok(bar?.y === 0, '标题条在窗口第 0 行（系统标题栏已让位）', bar ? `y=${bar.y}` : 'n/a');
-  // A94：标题条从 chrome 改走 rail（与导航条同色，框架成 L 形），
-  // 于是这里期望的值从 #f5f5f5 变成 #ececec。
-  ok(bar?.bg === 'rgb(236, 236, 236)', '标题条底色 = 导航条 rail #ececec', bar?.bg ?? 'n/a');
+  // 2026-11-06：rail 与 chrome 同值（框架面 #f9fafb），期望随令牌同步。
+  ok(bar?.bg === 'rgb(249, 250, 251)', '标题条底色 = 框架面 #f9fafb（与导航条同档）', bar?.bg ?? 'n/a');
   ok(/drag/.test(bar?.region ?? ''), '整条是窗口拖动区', bar?.region ?? 'n/a');
   ok(
     bar != null && Math.abs(bar.width - bar.innerWidth) <= 1,

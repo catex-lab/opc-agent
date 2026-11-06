@@ -104,12 +104,12 @@ const read = () => page.evaluate(() => {
 // ── 宽屏 ──
 let r = await read();
 // A94：标题条改成 rail 之后，「标题栏和谁同色」的答案又变了一次 ——
-// 现在是**标题栏与导航条**同色（框架成 L 形），列表栏退回 chrome 一档。
-// 两条一起守，防止有人只改一半：
-// ① 标题栏必须与导航条同色（不同 = 窗口顶部又出现 A92 那根竖线）；
-// ② 列表栏必须与它们不同（相同 = 两栏又并回一档，A92 修的层次没了）。
+// 现在是**标题栏与导航条**同色（框架成 L 形）。
+// 2026-11-06：参考图里导航条与列表栏本来就在同一列、同一个底面，rail 与
+// chrome 同值，所以「列表栏与它们不同」这条旧期望失效 —— 改为守「同值」：
+// 框架三处（标题条 / 导航条 / 列表栏）必须落在同一个面上，不许再漂出第三档。
 record('宽屏 标题栏与导航条同色（rail）', r.titlebarBg, r.navBg);
-record('宽屏 列表栏仍是 chrome（与框架分档）', r.columnBg !== r.titlebarBg ? 'chrome' : '同色', 'chrome');
+record('宽屏 列表栏与标题栏同为框架面（不是另一档）', r.columnBg !== r.titlebarBg ? '另一档' : '同框架面', '同框架面');
 // A103（用户要求）把会话头部从 content 改回了 chrome：消息列表栏与会话头部
 // 同为 #f5f5f5，两栏标题落在同一条色带上；消息区仍是白色，靠圆角（A103）和
 // 那道 6px 的缝分出层次。所以这里不再比 main，改守「头部 == 列表栏、且 != 消息区」。
@@ -155,7 +155,8 @@ await page.emulateMedia({ colorScheme: 'dark' });
 await page.waitForTimeout(600);
 r = await read();
 record('深色 标题栏与导航条同色（rail）', r.titlebarBg, r.navBg);
-record('深色 列表栏仍是 chrome（与框架分档）', r.columnBg !== r.titlebarBg ? 'chrome' : '同色', 'chrome');
+// 2026-11-06：参考图里导航/列表同一底面，这里同步改为守「同框架面」。
+record('深色 列表栏与标题栏同为框架面（不是另一档）', r.columnBg !== r.titlebarBg ? '另一档' : '同框架面', '同框架面');
 record('深色 框架面与内容面有色差（≥ 8）', diffLum(r.headerBgs[0], r.mainBg) >= 8 ? '≥8' : String(diffLum(r.headerBgs[0], r.mainBg)), '≥8');
 
 // ── 设置页有外观分区 ──
