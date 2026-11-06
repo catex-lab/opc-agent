@@ -697,10 +697,30 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
       width: nav.getBoundingClientRect().width,
       items: buttons.map(b => {
         const span = [...b.querySelectorAll('span')].find(node => node.textContent.trim());
+        const svg = b.querySelector('svg');
+        let icon = null;
+        if (svg) {
+          const box = svg.getBoundingClientRect();
+          const vb = (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+          const ctm = svg.getScreenCTM();
+          // computed strokeWidth 是用户单位，乘 CTM 才是实际落屏宽度
+          const stroke = parseFloat(getComputedStyle(svg.querySelector('path')).strokeWidth);
+          icon = {
+            w: box.width,
+            h: box.height,
+            viewBox: vb[2],
+            scale: ctm ? ctm.a : 0,
+            stroke,
+            effective: ctm ? stroke * ctm.a : 0,
+            leftFrac: box.x - Math.floor(box.x),
+            topFrac: box.y - Math.floor(box.y),
+          };
+        }
         return {
           name: b.getAttribute('aria-label') || b.getAttribute('title') || '',
-          hasIcon: !!b.querySelector('svg'),
+          hasIcon: !!svg,
           text: span ? span.textContent.trim() : '',
+          icon,
         };
       }),
       knowledge: !!nav.querySelector('[data-nav-knowledge]'),
@@ -724,6 +744,30 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
     rail && rail.items.every(item => item.text === ''),
     '图标下不再有文字标签',
     rail ? rail.items.map(item => item.text || '(空)').join(' / ') : '无'
+  );
+  /* D1：图标边缘清晰度。lucide 的 viewBox 是 24，渲染到 20px 时缩放系数
+     0.8333，2px 描边折算 1.667px、路径坐标落小数像素，抗锯齿把边缘摊成
+     2–3px（亮/深都发虚）。口径：渲染尺寸 = viewBox（缩放 1）、有效描边
+     ≥1.25 CSS px（实测 2 / 选中 2.5），且图标盒落在整数 CSS 像素。 */
+  ok(
+    rail && rail.items.every(item => item.icon && item.icon.w === item.icon.viewBox && item.icon.h === item.icon.viewBox),
+    '图标按 viewBox 自然尺寸渲染（24×24，不是 20px 非整数缩放）',
+    rail ? rail.items.map(item => (item.icon ? `${item.icon.w}×${item.icon.h}/vb${item.icon.viewBox}` : '无')).join(' / ') : '无'
+  );
+  ok(
+    rail && rail.items.every(item => item.icon && Math.abs(item.icon.scale - 1) < 0.001),
+    '图标缩放系数为 1（坐标不与小数缩放相乘，边缘不因抗锯齿发虚）',
+    rail ? [...new Set(rail.items.map(item => (item.icon ? item.icon.scale : 0)))].map(v => v.toFixed(4)).join(' | ') : '无'
+  );
+  ok(
+    rail && rail.items.every(item => item.icon && item.icon.effective >= 1.25 && [2, 2.5].includes(item.icon.effective)),
+    '有效描边 ≥1.25 CSS px（2 / 选中 2.5）',
+    rail ? [...new Set(rail.items.map(item => (item.icon ? item.icon.effective : 0)))].map(v => v.toFixed(2)).join(' | ') : '无'
+  );
+  ok(
+    rail && rail.items.every(item => item.icon && item.icon.leftFrac === 0 && item.icon.topFrac === 0),
+    '图标盒落在整数 CSS 像素（不会因为半像素定位被抹开）',
+    rail ? [...new Set(rail.items.map(item => `${item.icon?.leftFrac}/${item.icon?.topFrac}`))].join(' | ') : '无'
   );
   // 截图留证：浅 / 深两套下都只剩图标；只切 html 的 dark 类，不动产品状态。
   await page.locator('[data-nav-rail]').screenshot({ path: join(OUT, 'nav-rail-icon-only-light.png') });

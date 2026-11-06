@@ -19,7 +19,12 @@ interface NavRailProps {
  * 只放最高频的几个入口，不承载任何业务内容。
  *
  * 设计要点：
- *   • 统一 44×44 按钮 + 20px 图标，节奏一致
+ *   • 按钮 54×62（窄屏 44×44）+ 24px 图标，节奏一致
+ *   • 图标一律 24px：lucide 的 viewBox 是 24，渲染 24 时缩放系数为 1，
+ *     2px 描边就是整 2 CSS px（2× 屏 4 设备 px）。此前用 20px 会得到
+ *     0.8333 倍的非整数缩放，描边折算成 1.667px（2× 屏 3.333 设备 px），
+ *     路径坐标也落在小数像素上，抗锯齿把边缘摊成 2–3 px，两种主题下都发虚。
+ *     ⚠️ 不要为了「视觉大小」把它改回 20/22 这类非 24 整数倍的尺寸。
  *   • 激活态用「左侧 3px 品牌色指示条 + 浅色背景」双重标识，位置感明确
  *   • hover 有微妙的背景色抬升，交互反馈即时
  *   • focus-visible 带品牌色 ring，键盘导航友好
@@ -146,7 +151,7 @@ export function NavRail({
                 }`}
                 style={{ backgroundColor: 'var(--td-brand-color)' }}
               />
-              <Icon size={20} strokeWidth={active ? 2.5 : 2} />
+              <Icon size={24} strokeWidth={active ? 2.5 : 2} />
             </button>
           );
         })}
@@ -174,7 +179,7 @@ export function NavRail({
             }
           `}
         >
-          <Database size={20} strokeWidth={2} />
+          <Database size={24} strokeWidth={2} />
         </button>
       </div>
 
@@ -215,7 +220,7 @@ export function NavRail({
           {/* 三条横线（Menu）而非齿轮：设置已经从「一个图标位」变成一组
               分区，汉堡菜单更贴近「展开一列菜单」的语义；齿轮则更像
               「调参数」，与这个入口实际承载的内容不一致。 */}
-          <Menu size={20} strokeWidth={isActive('settings') ? 2.5 : 2} />
+          <Menu size={24} strokeWidth={isActive('settings') ? 2.5 : 2} />
         </button>
       </div>
     </nav>
