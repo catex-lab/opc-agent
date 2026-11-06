@@ -272,8 +272,10 @@ console.log('\n[1] 状态圆点：不描边');
       });
     }
   }
-  // 深色档核对：深色在线点必须仍是提亮值 #35B98A，不能在改亮色时被一起
-  // 带偏；同时留一张深色截图。切换只改 html 的 dark 类，不写产品状态。
+  // 深色档核对：2026-11-06 用户反馈「还是太暗」，深色在线点从 #35B98A
+  // 提到 #4FD3A2（对 #1b1b1c 9.16:1，色相不变）。这是**换值**不是放宽 ——
+  // 3:1 的下限没有动，只是从 6.93:1 的余额里再取一档更亮的绿。
+  // 同时留一张深色截图。切换只改 html 的 dark 类，不写产品状态。
   await page.evaluate(() => document.documentElement.classList.add('dark'));
   await page.waitForTimeout(200);
   const darkInfo = await page.evaluate(() => {
@@ -289,8 +291,8 @@ console.log('\n[1] 状态圆点：不描边');
     return { token: rgb, dots: dot };
   });
   ok(
-    darkInfo.token === 'rgb(53, 185, 138)' && darkInfo.dots.every(bg => bg === darkInfo.token),
-    '深色在线圆点保持提亮值 #35B98A（改亮色没带偏深色）',
+    darkInfo.token === 'rgb(79, 211, 162)' && darkInfo.dots.every(bg => bg === darkInfo.token),
+    '深色在线圆点 = #4FD3A2（提亮一档，3:1 下限未放宽）',
     `${darkInfo.token} / ${[...new Set(darkInfo.dots)].join(' | ')}`
   );
   await shot(page, 'a25-status-dots-dark');

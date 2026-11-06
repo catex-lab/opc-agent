@@ -310,6 +310,16 @@ select:focus-visible {
   --tc-surface-chrome: #f9fafb;
   --tc-surface-content: #ffffff;
   --tc-surface-raised: #ffffff;
+  /* 2026-11-06：浮起面的**上一档**，只给「弹窗里的卡片 / 分区块」。
+   *
+   * 设置弹窗的面板已经占住 raised（白），卡片若也用白就和面板糊成一片，
+   * 参考图里账号卡 / 充值卡是靠一圈 1px 描边 + 略暗的填充分出来的
+   * （实测 #F5F6F7，对面板 #FFFFFF 是 ΔL* 3.2）。
+   * 浅色下「亮 = 靠后」，所以「更靠前」反而是更暗 —— raised-2 取 #F5F6F7。
+   * raised-3 是它的 hover / 下拉选中档（参考图展开下拉 #F2F3F4，
+   * 对应我们 #EEEEEE 的既有取值）。 */
+  --tc-surface-raised-2: #f5f6f7;
+  --tc-surface-raised-3: #eeeeee;
   /**
    * A95：右侧工作区（文件 / 浏览器 / 终端）的专用面。
    *
@@ -707,6 +717,16 @@ select:focus-visible {
   --tc-surface-chrome: #1b1b1c;
   --tc-surface-content: #151517;
   --tc-surface-raised: #2c2c2e;
+  /* 2026-11-06：浮起面的上一档（深色）。设置弹窗的面板 = raised #2C2C2E，
+     面板里的卡片 / 下拉选中再亮一档，保住「遮罩后背景 < 面板 < 卡片」的
+     单调递增（参考图账号卡实测与面板同填色，靠 1px #565658 描边分层；
+     我们的卡片没有统一描边，所以用填充差补这一档）。
+       raised-2 #353638  L* 22.6  对面板 ΔL* +4.5（卡片 / 分区块）
+       raised-3 #3D3D3F  L* 25.5  对卡片 ΔL* +2.9（卡片 hover / 下拉选中）
+     只在这一档之上再抬；不改 raised 本身 —— 主界面的输入面板 / 悬浮层
+     仍取参考图的 #2C2C2E，避免为了弹窗把整界面再提亮一层。 */
+  --tc-surface-raised-2: #353638;
+  --tc-surface-raised-3: #3d3d3f;
   /* A95：右侧工作区专用面（理由见 :root 的 --tc-surface-aside）。
      深色取 #1c1d1f：对内容面 #151517 是 ΔL* 4.1，对 chrome #1b1b1c 只差
      0.5 L*（两者不相邻），「内容 → 工作区」的递进方向不变。
@@ -1043,10 +1063,20 @@ select:focus-visible {
   /* 在线圆点专用浅绿。
      --tc-status-ok 是 11px 状态词的深绿（按文字 4.5:1 选的），拿它画 8px
      实心圆点在亮色下偏墨、和页面整体不协调。圆点是图形而不是文字，恢复
-     原来的浅绿 #00A870（对白底 3.09:1，满足非文本 3:1）；状态区分仍靠形状，
+     原来的浅绿 #00A870（对白底 3.07:1，满足非文本 3:1）；状态区分仍靠形状，
      颜色只做辅助，所以这里不追求文字级对比度。
-     状态词（「在线」两个字）继续用 --tc-status-ok，不受影响。 */
-  --tc-status-dot-ok: #00A870;   /* 3.09:1 @ #ffffff · 2.84:1 @ #f5f5f5 */
+     状态词（「在线」两个字）继续用 --tc-status-ok，不受影响。
+
+     2026-11-06 复核「再浅一点」：浅色这一档**已经贴到 3:1 下限，不能再浅**。
+        #00A870  L* 60.9  对 #f9fafb 2.94:1 · 对 #ffffff 3.07:1
+        #00AA73  L* 61.6  对 #f9fafb 2.87:1 · 对 #ffffff 3.00:1（排除）
+        #12B981  L* 66.8  对 #f9fafb 2.43:1 · 对 #ffffff 2.54:1（排除）
+        #22C08C  L* 69.4  对 #f9fafb 2.24:1 · 对 #ffffff 2.34:1（排除）
+     亮度与对比度是反比：L* 每抬一点，对浅底的对比就掉一点。三个更浅的
+     候选全部跌破 3:1，按「图形元素下限」的规则排除，所以亮色保持原值；
+     需要更浅只能同时换底色或放宽口径（那属于改口径，不是改色）。
+     深色档有 6.9:1 的余量，另见 `:root.dark` 里 2026-11-06 的提亮。 */
+  --tc-status-dot-ok: #00A870;   /* 3.07:1 @ #ffffff · 2.94:1 @ #f9fafb */
 
   /* ── 说明文字（E2 / A2 / B3）──
    * 分区眉标、知识库分区说明、隐私卡正文这类「解释性小字」统一取这一档。
@@ -1117,9 +1147,16 @@ select:focus-visible {
   --tc-status-danger: #F0716B;
   --tc-status-muted: #a3a3a3;
 
-  /* 深色在线圆点：沿用 B1 的提亮值，观感不变；与状态词同值是有意的 ——
-     深色底上这个绿已经足够亮，拆开只会制造两套难维护的近色。 */
-  --tc-status-dot-ok: #35B98A;
+  /* 深色在线圆点：2026-11-06 再提亮一档（用户反馈「还是太暗」）。
+   *
+   *   #35B98A  L* 67.5  对 #1b1b1c 6.93:1（B1 的旧值，偏闷）
+   *   #4FD3A2  L* 76.6  对 #1b1b1c 9.16:1 ← 采用（色相 158 不变）
+   *
+   * 深色下 3:1 只是图形元素的下限，9:1 仍留有余量；同一颗点从「灰绿」
+   * 变成「亮薄荷绿」，和旁边 #F9FAFB 的主文字不再抢不过。
+   * 仍与状态词拆开：`--tc-status-ok` 是 11px 文字（按 4.5:1 选深绿），
+   * 圆点是 6–8px 图形（按 3:1 选更亮的绿），两种下限本来就不该共值。 */
+  --tc-status-dot-ok: #4FD3A2;
 
   /* E2：深色档说明文字。旧值 placeholder(#8B8B8B) 对 #1c1c1c 只有 3.97:1；
    * 这档对 #121212 是 7.97:1、对 #262626 是 6.44:1。 */
@@ -1729,12 +1766,18 @@ h4 {
 }
 
 :root.dark {
-  /* 深色：黑玻璃。底色比内容面（#121212）亮一档到 #262626 系 ——
-     「亮 = 靠前」在深色下成立，浮层必须比内容亮才浮得起来；
-     但 alpha 只有 0.78，透出的仍是背后的消息与图片。 */
-  --tc-glass-bg: rgba(38, 38, 38, 0.78);
+  /* 深色：黑玻璃。2026-11-06 按参考图重定 —— 弹窗面板必须落在
+     `--tc-surface-raised` #2C2C2E，而不是比它更暗的 #212122。
+     `rgba(50,50,52,.85)` 叠在「#151517 + 52% 黑遮罩」（约 #0A0A0B）上：
+       0.85×50 + 0.15×10 = 44 → #2C2C2E，与不透明面板同值。
+     对没有自带实底内层的弹窗（确认框、新建群聊等）也是同一个落点；
+     alpha 从 0.78 收到 0.85 是为了减小「面板压在不同底色上时」的漂移。
+     ⚠️ 不要再往回落：0.78 + #262626 的合成值是 #212122（L* 12.6），
+     只有参考图面板（L* 18.1）的七成，用户会读成「弹窗没浮起来」。 */
+  --tc-glass-bg: rgba(50, 50, 52, 0.85);
   --tc-overlay-surface: #1c1c1c;
-  --tc-overlay-surface-strong: #262626;
+  /* 非玻璃态兜底：必须和玻璃合成值同落点，否则关掉窗口玻璃后弹层又暗一档 */
+  --tc-overlay-surface-strong: #2c2c2e;
   --tc-glass-border: rgba(255, 255, 255, 0.12);
   /* 深色下 blur 收窄一档：同样的 18px 在暗背景上糊得更明显 */
   --tc-glass-blur: 14px;
@@ -1758,6 +1801,13 @@ h4 {
   /* 深色：12% 黑。再深就不是「极淡」了 —— 会像一块独立应用的模态遮罩，
      而这层只是把设置弹窗背景往后退半档，别压过弹层本身。 */
   --tc-scrim-color: rgb(0 0 0 / 12%);
+
+  /* 2026-11-06：弹窗遮罩按参考图反推校准（只改深色）。
+     参考图遮罩后的主画布实测 #0A0A0B；我们的内容面 #151517 叠 52% 黑
+     正好落到 10（≈#0A0A0B）。原来 34% 只压到 #0E0E0F，弹窗与背景的
+     差值被人为收窄了一档。浅色按同一张参考图取 26%（见 :root 的
+     --tc-mask-soft）—— 亮色遮罩后实测 #BDBDBD，与参考图一致。 */
+  --tc-mask-soft: rgba(0, 0, 0, 0.52);
 }
 
 /* 用法：把原位上的 `backgroundColor: var(--*-container)` + `border` 内联样式
@@ -1793,6 +1843,45 @@ h4 {
     inset 0 -1px 0 var(--tc-dialog-edge-bottom);
   -webkit-backdrop-filter: blur(var(--tc-glass-blur)) saturate(var(--tc-glass-saturate));
   backdrop-filter: blur(var(--tc-glass-blur)) saturate(var(--tc-glass-saturate));
+}
+
+/* ── 设置弹窗的三层：遮罩背景 < 面板 < 卡片 ───────────────────────────
+ *
+ * 实测发现面板比参考图暗了一档，原因**不是**玻璃底色，而是 SettingsPage
+ * 的根节点自己内联了一层 `--tc-surface-content`（#151517）盖在玻璃上：
+ *
+ *   遮罩后画布 #0E0E0F (L* 3.0) → 面板 #151517 (L* 6.8, Δ+3.8)
+ *   → 参考图同一对是 #0A0A0B (L* 0.8) → #2C2C2E (L* 18.1, Δ+17.3)
+ *
+ * 也就是说弹窗用了「主画布」的令牌，而不是「浮起面」——属于**映射错**，
+ * 不是单纯的差值不够。因此这里把面板（根节点的内联底 + 标题栏）改回
+ * raised 档；卡片再借 `--tc-surface-raised-2/3` 拉开一档。
+ *
+ * ⚠️ 根节点与 PanelHeader 的底色都是**内联样式**（组件里写死的
+ *    `backgroundColor`），只能靠 `!important` 覆盖。本轮约定不动
+ *    `SettingsPage.tsx`（另一条线正在改主题卡图标），所以覆盖放在这里。
+ *    以后若 SettingsPage 改成走 `surface="raised"`，这两条可以删掉。
+ * ⚠️ 令牌重定义只挂在 `[data-settings-panel]` 作用域内：设置之外的
+ *    `--td-bg-color-component` 仍是 #2c2c2e（主界面输入面板、悬浮层
+ *    按参考图保持 raised 档），不会被这一档连带提亮。 */
+[data-settings-panel] > div,
+[data-settings-panel] header {
+  background-color: var(--tc-surface-raised) !important;
+}
+
+[data-settings-panel] {
+  --td-bg-color-component: var(--tc-surface-raised-2);
+  --td-bg-color-component-hover: var(--tc-surface-raised-3);
+  --td-bg-color-container-hover: var(--tc-surface-raised-2);
+  --td-bg-color-container-active: var(--tc-surface-raised-3);
+}
+
+/* 下拉浮层：settings-select.css 写的是 `--td-bg-color-container`（#1c1c1c），
+   在升档后的面板上反而比面板更暗，违反「浮层不低于面板」。这里只抬到
+   raised 档（与面板同值、不低于），选项的 hover / 选中分别走 raised-2/3，
+   仍然保持「hover < 选中」。 */
+[data-settings-panel] .opc-select__panel {
+  background-color: var(--tc-surface-raised);
 }
 
 /* A115：TDesign Dialog（动态工作流弹窗）也吃同一套立体透明阴影。
@@ -2411,9 +2500,14 @@ html[data-opc-glass='1'] .tc-bubble-user {
 
 /* 弹窗蒙层：比 ConfirmDialog 的 0.45 再淡一档。
    详情弹窗是「看一眼就走」的东西，蒙层压得太死就违背了玻璃的初衷 ——
-   背后的图片消息应该还能看出是彩色的。 */
+   背后的图片消息应该还能看出是彩色的。
+
+   2026-11-06：按亮色参考图反推校准 —— 参考图遮罩后的侧栏实测
+   #F9FAFB(249) → #BDBDBD(189)，叠在白色画布上约 26% 黑；原来的 34%
+   会压到 #A8A8A8，背景比参考图暗一档、弹窗与背景的差被放大。
+   0.26×255 ≈ 189，落点与参考图一致；深色那一档单独取 52%（见 :root.dark）。 */
 :root {
-  --tc-mask-soft: rgba(0, 0, 0, 0.34);
+  --tc-mask-soft: rgba(0, 0, 0, 0.26);
 }
 
 /* ── 按钮 ──
