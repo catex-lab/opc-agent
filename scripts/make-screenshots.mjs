@@ -81,7 +81,20 @@ const MODELS = [
   { modelId: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', description: '快' },
 ];
 
-const T0 = Date.now();
+/**
+ * 固定的「现在」。
+ *
+ * 会话列表的时间标签由 ConversationList.formatTime 现算（今天 `22:45`、
+ * 昨天 `昨天`、更早 `11月6日`），夹具只固定 created_at 是不够的 —— 换个
+ * 钟点或换个日期跑，标签就变了，截图会反复把仓库弄脏。
+ *
+ * 所以两件事一起做：夹具的 T0 用这个常量，页面里的无参 `new Date()` /
+ * `Date.now()` 也钉到同一时刻（见 newPage 里的 init script）。
+ * 取一个「今天」的钟点，列表显示仍是 `HH:mm`，与旧截图观感一致。
+ */
+const FIXED_NOW = new Date(2026, 10, 6, 22, 50, 0).getTime();
+
+const T0 = FIXED_NOW;
 
 const SESSIONS = [
   {
@@ -214,6 +227,21 @@ async function newPage(initScript, { theme = 'light' } = {}) {
     colorScheme: theme,
   });
   if (initScript) await ctx.addInitScript(initScript);
+  // 钉住「现在」：只改无参 `new Date()` 与 `Date.now()`，setTimeout /
+  // setInterval 仍走真实时钟，页面该跑的过渡与等待不受影响。
+  await ctx.addInitScript(fixedNow => {
+    const RealDate = Date;
+    class FrozenDate extends RealDate {
+      constructor(...args) {
+        if (args.length === 0) super(fixedNow);
+        else super(...args);
+      }
+      static now() {
+        return fixedNow;
+      }
+    }
+    window.Date = FrozenDate;
+  }, FIXED_NOW);
   const page = await ctx.newPage();
   page.on('pageerror', e => errors.push(String(e)));
   page.on('console', m => {
