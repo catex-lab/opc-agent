@@ -102,29 +102,31 @@ const SESSIONS = [
     kind: 'direct', agent_ids: null, orchestration: null, created_at: new Date(T0 - 36e5).toISOString(),
   },
   {
-    id: 's-group', title: '重构用户模块', agent_id: 'workbuddy', model: 'claude-sonnet-4-5',
+    id: 's-group', title: '整理示例商品模块', agent_id: 'workbuddy', model: 'claude-sonnet-4-5',
     kind: 'group', agent_ids: ['codex', 'claude'], orchestration: 'dispatch',
     created_at: new Date(T0 - 72e5).toISOString(),
   },
 ];
 
-const ASK = '这个项目的测试跑得有点慢，帮我看看瓶颈在哪';
+// 截图里的对话全部是编的：项目名、文件名、模块名、数量与耗时都不对应任何
+// 真实工程。改这里时保持这一点 —— 这些字会随图片直接公开。
+const ASK = '这个演示项目的构建有点慢，帮我看看卡在哪一步';
 
 const ANSWER = [
-  '我看了 `scripts/` 下的 126 个验证脚本，瓶颈不在断言本身，而在**重复启动服务端**。',
+  '我看了 `demo-shop` 里的 24 个构建任务，瓶颈不在类型检查，而在**重复拷贝静态资源**。',
   '',
   '### 结论',
   '',
-  '每个 `verify-*.mjs` 都自己 `spawn` 一次 `server/index.ts`，冷启动要 1.5–2s。',
-  '主链串行跑 76 段，光是起停就占了三分之二的时间。',
+  '每个页面任务都单独拷贝一次 `public/`，冷启动要 1.2–1.8s。',
+  '主流程串行跑 32 步，光是重复拷贝就占了将近一半的时间。',
   '',
   '### 建议',
   '',
-  '- 把服务端提到链的外层，各段只传 `base` 地址进来',
-  '- 每段之间的 `taskkill` 改成复用同一进程',
-  '- 独立 `OPC_DATA_DIR` 保留，段与段之间清库即可，不必重启',
+  '- 把资源拷贝提到流程外层，各步骤只传输出目录进来',
+  '- 每步之间的重复清理改成复用同一份缓存',
+  '- 独立 `DEMO_CACHE_DIR` 保留，步骤之间清缓存即可，不必重跑',
   '',
-  '按这个改，主链大概能从 12 分钟压到 4 分钟以内。',
+  '按这个改，主流程大概能从 9 分钟压到 3 分钟以内。',
 ].join('\n');
 
 const MESSAGES = [
@@ -135,17 +137,17 @@ const MESSAGES = [
   {
     id: 'm2', session_id: 's-direct', role: 'assistant', content: ANSWER,
     model: 'claude-sonnet-4-5', author_agent_id: 'workbuddy',
-    created_at: new Date(T0 - 2e5).toISOString(), duration_ms: 47_000,
+    created_at: new Date(T0 - 2e5).toISOString(), duration_ms: 32_000,
     blocks: [
-      { id: 'b1', type: 'thinking', text: '先看主链是怎么组织的，再量一下每段的耗时分布。', state: 'done', format: 'raw' },
+      { id: 'b1', type: 'thinking', text: '先看主流程是怎么组织的，再量一下每一步的耗时分布。', state: 'done', format: 'raw' },
       {
         id: 'b2', type: 'tool', toolId: 't1', name: 'Read', status: 'completed',
-        input: { path: 'package.json' }, output: '126 条 scripts',
+        input: { path: 'demo-shop/package.json' }, output: '24 个构建任务',
         startedAt: T0 - 1.8e5, endedAt: T0 - 1.7e5,
       },
       {
         id: 'b3', type: 'tool', toolId: 't2', name: 'Grep', status: 'completed',
-        input: { pattern: 'spawn\\(' }, output: '76 处命中',
+        input: { pattern: 'copy\\(' }, output: '32 处命中',
         startedAt: T0 - 1.6e5, endedAt: T0 - 1.5e5,
       },
       { id: 'b4', type: 'text', text: ANSWER, state: 'done' },
@@ -153,23 +155,23 @@ const MESSAGES = [
   },
   {
     id: 'g1', session_id: 's-group', role: 'user',
-    content: '重构用户模块：Codex 负责后端接口拆分，Claude 负责补测试',
+    content: '整理示例商品模块：Codex 负责接口整理，Claude 负责补测试',
     created_at: new Date(T0 - 6e5).toISOString(),
   },
   {
     id: 'g2', session_id: 's-group', role: 'assistant',
     content: [
-      '后端拆完了，`users.ts` 按职责分成 `users.query.ts` / `users.mutate.ts` / `users.types.ts`。',
+      '接口整理完了，`catalog.ts` 按职责分成 `catalog.list.ts` / `catalog.edit.ts` / `catalog.model.ts`。',
       '',
-      '三个路由的行为没变，只是把 SQL 从路由里挪进了仓储层。改完 `tsc -b` 是干净的。',
+      '三个接口的行为没变，只是把查询从路由里挪进了数据层。改完 `tsc -b` 是干净的。',
     ].join('\n'),
     model: 'gpt-5-codex', author_agent_id: 'codex',
-    created_at: new Date(T0 - 4e5).toISOString(), duration_ms: 132_000,
+    created_at: new Date(T0 - 4e5).toISOString(), duration_ms: 96_000,
   },
   {
     id: 'g3', session_id: 's-group', role: 'assistant',
     content: [
-      '接口拆完之后我补了 14 条测试，覆盖仓储层的边界：',
+      '接口整理完之后我补了 9 条测试，覆盖数据层的边界：',
       '',
       '- 空结果与 `null` 要分开（前者返回 `[]`，后者抛错）',
       '- 并发改同一条记录时后写的覆盖先写的，这一点按现有行为钉住了',
@@ -177,7 +179,7 @@ const MESSAGES = [
       '有一个旧用例原本断言的是「返回 undefined」，实际一直是 `[]` —— 那条是错的，我改了断言并在提交信息里写明。',
     ].join('\n'),
     model: 'claude-sonnet-4-5', author_agent_id: 'claude',
-    created_at: new Date(T0 - 1e5).toISOString(), duration_ms: 98_000,
+    created_at: new Date(T0 - 1e5).toISOString(), duration_ms: 71_000,
   },
 ];
 
