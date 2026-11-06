@@ -207,11 +207,11 @@ await mkdir(OUT, { recursive: true });
 const browser = await chromium.launch({ executablePath: chrome, headless: true });
 const errors = [];
 
-async function newPage(initScript) {
+async function newPage(initScript, { theme = 'light' } = {}) {
   const ctx = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 2,
-    colorScheme: 'light',
+    colorScheme: theme,
   });
   if (initScript) await ctx.addInitScript(initScript);
   const page = await ctx.newPage();
@@ -285,8 +285,22 @@ const shots = [];
 }
 
 // 3. 群聊（两个 Agent 各回一段）
+//
+// 这一张固定出深色版：README 其余三张都是亮色，深色色阶需要一张实图。
+// 两条都要给 —— `colorScheme` 让「跟随系统」落到深色，`localStorage.theme`
+// 是 useTheme 在没有 Electron 注入时的首选来源（见 src/hooks/useTheme.ts），
+// 只给前者在某些启动顺序下仍可能先画出浅色。
 {
-  const { ctx, page } = await newPage();
+  const { ctx, page } = await newPage(
+    () => {
+      try {
+        localStorage.setItem('theme', 'dark');
+      } catch {
+        // 隐私模式下 localStorage 会抛，颜色仍可由 colorScheme 兜底
+      }
+    },
+    { theme: 'dark' },
+  );
   await settle(page, '/chat/s-group');
   const file = join(OUT, '03-group.png');
   await page.screenshot({ path: file });
