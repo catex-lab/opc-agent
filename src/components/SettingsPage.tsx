@@ -675,21 +675,14 @@ export function SettingsPage({
                     border: `1px solid ${selected ? 'var(--td-brand-color)' : 'transparent'}`,
                   }}
                 >
-                  {/* A26：选中态的小图标块不再用品牌色实心。
-                      36×36 的纯色块在 100% 透明度下就是玻璃上的一颗黑点 ——
-                      面积不大，但因为是整张卡片里唯一的高对比色，比大块的白卡还跳。
-                      改成按 --opc-t 从「实心 + 反色图标」插值到「淡底 + 品牌色图标」，
-                      t=0 时与原来完全一致。逻辑见 index.css 的 .tc-chip-brand。 */}
+                  {/* 图标盒：三枚本来就是 lucide 的线性图标（Sun / Moon / Monitor，
+                      路径 fill:none、stroke 2 → 18px 下有效描边 1.5px）。看起来「实心」
+                      的是外面那圈 36×36 色块：选中态品牌色实心 + 反色图标，白色笔画
+                      落在黑底上糊成一团。色块去掉、只留下尺寸与对齐用的空盒；选中态
+                      仍由卡片描边 + 淡底表达，图标保持单色（不因选中加色或加粗）。 */}
                   <span
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${selected ? 'tc-chip-brand' : ''}`}
-                    style={
-                      selected
-                        ? undefined
-                        : {
-                            backgroundColor: 'var(--td-bg-color-container)',
-                            color: 'var(--td-text-color-secondary)',
-                          }
-                    }
+                    className="flex h-9 w-9 shrink-0 items-center justify-center"
+                    style={{ color: 'var(--td-text-color-secondary)' }}
                   >
                     <Icon size={18} />
                   </span>
