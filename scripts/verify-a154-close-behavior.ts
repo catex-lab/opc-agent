@@ -259,26 +259,150 @@ try {
       await page.waitForSelector('[data-close-behavior-setting]', { timeout: 15000 });
 
       const opts = await page.evaluate(() => {
-        const select = document.querySelector('[data-close-behavior-select]') as HTMLSelectElement | null;
+        const trigger = document.querySelector('[data-close-behavior-select]') as HTMLElement | null;
+        const selected = document.querySelector(
+          '[data-close-behavior][aria-selected="true"]'
+        ) as HTMLElement | null;
         return {
           count: document.querySelectorAll('[data-close-behavior]').length,
-          value: select?.value ?? '',
+          value: selected?.getAttribute('data-close-behavior') ?? '',
+          role: trigger?.getAttribute('role') ?? '',
+          expanded: trigger?.getAttribute('aria-expanded') ?? '',
+          haspopup: trigger?.getAttribute('aria-haspopup') ?? '',
+          controls: trigger?.getAttribute('aria-controls') ?? '',
           items: [...document.querySelectorAll('[data-close-behavior]')].map(el => ({
             value: el.getAttribute('data-close-behavior'),
             text: (el.textContent || '').trim(),
+            selected: el.getAttribute('aria-selected'),
           })),
         };
       });
       ok(opts.count === 3, '三档都在', opts.items.map(o => o.value).join('/'));
       ok(opts.items.every(o => o.text.length > 0), '每档都有可见标签', opts.items.map(o => o.text).join(' / '));
-      ok(opts.value === 'tray', '★ 注入值 tray 在下拉里是选中态', `select.value=${opts.value}`);
+      ok(opts.value === 'tray', '★ 注入值 tray 在下拉里是选中态', `selected=${opts.value}`);
+      ok(
+        opts.role === 'combobox' && opts.haspopup === 'listbox' && opts.expanded === 'false',
+        '触发器语义：combobox + aria-haspopup=listbox + 默认收起',
+        `${opts.role}/${opts.haspopup}/${opts.expanded}`
+      );
+      ok(
+        opts.controls === 'opc-close-behavior-panel' &&
+          (await page.locator(`#${opts.controls}`).getAttribute('role')) === 'listbox',
+        'aria-controls 指向真实存在的 listbox 面板',
+        opts.controls
+      );
 
-      await page.locator('[data-close-behavior-select]').selectOption('ask');
+      // ── 自绘下拉的键盘与语义（A191 续：边线软化换成自绘后必须补齐）──
+      await page.locator('[data-close-behavior-select]').focus();
+      await page.keyboard.press('ArrowDown');
+      await page.waitForTimeout(150);
+      const opened = await page.evaluate(() => {
+        const trigger = document.querySelector('[data-close-behavior-select]') as HTMLElement;
+        const panel = document.querySelector('#opc-close-behavior-panel') as HTMLElement | null;
+        const active = document.querySelector('[data-active="true"]');
+        return {
+          expanded: trigger.getAttribute('aria-expanded'),
+          panelVisible: !!panel && !panel.hasAttribute('hidden'),
+          focusInPanel: document.activeElement === panel,
+          activeId: active?.id ?? '',
+          activeDesc: panel?.getAttribute('aria-activedescendant') ?? '',
+        };
+      });
+      ok(opened.expanded === 'true' && opened.panelVisible, '方向键打开面板', `${opened.expanded}/${opened.panelVisible}`);
+      ok(opened.focusInPanel, '打开后焦点落在列表上', String(opened.focusInPanel));
+      ok(
+        opened.activeId === opened.activeDesc && opened.activeId === 'opc-close-behavior-panel-tray',
+        '高亮项与 aria-activedescendant 一致（初始落在已选项 tray）',
+        `${opened.activeId} / ${opened.activeDesc}`
+      );
+
+      await page.keyboard.press('ArrowDown');
+      await page.waitForTimeout(120);
+      const moved = await page.evaluate(() => {
+        const panel = document.querySelector('#opc-close-behavior-panel') as HTMLElement;
+        const active = document.querySelector('[data-active="true"]');
+        return { activeId: active?.id ?? '', activeDesc: panel.getAttribute('aria-activedescendant') };
+      });
+      ok(moved.activeId === 'opc-close-behavior-panel-ask', '方向键把高亮移到下一项', moved.activeId);
+      ok(moved.activeId === moved.activeDesc, '移动后 aria-activedescendant 同步', moved.activeDesc);
+
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(150);
+      const escaped = await page.evaluate(() => {
+        const trigger = document.querySelector('[data-close-behavior-select]') as HTMLElement | null;
+        const panel = document.querySelector('#opc-close-behavior-panel') as HTMLElement | null;
+        return {
+          modal: !!document.querySelector('[data-settings-panel]'),
+          triggerAlive: !!trigger,
+          expanded: trigger?.getAttribute('aria-expanded') ?? 'MISSING',
+          panelHidden: !panel || panel.hasAttribute('hidden'),
+          focusBack: document.activeElement === trigger,
+          activeEl: (document.activeElement as HTMLElement | null)?.className ?? '',
+        };
+      });
+      ok(
+        escaped.expanded === 'false' && escaped.panelHidden,
+        'Esc 关闭面板',
+        `${escaped.expanded}/${escaped.panelHidden} (弹窗在=${escaped.modal}, 触发器在=${escaped.triggerAlive})`
+      );
+      ok(escaped.focusBack, 'Esc 后焦点回到触发器', String(escaped.focusBack));
+
+      // Home / End + Enter 选择：End 跳到最后一项（ask）
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(150);
+      await page.keyboard.press('Home');
+      await page.waitForTimeout(120);
+      const home = await page.evaluate(
+        () => document.querySelector('[data-active="true"]')?.id ?? ''
+      );
+      ok(home === 'opc-close-behavior-panel-quit', 'Home 跳到首项', home);
+      await page.keyboard.press('End');
+      await page.waitForTimeout(120);
+      const end = await page.evaluate(
+        () => document.querySelector('[data-active="true"]')?.id ?? ''
+      );
+      ok(end === 'opc-close-behavior-panel-ask', 'End 跳到末项', end);
+      await page.keyboard.press('Enter');
       await page.waitForTimeout(700); // 偏好 PATCH 有 250ms 防抖
       const local = await page.evaluate(() => localStorage.getItem('opc.close-behavior'));
-      ok(local === 'ask', '★ 点击后 localStorage 镜像同步写', String(local));
+      ok(local === 'ask', '★ 键盘选择后 localStorage 镜像同步写', String(local));
       const now = await json(await fetch(`${base}/api/preferences`));
-      ok(now.closeBehavior === 'ask', '★ 点击后服务端偏好也变成 ask（主进程读的就是这份）', `got ${now.closeBehavior}`);
+      ok(now.closeBehavior === 'ask', '★ 键盘选择后服务端偏好也变成 ask（主进程读的就是这份）', `got ${now.closeBehavior}`);
+
+      // 外部点击关闭：点左侧分区导航（在面板外、弹窗内）
+      await page.locator('[data-close-behavior-select]').click();
+      await page.waitForTimeout(150);
+      await page.locator('[data-settings-section="appearance"]').first().click();
+      await page.waitForTimeout(150);
+      const outside = await page.evaluate(() => {
+        const trigger = document.querySelector('[data-close-behavior-select]') as HTMLElement;
+        const panel = document.querySelector('#opc-close-behavior-panel') as HTMLElement | null;
+        return {
+          expanded: trigger.getAttribute('aria-expanded'),
+          panelHidden: !panel || panel.hasAttribute('hidden'),
+        };
+      });
+      ok(outside.expanded === 'false' && outside.panelHidden, '点击外部关闭面板', `${outside.expanded}/${outside.panelHidden}`);
+
+      // 「链接打开方式」同款语义（两档）
+      const linkTrigger = await page.evaluate(() => {
+        const trigger = document.querySelector('[data-link-open-select]') as HTMLElement | null;
+        return {
+          role: trigger?.getAttribute('role') ?? '',
+          expanded: trigger?.getAttribute('aria-expanded') ?? '',
+          count: document.querySelectorAll('[data-link-open-option]').length,
+          selected:
+            document
+              .querySelector('[data-link-open-option][aria-selected="true"]')
+              ?.getAttribute('data-link-open-option') ?? '',
+        };
+      });
+      ok(
+        linkTrigger.role === 'combobox' && linkTrigger.expanded === 'false' && linkTrigger.count === 2,
+        '链接打开方式：combobox + 两档 + 默认收起',
+        `${linkTrigger.role}/${linkTrigger.count}/${linkTrigger.expanded}`
+      );
+      ok(linkTrigger.selected === 'system', '链接打开方式默认选中系统浏览器', linkTrigger.selected);
 
       await page.screenshot({ path: path.join(SHOTS, 'settings-appearance.png') });
       ok(errors.length === 0, '页面零控制台错误', errors.slice(0, 2).join(' | ') || '干净');

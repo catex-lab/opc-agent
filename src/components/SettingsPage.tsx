@@ -14,7 +14,8 @@ import {
   Select,
   Switch
 } from 'tdesign-react';
-import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info, UserRound, Plus, PencilLine, Trash2, Check, CircleCheck, CircleX, RefreshCw, Power, Minimize2, HelpCircle, ChevronDown } from 'lucide-react';
+import { Bot, Sparkles, Code, FileText, Globe, Lightbulb, Monitor, Sun, Moon, KeyRound, X, Brain, ShieldAlert, Layers, Info, UserRound, Plus, PencilLine, Trash2, Check, CircleCheck, CircleX, RefreshCw, Power, Minimize2, HelpCircle } from 'lucide-react';
+import { EnumSelect } from './EnumSelect';
 import '../settings-select.css';
 import { PanelHeader } from './PanelHeader';
 import { InfoHint } from './InfoHint';
@@ -1301,7 +1302,6 @@ function CloseBehaviorSetting() {
   const [behavior, setBehavior] = useState<CloseBehavior>(readCloseBehavior);
   const current =
     CLOSE_BEHAVIOR_OPTIONS.find(option => option.value === behavior) ?? CLOSE_BEHAVIOR_OPTIONS[0];
-  const CurrentIcon = current.Icon;
 
   return (
     <div className="opc-enum-setting" data-close-behavior-setting>
@@ -1309,7 +1309,7 @@ function CloseBehaviorSetting() {
           右边缘就是分组内容宽度的右边界，和上面的主题卡、下面的说明文字同一条线。 */}
       <div className="opc-enum-setting__row">
         <div className="opc-enum-setting__title">
-          <label className="opc-enum-setting__label" htmlFor="opc-close-behavior">
+          <label className="opc-enum-setting__label" id="opc-close-behavior-label">
             关闭窗口时
           </label>
           <InfoHint
@@ -1317,25 +1317,17 @@ function CloseBehaviorSetting() {
             text="选择「直接退出」时，如果还有 Agent 任务在运行，会先弹一次确认；选择「最小化到托盘」则不会中断任务，进程继续留在托盘里，托盘右键菜单可以退出。"
           />
         </div>
-        {/* 原生 select：键盘（Tab / 方向键 / Esc）、朗读与表单语义都由浏览器负责；
-            选中项的图标放在控件左侧，取代原来三张横向铺开的卡片。 */}
-        <div className="opc-select">
-          <CurrentIcon className="opc-select__leading" size={15} aria-hidden="true" />
-          <select
-            id="opc-close-behavior"
-            className="opc-select__native"
-            data-close-behavior-select
-            value={behavior}
-            onChange={event => setBehavior(saveCloseBehavior(event.target.value as CloseBehavior))}
-          >
-            {CLOSE_BEHAVIOR_OPTIONS.map(({ value, label, hint }) => (
-              <option key={value} value={value} title={hint} data-close-behavior={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="opc-select__chevron" size={15} aria-hidden="true" />
-        </div>
+        {/* 自绘下拉：原生 select 的展开菜单由操作系统绘制、边线无法软化，
+            换成自绘面板才能让弹层走设计令牌。键盘与朗读语义见 EnumSelect。 */}
+        <EnumSelect
+          id="opc-close-behavior"
+          labelledBy="opc-close-behavior-label"
+          triggerAttrs={{ 'data-close-behavior-select': '' }}
+          optionAttrs={value => ({ 'data-close-behavior': value })}
+          value={behavior}
+          options={CLOSE_BEHAVIOR_OPTIONS}
+          onChange={next => setBehavior(saveCloseBehavior(next))}
+        />
       </div>
       <p className="opc-enum-setting__hint">{current.hint}</p>
     </div>
@@ -1365,13 +1357,12 @@ const LINK_OPEN_OPTIONS: Array<{
 function LinkOpenModeSetting() {
   const [mode, setMode] = useState<LinkOpenMode>(readLinkOpenMode);
   const current = LINK_OPEN_OPTIONS.find(option => option.value === mode) ?? LINK_OPEN_OPTIONS[0];
-  const CurrentIcon = current.Icon;
 
   return (
     <div className="opc-enum-setting" data-link-open-setting>
       <div className="opc-enum-setting__row">
         <div className="opc-enum-setting__title">
-          <label className="opc-enum-setting__label" htmlFor="opc-link-open-mode">
+          <label className="opc-enum-setting__label" id="opc-link-open-mode-label">
             链接打开方式
           </label>
           <InfoHint
@@ -1379,23 +1370,15 @@ function LinkOpenModeSetting() {
             text="正文里的 http(s) 链接点击时用哪种方式打开。悬停链接时会有完整地址提示，里面也能临时改用另一种方式打开。应用内打开会占用右侧工作区；窄屏或群聊里会自动改用系统浏览器。"
           />
         </div>
-        <div className="opc-select">
-          <CurrentIcon className="opc-select__leading" size={15} aria-hidden="true" />
-          <select
-            id="opc-link-open-mode"
-            className="opc-select__native"
-            data-link-open-select
-            value={mode}
-            onChange={event => setMode(saveLinkOpenMode(event.target.value as LinkOpenMode))}
-          >
-            {LINK_OPEN_OPTIONS.map(({ value, label, hint }) => (
-              <option key={value} value={value} title={hint} data-link-open-option={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="opc-select__chevron" size={15} aria-hidden="true" />
-        </div>
+        <EnumSelect
+          id="opc-link-open-mode"
+          labelledBy="opc-link-open-mode-label"
+          triggerAttrs={{ 'data-link-open-select': '' }}
+          optionAttrs={value => ({ 'data-link-open-option': value })}
+          value={mode}
+          options={LINK_OPEN_OPTIONS}
+          onChange={next => setMode(saveLinkOpenMode(next))}
+        />
       </div>
       <p className="opc-enum-setting__hint">{current.hint}</p>
     </div>

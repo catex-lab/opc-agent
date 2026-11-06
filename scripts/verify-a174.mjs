@@ -654,17 +654,29 @@ try {
     ok((await page.locator('[data-link-open-setting]').count()) === 1, '设置页有「链接打开方式」区块');
     ok((await page.locator('[data-link-open-option="system"]').count()) === 1, '有「系统浏览器」选项');
     ok((await page.locator('[data-link-open-option="in-app"]').count()) === 1, '有「应用内打开」选项');
-    const beforeSel = await page.evaluate(() => document.querySelector('[data-link-open-select]').value);
+    const beforeSel = await page.evaluate(
+      () =>
+        document
+          .querySelector('[data-link-open-option][aria-selected="true"]')
+          ?.getAttribute('data-link-open-option') ?? ''
+    );
     ok(beforeSel === 'system', '默认选中系统浏览器（不改变老行为）', beforeSel);
-    await page.locator('[data-link-open-select]').selectOption('in-app');
+    // 自绘下拉：点开面板再点选项（原生 selectOption 不再适用）
+    await page.locator('[data-link-open-select]').click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-link-open-option="in-app"]').click();
     await page.waitForTimeout(300);
     const after = await page.evaluate(() => {
-      const select = document.querySelector('[data-link-open-select]');
+      const selected = document.querySelector('[data-link-open-option][aria-selected="true"]');
       return {
         stored: localStorage.getItem('opc.link-open-mode'),
-        value: select.value,
-        inApp: select.querySelector('option[value="in-app"]').selected,
-        system: select.querySelector('option[value="system"]').selected,
+        value: selected?.getAttribute('data-link-open-option') ?? '',
+        inApp: document
+          .querySelector('[data-link-open-option="in-app"]')
+          ?.getAttribute('aria-selected') === 'true',
+        system: document
+          .querySelector('[data-link-open-option="system"]')
+          ?.getAttribute('aria-selected') === 'true',
       };
     });
     ok(after.value === 'in-app' && after.inApp === true && after.system === false, '选中态切换正确', `${after.value}/${after.inApp}/${after.system}`);

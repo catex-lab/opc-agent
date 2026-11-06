@@ -406,7 +406,7 @@ section('接线：主进程 / preload / 装饰 / 设置项');
 
   const settings = read('src/components/SettingsPage.tsx');
   ok(settings.includes('data-link-open-setting'), '设置项有 data-link-open-setting');
-  ok(settings.includes("data-link-open-option={value}"), '两个选项都有 data- 锚点');
+  ok(settings.includes("'data-link-open-option': value"), '两个选项都有 data- 锚点');
   ok(settings.includes('saveLinkOpenMode'), '点击会落盘');
 
   const css = read('src/index.css');

@@ -1,11 +1,15 @@
-/* ── 设置页枚举型选项的下拉形态 ─────────────────────────────────────────
+/* ── 设置页枚举型选项的自绘下拉 ─────────────────────────────────────────
  *
  * 只服务「关闭窗口时」「链接打开方式」两项，独立成文件，避免和导航栏
  * / index.css 的并行改动抢同一段样式。
  *
- * 用原生 <select>：键盘（Tab / 方向键 / Esc）、朗读与表单语义都由
- * 浏览器负责；描边、底色、浮层配色全部走既有令牌，亮/深两套自动成立。
- * 图标用单色线形（lucide），颜色取 --td-text-color-secondary。
+ * 为什么是自绘而不是原生 <select>：原生展开菜单由操作系统绘制，边框、
+ * 圆角、阴影都归系统，CSS 无法软化「弹层边线」。自绘面板后，边线走
+ * --tc-edge，阴影走 --shadow-popup（亮/深两套都有一档），圆角走
+ * --td-radius-medium —— 不新增硬编码色值，不用品牌色。
+ *
+ * 触发器/面板的键盘与朗读语义由 EnumSelect.tsx 负责（role=combobox +
+ * listbox / option、aria-expanded、aria-activedescendant 等）。
  */
 
 .opc-enum-setting {
@@ -56,7 +60,7 @@
 .opc-select {
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   flex: 0 0 220px;
   width: 220px;
   height: 32px;
@@ -74,9 +78,9 @@
   border-color: var(--tc-edge-strong);
 }
 
-/* 焦点环：全局规则把原生 select 的 outline 关掉了，这里补一圈中性色描边
+/* 焦点环：全局规则把原生表单控件的 outline 关掉了，这里补一圈中性色描边
    （不用品牌色，避免彩色强调）+ 设计系统既有的淡阴影。只加在包裹层，
-   原生控件本身仍保持无 outline，不会叠出第二圈。 */
+   触发器本身不再画第二圈。 */
 .opc-select:focus-within {
   border-color: var(--tc-edge-strong);
   box-shadow: var(--tc-focus-shadow);
@@ -84,11 +88,13 @@
   outline-offset: 1px;
 }
 
-.opc-select__native {
-  appearance: none;
+.opc-select__trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   height: 100%;
-  padding: 0 32px 0 34px;
+  padding: 0 10px 0 11px;
   border: 0;
   outline: none;
   background: transparent;
@@ -97,37 +103,90 @@
   font-size: var(--text-body);
   line-height: 1;
   cursor: pointer;
+  user-select: none;
 }
 
-/* 原生展开的菜单由系统绘制，color-scheme 让它跟随应用主题（独立于系统）。 */
-.opc-select__native {
-  color-scheme: light;
-}
-
-:root.dark .opc-select__native {
-  color-scheme: dark;
-}
-
-.opc-select__native option {
-  background-color: var(--td-bg-color-container);
-  color: var(--td-text-color-primary);
+.opc-select__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
 }
 
 .opc-select__leading,
 .opc-select__chevron {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
+  flex: 0 0 auto;
   color: var(--td-text-color-secondary);
 }
 
-.opc-select__leading {
-  left: 11px;
+/* 弹层：低对比描边 + 柔和阴影 + 圆角档位令牌。
+   z-index 高于同一列里的说明文字，避免被下一行盖住。 */
+.opc-select__panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: 4px;
+  border: 1px solid var(--tc-edge);
+  border-radius: var(--td-radius-medium);
+  background-color: var(--td-bg-color-container);
+  box-shadow: var(--shadow-popup);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-.opc-select__chevron {
-  right: 10px;
+/* 与触发器视觉连续：间距 4px，宽度与触发器一致（left/right:0） */
+.opc-select__panel--below {
+  top: calc(100% + 4px);
+}
+
+.opc-select__panel--above {
+  bottom: calc(100% + 4px);
+}
+
+.opc-select__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border-radius: var(--td-radius-default);
+  font-size: var(--text-body);
+  line-height: 1.4;
+  color: var(--td-text-color-primary);
+  cursor: pointer;
+}
+
+/* hover 与选中都用低对比底色，不用彩色强调：
+   hover 更浅一档、选中更深一档，叠加次序让选中始终压过 hover。
+   选中再多一枚对勾图标，保证两态在「同底」时也能区分。 */
+.opc-select__option[data-active='true'] {
+  background-color: var(--td-bg-color-container-hover);
+}
+
+.opc-select__option[aria-selected='true'] {
+  background-color: var(--td-bg-color-component-hover);
+}
+
+.opc-select__option[aria-disabled='true'] {
+  color: var(--td-text-color-disabled);
+  cursor: default;
+}
+
+.opc-select__option-icon,
+.opc-select__option-check {
+  flex: 0 0 auto;
+  color: var(--td-text-color-secondary);
+}
+
+.opc-select__option-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 窄窗规则：容器可用宽度 ≤ 360px 时，一行放不下「标题（约 106px）+ 220px
