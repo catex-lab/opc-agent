@@ -1,4 +1,5 @@
 @import './kb-ui.css';
+@import './focus-contract.css';
 
 @tailwind base;
 @tailwind components;

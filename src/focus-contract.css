@@ -1,0 +1,118 @@
+/* ==========================================================================
+ * A190 输入框焦点契约
+ *
+ * 目标：所有「输入类」控件在聚焦时只出现一个中性、低对比的 2px 环，
+ * 不再出现「边框变品牌色 + 光环」的双环，也不再有大到像黑框的 outline。
+ *
+ * 为什么单独成文件：
+ *   · index.css 同时被导航栏线 / 设置页下拉线在改，把契约放独立文件，
+ *     产品样式里只加一行 @import，冲突面最小；
+ *   · 本文件在 index.css 的 @import 处加载，顺序是「kb-ui.css → 本文件 →
+ *     index.css 正文」。因此这里对 index.css 里已有规则的覆盖，必须靠
+ *     !important 或更高的特异性取胜，不能指望源码顺序。
+ *
+ * 触发条件是 :focus（含鼠标点击）。文本输入框在浏览器里始终匹配
+ * :focus-visible，写 :focus-visible 等于写 :focus，只会误导后来的人；
+ * 见 index.css 里 A24 的记录。
+ *
+ * 保留的局部例外（本文件不碰）：
+ *   · t-chat-sender 的整块输入面 —— 仍用 --tc-focus-shadow 的「抬升」语义；
+ *   · 透明搜索胶囊 —— 由容器 :focus-within 变底色，不给 input 画环；
+ *   · 下拉触发器（.t-select / .opc-select）—— 点击不发光；
+ *   · range 滑杆 —— 沿用原 :focus-visible + outline。
+ * ========================================================================== */
+
+:root {
+  /* 输入类控件的焦点环：中性、10% 墨。 */
+  --opc-focus-ring: rgb(31 31 31 / 0.10);
+  /* 勾选框 / 单选框是键盘专属焦点环，环太小、太淡会看不见，
+     所以单独一档（0.45 ≈ 视觉上一条清晰的细线），只有键盘用户会看到。 */
+  --opc-focus-outline: rgb(31 31 31 / 0.45);
+}
+
+:root.dark {
+  --opc-focus-ring: rgb(255 255 255 / 0.14);
+  --opc-focus-outline: rgb(255 255 255 / 0.55);
+}
+
+/* ── 1. TDesign Textarea ────────────────────────────────────────────────
+ * 组件库默认 :focus 是「border-color: 品牌色 + box-shadow: 0 0 0 2px
+ * 品牌色 16%/28%」。品牌色在本项目是近黑/近白，于是变成最粗的一圈。
+ * 这里把边框钉回常态描边档，光环换成契约令牌。
+ * hover 只抬到 --tc-edge-strong（7%/8.5%），聚焦本身不改边框。
+ * 规则顺序：hover 放在 focus 之后，鼠标点击时（同时 hover + focus）
+ * 边框停在 edge-strong；键盘聚焦（不 hover）停在 edge，符合契约。
+ *
+ * 常态描边：TDesign 的 textarea 走 --td-border-level-2-color（12%/14%），
+ * 比 .t-input / .tc-input 用的 --tc-edge（4.5%/5.5%）深一倍多。
+ * 不在 .t-textarea 上把这条令牌指到 --tc-edge 的话，聚焦「保持原色」会
+ * 让常态停在 12%，而 hover 的 7% 比常态还浅 —— 反馈方向反了。
+ * 只改这条令牌，success / warning / error 各自用自己的色，不受影响。 */
+.t-textarea {
+  --td-border-level-2-color: var(--tc-edge);
+}
+
+.t-textarea .t-textarea__inner:focus {
+  border-color: var(--tc-edge) !important;
+  box-shadow: 0 0 0 2px var(--opc-focus-ring) !important;
+}
+
+.t-textarea .t-textarea__inner:hover {
+  border-color: var(--tc-edge-strong) !important;
+}
+
+/* 错误态优先：红色边框与红色淡环不能被上面的契约覆盖。 */
+.t-textarea .t-textarea__inner.t-is-error,
+.t-textarea .t-textarea__inner.t-is-error:hover,
+.t-textarea .t-textarea__inner.t-is-error:focus {
+  border-color: var(--td-error-color) !important;
+}
+
+.t-textarea .t-textarea__inner.t-is-error:focus {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--td-error-color) 22%, transparent) !important;
+}
+
+/* ── 2. TDesign Input ───────────────────────────────────────────────────
+ * index.css 已把聚焦环压成 3px / 4.5% 的 --tc-focus-shadow 并带 !important。
+ * 这里用 html 前缀抬高特异性，换成 2px 契约环，保证两套口径不同时存在。
+ * 下拉框内部的假 input 由 index.css 里特异性更高的
+ * .t-select-input .t-input 规则继续压平，不会被这里点亮。 */
+html .t-input.t-is-focused,
+html .t-input:focus-within {
+  box-shadow: 0 0 0 2px var(--opc-focus-ring) !important;
+}
+
+/* ── 3. .tc-input（备注弹窗 / 个人资料等自绘单行输入）─────────────
+ * 原 :focus 同时改边框（edge → edge-strong）并加 3px 晕。
+ * 契约：聚焦不改边框色，hover 才抬到 edge-strong。 */
+html .tc-input:focus {
+  border-color: var(--tc-edge);
+  box-shadow: 0 0 0 2px var(--opc-focus-ring);
+}
+
+html .tc-input:not(:disabled):hover {
+  border-color: var(--tc-edge-strong);
+}
+
+html .tc-input:focus:hover {
+  border-color: var(--tc-edge-strong);
+}
+
+/* ── 4. 知识库 .kb-input ────────────────────────────────────────────────
+ * kb-ui.css 里写的是 outline: 2px solid color-mix(品牌色 55%) + offset 2px，
+ * 特异性 (0,2,0) 压过了全局的 outline: none。这里用双类名 + !important
+ * 收回契约口径；本轮不改 kb-ui.css，等下一轮归档时再删旧规则。 */
+.kb-input.kb-input:focus {
+  outline: none !important;
+  outline-offset: 0 !important;
+  box-shadow: 0 0 0 2px var(--opc-focus-ring) !important;
+}
+
+/* ── 5. 勾选框 ─────────────────────────────────────────────────────────
+ * 全局的 input:focus-visible { outline: none } 把勾选框的焦点环一起清掉了，
+ * 它是目前唯一完全没有焦点反馈的控件。这里只给键盘（:focus-visible）
+ * 补一条 2px outline + 2px offset，鼠标点击不出环。 */
+input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--opc-focus-outline);
+  outline-offset: 2px;
+}

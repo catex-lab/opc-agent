@@ -76,7 +76,9 @@ function buttonContrast(button) {
 function themeTokensFromIndexCss(css) {
   let next = css
     .replace(/@tailwind\s+[a-z]+;/g, '')
-    .replace(/@import\s+'\.\/kb-ui\.css';/g, '');
+    // index.css 顶部的局部样式表由夹具自己按真实顺序引入，这里统一剥掉，
+    // 避免夹具目录里出现解析不到的相对 @import。
+    .replace(/@import\s+'\.\/[^']+\.css';/g, '');
   const marker = '@layer utilities {';
   const start = next.indexOf(marker);
   if (start >= 0) {
