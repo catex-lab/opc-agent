@@ -1305,33 +1305,37 @@ function CloseBehaviorSetting() {
 
   return (
     <div className="opc-enum-setting" data-close-behavior-setting>
-      <div className="opc-enum-setting__head">
-        <label className="opc-enum-setting__label" htmlFor="opc-close-behavior">
-          关闭窗口时
-        </label>
-        <InfoHint
-          label="关闭窗口行为说明"
-          text="选择「直接退出」时，如果还有 Agent 任务在运行，会先弹一次确认；选择「最小化到托盘」则不会中断任务，进程继续留在托盘里，托盘右键菜单可以退出。"
-        />
-      </div>
-      {/* 原生 select：键盘（Tab / 方向键 / Esc）、朗读与表单语义都由浏览器负责；
-          选中项的图标放在控件左侧，取代原来三张横向铺开的卡片。 */}
-      <div className="opc-select">
-        <CurrentIcon className="opc-select__leading" size={15} aria-hidden="true" />
-        <select
-          id="opc-close-behavior"
-          className="opc-select__native"
-          data-close-behavior-select
-          value={behavior}
-          onChange={event => setBehavior(saveCloseBehavior(event.target.value as CloseBehavior))}
-        >
-          {CLOSE_BEHAVIOR_OPTIONS.map(({ value, label, hint }) => (
-            <option key={value} value={value} title={hint} data-close-behavior={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <ChevronDown className="opc-select__chevron" size={15} aria-hidden="true" />
+      {/* 标题与下拉同一行：标题占左侧、下拉用 margin-left:auto 贴该行右边缘，
+          右边缘就是分组内容宽度的右边界，和上面的主题卡、下面的说明文字同一条线。 */}
+      <div className="opc-enum-setting__row">
+        <div className="opc-enum-setting__title">
+          <label className="opc-enum-setting__label" htmlFor="opc-close-behavior">
+            关闭窗口时
+          </label>
+          <InfoHint
+            label="关闭窗口行为说明"
+            text="选择「直接退出」时，如果还有 Agent 任务在运行，会先弹一次确认；选择「最小化到托盘」则不会中断任务，进程继续留在托盘里，托盘右键菜单可以退出。"
+          />
+        </div>
+        {/* 原生 select：键盘（Tab / 方向键 / Esc）、朗读与表单语义都由浏览器负责；
+            选中项的图标放在控件左侧，取代原来三张横向铺开的卡片。 */}
+        <div className="opc-select">
+          <CurrentIcon className="opc-select__leading" size={15} aria-hidden="true" />
+          <select
+            id="opc-close-behavior"
+            className="opc-select__native"
+            data-close-behavior-select
+            value={behavior}
+            onChange={event => setBehavior(saveCloseBehavior(event.target.value as CloseBehavior))}
+          >
+            {CLOSE_BEHAVIOR_OPTIONS.map(({ value, label, hint }) => (
+              <option key={value} value={value} title={hint} data-close-behavior={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="opc-select__chevron" size={15} aria-hidden="true" />
+        </div>
       </div>
       <p className="opc-enum-setting__hint">{current.hint}</p>
     </div>
@@ -1365,31 +1369,33 @@ function LinkOpenModeSetting() {
 
   return (
     <div className="opc-enum-setting" data-link-open-setting>
-      <div className="opc-enum-setting__head">
-        <label className="opc-enum-setting__label" htmlFor="opc-link-open-mode">
-          链接打开方式
-        </label>
-        <InfoHint
-          label="链接打开方式说明"
-          text="正文里的 http(s) 链接点击时用哪种方式打开。悬停链接时会有完整地址提示，里面也能临时改用另一种方式打开。应用内打开会占用右侧工作区；窄屏或群聊里会自动改用系统浏览器。"
-        />
-      </div>
-      <div className="opc-select">
-        <CurrentIcon className="opc-select__leading" size={15} aria-hidden="true" />
-        <select
-          id="opc-link-open-mode"
-          className="opc-select__native"
-          data-link-open-select
-          value={mode}
-          onChange={event => setMode(saveLinkOpenMode(event.target.value as LinkOpenMode))}
-        >
-          {LINK_OPEN_OPTIONS.map(({ value, label, hint }) => (
-            <option key={value} value={value} title={hint} data-link-open-option={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <ChevronDown className="opc-select__chevron" size={15} aria-hidden="true" />
+      <div className="opc-enum-setting__row">
+        <div className="opc-enum-setting__title">
+          <label className="opc-enum-setting__label" htmlFor="opc-link-open-mode">
+            链接打开方式
+          </label>
+          <InfoHint
+            label="链接打开方式说明"
+            text="正文里的 http(s) 链接点击时用哪种方式打开。悬停链接时会有完整地址提示，里面也能临时改用另一种方式打开。应用内打开会占用右侧工作区；窄屏或群聊里会自动改用系统浏览器。"
+          />
+        </div>
+        <div className="opc-select">
+          <CurrentIcon className="opc-select__leading" size={15} aria-hidden="true" />
+          <select
+            id="opc-link-open-mode"
+            className="opc-select__native"
+            data-link-open-select
+            value={mode}
+            onChange={event => setMode(saveLinkOpenMode(event.target.value as LinkOpenMode))}
+          >
+            {LINK_OPEN_OPTIONS.map(({ value, label, hint }) => (
+              <option key={value} value={value} title={hint} data-link-open-option={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="opc-select__chevron" size={15} aria-hidden="true" />
+        </div>
       </div>
       <p className="opc-enum-setting__hint">{current.hint}</p>
     </div>

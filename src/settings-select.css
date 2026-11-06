@@ -10,16 +10,34 @@
 
 .opc-enum-setting {
   margin-top: 24px;
+  /* 用容器查询判断「这一行还放不放得下标题 + 下拉」，比媒体查询更准：
+     设置面板的可用宽度受导航栏、模态宽度和内边距共同影响，不等于视口宽。 */
+  container-type: inline-size;
 }
 
-.opc-enum-setting__head {
+/* 标题与控件同一行：标题固定左侧，下拉 margin-left:auto 贴到本行右边缘。
+   本行宽度 = 分组内容宽度，所以下拉右边缘和主题卡、透明度行右端的百分比
+   都落在同一条竖线上，不会各走各的。 */
+.opc-enum-setting__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.opc-enum-setting__title {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .opc-enum-setting__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-body);
   font-weight: 500;
   color: var(--td-text-color-primary);
@@ -29,7 +47,7 @@
   /* 两行高固定预留：切换选项时说明文字长短不一，不预留会让下面的
      透明度/光斑设置整体上下跳。 */
   min-height: calc(1.6em * 2);
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   font-size: var(--text-body);
   line-height: 1.6;
   color: var(--td-text-color-secondary);
@@ -39,9 +57,10 @@
   position: relative;
   display: flex;
   align-items: center;
-  width: 100%;
-  max-width: 300px;
+  flex: 0 0 220px;
+  width: 220px;
   height: 32px;
+  margin-left: auto;
   border: 1px solid var(--tc-edge);
   border-radius: var(--td-radius-default);
   background-color: var(--td-bg-color-container);
@@ -55,11 +74,14 @@
   border-color: var(--tc-edge-strong);
 }
 
-/* 焦点环：与设置页输入框同一口径 —— 描边只加深一档，真正提示焦点的是
-   阴影；原生 select 的默认 outline 关掉，避免叠加出第二圈。 */
+/* 焦点环：全局规则把原生 select 的 outline 关掉了，这里补一圈中性色描边
+   （不用品牌色，避免彩色强调）+ 设计系统既有的淡阴影。只加在包裹层，
+   原生控件本身仍保持无 outline，不会叠出第二圈。 */
 .opc-select:focus-within {
   border-color: var(--tc-edge-strong);
   box-shadow: var(--tc-focus-shadow);
+  outline: 1px solid var(--td-text-color-secondary);
+  outline-offset: 1px;
 }
 
 .opc-select__native {
@@ -106,4 +128,25 @@
 
 .opc-select__chevron {
   right: 10px;
+}
+
+/* 窄窗规则：容器可用宽度 ≤ 360px 时，一行放不下「标题（约 106px）+ 220px
+   下拉」，整体改成上下堆叠 —— 标题一行、下拉占满下一行，标题不再被压成
+   竖排，也不允许控件溢出。360px 是容器宽度，不是视口宽度。 */
+@container (max-width: 360px) {
+  .opc-enum-setting__row {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .opc-enum-setting__title {
+    flex: 1 1 100%;
+  }
+
+  .opc-select {
+    flex: 1 1 100%;
+    width: 100%;
+    margin-left: 0;
+    margin-top: 8px;
+  }
 }
