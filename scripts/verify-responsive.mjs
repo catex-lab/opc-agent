@@ -117,10 +117,9 @@ record('宽屏 列表栏仍是 chrome（与框架分档）', r.columnBg !== r.ti
 //  界面按用户要求改了，期望表没跟上，于是长期假红。）
 record('宽屏 会话头部与列表栏同色（chrome）', r.headerBgs[1], r.columnBg);
 record('宽屏 会话头部与消息区不同色（内容面独立）', r.headerBgs[1] !== r.mainBg ? '不同' : '同色', '不同');
-// 64 = 52px 按钮 + 两侧各 6px 呼吸位（纯图标栏，不给文字留横向空间）。
-// 原先这里写的是 56，A117 那一轮栏宽调整后没跟上，长期假红；现在按
-// NavRail 的 w-[64px] 与 TitleBar 的 railWidth=64 同口径对齐。
-record('宽屏 导航条 64px', r.navWidth, 64);
+// 56 = 44px 按钮 + 两侧各 6px 呼吸位（图标 20 后按钮/栏宽同比例收）。
+// 与 NavRail 的 w-[56px]、TitleBar 的 railWidth=56 同口径。
+record('宽屏 导航条 56px', r.navWidth, 56);
 record('宽屏 列表与内容同时在 DOM', String(r.columnInDom && r.mainInDom), 'true');
 record('宽屏 没有返回键', r.backBtn, 0);
 record('宽屏 聊天页不出现 Agent 简介', r.chatText.includes('这句简介不该出现在聊天页'), false);

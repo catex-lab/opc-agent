@@ -116,9 +116,9 @@ export function TitleBar({ compact = false }: { compact?: boolean }) {
   // 早先直接 px-4 起排：18px 的标记左边缘落在 16px，中心在 25px，
   // 与导航图标的中轴对不上（差 7px），放大看是能看出来的错位。
   // 宽度跟着 compact 一起收，窄屏也不歪。
-  // ⚠️ 这两个数字必须等于 NavRail 的 `w-[64px]` / `w-[48px]`，
+  // ⚠️ 这两个数字必须等于 NavRail 的 `w-[56px]` / `w-[48px]`，
   //    改一处不改另一处，标记就会歪到图标左边去。
-  const railWidth = compact ? 48 : 64;
+  const railWidth = compact ? 48 : 56;
 
   const [maximized, setMaximized] = useState(false);
 

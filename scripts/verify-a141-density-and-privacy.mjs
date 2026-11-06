@@ -704,15 +704,19 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
           const box = svg.getBoundingClientRect();
           const vb = (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
           const ctm = svg.getScreenCTM();
-          // computed strokeWidth 是用户单位，乘 CTM 才是实际落屏宽度
-          const stroke = parseFloat(getComputedStyle(svg.querySelector('path')).strokeWidth);
+          // computed strokeWidth 是用户单位。默认要乘 CTM 才是落屏宽度；
+          // 但 non-scaling-stroke 下描边不参与 viewBox 缩放，CSS px 即落屏宽度。
+          const pathStyle = getComputedStyle(svg.querySelector('path'));
+          const stroke = parseFloat(pathStyle.strokeWidth);
+          const vectorEffect = pathStyle.vectorEffect;
           icon = {
             w: box.width,
             h: box.height,
             viewBox: vb[2],
             scale: ctm ? ctm.a : 0,
             stroke,
-            effective: ctm ? stroke * ctm.a : 0,
+            vectorEffect,
+            effective: vectorEffect === 'non-scaling-stroke' ? stroke : ctm ? stroke * ctm.a : 0,
             leftFrac: box.x - Math.floor(box.x),
             topFrac: box.y - Math.floor(box.y),
           };
@@ -727,7 +731,7 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
       knowledge: !!nav.querySelector('[data-nav-knowledge]'),
     };
   });
-  ok(rail && rail.width === 64, '导航条宽度收到 64px（52px 按钮 + 两侧 6px，与 TitleBar 同宽）', `实测 ${rail?.width}px`);
+  ok(rail && rail.width === 56, '导航条宽度收到 56px（44px 按钮 + 两侧 6px，与 TitleBar 同宽）', `实测 ${rail?.width}px`);
   ok(rail && rail.knowledge, '导航条有全局知识库入口');
   ok(rail && rail.items.length === 6, '导航条仍是六个入口', rail ? `${rail.items.length} 个` : '无');
   const requiredNames = ['聊天', '项目', '通讯录', '扩展', '知识库', '设置'];
@@ -746,24 +750,33 @@ console.log('\n[6] 输入区四颗选择器的箭头统一 14px');
     '图标下不再有文字标签',
     rail ? rail.items.map(item => item.text || '(空)').join(' / ') : '无'
   );
-  /* D1：图标边缘清晰度。lucide 的 viewBox 是 24，渲染到 20px 时缩放系数
-     0.8333，描边折算成小数、路径坐标落小数像素，抗锯齿把边缘摊成 2–3px
-     （亮/深都发虚）。口径：渲染尺寸 = viewBox（缩放 1）、有效描边
-     ≥1.25 CSS px（1.75 / 选中 2.25 —— 真机嫌 2 厚重，只降描边不缩盒子）、
+  /* D1：图标边缘清晰度。第二轮真机反馈「图标还是太宽」，盒子从 24 收到 20
+     —— 缩放系数必然是 0.8333（非整数），所以描边改用
+     `vector-effect: non-scaling-stroke` 按 CSS px 落屏。
+     实测（canvas 按设备像素光栅化真实路径）边缘过渡：
+       现状 24/1.75 → 2 / 1 / 1 / 1 px（1×, 1.25×, 1.5×, 2×）
+       现在 20/2+nss → 1 / 1 / 0 / 0 px
+     口径：渲染尺寸 20、viewBox 24、缩放 20/24、vector-effect 必须是
+     non-scaling-stroke、有效描边 ≥1.25 CSS px（2 / 选中 2.5）、
      且图标盒落在整数 CSS 像素。 */
   ok(
-    rail && rail.items.every(item => item.icon && item.icon.w === item.icon.viewBox && item.icon.h === item.icon.viewBox),
-    '图标按 viewBox 自然尺寸渲染（24×24，不是 20px 非整数缩放）',
+    rail && rail.items.every(item => item.icon && item.icon.w === 20 && item.icon.h === 20 && item.icon.viewBox === 24),
+    '图标按 20px 盒子渲染（viewBox 仍是 24）',
     rail ? rail.items.map(item => (item.icon ? `${item.icon.w}×${item.icon.h}/vb${item.icon.viewBox}` : '无')).join(' / ') : '无'
   );
   ok(
-    rail && rail.items.every(item => item.icon && Math.abs(item.icon.scale - 1) < 0.001),
-    '图标缩放系数为 1（坐标不与小数缩放相乘，边缘不因抗锯齿发虚）',
+    rail && rail.items.every(item => item.icon && Math.abs(item.icon.scale - 20 / 24) < 0.001),
+    '缩放系数为 20/24（0.8333）—— 只允许在这一种缩放下，且必须靠 vector-effect 抵偿',
     rail ? [...new Set(rail.items.map(item => (item.icon ? item.icon.scale : 0)))].map(v => v.toFixed(4)).join(' | ') : '无'
   );
   ok(
-    rail && rail.items.every(item => item.icon && item.icon.effective >= 1.25 && [1.75, 2.25].includes(item.icon.effective)),
-    '有效描边 ≥1.25 CSS px（1.75 / 选中 2.25）',
+    rail && rail.items.every(item => item.icon && item.icon.vectorEffect === 'non-scaling-stroke'),
+    '描边锁定 non-scaling-stroke（删掉这条 CSS，描边会折成 1.67px 并落小数设备像素）',
+    rail ? [...new Set(rail.items.map(item => (item.icon ? item.icon.vectorEffect : '无')))].join(' | ') : '无'
+  );
+  ok(
+    rail && rail.items.every(item => item.icon && item.icon.effective >= 1.25 && [2, 2.5].includes(item.icon.effective)),
+    '有效描边 ≥1.25 CSS px（2 / 选中 2.5）',
     rail ? [...new Set(rail.items.map(item => (item.icon ? item.icon.effective : 0)))].map(v => v.toFixed(2)).join(' | ') : '无'
   );
   ok(
