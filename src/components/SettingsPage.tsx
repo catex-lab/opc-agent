@@ -728,7 +728,6 @@ export function SettingsPage({
                  我们 6px 档。尺寸落在 settings-select.css 的 .opc-refresh-login，
                   描边沿用全局 outline 的 --td-component-stroke 低对比档。 */
               variant="outline"
-              size="small"
               className="opc-refresh-login"
               icon={<RefreshCw size={13} />}
               onClick={checkLoginStatus}
