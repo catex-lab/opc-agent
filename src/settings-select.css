@@ -1,19 +1,48 @@
-/* ── 设置页枚举型选项的自绘下拉 ─────────────────────────────────────────
+/* ── 设置页：行文法 + 枚举型选项的自绘下拉 ─────────────────────────────
  *
- * 只服务「关闭窗口时」「链接打开方式」两项，独立成文件，避免和导航栏
- * / index.css 的并行改动抢同一段样式。
+ * 只服务设置页（不含导航栏 / index.css 的公共样式），独立成文件，避免和
+ * 并行改动抢同一段样式。
  *
- * 为什么是自绘而不是原生 <select>：原生展开菜单由操作系统绘制，边框、
- * 圆角、阴影都归系统，CSS 无法软化「弹层边线」。自绘面板后，边线走
- * --tc-edge，阴影走 --shadow-popup（亮/深两套都有一档），圆角走
- * --td-radius-medium —— 不新增硬编码色值，不用品牌色。
+ * ## 行文法来自参考图实测
+ *
+ * 参考图（1924×1234 截图，1.5× 缩放）实测换算成 CSS px 后：
+ *   · 主标签 14px / 行高 20，字重 500；
+ *   · 说明 12px / 行高 18，标签字身到说明字身 24；
+ *   · 行内上下留白各 17 + 1px 低对比分隔线 ⇒ 行跳 77；
+ *   · 控件高 36、宽度按内容、右边缘与内容右边界同线、左右内边距 12；
+ *   · 弹层与触发器同宽、间距 4、内边距 4、圆角 8、选项高 34。
+ * 详细测量与差异表在 `e:\aiapp\opc\.local-notes\settings-reference-notes.md`。
+ *
+ * ## 为什么是自绘而不是原生 <select>
+ *
+ * 原生展开菜单由操作系统绘制，边框、圆角、阴影都归系统，CSS 无法软化
+ * 「弹层边线」。自绘面板后，边线走 --tc-edge，阴影走 --shadow-popup
+ * （亮/深两套都有一档），圆角走 --td-radius-medium —— 不新增硬编码色值，
+ * 不用品牌色。
  *
  * 触发器/面板的键盘与朗读语义由 EnumSelect.tsx 负责（role=combobox +
  * listbox / option、aria-expanded、aria-activedescendant 等）。
  */
 
+/* 分区标题：只做文字、不加卡片，靠留白分段。
+   参考图里标题（14px / 600）与上一行之间隔了一次行分隔线 + 一段留白，
+   下方只留 12px 就接内容。本仓库一次只渲染一个分区，标题就是内容首行，
+   所以上边距取 0（那 48px 在参考图里属于「上一分区末尾」），否则首屏会
+   白掉近 50px。 */
+.opc-settings-section-title {
+  margin: 0 0 12px;
+  font-size: var(--text-body-lg);
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+}
+
+/* 一行设置：主标签在左、控件右对齐；说明单独占下方一行。
+   分隔线用 --tc-edge-strong（深色 8.5% 白 ≈ rgb(64,64,66)，参考图实测
+   rgb(70,70,71) / 底 rgb(44,44,46)，同一档低对比）。 */
 .opc-enum-setting {
-  margin-top: 24px;
+  padding: 17px 0;
+  border-top: 1px solid var(--tc-edge-strong);
   /* 用容器查询判断「这一行还放不放得下标题 + 下拉」，比媒体查询更准：
      设置面板的可用宽度受导航栏、模态宽度和内边距共同影响，不等于视口宽。 */
   container-type: inline-size;
@@ -26,7 +55,15 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 32px;
+  /* 行高与控件同高时不撑高本行；控件 36 才是这一行的主高度 */
+  min-height: 36px;
+}
+
+/* 左列：标签行 + 说明行，整体与右侧控件垂直居中（参考图里两行文字和 36px
+   控件是居中对齐的，说明首行与控件底边会有几像素的重叠区）。 */
+.opc-enum-setting__text {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .opc-enum-setting__title {
@@ -34,7 +71,6 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  flex: 1 1 auto;
 }
 
 .opc-enum-setting__label {
@@ -42,65 +78,79 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-body);
+  font-size: var(--text-body-lg);
+  line-height: 20px;
   font-weight: 500;
   color: var(--td-text-color-primary);
 }
 
 .opc-enum-setting__hint {
   /* 两行高固定预留：切换选项时说明文字长短不一，不预留会让下面的
-     透明度/光斑设置整体上下跳。 */
-  min-height: calc(1.6em * 2);
-  margin: 6px 0 0;
-  font-size: var(--text-body);
-  line-height: 1.6;
+     透明度/光斑设置整体上下跳。
+     上边距 2：标题行被 InfoHint 图标撑到 22，22 + 2 = 24，正是参考图
+     实测的「标签字身顶 → 说明字身顶」距离。 */
+  min-height: calc(18px * 2);
+  margin: 2px 0 0;
+  font-size: var(--text-caption);
+  line-height: 18px;
   color: var(--td-text-color-secondary);
 }
 
+/* 控件：高 36（参考图三处控件实测均 54 原始像素 → 36）。
+   宽度按内容自适应（参考图里「工作区内修改」≈143、「中文」≈100，
+   不是固定宽），min-width 只兜住最短选项，右边缘靠 margin-left:auto
+   与内容右边界对齐。 */
 .opc-select {
   position: relative;
   display: flex;
   align-items: stretch;
-  flex: 0 0 220px;
-  width: 220px;
-  height: 32px;
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 140px;
+  height: 36px;
   margin-left: auto;
-  border: 1px solid var(--tc-edge);
+  /* 填充式（参考图亮/暗两张都是浅灰底、看不到描边，圆角 6px）：
+     亮色取 rgb(245,246,247)、深色取比内容底亮一档的灰 —— 正好是
+     --td-bg-color-component（#f5f5f5 / #262626），不新增色值。
+     1px 透明边框只用来占位：聚焦切到「只加环」时尺寸不跳动。 */
+  border: 1px solid transparent;
   border-radius: var(--td-radius-default);
-  background-color: var(--td-bg-color-container);
+  background-color: var(--td-bg-color-component);
   color: var(--td-text-color-primary);
   transition:
-    border-color var(--duration-fast) var(--ease-tencent),
+    background-color var(--duration-fast) var(--ease-tencent),
     box-shadow var(--duration-fast) var(--ease-tencent);
 }
 
+/* 悬停只压深填充，不加描边 —— 与填充式形态一致 */
 .opc-select:hover {
-  border-color: var(--tc-edge-strong);
+  background-color: var(--td-bg-color-component-hover);
 }
 
-/* 焦点环：全局规则把原生表单控件的 outline 关掉了，这里补一圈中性色描边
-   （不用品牌色，避免彩色强调）+ 设计系统既有的淡阴影。只加在包裹层，
-   触发器本身不再画第二圈。 */
+/* 焦点：只加 --tc-focus-shadow（3px 4.5% 的柔光 + 一点点下沉阴影），
+   **不改边框色、不改填充色** —— 与 `.t-input.t-is-focused` 的口径完全一致
+   （A30/A83 的焦点契约：任何边框色变化都会把那圈「黑框」请回来）。
+   触发器是 div[role=combobox]，不吃全局 `button:focus-visible` 的品牌色描边；
+   这里也不再自加 outline，避免出现「柔光环 + 硬描边」双圈。 */
 .opc-select:focus-within {
-  border-color: var(--tc-edge-strong);
   box-shadow: var(--tc-focus-shadow);
-  outline: 1px solid var(--td-text-color-secondary);
-  outline-offset: 1px;
 }
 
 .opc-select__trigger {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
   height: 100%;
-  padding: 0 10px 0 11px;
+  /* 参考图控件文字左沿距控件左边 ≈12 */
+  padding: 0 12px;
   border: 0;
   outline: none;
   background: transparent;
   color: var(--td-text-color-primary);
   font-family: inherit;
-  font-size: var(--text-body);
+  font-size: var(--text-body-lg);
   line-height: 1;
   cursor: pointer;
   user-select: none;
@@ -125,11 +175,15 @@
    z-index 高于同一列里的说明文字，避免被下一行盖住。 */
 .opc-select__panel {
   position: absolute;
-  left: 0;
-  right: 0;
+  /* -1px：触发器有 1px 透明边框，弹层外沿与触发器外沿对齐（参考图两者同宽） */
+  left: -1px;
+  right: -1px;
   z-index: 30;
   padding: 4px;
-  border: 1px solid var(--tc-edge);
+  /* 参考图两张的弹层描边都比触发器明显一点：亮 rgb(229)/白 ≈ 10% 黑，
+     深 rgb(68)/底 rgb(44) ≈ +24 亮度。--tc-edge 只有 4.5%/5.5%，会淡到
+     看不出边界，故这里用 --tc-edge-strong（7%/8.5%）。 */
+  border: 1px solid var(--tc-edge-strong);
   border-radius: var(--td-radius-medium);
   background-color: var(--td-bg-color-container);
   box-shadow: var(--shadow-popup);
@@ -137,7 +191,8 @@
   overscroll-behavior: contain;
 }
 
-/* 与触发器视觉连续：间距 4px，宽度与触发器一致（left/right:0） */
+/* 与触发器视觉连续：间距 4px（参考图实测 6 原始像素 = 4 CSS），
+   宽度与触发器一致（left/right:0） */
 .opc-select__panel--below {
   top: calc(100% + 4px);
 }
@@ -146,14 +201,16 @@
   bottom: calc(100% + 4px);
 }
 
+/* 选项：高 34（参考图弹层 77 高 = 4×2 内边距 + 1×2 边框 + 2×34），
+   同一弹层里所有选项高度与内边距一致，不因文案长短而变。 */
 .opc-select__option {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 32px;
-  padding: 5px 8px;
+  min-height: 34px;
+  padding: 0 8px;
   border-radius: var(--td-radius-default);
-  font-size: var(--text-body);
+  font-size: var(--text-body-lg);
   line-height: 1.4;
   color: var(--td-text-color-primary);
   cursor: pointer;
@@ -189,7 +246,7 @@
   white-space: nowrap;
 }
 
-/* 窄窗规则：容器可用宽度 ≤ 360px 时，一行放不下「标题（约 106px）+ 220px
+/* 窄窗规则：容器可用宽度 ≤ 360px 时，一行放不下「标题（约 106px）+ 140px
    下拉」，整体改成上下堆叠 —— 标题一行、下拉占满下一行，标题不再被压成
    竖排，也不允许控件溢出。360px 是容器宽度，不是视口宽度。 */
 @container (max-width: 360px) {
@@ -198,7 +255,7 @@
     align-items: flex-start;
   }
 
-  .opc-enum-setting__title {
+  .opc-enum-setting__text {
     flex: 1 1 100%;
   }
 

@@ -610,9 +610,12 @@ export function SettingsPage({
           })}
         </div>
 
+        {/* 底部留白比顶部大一档：参考图的滚动区在裁切位置看不到底边，
+            但「最后一行不贴边」是硬要求 —— 24px 在深色下仍会让末行文字
+            贴着弹窗圆角，故取下 32 / 上 24。 */}
         <div
           ref={panelScrollRef}
-          className="tc-scroll-fade min-w-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6"
+          className="tc-scroll-fade min-w-0 flex-1 overflow-y-auto px-4 pb-8 pt-6 sm:px-6"
           data-fade={panelOverflowing ? '1' : undefined}
         >
           <div className="w-full space-y-8" data-settings-panel={section}>
@@ -641,11 +644,9 @@ export function SettingsPage({
             用户也已经能把界面调成自己喜欢的深浅色。 */}
         {section === 'appearance' && (
         <div>
-          <div className="mb-4">
-            <h2 className="text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-              外观
-            </h2>
-          </div>
+          {/* 分区标题只做文字：参考图里「外观」与主标签同档（14px），
+              靠上方留白分段、下方只留 12px 接内容。样式见 settings-select.css。 */}
+          <h2 className="opc-settings-section-title">外观</h2>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {THEME_OPTIONS.map(({ value, label, hint, Icon }) => {
@@ -1308,14 +1309,19 @@ function CloseBehaviorSetting() {
       {/* 标题与下拉同一行：标题占左侧、下拉用 margin-left:auto 贴该行右边缘，
           右边缘就是分组内容宽度的右边界，和上面的主题卡、下面的说明文字同一条线。 */}
       <div className="opc-enum-setting__row">
-        <div className="opc-enum-setting__title">
-          <label className="opc-enum-setting__label" id="opc-close-behavior-label">
-            关闭窗口时
-          </label>
-          <InfoHint
-            label="关闭窗口行为说明"
-            text="选择「直接退出」时，如果还有 Agent 任务在运行，会先弹一次确认；选择「最小化到托盘」则不会中断任务，进程继续留在托盘里，托盘右键菜单可以退出。"
-          />
+        {/* 参考图的左列是「标签 + 说明」两行、整体与右侧控件垂直居中，
+            说明就在标签下 4px —— 所以说明放在左列里，而不是行外另起一段。 */}
+        <div className="opc-enum-setting__text">
+          <div className="opc-enum-setting__title">
+            <label className="opc-enum-setting__label" id="opc-close-behavior-label">
+              关闭窗口时
+            </label>
+            <InfoHint
+              label="关闭窗口行为说明"
+              text="选择「直接退出」时，如果还有 Agent 任务在运行，会先弹一次确认；选择「最小化到托盘」则不会中断任务，进程继续留在托盘里，托盘右键菜单可以退出。"
+            />
+          </div>
+          <p className="opc-enum-setting__hint">{current.hint}</p>
         </div>
         {/* 自绘下拉：原生 select 的展开菜单由操作系统绘制、边线无法软化，
             换成自绘面板才能让弹层走设计令牌。键盘与朗读语义见 EnumSelect。 */}
@@ -1329,7 +1335,6 @@ function CloseBehaviorSetting() {
           onChange={next => setBehavior(saveCloseBehavior(next))}
         />
       </div>
-      <p className="opc-enum-setting__hint">{current.hint}</p>
     </div>
   );
 }
@@ -1361,14 +1366,17 @@ function LinkOpenModeSetting() {
   return (
     <div className="opc-enum-setting" data-link-open-setting>
       <div className="opc-enum-setting__row">
-        <div className="opc-enum-setting__title">
-          <label className="opc-enum-setting__label" id="opc-link-open-mode-label">
-            链接打开方式
-          </label>
-          <InfoHint
-            label="链接打开方式说明"
-            text="正文里的 http(s) 链接点击时用哪种方式打开。悬停链接时会有完整地址提示，里面也能临时改用另一种方式打开。应用内打开会占用右侧工作区；窄屏或群聊里会自动改用系统浏览器。"
-          />
+        <div className="opc-enum-setting__text">
+          <div className="opc-enum-setting__title">
+            <label className="opc-enum-setting__label" id="opc-link-open-mode-label">
+              链接打开方式
+            </label>
+            <InfoHint
+              label="链接打开方式说明"
+              text="正文里的 http(s) 链接点击时用哪种方式打开。悬停链接时会有完整地址提示，里面也能临时改用另一种方式打开。应用内打开会占用右侧工作区；窄屏或群聊里会自动改用系统浏览器。"
+            />
+          </div>
+          <p className="opc-enum-setting__hint">{current.hint}</p>
         </div>
         <EnumSelect
           id="opc-link-open-mode"
@@ -1380,7 +1388,6 @@ function LinkOpenModeSetting() {
           onChange={next => setMode(saveLinkOpenMode(next))}
         />
       </div>
-      <p className="opc-enum-setting__hint">{current.hint}</p>
     </div>
   );
 }

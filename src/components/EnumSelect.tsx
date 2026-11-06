@@ -53,7 +53,15 @@ interface EnumSelectProps<T extends string> {
 }
 
 const PANEL_MAX = 240;
-const OPTION_HEIGHT = 32;
+/**
+ * 单个选项的高度，必须与 settings-select.css 里 `.opc-select__option`
+ * 的 min-height 一致：这里用来估「面板展开后要多高」，据此决定向上还是
+ * 向下、以及钳制最大高度。参考图实测弹层 77px = 4×2 内边距 + 1×2 边框
+ * + 2×34，故选项 34。
+ */
+const OPTION_HEIGHT = 34;
+/** 弹层上下内边距 4×2 + 描边 1×2 */
+const PANEL_CHROME = 10;
 
 export function EnumSelect<T extends string>({
   id,
@@ -83,7 +91,7 @@ export function EnumSelect<T extends string>({
     const clip = clipEl?.getBoundingClientRect();
     const bottom = clip ? clip.bottom : window.innerHeight;
     const top = clip ? clip.top : 0;
-    const desired = Math.min(options.length * OPTION_HEIGHT + 8, PANEL_MAX);
+    const desired = Math.min(options.length * OPTION_HEIGHT + PANEL_CHROME, PANEL_MAX);
     const spaceBelow = bottom - rect.bottom - 8;
     const spaceAbove = rect.top - top - 8;
     const up = spaceBelow < desired && spaceAbove > spaceBelow;
