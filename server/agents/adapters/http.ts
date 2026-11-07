@@ -20,9 +20,10 @@
  *    公共助手人格）。这与 CLI 类「用人家原生人格」是两条路，UI 上必须
  *    区分开：这类 Agent 叫「模型直连」而不是「Agent」。
  *
- * 3. **上下文不自动续接**。和 CLI 类一样，服务器不拼历史消息；但这里连
- *    resume token 都没有 —— 每次调用都是独立的一问一答。要让多轮生效，
- *    必须由上层把历史塞进 messages（本轮不做）。
+ * 3. **上下文由上层装配**。这类接口没有 resume token，每次调用本来都是
+ *    独立的一问一答。A208 起由服务端从 chat.db 取已完成的回合、按 token
+ *    预算截好后经 `ctx.history` 传进来；适配器只负责翻译成各家的
+ *    messages / contents 结构。适配器自己不读库，也不负责截断策略。
  *
  * ## 为什么不用 fetch
  *
@@ -366,7 +367,9 @@ export class HttpAdapter implements AgentProvider {
 
         if (this.spec.dialect === 'openai') {
           headers.authorization = `Bearer ${key}`;
+          // A208：历史在前、本轮提问在后；顺序必须保持时间正序
           const messages: Array<{ role: string; content: string }> = [
+            ...(ctx.history ?? []).map(h => ({ role: h.role, content: h.content })),
             { role: 'user', content: ctx.prompt },
           ];
           if (systemPrompt) messages.unshift({ role: 'system', content: systemPrompt });
@@ -382,13 +385,25 @@ export class HttpAdapter implements AgentProvider {
           body = {
             model,
             max_tokens: this.spec.maxTokens ?? 8192,
-            messages: [{ role: 'user', content: ctx.prompt }],
+            messages: [
+              ...(ctx.history ?? []).map(h => ({ role: h.role, content: h.content })),
+              { role: 'user', content: ctx.prompt },
+            ],
             stream: true,
           };
           if (systemPrompt) body.system = systemPrompt;
         } else {
           headers['x-goog-api-key'] = key;
-          body = { contents: [{ role: 'user', parts: [{ text: ctx.prompt }] }] };
+          // Gemini 用 'model' 而不是 'assistant' 来表示自己说过的话
+          body = {
+            contents: [
+              ...(ctx.history ?? []).map(h => ({
+                role: h.role === 'assistant' ? 'model' : 'user',
+                parts: [{ text: h.content }],
+              })),
+              { role: 'user', parts: [{ text: ctx.prompt }] },
+            ],
+          };
           if (systemPrompt) body.systemInstruction = { parts: [{ text: systemPrompt }] };
         }
 

@@ -583,6 +583,15 @@ export interface SendContext {
   /** 上次调用返回的恢复令牌，用于续接上下文（CLI 的 --continue / --session） */
   resumeToken?: string | null;
   /**
+   * A208：已经整理好的历史对话（只给**无状态**的 HTTP 直连接口用）。
+   *
+   * 为什么放在这里而不是让适配器自己读 chat.db：适配器不该知道库在哪；
+   * 由服务端按 token 预算截好后喂进来，HTTP 适配器只负责翻译成各家的
+   * messages / contents 结构。CLI 型适配器会忽略这个字段 —— 它们有自己的
+   * 会话文件，再灌一份历史会把两套上下文搅在一起。
+   */
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  /**
    * A106：由 CliAdapter 在**双向模式**下注入，告诉 buildArgs 切到 stdin 供数。
    *
    * 为什么经 ctx 传而不是适配器自己拼 argv：`--input-format stream-json`

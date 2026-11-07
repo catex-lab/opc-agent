@@ -147,7 +147,7 @@ import { errorTextOfBlocks, legacyToBlocks, textOfBlocks, toolCallsOfBlocks } fr
 // A207：CLI 会话里的悬空回合识别（切模型/续接前先问用户）。
 import { findDanglingTurn, opencodeSessionDirectory, sameDirectory } from "./dangling.js";
 // A208：HTTP 直连型 Agent 的历史装配（复用 kb 的 token 估算与预算思路）。
-import { historySummary } from "./history.js";
+import { assembleHistory, HISTORY_TOKEN_BUDGET, historySummary } from "./history.js";
 import type { CapabilityProfile } from "../shared/capabilities.js";
 import type { RunEvent } from "../shared/blocks.js";
 import {
@@ -2138,6 +2138,43 @@ app.post("/api/chat", async (req, res) => {
     console.log(`[Chat] 用户选择继续原 CLI 会话: ${resumeToken}`);
   }
 
+  /**
+   * A208：HTTP 直连型 Agent 的历史装配。
+   *
+   * 这一类接口每次请求都是无状态的（豆包 / Kimi / 自建 OpenAI 兼容网关），
+   * 适配器原来只把本轮一句放进 messages —— 界面上是连续对话，模型看到的
+   * 却是一张白纸。这里从 chat.db 取已完成的回合，按 token 预算从最早的开始
+   * 丢，再交给适配器翻译成各家的 messages / contents。
+   *
+   * 只给 `kind === 'http'` 的 Agent：CLI 型有自己的会话文件（resumeToken），
+   * 再灌一份历史等于两套上下文打架；无状态的 CLI（如 Trae）也不在本次范围，
+   * 保持原行为。
+   *
+   * 历史窗口在**插入本轮 user 消息之前**取，所以天然不含当前提问。
+   * 重新生成时库里那条 user 就是本轮 prompt，要单独剔除，否则会重复一遍。
+   */
+  let chatHistory: Array<{ role: 'user' | 'assistant'; content: string }> | undefined;
+  if (findDef(agentId)?.descriptor.kind === 'http') {
+    let rowsForHistory = historyRows;
+    if (regenerate) {
+      let lastUser = -1;
+      for (let i = rowsForHistory.length - 1; i >= 0; i -= 1) {
+        if (rowsForHistory[i].role === 'user') {
+          lastUser = i;
+          break;
+        }
+      }
+      if (lastUser >= 0) rowsForHistory = rowsForHistory.filter((_, i) => i !== lastUser);
+    }
+    const asm = assembleHistory(rowsForHistory);
+    chatHistory = asm.messages.length > 0 ? asm.messages : undefined;
+    console.log(
+      `[Chat] HTTP 历史装配：带上 ${asm.stats.rounds} 轮 / 估算 ${asm.stats.tokens} token` +
+      `（预算 ${HISTORY_TOKEN_BUDGET}，扫描 ${asm.stats.scannedRounds} 轮，` +
+      `失败跳过 ${asm.stats.droppedFailed}，预算丢弃 ${asm.stats.droppedBudget}）`
+    );
+  }
+
   const userMessageId = uuidv4();
   const assistantMessageId = uuidv4();
   // 首轮判定必须在落 user 消息之前取：落库后再数，本轮提问会被算进去。
@@ -2298,6 +2335,8 @@ app.post("/api/chat", async (req, res) => {
     // 免得给 CLI 传一个空串档位。
     reasoningEffort: (session.reasoning_effort ?? undefined) || undefined,
     resumeToken,
+    // A208：只有无状态 HTTP 适配器会用；CLI 适配器忽略
+    history: chatHistory,
     // A123：生效顺序与 cwd / 档位一致 —— 请求体 > 会话里存的值 > 'default'。
     // 中间那一级是这轮补上的：以前这一档只活在请求体里，而前端读的是会话对象，
     // 于是「芯片显示全放行、发出去的是 default」—— 会话里存了也没人看。
