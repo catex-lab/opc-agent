@@ -234,6 +234,79 @@ const StreamCursorLine = memo(function StreamCursorLine({
   );
 });
 
+/**
+ * A4 首字占位，带「回合结束时的收拢」。
+ *
+ * 为什么要有收拢：纯工具回合（本轮没有正文）结束那一帧原本同时发生三件事 ——
+ * 轨迹收起（约 220ms 动画）、状态行换成操作行（+9.5px）、这个 57.4px 的占位
+ * 瞬间消失。位移彼此方向相反、且有一个是瞬时的，读起来就是「抖一下」。
+ *
+ * 现在占位不再瞬删：回合因「没产出正文」而结束时，把它和轨迹同向、同时长地
+ * 高度收拢到 0（字形立即隐藏），三件事里最大的一件（轨迹折叠）成为唯一的主导
+ * 位移，占位的 57.4px 融进同一次收拢里，不再单独跳一帧。
+ *
+ * 因「首字到达」而退出时不走收拢：真实正文会接管这个槽位，高度本来就连续，
+ * 再收拢反而会在正文下方挤出一段空白。
+ */
+const PLACEHOLDER_RETIRE_MS = 220; // 与 AgentTrace 的 FOLD_MS 对齐
+
+const StreamPlaceholder = memo(function StreamPlaceholder({
+  active,
+  retire,
+}: {
+  active: boolean;
+  retire: boolean;
+}) {
+  const [mode, setMode] = useState<'hidden' | 'shown' | 'out'>(active ? 'shown' : 'hidden');
+  const wasActiveRef = useRef(active);
+  useEffect(() => {
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = active;
+    if (active) {
+      setMode('shown');
+      return;
+    }
+    // 只有「流式中 → 结束且仍无正文」才收拢；历史消息挂载、出错、生图都直接隐身
+    if (wasActive && retire) {
+      setMode('out');
+      const timer = setTimeout(() => setMode('hidden'), PLACEHOLDER_RETIRE_MS);
+      return () => clearTimeout(timer);
+    }
+    setMode('hidden');
+  }, [active, retire]);
+  if (mode === 'hidden') return null;
+  const retiring = mode === 'out';
+  return (
+    <div
+      className="tc-bubble-assistant tc-answer min-w-0 max-w-full break-words"
+      data-stream-placeholder
+      data-stream-placeholder-retiring={retiring ? '1' : undefined}
+      aria-hidden="true"
+      style={
+        retiring
+          ? {
+              height: 0,
+              minHeight: 0,
+              overflow: 'hidden',
+              opacity: 0,
+              transition: `height ${PLACEHOLDER_RETIRE_MS}ms var(--ease-tencent), opacity 80ms linear`,
+            }
+          : {
+              // 2lh + 0.6em = 正文一行 + 光标行 + markdown 段落下边距（实测 57.4px）
+              height: 'calc(2lh + 0.6em)',
+              minHeight: 'calc(2lh + 0.6em)',
+            }
+      }
+    >
+      {!retiring && (
+        <span className="animate-cursor-blink" style={{ color: 'var(--td-brand-color)' }}>
+          |
+        </span>
+      )}
+    </div>
+  );
+});
+
 interface MessageActionsProps {
   /** 纯答案文本（复制按钮用） */
   text: string;
@@ -1866,23 +1939,12 @@ export function ChatMessages({
       <>
         {processNodes}
         {/* A4：与正文块同一个槽位、同一套排版类（字体/行高/断行），
-            所以正文第一行落进来时高度与位置都不变。
-            `2lh + 0.6em` = 「正文一行 + 光标行 + markdown 段落下边距」：
-            光标是紧跟 `<AnswerMarkdown>`（块级宿主）之后的行内 span，
-            实测会独占一行（720px 列宽下 24.5 + 24.5 + 8.4 = 57.4px）。
-            按实测高度预留，而不是按「看起来应该一行」拍一个值。 */}
-        {showAnswerPlaceholder && (
-          <div
-            className="tc-bubble-assistant tc-answer min-w-0 max-w-full break-words"
-            data-stream-placeholder
-            aria-hidden="true"
-            style={{ minHeight: 'calc(2lh + 0.6em)' }}
-          >
-            <span className="animate-cursor-blink" style={{ color: 'var(--td-brand-color)' }}>
-              |
-            </span>
-          </div>
-        )}
+            所以正文第一行落进来时高度与位置都不变；回合无正文地结束时
+            由组件自己收拢，避免和轨迹折叠抢同一帧。 */}
+        <StreamPlaceholder
+          active={showAnswerPlaceholder}
+          retire={!message.isStreaming && !hasAnswer && !message.error && !imageMode}
+        />
         {answerNodes}
         {message.kbRefs ? renderKbRefs(message.kbRefs) : null}
         {errorBlock}
