@@ -1575,7 +1575,18 @@ export function ChatMessages({
     isLast?: boolean,
     defaultOpen?: boolean,
     collapse?: boolean,
-    at?: string
+    at?: string,
+    /**
+     * 这段话是不是「本轮最后一段非空正文」。
+     *
+     * 光标行（`StreamCursorLine`）占着 1lh = 24.5px 的行盒。以前只有
+     * `isLast`（= 最后一个**块**）才保留行盒，于是正文后面又来一个工具时，
+     * 这段正文立刻从 live 掉到 none，整条消息瞬矮 24.5px。而 `isLast` 这个
+     * 位置判据本身与「光标该不该在」无关 —— 工具插到正文下面并不代表正文
+     * 写完了。改用「最后一段正文」判据：它后面就算挂上了轨迹，行盒也留着
+     * （settle 态，字形不可见），下一段正文接管时才把行盒平移过去。
+     */
+    tailText?: boolean
   ): React.ReactNode => {
     if (block.type === 'text') {
       /**
@@ -1603,7 +1614,7 @@ export function ChatMessages({
             phase={
               isStreaming && isLast
                 ? 'live'
-                : !isStreaming && isLast && defaultOpen
+                : (isStreaming || defaultOpen) && tailText
                   ? 'settle'
                   : 'none'
             }
@@ -1960,7 +1971,8 @@ export function ChatMessages({
             i === blocks.length - 1,
             defaultOpen,
             hasAnswer,
-            messageClock
+            messageClock,
+            i === lastTextIdx
           )
         );
         i++;
