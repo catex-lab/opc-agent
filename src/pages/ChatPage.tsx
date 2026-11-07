@@ -168,6 +168,14 @@ interface NewChatOptions {
   imageModel?: string;
 }
 
+/**
+ * 流式跟随的滞回阈值（px）。距底超过 48px 认定「用户主动上滑」，停止跟随；
+ * 回到 8px 以内才恢复。两个值必须留出间隔：只用一个阈值时，滚动条在
+ * 边界附近抖 1px 就会反复切换跟随状态。
+ */
+const SCROLL_UNSTICK_GAP = 48;
+const SCROLL_RESTICK_GAP = 8;
+
 export function ChatPage({
   currentSession,
   models,
@@ -206,6 +214,45 @@ export function ChatPage({
   const navigate = useNavigate();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * 流式跟随状态（A1）。
+   *
+   * 用 ref 而不是 state 存「是否贴底」：`scroll` 事件里每帧都要读它，
+   * 放进 state 会让滚动本身触发重渲染。只有「回到最新」按钮的显隐需要
+   * 参与渲染，所以只有它用 state。
+   *
+   * ⚠️ `scroll` 回调只**判断**、不写 `scrollTop`。程序化贴底写在
+   *    ResizeObserver 里；如果滚动回调也写，就会和用户自己的滚动互相
+   *    推回去，形成自激振荡。
+   */
+  const stickToBottomRef = useRef(true);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  /** 当前观察的内容根节点（`[data-msg-list]`），切视图时会被替换 */
+  const observedContentRef = useRef<HTMLElement | null>(null);
+
+  /** 硬贴底：不走 smooth。流式期间每帧都在移动目标，平滑动画永远追不上。 */
+  const pinToLatest = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+  }, []);
+
+  const handleScrollFollow = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const gap = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (gap > SCROLL_UNSTICK_GAP) {
+      if (stickToBottomRef.current) {
+        stickToBottomRef.current = false;
+        setShowJumpToLatest(true);
+      }
+    } else if (gap <= SCROLL_RESTICK_GAP) {
+      stickToBottomRef.current = true;
+      // 同一个值不重复提交，滚动事件每帧都在触发
+      setShowJumpToLatest(prev => (prev ? false : prev));
+    }
+  }, []);
 
   // 新对话页面状态
   const [newChatAgentId, setNewChatAgentId] = useState('default');
@@ -366,6 +413,10 @@ export function ChatPage({
     if (lastSessionIdRef.current !== sessionId) {
       lastSessionIdRef.current = sessionId;
       pendingJumpRef.current = true;
+      // 新会话必定落在底部，「跟随」状态跟着复位（否则上一个会话里
+      // 上滑留下的 false 会让新会话永远不跟）
+      stickToBottomRef.current = true;
+      setShowJumpToLatest(false);
     }
 
     const el = messagesEndRef.current;
@@ -374,10 +425,8 @@ export function ChatPage({
 
     // 注意：消息容器带 24px 底部内边距（p-6），`scrollIntoView(block:end)`
     // 对齐的是「零高度锚点的底部」，会停在 padding 之上，留下约 23px 空档，
-    // 看着没贴底。所以先 scrollIntoView（记录行为、承担平滑分支），
-    // 再把容器直接拉到绝对底部，确保真正贴底。
+    // 看着没贴底。所以直接拉 scrollTop 到 scrollHeight，确保真正贴底。
     const snapToBottom = () => {
-      el.scrollIntoView({ behavior: 'auto', block: 'end' });
       container.scrollTop = container.scrollHeight;
     };
 
@@ -397,8 +446,58 @@ export function ChatPage({
       return;
     }
 
-    el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    /**
+     * A1：流式跟随不再用 `scrollIntoView({ behavior: 'smooth' })`。
+     *
+     * 流式期间每次消息提交（约一帧一次）都会重跑这个 effect，而 smooth
+     * 动画的每段都被下一个目标打断 —— 画面表现为内容在底部附近持续抖动，
+     * 且用户手动上滑会被强行拽回。现在只有「贴底」状态才写一次 scrollTop，
+     * 上滑后彻底放手。
+     *
+     * 高度变化本身由下面的 ResizeObserver 兜（平滑揭示、轨迹折叠、图片
+     * 渲染都发生在消息数组不变的时候）。
+     */
+    if (stickToBottomRef.current) snapToBottom();
   }, [currentSession?.id, currentSession?.messages, jumpToHashTarget]);
+
+  /**
+   * A1：内容高度变化时贴底。
+   *
+   * 为什么必须单独观察高度：正文的匀速揭示按 32ms 增长、轨迹折叠是 200ms
+   * 动画、图片/代码块是渲染后才定高 —— 这些都不改 `messages` 数组，上面
+   * 那个布局 effect 不会被触发。只靠消息数组，用户看到的是「文字自己往上
+   * 顶一截，等下一次 token 才被拽回来」。
+   *
+   * 观察目标是消息列表根节点（`data-msg-list`，高度 = 内容高度），不是滚动
+   * 容器（它高度恒定，永远不触发）。切换新对话/加载骨架时根节点会被替换，
+   * 用 MutationObserver 重新挂一次，比把 ref 一路透传下去改动面小。
+   */
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    let ro: ResizeObserver | null = null;
+    const attach = () => {
+      const content = container.querySelector<HTMLElement>('[data-msg-list]');
+      if (!content || content === observedContentRef.current) return;
+      observedContentRef.current = content;
+      ro?.disconnect();
+      ro = new ResizeObserver(() => {
+        // 只在用户仍处于底部时贴；否则阅读中的位置会被强行拽走
+        if (stickToBottomRef.current) container.scrollTop = container.scrollHeight;
+      });
+      ro.observe(content);
+    };
+
+    attach();
+    const mo = new MutationObserver(attach);
+    mo.observe(container, { childList: true });
+    return () => {
+      ro?.disconnect();
+      mo.disconnect();
+      observedContentRef.current = null;
+    };
+  }, []);
 
   // 同一个会话里点「回到原对话」只会改 hash，不会重挂载页面；补一个监听。
   useEffect(() => {
@@ -681,13 +780,25 @@ export function ChatPage({
           的 handleNavigate 注释）。 */}
       <div data-chat-page className="relative flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
+          {/* A1：滚动区外面再包一层 `relative`，只为给「回到最新」提供定位
+              基准 —— 按钮不能挂在滚动容器**内部**，那样它会跟着内容一起滚走。
+              `flex-col + min-h-0` 与原结构等价，滚动容器仍然是唯一的
+              `data-chat-scroll`。 */}
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {/* 消息区域。`data-chat-scroll` 是给打靶脚本量的：
               切换会话时这个容器的 scrollTop 变了几次（换成平滑滚动会动
-              几十次，见 useLayoutEffect 里的 pendingJump 说明）。 */}
+              几十次，见 useLayoutEffect 里的 pendingJump 说明）。
+
+              `[overflow-anchor:none]`：贴底由我们自己接管（scrollTop 写入 +
+              ResizeObserver）。不关掉浏览器的滚动锚定，它会在同一帧再改写
+              一次 scrollTop，两个策略互相打架，表现为底部轻微来回。
+              `[scrollbar-gutter:stable]`：滚动条从无到有时不改变内容宽度。
+              正文是中文整段折行，宽度少 15px 会整篇重排一次。 */}
           <div
             ref={scrollContainerRef}
             data-chat-scroll
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-6"
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-6 [overflow-anchor:none] [scrollbar-gutter:stable]"
+            onScroll={handleScrollFollow}
           >
             {showNewChatView ? (
               <NewChatView
@@ -743,6 +854,30 @@ export function ChatPage({
             {!isGroup && resumeConfirm && onResolveResume && (
               <ResumeNotice info={resumeConfirm} onChoose={onResolveResume} />
             )}
+          </div>
+
+          {/* A1：用户上滑后不再抢滚动，改为给一个显式入口。
+              点击是**硬贴底**（同一帧到位），不用 smooth —— 平滑动画在
+              流式期间会被下一次内容增长打断，正好又变成要消除的那种抖动。 */}
+          {showJumpToLatest && (
+            <button
+              type="button"
+              data-jump-latest
+              onClick={() => {
+                stickToBottomRef.current = true;
+                setShowJumpToLatest(false);
+                pinToLatest();
+              }}
+              className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5 text-caption shadow-md transition-colors"
+              style={{
+                backgroundColor: 'var(--tc-surface-content)',
+                border: '1px solid var(--tc-hairline)',
+                color: 'var(--td-text-color-secondary)',
+              }}
+            >
+              回到最新
+            </button>
+          )}
           </div>
 
           {/* A100：上一轮没有产出回复。只在「最后一条是 user 且没有活跃 run」时
