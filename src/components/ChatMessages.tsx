@@ -277,7 +277,11 @@ const StreamPlaceholder = memo(function StreamPlaceholder({
     }
     setMode('hidden');
   }, [active, retire]);
-  if (mode === 'hidden') return null;
+  /* 首字到达时 `active` 当场转 false，但 `mode` 要等 effect 才翻 —— 中间那一个
+     渲染帧里占位与真实正文同时在场（实测多出一行 57.4px；重渲染慢时这一帧
+     能停留 200ms+，就是肉眼看到的一次上跳再回落）。收拢态（retire）除外：
+     它本来就要先按原高度起步做高度动画。 */
+  if (mode === 'hidden' || (!active && !retire)) return null;
   const retiring = mode === 'out';
   return (
     <div
