@@ -144,6 +144,10 @@ import {
   TARGETS as EXT_TARGETS,
 } from "./extensions/targets.js";
 import { errorTextOfBlocks, legacyToBlocks, textOfBlocks, toolCallsOfBlocks } from "../shared/blocks.js";
+// A207：CLI 会话里的悬空回合识别（切模型/续接前先问用户）。
+import { findDanglingTurn, opencodeSessionDirectory, sameDirectory } from "./dangling.js";
+// A208：HTTP 直连型 Agent 的历史装配（复用 kb 的 token 估算与预算思路）。
+import { historySummary } from "./history.js";
 import type { CapabilityProfile } from "../shared/capabilities.js";
 import type { RunEvent } from "../shared/blocks.js";
 import {
@@ -1954,6 +1958,9 @@ app.post("/api/chat", async (req, res) => {
     regenerate = false,
     // 被重新生成顶掉的那条 assistant 消息 id（regenerate 时必带）
     replaceMessageId,
+    // A207：用户对「上一轮指令未完成」确认框的答复。
+    // 'continue' = 就在原 CLI 会话上继续；'fresh' = 清掉续接令牌、新建会话。
+    resumeChoice: rawResumeChoice,
   } = req.body;
 
   console.log(`\n[Chat] ========== 新请求 ==========`);
@@ -2035,7 +2042,101 @@ app.post("/api/chat", async (req, res) => {
   }
 
   const selectedModel = resolvedModel;
-  const resumeToken = session.sdk_session_id;
+  let resumeToken = session.sdk_session_id;
+
+  /**
+   * A207：切模型 / 重发之前先确认「CLI 会话里是否留着没答完的指令」。
+   *
+   * 为什么必须挡在落库之前：确认请求一旦返回，这一轮就不存在 ——
+   * 先写 user 消息再问，用户选「新建会话」时库里会多出一条没有对应回复的提问，
+   * 刷新后就是新的悬空回合。
+   *
+   * 判定分两层：
+   *   · 本地 chat.db 只看「最后一条助手消息是否失败」，健康会话不解锁额外开销；
+   *   · opencode 能读到自己的会话库，就以它的结构为准（已答完的不打扰用户）。
+   * 判定为权威的那份理由会写进确认文案，用户能看出是额度、超时还是别的原因。
+   */
+  const resumeChoice: 'continue' | 'fresh' | null =
+    rawResumeChoice === 'fresh' ? 'fresh' : rawResumeChoice === 'continue' ? 'continue' : null;
+
+  let historyRows: db.DbMessage[] = [];
+  try {
+    historyRows = db.getMessagesBySession(session.id);
+  } catch {
+    historyRows = [];
+  }
+
+  let freshSummary = '';
+  if (resumeToken && !resumeChoice && runHub.activeRuns().every(r => r.sessionId !== session.id)) {
+    const dangling = findDanglingTurn(agentId, resumeToken, historyRows);
+    if (dangling) {
+      const preview =
+        dangling.userText.replace(/\s+/g, ' ').trim().slice(0, 90)
+        || '（无法读取指令原文）';
+      const lastAssistant = [...historyRows].reverse().find(r => r.role === 'assistant');
+      const fromModel = lastAssistant?.model || session.model || '';
+      const modelChanged = !!fromModel && !!selectedModel && fromModel !== selectedModel;
+      const effectiveCwd = cwd || session.cwd || process.cwd();
+      // 归属目录只有 opencode 读得到；别的 CLI 拿不到就如实不提示，不瞎猜。
+      const tokenCwd = agentId === 'opencode' ? opencodeSessionDirectory(resumeToken) : null;
+      const cwdMismatch =
+        tokenCwd && !sameDirectory(tokenCwd, effectiveCwd)
+          ? { tokenCwd, sessionCwd: effectiveCwd }
+          : null;
+
+      const lines = [
+        '这条会话的 CLI 里还留着一条没有得到完整回复的指令。直接续接时，新模型可能会把它当成待办事项重新执行。',
+        `未完成的指令：${preview}`,
+        `判定依据：${dangling.reason}`,
+      ];
+      if (modelChanged) {
+        lines.push(`上一轮使用的模型是 ${fromModel}，本轮将使用 ${selectedModel}。`);
+      }
+      if (cwdMismatch) {
+        lines.push(
+          `该 CLI 会话属于目录 ${cwdMismatch.tokenCwd}，与当前工作目录 ${cwdMismatch.sessionCwd} 不一致。` +
+          '本轮不会自动改写；新建会话会从当前工作目录开始。'
+        );
+      }
+
+      console.log(`[Chat] 发现悬空 CLI 回合（${dangling.source}），等待用户确认`);
+      return res.status(409).json({
+        confirm: {
+          kind: 'dangling-cli-turn',
+          title: '上一轮指令未完成',
+          detail: lines.join('\n'),
+          userText: preview,
+          reason: dangling.reason,
+          source: dangling.source,
+          modelChanged,
+          fromModel: fromModel || null,
+          toModel: selectedModel || null,
+          cwdMismatch,
+          options: [
+            { action: 'continue', label: '继续那一条' },
+            { action: 'fresh', label: '新建会话（带历史摘要）' },
+          ],
+        },
+      });
+    }
+  }
+
+  /**
+   * 用户选了「新建会话」：清掉续接令牌，下一轮 CLI 自己起新会话。
+   *
+   * 只清令牌、不改 cwd —— 目录不一致时提示归提示，用户的工作目录不该被
+   * 悄悄改掉。历史摘要只是背景，措辞里明确写了「不是待办指令」。
+   */
+  if (resumeChoice === 'fresh' && resumeToken) {
+    db.updateSession(session.id, { sdk_session_id: null });
+    resumeToken = null;
+    freshSummary = historySummary(historyRows);
+    console.log(
+      `[Chat] 已清空续接令牌，新建 CLI 会话${freshSummary ? '（附带历史摘要）' : ''}`
+    );
+  } else if (resumeChoice === 'continue' && resumeToken) {
+    console.log(`[Chat] 用户选择继续原 CLI 会话: ${resumeToken}`);
+  }
 
   const userMessageId = uuidv4();
   const assistantMessageId = uuidv4();
@@ -2166,7 +2267,10 @@ app.post("/api/chat", async (req, res) => {
   if (kbInjection) {
     writeEvent(projector.kbRefs(kbInjection.citations));
   }
-  const promptForAgent = kbInjection ? `${kbInjection.promptPrefix}\n\n${message}` : message;
+  // A207：新建 CLI 会话时把历史摘要前置（仅背景，措辞已注明不是指令）。
+  // 顺序：知识库前缀 → 历史摘要 → 本轮提问；三者都是纯文本，CLI 侧无结构要求。
+  const promptWithHistory = freshSummary ? `${freshSummary}\n\n${message}` : message;
+  const promptForAgent = kbInjection ? `${kbInjection.promptPrefix}\n\n${promptWithHistory}` : promptWithHistory;
 
   let newResumeToken: string | null = null;
   // done 事件的载荷先攒着，等落库之后再发：客户端收到 run_end 常会立刻

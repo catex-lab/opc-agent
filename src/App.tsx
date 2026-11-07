@@ -39,6 +39,7 @@ import { SidebarResizer } from './components/SidebarResizer';
 import { pickDirectory } from './workspace';
 import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { ChatHeader } from './components/ChatHeader';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { WorkspacePanel } from './components/WorkspacePanel';
 import { SettingsPage } from './components/SettingsPage';
 import { PermissionDock } from './components/PermissionDock';
@@ -345,6 +346,8 @@ function AppContent() {
     sendMessage,
     regenerate,
     handleStop,
+    resumePrompt,
+    resolveResumeConfirm,
   } = useChat({
     currentSession,
     currentSessionId,
@@ -1896,6 +1899,24 @@ function AppContent() {
                         onRebindAgent={handleRebindAgent}
                       />
                     </Suspense>
+
+                    {/* A207：CLI 会话里的悬空回合。后端在落库前返回 409，
+                        前端撤回乐观气泡后在这里让用户三选一；取消时提问已回到输入框。 */}
+                    <ConfirmDialog
+                      open={!!resumePrompt}
+                      title={resumePrompt?.info.title || '上一轮指令未完成'}
+                      confirmText="继续那一条"
+                      alternateText="新建会话（带历史摘要）"
+                      onAlternate={() => void resolveResumeConfirm('fresh')}
+                      cancelText="取消"
+                      danger={false}
+                      onConfirm={() => void resolveResumeConfirm('continue')}
+                      onCancel={() => void resolveResumeConfirm('cancel')}
+                    >
+                      <div className="whitespace-pre-wrap leading-relaxed">
+                        {resumePrompt?.info.detail}
+                      </div>
+                    </ConfirmDialog>
                     </div>
 
                     {/* A77：工作区面板（右侧兄弟列）。

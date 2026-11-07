@@ -64,6 +64,37 @@ interface NewChatOptions {
   const IMAGE_SCENARIO_ID = 'image';
 
   /**
+   * A207：后端返回的「上一轮指令未完成」确认请求。
+   *
+   * 只要 /api/chat 以 409 返回它，前端就撤回刚加上的乐观气泡、把提问放回
+   * 输入框，并在现有 ConfirmDialog 上让用户三选一。
+   */
+  export interface DanglingConfirmInfo {
+    kind: 'dangling-cli-turn';
+    title: string;
+    detail: string;
+    userText: string;
+    reason: string;
+    source: 'opencode' | 'local';
+    modelChanged: boolean;
+    fromModel: string | null;
+    toModel: string | null;
+    cwdMismatch: { tokenCwd: string; sessionCwd: string } | null;
+    options: Array<{ action: 'continue' | 'fresh'; label: string }>;
+  }
+
+  /** 等待用户答复的那一次发送（保存足够的参数，确认后原样重发） */
+  interface ResumePrompt {
+    info: DanglingConfirmInfo;
+    messageContent: string;
+    newChatOptions?: NewChatOptions;
+    onNavigate?: (path: string) => void;
+    regen?: RegenerateOptions;
+    /** 重新生成时被临时替换掉的旧回复；取消确认时要还原回去 */
+    replacedOriginal?: Message;
+  }
+
+  /**
    * A33「重新生成」的入参。
    *
    * `replaceMessageId`：要顶掉的那条旧回复。传了它就表示这不是一次普通
@@ -119,6 +150,8 @@ export function useChat(options: UseChatOptions) {
   const turnsRef = useRef<Map<string, Turn>>(new Map());
   /** 正在跑的会话 id。派生给 UI 的 `isLoading` 只反映**当前会话** */
   const [runningIds, setRunningIds] = useState<string[]>([]);
+  /** A207：等待用户答复的悬空回合确认（同一时刻只会有一个） */
+  const [resumePrompt, setResumePrompt] = useState<ResumePrompt | null>(null);
 
   const [inputValue, setInputValue] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.draftInput) || '';
@@ -150,7 +183,9 @@ export function useChat(options: UseChatOptions) {
     newChatOptions?: NewChatOptions,
     onNavigate?: (path: string) => void,
     /** A33 重新生成：带上它就是「重跑最后一轮」，不是新提问 */
-    regen?: RegenerateOptions
+    regen?: RegenerateOptions,
+    /** A207：用户对「上一轮指令未完成」的答复，确认后原样重发时带上 */
+    resumeChoice?: 'continue' | 'fresh'
   ) => {
     if (!messageContent.trim()) return;
     /* A142：只拦「这个会话」自己。以前是 `|| isLoading`，全局一个布尔，
@@ -254,6 +289,11 @@ export function useChat(options: UseChatOptions) {
       isStreaming: true,
       contentBlocks: []
     };
+
+    // A207：确认请求回来时要还原这一条。必须在乐观替换之前取。
+    const replacedOriginal = regen
+      ? currentSession?.messages.find(m => m.id === regen.replaceMessageId)
+      : undefined;
 
     setSessions(prev => prev.map(s => {
       if (s.id !== sessionId) return s;
@@ -408,6 +448,8 @@ export function useChat(options: UseChatOptions) {
                 replaceMessageId: regen.replaceMessageId,
               }
             : {}),
+          // A207：用户已确认「继续 / 新建」，本轮不再弹同一个确认
+          ...(resumeChoice ? { resumeChoice } : {}),
         })
       });
 
@@ -416,12 +458,57 @@ export function useChat(options: UseChatOptions) {
       // 用户只看到一个永远转圈、最后静默停下的气泡，完全不知道为什么。
       if (!response.ok) {
         let detail = `HTTP ${response.status}`;
+        let body: any = null;
         try {
-          const j = await response.json();
-          if (j?.error) detail = String(j.error);
+          body = await response.json();
+          if (body?.error) detail = String(body.error);
         } catch {
           // 非 JSON 响应（网关错误页等），保留状态码
         }
+
+        // A207：上一轮指令未完成 —— 后端在落库前就挡住了本轮。
+        // 这里要把乐观气泡撤回：后端没有写 user 消息，留着它就是一条
+        // 永远等不到回复的悬空提问（刷新后又会变成新的悬空回合）。
+        const confirm = body?.confirm;
+        if (confirm?.kind === 'dangling-cli-turn') {
+          setSessions(prev => prev.map(s => {
+            if (s.id !== sessionId) return s;
+            if (regen) {
+              // 原位还原旧回复；旧回复在后端也还没被删除
+              return {
+                ...s,
+                messages: s.messages.map(m =>
+                  m.id === tempAssistantMessageId ? (replacedOriginal ?? m) : m
+                ),
+              };
+            }
+            return {
+              ...s,
+              messages: s.messages.filter(
+                m => m.id !== tempUserMessageId && m.id !== tempAssistantMessageId
+              ),
+            };
+          }));
+          // 普通提问放回输入框：用户点「取消」时不丢内容；重新生成没有输入框语义，跳过
+          if (!regen) {
+            setInputValue(messageContent);
+            try {
+              localStorage.setItem(STORAGE_KEYS.draftInput, messageContent);
+            } catch {
+              // 隐私模式等写不进去，不影响本次发送
+            }
+          }
+          setResumePrompt({
+            info: confirm as DanglingConfirmInfo,
+            messageContent,
+            newChatOptions,
+            onNavigate,
+            regen,
+            replacedOriginal,
+          });
+          return;
+        }
+
         patchAssistant({
           isStreaming: false,
           error: `${imageMode ? '生图失败' : '请求失败'}：${detail}`,
@@ -723,6 +810,29 @@ export function useChat(options: UseChatOptions) {
     notifyRunsChanged();
   }, [currentSessionId, setSessions]);
 
+  /**
+   * A207：处理「上一轮指令未完成」的确认结果。
+   *
+   * 确认后原样重发同一条消息，只是多带一个 `resumeChoice`；
+   * 后端据此续接或清令牌，不再重复弹确认。
+   */
+  const resolveResumeConfirm = useCallback(async (choice: 'continue' | 'fresh' | 'cancel') => {
+    const pending = resumePrompt;
+    if (!pending) return;
+    setResumePrompt(null);
+    if (choice === 'cancel') {
+      // 提问原文已在 409 分支放回输入框；重新生成没有输入框语义，到此为止
+      return;
+    }
+    await sendMessage(
+      pending.messageContent,
+      pending.newChatOptions,
+      pending.onNavigate,
+      pending.regen,
+      choice
+    );
+  }, [resumePrompt, sendMessage]);
+
   // A132：`resolvePermission` 与 `permissionRequest` 都搬走了。
   // 答复的唯一出口是 `permissionStore.answer()`（它做送达判定：只有 200 才摘卡），
   // 队列也由 store 统一持有 —— 这里不再需要对外暴露任何权限相关的东西。
@@ -733,5 +843,8 @@ export function useChat(options: UseChatOptions) {
     sendMessage,
     regenerate,
     handleStop,
+    /** A207：悬空回合确认（为空 = 不显示弹窗） */
+    resumePrompt,
+    resolveResumeConfirm,
   };
 }
