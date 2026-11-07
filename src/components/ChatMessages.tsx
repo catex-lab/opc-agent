@@ -153,8 +153,11 @@ function StreamStatus({
 
   return (
     <span
-      className="flex items-center gap-1.5 text-caption"
-      style={{ color: 'var(--td-text-color-placeholder)' }}
+      className="mt-1.5 flex items-center gap-1.5 text-caption"
+      /* 与下方操作行同槽位：`.tc-actions` 是 26px + `mt-1.5`，这里补上同样的
+         上边距与最小高度，回合结束那一帧「状态行 → 操作行」才是纯内容替换，
+         不再矮/高一档（实测状态行 16.5px、操作行 26px + 6px 上边距）。 */
+      style={{ color: 'var(--td-text-color-placeholder)', minHeight: 26 }}
       data-stream-status
       data-stream-phase={imageMode ? 'image' : runActivity(blocks ?? [])}
     >
