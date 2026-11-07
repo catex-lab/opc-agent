@@ -1334,7 +1334,9 @@ const MessageRow = memo(function MessageRow({
 
         {/* P6 成本统计：耗时 / 费用 / token 一行小字，跟在气泡下面。
             没有用量数据时 formatUsage 返回 null，整行不渲染 ——
-            不显示「0 秒 · $0.00」冒充「这次没花钱」。 */}
+            不显示「0 秒 · $0.00」冒充「这次没花钱」。
+            已知取舍：数据显示与 run_end 同帧到达，预占一行会让流式期常驻空白，
+            故不预占，收尾帧净增 24.5px 保持现状（不是待修 bug）。 */}
         {message.role === 'assistant' && usageText && (
           <span
             className="text-caption"
@@ -1853,9 +1855,9 @@ export function ChatMessages({
      * 中途旁白都变成永久正文，多步回合重新变成「好几条摘要 + 夹在中间的
      * 旁白」，正是 2026-11-03 改版要消掉的版面问题。
      *
-     * 残余：`[正文A][工具][正文B]` 的回合里，B 开始出现时 A 仍会并入轨迹
-     * 一次。纯块序列里没有「旁白 / 答案」的语义字段，只能按位置划界；
-     * 把 A 永久留在正文区就是上面的首锚方案，代价更大。
+     * 已知残余（保留不改）：`[正文A][工具][正文B]` 里 B 一出现，A 会并入轨迹一次。
+     * 块序列没有旁白 / 答案语义；用 ref 冻结「已进正文区」的起点会让 live 与刷新后
+     * （按位置重算）呈现不一致，故仍按位置划界 —— 不是待修 bug。
      */
     const lastTextIdx = blocks.reduce(
       (acc, b, idx) => (b.type === 'text' && b.text.trim().length > 0 ? idx : acc),
