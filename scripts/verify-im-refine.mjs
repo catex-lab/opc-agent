@@ -415,7 +415,12 @@ await go('/chat/s2');
       ch: el ? el.clientHeight : null,
     };
   });
-  ok(r.behaviors.length > 0, '确实发生过滚动定位', JSON.stringify(r.behaviors));
+  /* A1 之后切会话不再走 `scrollIntoView`（流式期间它是抖动的来源），
+     改为直接写 scrollTop。所以「确实发生过滚动定位」改用**结果**证明：
+     位移非零且停在底部。原来断言 behaviors.length > 0 只证明了那个 API
+     被调用过，换成 scrollTop 之后它必然为空 —— 那是断言跟着实现走，
+     不是行为退化。 */
+  ok(r.top > 0, '确实发生过滚动定位（scrollTop > 0）', `top=${r.top}`);
   ok(
     r.behaviors.every(b => b !== 'smooth'),
     '切会话用的是瞬移（没有 smooth 动画）',
