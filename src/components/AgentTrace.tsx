@@ -585,38 +585,27 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
     }
 
     // 正文之后又来了工具事件：ChatMessages 的 hasAnswer 会暂时回落。
-    // 但那条工具可能落在**下一段轨迹**（正文把轨迹切成多段），本段没有新行，
-    // 就不能跟着重开 —— 旧过程已经完成，重新展开只会把正文往下推。
-    // 只有本段真的多了行（rows.length > 收拢时的长度）才重新展开。
-    if (
-      !collapse &&
-      wasCollapse &&
-      contentStartedRef.current &&
-      !touched.current &&
-      rows.length > foldedAtRef.current
-    ) {
-      setExpanded(true);
-      setFoldReason(null);
-    }
+    // A2：这里**不再**自动展开。旧逻辑是本段真的多了行就重开，但在
+    // think/tool/answer 交错的回合里，这个「重开 → 正文再出现 → 收拢」
+    // 会反复发生，每次都是 200ms、数百像素的高度变化，且正好覆盖正文
+    // 流式输出的全过程。新步骤不再占用版面：摘要条的步数会增长，
+    // 运行中另有「执行中」标记（见 barLabel 下方），用户点一下仍可展开。
+    // 手动展开过（touched）的由用户自己控制，不在此列。
   }, [collapse, isStreaming, rows.length]);
 
   /**
-   * 收拢后仍有新工具事件：重新展开；等正文重新出现（collapse 由假变真）
-   * 或正文已经在这些步骤之后（collapse 仍为真）且它们都结束时，再次收拢。
+   * A2：收拢之后不再因为新步骤自动展开，只补一次「收尾」收拢。
    *
-   * 展开期间如果新步骤一直没结束（没有后续事件），它会一直是 running，
-   * 这里也就不会把它折掉 —— 不会假装完成。
+   * 本条效应原来负责两件事：有新步骤就跑出来展开；这些步骤后面没有正文
+   * 时再收起。第一次是流式期间高度来回的主因（think/tool/answer 交错时
+   * 反复触发，每次 200ms、数百像素）。现在展开只由用户点击触发，这里
+   * 仅在「正文已经在这批步骤之后、且它们都结束」时把版面收回去。
    */
   useEffect(() => {
     if (!isStreaming || touched.current || !contentStartedRef.current) return;
     const fresh = rows.slice(foldedAtRef.current);
     if (fresh.length === 0) return;
-    if (fresh.some(i => !isNarration(i) && i.status === 'running')) {
-      setExpanded(true);
-      setFoldReason(null);
-    } else if (collapse) {
-      // collapse 为假说明这些步骤后面还没有正文：此时收拢只是白占版面，
-      // 保持展开，等正文重新出现时由上面的 collapse 变真来收。
+    if (collapse && fresh.every(i => isNarration(i) || i.status !== 'running')) {
       setExpanded(false);
       setFoldReason('content');
     }
@@ -743,6 +732,14 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
             title="最后一步没有等到结束事件，既不算完成也不算失败"
           >
             结果未回传
+          </span>
+        )}
+        {/* A2：收拢之后新步骤不再展开占版面，用一个独立标记说明「还在跑」。
+            刻意不动摘要文案本身 —— 那句话里的「干了什么」信息量最高，
+            盖掉它反而是退步。 */}
+        {!expanded && isStreaming && (
+          <span className="tc-trace-foldtag" data-trace-running>
+            执行中
           </span>
         )}
         {/* 首个正文 token 收拢时给一个可见出口；摘要条本身始终可点 */}
