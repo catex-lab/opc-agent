@@ -86,8 +86,14 @@ function AnswerMarkdownImpl({
   at?: string;
 }) {
   const plain = stripEmoji(text);
-  const shown = useSmoothText(plain, streaming);
-  const segments = useMemo(() => planAnswer(shown, { streaming }), [shown, streaming]);
+  const { shown, settling } = useSmoothText(plain, streaming);
+  // 收尾追赶期间仍按「流式」规划分段：正文还没揭示完，不能提前把
+  // 未闭合的表格/列表当成已收尾的结构（否则会闪一下卡片再变回去）
+  const planStreaming = streaming || settling;
+  const segments = useMemo(
+    () => planAnswer(shown, { streaming: planStreaming }),
+    [shown, planStreaming]
+  );
   const keys = useMemo(() => segmentKeys(segments), [segments]);
   return (
     <div

@@ -19,6 +19,7 @@ import { UserAvatar } from './UserAvatar';
 import { useUserProfile } from '../userProfile';
 import { ImageBubble } from './ImageBubble';
 import { AnswerMarkdown } from './AnswerMarkdown';
+import { SMOOTH_SETTLE_MS } from '../hooks/useSmoothText';
 import { TypingText } from './TypingText';
 import { formatUsage } from '../utils/formatUsage';
 import { stripEmoji } from '../utils/plainText';
@@ -178,6 +179,60 @@ function StreamStatus({
     </span>
   );
 }
+
+/**
+ * 正文末尾的流式光标 / 空行占位。
+ *
+ * 三个阶段：
+ *   · `live`   —— 正在流式，显示闪烁光标；
+ *   · `settle` —— 刚流完、正文还在收尾追赶（见 `SMOOTH_SETTLE_MS`），
+ *                光标先留着，追完才换成不可见占位；
+ *   · `none`   —— 不占行。
+ *
+ * 为什么要「换成不可见占位」而不是直接删掉：光标是紧跟块级 markdown 宿主
+ * 之后的行内 span，浏览器会为它另起一个匿名行盒。实测（720px 列宽）同一段
+ * 单行答案：带光标 57.4px、不带 32.9px，差值正好 1lh = 24.5px。直接删会让
+ * 正文在流式结束那一帧矮一行。占位保留同一个行盒、只把字形藏起来，高度连续。
+ *
+ * 只给本条会话最后一条助手消息保留（由调用方的 `settle` 阶段表达）：历史
+ * 消息保持原排版；新回合开始时这条让位，缩小发生在新消息上方，而那时视口
+ * 已经钉在底部，看不到。
+ */
+const StreamCursorLine = memo(function StreamCursorLine({
+  phase,
+}: {
+  phase: 'live' | 'settle' | 'none';
+}) {
+  // 挂载时就在流式中才显示；历史消息挂载即 settle，直接是占位
+  const [visible, setVisible] = useState(phase === 'live');
+  const prevPhase = useRef(phase);
+  useEffect(() => {
+    const prev = prevPhase.current;
+    prevPhase.current = phase;
+    if (phase === 'live') {
+      setVisible(true);
+      return;
+    }
+    if (phase === 'settle' && prev === 'live') {
+      const timer = setTimeout(() => setVisible(false), SMOOTH_SETTLE_MS);
+      return () => clearTimeout(timer);
+    }
+    setVisible(false);
+  }, [phase]);
+  if (phase === 'none') return null;
+  if (visible) {
+    return (
+      <span className="animate-cursor-blink ml-0.5" style={{ color: 'var(--td-brand-color)' }}>
+        |
+      </span>
+    );
+  }
+  return (
+    <span className="ml-0.5 invisible" aria-hidden="true">
+      |
+    </span>
+  );
+});
 
 interface MessageActionsProps {
   /** 纯答案文本（复制按钮用） */
@@ -1468,26 +1523,15 @@ export function ChatMessages({
             cwd={sessionCwd}
             at={at}
           />
-          {isStreaming && isLast && (
-            <span className="animate-cursor-blink ml-0.5" style={{ color: 'var(--td-brand-color)' }}>
-              |
-            </span>
-          )}
-          {/* 轮末残差：根因是光标本身占一行，不是占位块的移除时机。
-              光标是紧跟块级 markdown 宿主之后的**行内** span，浏览器会为它另起
-              一个匿名行盒。实测（Electron 152 / 720px 列宽）：同一段单行答案，
-              带光标 57.4px、不带 32.9px —— 差值正好是 1lh = 24.5px。
-              所以 `isStreaming` 落假那一帧，正文会矮一行。
-
-              这里把那一行的行高换成不可见占位：字形隐藏、行盒照旧存在。
-              流式中是可见光标，结束后是同一位置的空白行，高度连续。
-              只给本条会话最后一条助手消息保留：历史消息排版保持原样；新回合
-              开始时这条让位，缩小发生在新消息上方，而那时视口已经钉在底部。 */}
-          {!isStreaming && isLast && defaultOpen && (
-            <span className="ml-0.5 invisible" aria-hidden="true">
-              |
-            </span>
-          )}
+          <StreamCursorLine
+            phase={
+              isStreaming && isLast
+                ? 'live'
+                : !isStreaming && isLast && defaultOpen
+                  ? 'settle'
+                  : 'none'
+            }
+          />
         </div>
       );
     }

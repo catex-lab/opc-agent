@@ -34,6 +34,20 @@ const MAX_LAG = 400;
 const JUMP_TAIL = 120;
 
 /**
+ * 一轮结束后的「收尾追赶」时长（ms）。
+ *
+ * 以前 `streaming` 落假就立刻换全文：屏幕上攒着的那截尾巴会在一帧内补完，
+ * 多出一行，贴底的消息再被拽一下。现在改成固定时长线性追完 ——
+ * 取 160ms（需求给的是 120–200ms），理由：
+ *   · 约 5 个 32ms 小帧，肉眼看得出「在收尾」，又不会让人觉得回合还没完；
+ *   · 典型收尾积压只有几十字，160ms 下每帧推进量与流式稳态同量级，
+ *     不会出现「最后一段突然窜出来」；
+ *   · 再短就接近瞬补，再长会和「状态行收起 / 操作行出现」抢注意力。
+ * 这段时间里高度仍由消息区的贴底逻辑兜住，追完才撤光标占位。
+ */
+export const SMOOTH_SETTLE_MS = 160;
+
+/**
  * 下一帧应该揭示到第几个字符。纯函数，供 L1 直接断言。
  *
  * 三条性质（脚本按这三条打靶）：
@@ -52,22 +66,71 @@ export function nextRevealLength(shownLength: number, targetLength: number): num
 }
 
 /**
- * 平滑揭示：`streaming` 时返回已揭示的前缀，否则返回全文。
+ * 平滑揭示：`streaming` 或收尾追赶中返回已揭示的前缀，否则返回全文。
  *
  * 初始值取传入文本 —— 中途切进一个正在流的会话时，不该把已有内容重打一遍。
+ *
+ * 一轮结束时不再瞬补：把剩下的字在 {@link SMOOTH_SETTLE_MS} 内线性追完，
+ * 期间 `settling` 为真（调用方据此保留光标占位，追完再撤）。
  */
-export function useSmoothText(text: string, streaming: boolean): string {
+export function useSmoothText(
+  text: string,
+  streaming: boolean
+): { shown: string; settling: boolean } {
   const [shown, setShown] = useState(text);
+  const [settling, setSettling] = useState(false);
   const shownRef = useRef(text);
   const targetRef = useRef(text);
+  const prevStreamingRef = useRef(streaming);
   targetRef.current = text;
 
-  // 非流式：立刻对齐全文。一轮结束时也不留半截（否则用户看到的是「话没说完」）。
   useEffect(() => {
-    if (streaming) return;
-    if (shownRef.current === targetRef.current) return;
-    shownRef.current = targetRef.current;
-    setShown(targetRef.current);
+    const wasStreaming = prevStreamingRef.current;
+    prevStreamingRef.current = streaming;
+    if (streaming) {
+      if (settling) setSettling(false);
+      return;
+    }
+
+    const target = targetRef.current;
+    const cur = shownRef.current;
+    /** 直接对齐：目标被整体替换 / 变短 / 不是前缀时，追旧前缀没有意义 */
+    const align = () => {
+      shownRef.current = target;
+      setShown(target);
+      setSettling(false);
+    };
+    if (target.length <= cur.length || !target.startsWith(cur)) {
+      align();
+      return;
+    }
+    // 不是「刚流完」的文本变化（如非流式消息被替换、重新生成）：不重放
+    if (!wasStreaming) {
+      align();
+      return;
+    }
+
+    // 收尾追赶：固定时长线性，保证「话一定说完」且不在一帧内补完
+    const startLen = cur.length;
+    const budget = target.length - startLen;
+    const startedAt = performance.now();
+    let raf = 0;
+    setSettling(true);
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - startedAt) / SMOOTH_SETTLE_MS);
+      const next = target.slice(0, Math.min(target.length, startLen + Math.ceil(budget * p)));
+      if (next !== shownRef.current) {
+        shownRef.current = next;
+        setShown(next);
+      }
+      if (p < 1) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        setSettling(false);
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, [text, streaming]);
 
   useEffect(() => {
@@ -96,5 +159,8 @@ export function useSmoothText(text: string, streaming: boolean): string {
   }, [streaming]);
 
   // 只在前缀关系成立时才用 shown —— 目标变短的那一帧立刻回到全文
-  return streaming && text.startsWith(shown) ? shown : text;
+  return {
+    shown: (streaming || settling) && text.startsWith(shown) ? shown : text,
+    settling,
+  };
 }
