@@ -66,6 +66,144 @@ export function nextRevealLength(shownLength: number, targetLength: number): num
 }
 
 /**
+ * 语法保护的兜底时长（ms）。
+ *
+ * 揭示位置停在一个未闭合结构里时最多等这么久；模型一直不闭合就强制揭示，
+ * 宁可露出半截语法，也不能让正文永远卡住。
+ */
+export const SYNTAX_HOLD_MS = 400;
+
+/** 扫描时压在栈上的未闭合结构 */
+type OpenSyntax = {
+  kind: 'fence' | 'code' | 'bold' | 'underscore' | 'bracket';
+  start: number;
+  /** 行内反引号：打开时的长度，闭合要求同长度 */
+  len?: number;
+};
+
+/**
+ * 语法感知的揭示保护（A5 第二版）。
+ *
+ * 半截语法会改变结构：`**粗` 先被渲染成字面量、闭合后再变成粗体；
+ * 未闭合的 ``` 会把后文整段吞进代码块；`[链` 在闭合后会被当成链接。
+ * 这里只处理五种**高频**结构 —— `**`、`__`、行内反引号、方括号 `[`、
+ * 代码围栏 —— 不试图解析完整 markdown。
+ *
+ * 返回「可以安全揭示到的长度」：候选位置落在未闭合结构内部时，回退到
+ * 该结构的起点（最早的那个）；否则原样返回候选长度。转义字符（`\*`）
+ * 与代码内部的符号不参与配对。
+ *
+ * 只做延迟、不做截断以外的加工：它给 `useSmoothText` 的每帧步长加一道
+ * 上限，结构闭合后该怎么快就怎么快。
+ */
+export function syntaxSafeLength(text: string, candidate: number): number {
+  const limit = Math.max(0, Math.min(candidate, text.length));
+  const stack: OpenSyntax[] = [];
+  let atLineStart = true;
+
+  const popIf = (kind: OpenSyntax['kind']) => {
+    const top = stack[stack.length - 1];
+    if (top && top.kind === kind) stack.pop();
+  };
+
+  for (let i = 0; i < limit; i++) {
+    const ch = text[i]!;
+    const top = stack[stack.length - 1];
+
+    // 代码围栏内部：只认同字符、行首、≥3 个的闭合围栏，其余原样跳过
+    if (top && top.kind === 'fence') {
+      if (ch === '\n') {
+        atLineStart = true;
+        continue;
+      }
+      if (atLineStart && (ch === '`' || ch === '~')) {
+        let j = i;
+        while (j < limit && text[j] === ch) j += 1;
+        const run = j - i;
+        const fenceChar = text[top.start];
+        if (run >= 3 && ch === fenceChar) stack.pop();
+        i = j - 1;
+      }
+      if (ch !== ' ' && ch !== '\t') atLineStart = false;
+      continue;
+    }
+
+    // 行内反引号内部：只等同样长度的反引号串闭合
+    if (top && top.kind === 'code') {
+      if (ch === '`') {
+        let j = i;
+        while (j < limit && text[j] === '`') j += 1;
+        if (j - i === top.len) stack.pop();
+        i = j - 1;
+      }
+      if (ch === '\n') atLineStart = true;
+      else if (ch !== ' ' && ch !== '\t') atLineStart = false;
+      continue;
+    }
+
+    if (ch === '\n') {
+      atLineStart = true;
+      continue;
+    }
+    if (ch === ' ' || ch === '\t') continue; // 行首缩进不改变 atLineStart
+    if (ch === '\\') {
+      i += 1; // 转义：跳过下一个字符，它不参与配对
+      atLineStart = false;
+      continue;
+    }
+
+    // 行首 ``` / ~~~：代码围栏（≥3）。1–2 个按行内代码处理
+    if (atLineStart && (ch === '`' || ch === '~')) {
+      let j = i;
+      while (j < limit && text[j] === ch) j += 1;
+      const run = j - i;
+      stack.push(run >= 3 ? { kind: 'fence', start: i } : { kind: 'code', start: i, len: run });
+      i = j - 1;
+      atLineStart = false;
+      continue;
+    }
+    if (ch === '`') {
+      let j = i;
+      while (j < limit && text[j] === '`') j += 1;
+      stack.push({ kind: 'code', start: i, len: j - i });
+      i = j - 1;
+      atLineStart = false;
+      continue;
+    }
+
+    // ** / __：整串标记算一个开关，3 个及以上同上
+    if (ch === '*' || ch === '_') {
+      let j = i;
+      while (j < limit && text[j] === ch) j += 1;
+      const run = j - i;
+      if (run >= 2) {
+        const kind = ch === '*' ? 'bold' : 'underscore';
+        if (top && top.kind === kind) stack.pop();
+        else stack.push({ kind, start: i });
+      }
+      i = j - 1;
+      atLineStart = false;
+      continue;
+    }
+
+    if (ch === '[') {
+      stack.push({ kind: 'bracket', start: i });
+    } else if (ch === ']') {
+      popIf('bracket');
+    }
+    atLineStart = false;
+  }
+
+  if (stack.length === 0) return limit;
+  // 揭示到最早一个未闭合结构的起点之前
+  let earliest = limit;
+  for (const open of stack) {
+    if (open.start < earliest) earliest = open.start;
+  }
+  return Math.max(0, earliest);
+}
+
+/**
  * 平滑揭示：`streaming` 或收尾追赶中返回已揭示的前缀，否则返回全文。
  *
  * 初始值取传入文本 —— 中途切进一个正在流的会话时，不该把已有内容重打一遍。
@@ -82,6 +220,10 @@ export function useSmoothText(
   const shownRef = useRef(text);
   const targetRef = useRef(text);
   const prevStreamingRef = useRef(streaming);
+  /** 语法保护：结构未闭合时从何时开始等待 */
+  const holdSinceRef = useRef<number | null>(null);
+  /** 等待超过 SYNTAX_HOLD_MS 后放行，直到该结构闭合才恢复保护 */
+  const bypassSyntaxRef = useRef(false);
   targetRef.current = text;
 
   useEffect(() => {
@@ -135,6 +277,8 @@ export function useSmoothText(
 
   useEffect(() => {
     if (!streaming) return;
+    holdSinceRef.current = null;
+    bypassSyntaxRef.current = false;
     let raf = 0;
     let last = 0;
     const tick = (now: number) => {
@@ -150,9 +294,36 @@ export function useSmoothText(
         setShown(target);
         return;
       }
-      const next = target.slice(0, nextRevealLength(cur.length, target.length));
-      shownRef.current = next;
-      setShown(next);
+      let next = nextRevealLength(cur.length, target.length);
+      /**
+       * A5：语法感知的延迟揭示。
+       *
+       * 揭示位置落在未闭合的 `**` / `__` / 反引号 / `/`[` / 代码围栏里时，
+       * 先停在结构起点，等它闭合再一次性放出来 —— 半截语法会让 Cherry 先
+       * 按字面量排版、闭合后再跳成粗体/代码块。
+       *
+       * 兜底：最多等 {@link SYNTAX_HOLD_MS}。超时后放行（宁可露半截），
+       * 并保持放行到该结构闭合为止，避免「等 400ms → 放一帧 → 又卡住」
+       * 的抽搐。
+       */
+      const safe = syntaxSafeLength(target, next);
+      if (safe >= next) {
+        holdSinceRef.current = null;
+        bypassSyntaxRef.current = false;
+      } else if (bypassSyntaxRef.current) {
+        // 已超时放行：继续揭示，等结构闭合后自动恢复保护
+      } else {
+        if (holdSinceRef.current == null) holdSinceRef.current = now;
+        if (now - holdSinceRef.current >= SYNTAX_HOLD_MS) {
+          bypassSyntaxRef.current = true;
+        } else {
+          next = Math.max(cur.length, safe);
+        }
+      }
+      if (next <= cur.length) return;
+      const text = target.slice(0, next);
+      shownRef.current = text;
+      setShown(text);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);

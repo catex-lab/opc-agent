@@ -12,7 +12,7 @@
  *
  * 运行：npx tsx scripts/verify-smooth-text.ts
  */
-import { nextRevealLength, SMOOTH_FRAME_MS } from '../src/hooks/useSmoothText';
+import { nextRevealLength, syntaxSafeLength, SMOOTH_FRAME_MS, SYNTAX_HOLD_MS } from '../src/hooks/useSmoothText';
 
 let pass = 0;
 const fails: string[] = [];
@@ -79,6 +79,36 @@ console.log('\n[4] 边界');
   ok(nextRevealLength(10, 10) === 10, '已追平时返回目标（幂等）');
   ok(nextRevealLength(20, 10) === 10, '目标变短时对齐目标（重新生成不卡住）', String(nextRevealLength(20, 10)));
   ok(nextRevealLength(0, 1) === 1, '只差 1 个字也要吐出来', String(nextRevealLength(0, 1)));
+}
+
+console.log('\n[5] 语法保护：未闭合结构内不揭示，闭合后放行');
+{
+  const safe = (text: string, n: number) => syntaxSafeLength(text, n);
+  // 粗体 **
+  ok(safe('**粗体**', 6) === 6, '闭合的 ** 完整揭示', String(safe('**粗体**', 6)));
+  ok(safe('**粗体', 4) === 0, '未闭合的 ** 停在结构起点', String(safe('**粗体', 4)));
+  ok(safe('前面**粗体', 6) === 2, '只回退到 ** 起点，前面的安全文字照常揭示', String(safe('前面**粗体', 6)));
+  // 下划线 __
+  ok(safe('__粗体__', 6) === 6, '闭合的 __ 完整揭示', String(safe('__粗体__', 6)));
+  ok(safe('__粗体', 3) === 0, '未闭合的 __ 停在结构起点', String(safe('__粗体', 3)));
+  // 行内反引号
+  ok(safe('`code`', 6) === 6, '闭合的反引号完整揭示', String(safe('`code`', 6)));
+  ok(safe('`code', 5) === 0, '未闭合的反引号停在结构起点', String(safe('`code', 5)));
+  ok(safe('`a**b`', 6) === 6, '反引号内部的 ** 不参与配对', String(safe('`a**b`', 6)));
+  // 方括号
+  ok(safe('[链接](x)', 7) === 7, '闭合的 [ 完整揭示', String(safe('[链接](x)', 7)));
+  ok(safe('见[链接', 4) === 1, '未闭合的 [ 停在结构起点', String(safe('见[链接', 4)));
+  // 代码围栏
+  ok(safe('```\ncode', 8) === 0, '未闭合的代码围栏不揭示', String(safe('```\ncode', 8)));
+  ok(safe('```\ncode\n```', 12) === 12, '闭合的代码围栏完整揭示', String(safe('```\ncode\n```', 12)));
+  ok(safe('```\na**b\n```', 12) === 12, '围栏内部的 ** 不参与配对', String(safe('```\na**b\n```', 12)));
+  ok(safe('~~~\nx\n~~~', 9) === 9, '波浪线围栏同样处理', String(safe('~~~\nx\n~~~', 9)));
+  // 非结构 / 边界
+  ok(safe('a*b', 3) === 3, '单个 * 不是结构', String(safe('a*b', 3)));
+  ok(safe('\\*\\*粗', 5) === 5, '转义的 ** 不参与配对', String(safe('\\*\\*粗', 5)));
+  ok(safe('abc', 10) === 3, '候选长度不超过文本长度', String(safe('abc', 10)));
+  ok(safe('', 0) === 0, '空文本返回 0');
+  ok(SYNTAX_HOLD_MS === 400, '兜底时长为 400ms（不会让正文永久卡住）', String(SYNTAX_HOLD_MS));
 }
 
 console.log(`\n${pass}/${pass + fails.length} 通过`);
