@@ -1473,6 +1473,21 @@ export function ChatMessages({
               |
             </span>
           )}
+          {/* 轮末残差：根因是光标本身占一行，不是占位块的移除时机。
+              光标是紧跟块级 markdown 宿主之后的**行内** span，浏览器会为它另起
+              一个匿名行盒。实测（Electron 152 / 720px 列宽）：同一段单行答案，
+              带光标 57.4px、不带 32.9px —— 差值正好是 1lh = 24.5px。
+              所以 `isStreaming` 落假那一帧，正文会矮一行。
+
+              这里把那一行的行高换成不可见占位：字形隐藏、行盒照旧存在。
+              流式中是可见光标，结束后是同一位置的空白行，高度连续。
+              只给本条会话最后一条助手消息保留：历史消息排版保持原样；新回合
+              开始时这条让位，缩小发生在新消息上方，而那时视口已经钉在底部。 */}
+          {!isStreaming && isLast && defaultOpen && (
+            <span className="ml-0.5 invisible" aria-hidden="true">
+              |
+            </span>
+          )}
         </div>
       );
     }
