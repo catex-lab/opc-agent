@@ -1447,6 +1447,15 @@ export function ChatMessages({
     at?: string
   ): React.ReactNode => {
     if (block.type === 'text') {
+      /**
+       * A4：空文本块不渲染。
+       *
+       * `block_open` 先到、第一个 delta 还没到的那几十毫秒里，块已经在
+       * `blocks` 里但 `text` 是空的。以前这里会画出一个空容器（外加一个
+       * 光标），与首字占位同时在场 —— 屏幕上是两个光标，正文到达时还要
+       * 少掉一个 flex gap 的高度。空块交给占位表达即可。
+       */
+      if (block.text.trim().length === 0) return null;
       return (
         <div
           key={block.id}
@@ -1734,6 +1743,25 @@ export function ChatMessages({
       );
     }
 
+    /**
+     * A4：首字占位。
+     *
+     * 以前正文气泡要等第一个 token 到达才被插入，那一帧整条消息从
+     * 「头部 + 状态行」一下长出一行正文：状态行往下跳一行，贴底的那条
+     * 消息还要被滚动容器再拽一次。这里在**同一个槽位**先放一个与正文块
+     * 同字体、同行高的光标行 —— 位置不变、高度提前占住，正文到达时只是
+     * 把光标换成文字。
+     *
+     * 三个不显示的条件：
+     *   · 已经有答案（`hasAnswer`）：真实正文已经接管这个槽位；
+     *   · 失败（`message.error`）：错误卡在下方，光标会像「还在生成」；
+     *   · 生图（`imageMode`）：图像产物不走文字气泡，光标是错误暗示。
+     *
+     * 用 `aria-hidden` + 纯装饰：读屏软件不该念出一个光标。
+     */
+    const showAnswerPlaceholder =
+      !!message.isStreaming && !hasAnswer && !message.error && !imageMode;
+
     // 合并后从答案起点继续；未合并时仍从 0 开始走原来的逐段规则。
     let i = groupProcess ? processEnd : 0;
     while (i < blocks.length) {
@@ -1778,6 +1806,24 @@ export function ChatMessages({
     return (
       <>
         {processNodes}
+        {/* A4：与正文块同一个槽位、同一套排版类（字体/行高/断行），
+            所以正文第一行落进来时高度与位置都不变。
+            `2lh + 0.6em` = 「正文一行 + 光标行 + markdown 段落下边距」：
+            光标是紧跟 `<AnswerMarkdown>`（块级宿主）之后的行内 span，
+            实测会独占一行（720px 列宽下 24.5 + 24.5 + 8.4 = 57.4px）。
+            按实测高度预留，而不是按「看起来应该一行」拍一个值。 */}
+        {showAnswerPlaceholder && (
+          <div
+            className="tc-bubble-assistant tc-answer min-w-0 max-w-full break-words"
+            data-stream-placeholder
+            aria-hidden="true"
+            style={{ minHeight: 'calc(2lh + 0.6em)' }}
+          >
+            <span className="animate-cursor-blink" style={{ color: 'var(--td-brand-color)' }}>
+              |
+            </span>
+          </div>
+        )}
         {answerNodes}
         {message.kbRefs ? renderKbRefs(message.kbRefs) : null}
         {errorBlock}
