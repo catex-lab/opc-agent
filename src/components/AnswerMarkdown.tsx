@@ -1,9 +1,52 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { ChatMarkdown } from '@tdesign-react/chat';
 import { useSmoothText } from '../hooks/useSmoothText';
 import { stripEmoji } from '../utils/plainText';
-import { chartOf, planAnswer } from '../answer/renderPlan';
+import { chartOf, planAnswer, type AnswerSegment } from '../answer/renderPlan';
 import { AnswerChartCard, AnswerCodeCard, AnswerEvidence, AnswerLinkCards, AnswerTableCard } from './AnswerCards';
+
+/**
+ * A3：给每个片段一个**内容稳定**的 key。
+ *
+ * 原来用数组下标。正文是流式增长的前缀，`planAnswer` 会在中途把一段 md
+ * 拆成 md + 表格卡 + md —— 一旦在中间插入片段，后面所有下标平移，已渲染
+ * 的 Cherry 正文会整体换 key 重新挂载，表现为一次明显闪动。
+ *
+ * md 片段用「第几个 md」而不是文本 hash：markdown 文本每 32ms 就变长一次，
+ * hash 会每帧变，等于把重挂载写进每一帧。md 的顺序在流式中只会在尾部追加，
+ * 因此序号是稳定的；非 md 片段（表格/证据/链接/代码卡）由内容派生，
+ * 内容不变 key 就不变。
+ */
+function segmentKeys(segments: AnswerSegment[]): string[] {
+  let mdCount = 0;
+  const used = new Map<string, number>();
+  return segments.map(seg => {
+    let base: string;
+    switch (seg.kind) {
+      case 'md':
+        base = `md:${mdCount++}`;
+        break;
+      case 'links':
+        base = `links:${seg.items[0]?.url ?? ''}`;
+        break;
+      case 'evidence':
+        base = `evidence:${seg.command.slice(0, 32)}`;
+        break;
+      case 'table':
+        base = `table:${seg.header.join('|').slice(0, 48)}`;
+        break;
+      case 'coderef':
+        base = `coderef:${seg.path}:${seg.from}`;
+        break;
+      default:
+        base = 'seg';
+    }
+    // 同一条命令/同一个表头可能合法地出现两次，补序号避免 key 冲突
+    const seen = used.get(base) ?? 0;
+    used.set(base, seen + 1);
+    return seen === 0 ? base : `${base}#${seen}`;
+  });
+}
 
 /**
  * 答案正文的 markdown 容器（方案 C：正文匀速揭示）。
@@ -29,7 +72,7 @@ import { AnswerChartCard, AnswerCodeCard, AnswerEvidence, AnswerLinkCards, Answe
  * 表格只有「两列标签+数值、≥3 行、全非负」时才升级成图表卡，其余一律
  * 表格卡；图卡里也保留「查看表格」的回退路径。
  */
-export function AnswerMarkdown({
+function AnswerMarkdownImpl({
   text,
   streaming,
   cwd,
@@ -45,6 +88,7 @@ export function AnswerMarkdown({
   const plain = stripEmoji(text);
   const shown = useSmoothText(plain, streaming);
   const segments = useMemo(() => planAnswer(shown, { streaming }), [shown, streaming]);
+  const keys = useMemo(() => segmentKeys(segments), [segments]);
   return (
     <div
       className="chat-markdown min-w-0 max-w-full"
@@ -55,13 +99,14 @@ export function AnswerMarkdown({
       data-answer-segments={segments.length}
     >
       {segments.map((seg, idx) => {
+        const key = keys[idx];
         switch (seg.kind) {
           case 'links':
-            return <AnswerLinkCards key={idx} items={seg.items} />;
+            return <AnswerLinkCards key={key} items={seg.items} />;
           case 'evidence':
             return (
               <AnswerEvidence
-                key={idx}
+                key={key}
                 command={seg.command}
                 output={seg.output}
                 lines={seg.lines}
@@ -71,15 +116,15 @@ export function AnswerMarkdown({
           case 'table': {
             const chart = chartOf(seg);
             return chart ? (
-              <AnswerChartCard key={idx} table={seg} chart={chart} />
+              <AnswerChartCard key={key} table={seg} chart={chart} />
             ) : (
-              <AnswerTableCard key={idx} table={seg} />
+              <AnswerTableCard key={key} table={seg} />
             );
           }
           case 'coderef':
             return (
               <AnswerCodeCard
-                key={idx}
+                key={key}
                 path={seg.path}
                 from={seg.from}
                 to={seg.to}
@@ -90,11 +135,21 @@ export function AnswerMarkdown({
               />
             );
           default:
-            return <ChatMarkdown key={idx} content={seg.text} />;
+            return <ChatMarkdown key={key} content={seg.text} />;
         }
       })}
     </div>
   );
 }
+
+/**
+ * A3：memo 化。
+ *
+ * 同一轮里已结束的正文块，props（text/streaming/cwd/at）不会再变；不 memo
+ * 的话，父级每帧重渲染都会让 `stripEmoji → useSmoothText → planAnswer →
+ * Cherry` 整条链路重新走一遍 —— 这正是历史消息拖慢流式的原因之一。
+ */
+export const AnswerMarkdown = memo(AnswerMarkdownImpl);
+
 
 export default AnswerMarkdown;

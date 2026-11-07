@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loading, MessagePlugin } from 'tdesign-react';
 import { Brain, Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, TextSelect, Image as ImageIcon } from 'lucide-react';
@@ -891,6 +891,345 @@ function SelectionToolbar({
   );
 }
 
+/**
+ * 编排叙述行。
+ *
+ * 渲染成居中的弱化文字而不是气泡：它是**过程说明**（「主控决定交给
+ * OpenCode」「第 2/2 棒」），不是谁的发言。做成气泡会让用户误以为
+ * 某个 Agent 说了这句话，也会把真正的发言挤出视觉焦点。
+ *
+ * A3：提到模块作用域 —— 它只依赖 message，留在 ChatMessages 里每帧都会
+ * 换一个新函数，MessageRow 的 memo 就白做了。
+ */
+function renderNoteRow(message: Message): React.ReactNode {
+  return (
+    <div key={message.id} className="flex justify-center py-1" data-note>
+      <span
+        className="text-caption"
+        style={{ color: 'var(--td-text-color-placeholder)' }}
+      >
+        · {message.content}
+      </span>
+    </div>
+  );
+}
+
+interface MessageRowProps {
+  message: Message;
+  /** 最新一条助手消息：只有它的思考块默认展开 */
+  isLastAssistant: boolean;
+  userProfile: ReturnType<typeof useUserProfile>;
+  verifications: ReturnType<typeof useVerifications>['rows'];
+  refreshVerifications: ReturnType<typeof useVerifications>['refresh'];
+  imageMode: boolean;
+  currentSessionId?: string | null;
+  sessionCwd?: string | null;
+  resolveAgent: (id?: string) => RegisteredAgent | undefined;
+  toBlocks: (message: Message) => Block[];
+  messageToMarkdown: (message: Message) => string;
+  formatModelName: (modelId: string) => string;
+  /**
+   * 助手正文。签名里带上 isLastAssistant 是**必要的**：正文渲染依赖它
+   * （思考块默认展开）。如果只靠闭包读最新值，被 memo 跳过的旧行会一直
+   * 保持「我是最后一条」的渲染结果。
+   */
+  renderContent: (message: Message, isLastAssistant: boolean) => React.ReactNode;
+  onShowAgentDetail?: (agentId: string) => void;
+  onEditMessage?: (message: Message) => void;
+  onRegenerate?: (message: Message) => void;
+  onBranch?: (message: Message) => void;
+}
+
+/**
+ * A3：单条消息行，memo 化。
+ *
+ * 流式期间 ChatMessages 每帧都会重渲染（`messages` 换引用），此前整个
+ * `messages.map` 会跟着重跑：几十条历史消息的 Cherry 正文全部重新赋一遍
+ * content。历史消息的内容根本不会变，这里按 `message` 引用短路 ——
+ * 只有正在流式的那一条会真正重算。
+ *
+ * 所有回调类 prop 必须由父组件用 `useCallback` 稳定，否则 memo 恒失效。
+ */
+const MessageRow = memo(function MessageRow({
+  message,
+  isLastAssistant,
+  userProfile,
+  verifications,
+  refreshVerifications,
+  imageMode,
+  currentSessionId,
+  sessionCwd,
+  resolveAgent,
+  toBlocks,
+  messageToMarkdown,
+  formatModelName,
+  renderContent,
+  onShowAgentDetail,
+  onEditMessage,
+  onRegenerate,
+  onBranch,
+}: MessageRowProps) {
+  // 编排叙述行：不套气泡外壳，直接居中一行
+  if (message.note) return <>{renderNoteRow(message)}</>;
+
+  const msgAgent = resolveAgent(message.agentId);
+  // 这条消息是不是生图产物（新数据走 blocks，老数据走 contentBlocks / images）
+  const msgIsImage = !!(
+    (message.images && message.images.length > 0) ||
+    message.blocks?.some(b => b.type === 'image') ||
+    message.contentBlocks?.some(b => b.type === 'image')
+  );
+  // P6 成本统计：助手消息的用量小字。没有数据返回 null，整行省掉
+  //
+  // A36：耗时已经挪到头部（「已处理 47m42s」），这里只在**有费用或 token**
+  // 时才渲染 —— 否则同一轮会出现两个时长（头部 47m42s + 这里 2862.0s），
+  // 而且底下那个还带着一位小数，读起来像两条不同的数据。
+  const usageText =
+    message.role === 'assistant' && (message.cost || message.tokens)
+      ? formatUsage(message)
+      : null;
+
+  /**
+   * A206：空助手消息不再画成「一行 Agent 名字 + 什么都没有」的空泡。
+   *
+   * 之前失败回合只把错误挂在实时流上，落库后是一条 content 为空、
+   * blocks 也为空的助手消息 —— 刷新历史后就是 25 个空泡。现在新失败
+   * 回合都有 error 块可看；这条兜底只针对**已经结束且确实没有任何
+   * 可见内容**的老数据（raw 块按设计不渲染，不算可见）。
+   *
+   * 正在流式的消息不能走这里：它此刻就是空的，但状态行「正在处理」
+   * 正需要显示。
+   */
+  if (message.role === 'assistant' && !message.isStreaming && !msgIsImage) {
+    const visible = !!message.error
+      || message.content.trim().length > 0
+      || toBlocks(message).some(b =>
+        b.type === 'text' ? b.text.trim().length > 0 : b.type !== 'raw'
+      );
+    if (!visible) return null;
+  }
+
+  return (
+    <div
+      // 知识库来源卡的「回到原对话」只带 messageId，落地页靠这个锚点定位
+      id={`msg-${message.id}`}
+      data-message-id={message.id}
+      // A35：助手侧整条改成纵向（头部一行 + 正文一行），用户侧保持
+      // 「头像在右、气泡在左」的横向排布。
+      className={
+        message.role === 'user'
+          ? 'tc-msg-enter flex flex-row-reverse gap-3'
+          : 'tc-msg-enter flex min-w-0 max-w-full flex-col gap-2'
+      }
+    >
+      {message.role === 'user' ? (
+        // 用户侧：品牌色圆 + 人像图标。用户没有「官方 logo」，
+        // 与 Agent 侧的品牌 logo 形成清晰的左右对照。
+        //
+        // A26：底色从「品牌色实心」改成**随透明度在实心与淡底之间插值**。
+        // 实心圆在 100% 透明度下是玻璃上的一颗黑点（深色主题是一颗白点），
+        // 是用户报的「扎眼」里最集中的一处。
+        //
+        // 为什么不直接换成淡底：那会连不透明模式下的观感一起改掉，
+        // 而那一档用户是认可的。用 color-mix 按 --opc-t 插值，t=0 时
+        // 100% 品牌色（与原来完全一致），t=1 时 100% 淡底 —— 中间平滑过渡。
+        // 图标色同理：白 → 品牌色，否则淡底上的白图标会消失。
+        //
+        // A115：用户在「我的资料」里换过头像/昵称后，这里跟着变 ——
+        // 否则「换了头像」在聊天里看不到任何效果，用户会以为没保存。
+        // 没设资料时仍是原来那颗人像图标（零变化的兜底）。
+        <UserAvatar
+          nickname={userProfile.nickname}
+          avatar={userProfile.avatar}
+          image={userProfile.avatarImage}
+          size={36}
+          className="self-start"
+        />
+      ) : null}
+
+      {/* A35（反馈）：助手侧改成「头部一行 + 正文另起一行」。
+          原话：「模型回答的内容，不能与 logo 放在同一行，要换行，
+          logo 后面展示的是 agent 的名字」。
+
+          改前头像与正文是同一行 flex 的两个子项，正文的第一行就贴在
+          logo 右边，读起来像「这个 logo 在说话」；而且非群聊时那行小字
+          显示的是**模型名**，用户根本看不到「是谁在回答」。
+          现在：头部 = 头像 + Agent 名 + （模型名，作为次要信息跟在后
+          面），正文整宽从下一行开始。群聊与单聊用同一套头部，不再分叉。 */}
+      {message.role === 'assistant' && (
+        <div className="flex min-w-0 items-center gap-2" data-msg-header>
+          {msgIsImage ? (
+            // 生图产物用**专属**头像：图是生图 provider 画的，不是会话绑定的
+            // 那个 Agent 画的。套用它的头像会让人以为「Hermes 会画图」。
+            // A26：同样按透明度插值到淡底（理由见上面用户头像）。
+            <div
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+              style={{
+                backgroundColor:
+                  'color-mix(in srgb, #D54941 calc((1 - var(--opc-t, 0)) * 100%), rgb(213 73 65 / 0.14))',
+                color: 'color-mix(in srgb, #fff calc((1 - var(--opc-t, 0)) * 100%), #D54941)',
+              }}
+              title="图像生成"
+            >
+              <ImageIcon size={14} />
+            </div>
+          ) : (
+            // 头像是按钮：点它弹出这个 Agent 的详情（P7）——
+            // 用户看到头像的第一直觉就是「这是谁，点开看看」。
+            <button
+              type="button"
+              onClick={() => {
+                const id = message.agentId || msgAgent?.id;
+                if (onShowAgentDetail && id) onShowAgentDetail(id);
+              }}
+              disabled={!onShowAgentDetail}
+              title={msgAgent ? `${msgAgent.name} · 查看详情` : undefined}
+              aria-label={msgAgent ? `查看 ${msgAgent.name} 的详情` : undefined}
+              data-agent-avatar={message.agentId || msgAgent?.id || undefined}
+              className="shrink-0 rounded-full transition-transform hover:scale-105 disabled:cursor-default disabled:hover:scale-100"
+            >
+              <AgentAvatar
+                id={message.agentId || msgAgent?.id || 'assistant'}
+                name={msgAgent?.name || 'Agent'}
+                icon={msgAgent?.icon}
+                src={msgAgent?.logoUrl}
+                color={msgAgent?.color}
+                size={26}
+                showStatus={false}
+              />
+            </button>
+          )}
+          <span
+            className="min-w-0 truncate text-caption font-medium"
+            style={{ color: 'var(--td-text-color-secondary)' }}
+            data-msg-agent={msgAgent?.id || undefined}
+          >
+            {msgIsImage ? '图像生成' : msgAgent?.name || 'Agent'}
+          </span>
+          {!msgIsImage && message.model && (
+            <span
+              className="shrink-0 text-caption"
+              style={{ color: 'var(--td-text-color-placeholder)' }}
+            >
+              · {formatModelName(message.model)}
+            </span>
+          )}
+          {/* A36：本轮总耗时。参考图把它放在头部右端（「已处理 47m42s」）——
+              它描述的是**这一轮**，不是某一步，放在步骤里反而会被误读成单步耗时。
+              流式中不显示：那一刻还没跑完，写死一个不断变大的数会和下面
+              状态行的秒数打架。 */}
+          {!msgIsImage && !message.isStreaming && formatHandledDuration(message.durationMs) && (
+            <span
+              className="ml-auto shrink-0 text-caption tabular-nums"
+              style={{ color: 'var(--td-text-color-placeholder)' }}
+              data-msg-duration
+            >
+              已处理 {formatHandledDuration(message.durationMs)}
+            </span>
+          )}
+        </div>
+      )}
+
+      <div
+        className={`flex flex-col gap-2 ${message.role === 'user' ? 'items-end max-w-[80%] ml-auto tc-user-msg' : 'min-w-0 max-w-full'}`}
+      >
+
+        {/* 用户消息。
+            A136：去掉 `leading-relaxed`（1.625）—— 行高与字号现在都在
+            `.tc-bubble-user` 里定义（1.75，与助手正文同档）。留着一个
+            Tailwind 行高类会和那条规则抢同一个属性，谁赢取决于打包后的
+            样式顺序，改一次打包可能就变一次。 */}
+        {message.role === 'user' && (
+          <div className="tc-bubble-user px-4 py-3 break-words">
+            {message.content}
+          </div>
+        )}
+
+        {/* 用户消息操作行（A49）：复制 / 编辑 / 分享。
+            位置与助手侧对称 —— 助手在正文下方、用户在自己的气泡下方；
+            因为外层是 `items-end`，这一行自然右对齐贴在气泡右下。
+            A55：默认隐藏，只在悬停 / 聚焦这条用户消息时淡入
+            （见 index.css 的 .tc-actions-user）。 */}
+        {message.role === 'user' && (
+          <UserMessageActions
+            text={message.content}
+            onEdit={onEditMessage ? () => onEditMessage(message) : undefined}
+          />
+        )}
+
+        {/* 助手消息 - 按顺序渲染内容块 */}
+        {message.role === 'assistant' && renderContent(message, isLastAssistant)}
+
+        {/* 流式状态行（A34）：从发出请求到最后一条 token 全程在线、
+            秒数在涨；文案按阶段变化（正在处理 / 思考 / 调用工具 / 生成）。
+            imageMode 时固定为「正在生成图像」。 */}
+        {message.role === 'assistant' && message.isStreaming && !message.error && (
+          <StreamStatus
+            startedAt={message.timestamp?.getTime()}
+            blocks={message.blocks}
+            imageMode={imageMode}
+          />
+        )}
+
+        {/* D1：核对行。只在这条回答**真的改过文件**时出现 ——
+            纯问答不需要「跑测试」入口。什么都不做也照样显示（它是显式状态），
+            不能因为没数据就整块消失，否则用户会默认「应该没问题」，
+            而这正是「Agent 说完成就算完成」那个洞。
+            内容已并成一行「本轮核对」，展开才是原来的验证 / 文件核对面板。 */}
+        {message.role === 'assistant' &&
+          !message.isStreaming &&
+          !message.error &&
+          !!message.id &&
+          !!currentSessionId &&
+          hasFileEdits(toBlocks(message)) && (
+            /* D1：验证 + 文件核对并成一条「本轮核对」。
+               原先是两条并列的状态行（A97 验证 / A99 文件核对），
+               每条都带标题与说明；一轮改过文件的回答下面因此常驻
+               三行（过程摘要 + 验证 + 核对），而九成时间内容是
+               「0 验证 / 未核对」。展开后仍是原来那两个面板本身。 */
+            <RoundAudit
+              sessionId={currentSessionId}
+              messageId={message.id}
+              cwd={sessionCwd ?? undefined}
+              rows={verifications.filter(v => v.message_id === message.id)}
+              stepCount={toBlocks(message).filter(b => b.type === 'tool').length}
+              onUpdated={refreshVerifications}
+            />
+          )}
+
+        {/* P6 成本统计：耗时 / 费用 / token 一行小字，跟在气泡下面。
+            没有用量数据时 formatUsage 返回 null，整行不渲染 ——
+            不显示「0 秒 · $0.00」冒充「这次没花钱」。 */}
+        {message.role === 'assistant' && usageText && (
+          <span
+            className="text-caption"
+            style={{ color: 'var(--td-text-color-placeholder)' }}
+            data-usage={usageText}
+          >
+            {usageText}
+          </span>
+        )}
+
+        {/* 消息操作行：复制 / 重新生成 / 分享 / 分支（A55 删了赞踩与代码两个）。
+            只在「流式已结束、且没有报错」时出现 —— 正在生成或报错时不给
+            用户提供对半成品的操作。 */}
+        {message.role === 'assistant' && !message.isStreaming && !message.error && (
+          <MessageActions
+            /* A149：复制出去的内容必须与屏幕上看到的一致 —— 正文在渲染层
+               去了 emoji，这里不跟着去，用户复制回来会发现「屏幕上没有的
+               表情又冒出来了」。分享文本（完整 Markdown）刻意不过滤：
+               它是导出给别的工具的原料，改动越少越安全。 */
+            text={stripEmoji(textOfBlocks(toBlocks(message)))}
+            shareText={messageToMarkdown(message)}
+            onRegenerate={onRegenerate ? () => onRegenerate(message) : undefined}
+            onBranch={onBranch ? () => onBranch(message) : undefined}
+          />
+        )}
+      </div>
+    </div>
+  );
+});
+
 interface ChatMessagesProps {
   messages: Message[];
   models: Model[];
@@ -1019,14 +1358,14 @@ export function ChatMessages({
     },
     [getAgent, agent]
   );
-  const formatModelName = (modelId: string) => {
+  const formatModelName = useCallback((modelId: string) => {
     const model = models.find(m => m.modelId === modelId);
     const name = model?.name || modelId;
     return name
       .replace(/^(Claude|GPT|Gemini|Kimi|DeepSeek|Qwen|GLM)\s*/i, '')
       .replace(/-/g, ' ')
       .trim() || name;
-  };
+  }, [models]);
 
   /**
    * 旧消息 → 块序列。
@@ -1073,7 +1412,7 @@ export function ChatMessages({
   }, []);
 
   /** 把一条消息导出成 Markdown（分享按钮用）：答案 + 思考 + 工具摘要 */
-  const messageToMarkdown = (message: Message): string => {
+  const messageToMarkdown = useCallback((message: Message): string => {
     const parts: string[] = [];
     for (const b of toBlocks(message)) {
       if (b.type === 'text') {
@@ -1095,7 +1434,7 @@ export function ChatMessages({
       }
     }
     return parts.join('\n\n');
-  };
+  }, [toBlocks]);
 
   // 渲染单个内容块
   const renderBlock = (
@@ -1487,21 +1826,23 @@ export function ChatMessages({
     </details>
   );
   /**
-   * 编排叙述行（group_note）。
+   * A3：把正文渲染函数变成**引用稳定**的回调。
    *
-   * 渲染成居中的弱化文字而不是气泡：它是**过程说明**（「主控决定交给
-   * OpenCode」「第 2/2 棒」），不是谁的发言。做成气泡会让用户误以为
-   * 某个 Agent 说了这句话，也会把真正的发言挤出视觉焦点。
+   * `renderAssistantContent` 依赖大量本轮的状态（toBlocks / lastAssistantId /
+   * resolveAgent ...），每帧都会是新函数；直接当 prop 传下去，MessageRow 的
+   * memo 永远命中不了。这里用 ref 装最新实现、对外暴露一个空依赖的稳定壳：
+   * 未变化的行被 memo 跳过（根本不会调用），变化的行调用时读到的仍是最新
+   * 闭包。渲染期给 ref 赋值不产生副作用，废弃的并发渲染下一帧会被覆盖。
    */
-  const renderNote = (message: Message) => (
-    <div key={message.id} className="flex justify-center py-1" data-note>
-      <span
-        className="text-caption"
-        style={{ color: 'var(--td-text-color-placeholder)' }}
-      >
-        · {message.content}
-      </span>
-    </div>
+  const renderContentRef = useRef<(message: Message, isLastAssistant: boolean) => React.ReactNode>(
+    () => null
+  );
+  renderContentRef.current = (message, isLastAssistant) =>
+    renderAssistantContent(message, isLastAssistant);
+  const renderContent = useCallback(
+    (message: Message, isLastAssistant: boolean) =>
+      renderContentRef.current(message, isLastAssistant),
+    []
   );
 
   /**
@@ -1534,275 +1875,28 @@ export function ChatMessages({
       data-msg-list
       onCopy={handleCopy}
     >
-      {messages.map(message => {
-        // 编排叙述行：不套气泡外壳，直接居中一行
-        if (message.note) return renderNote(message);
-
-        const msgAgent = resolveAgent(message.agentId);
-        // 这条消息是不是生图产物（新数据走 blocks，老数据走 contentBlocks / images）
-        const msgIsImage = !!(
-          (message.images && message.images.length > 0) ||
-          message.blocks?.some(b => b.type === 'image') ||
-          message.contentBlocks?.some(b => b.type === 'image')
-        );
-        // P6 成本统计：助手消息的用量小字。没有数据返回 null，整行省掉
-        //
-        // A36：耗时已经挪到头部（「已处理 47m42s」），这里只在**有费用或 token**
-        // 时才渲染 —— 否则同一轮会出现两个时长（头部 47m42s + 这里 2862.0s），
-        // 而且底下那个还带着一位小数，读起来像两条不同的数据。
-        const usageText =
-          message.role === 'assistant' && (message.cost || message.tokens)
-            ? formatUsage(message)
-            : null;
-
-        /**
-         * A206：空助手消息不再画成「一行 Agent 名字 + 什么都没有」的空泡。
-         *
-         * 之前失败回合只把错误挂在实时流上，落库后是一条 content 为空、
-         * blocks 也为空的助手消息 —— 刷新历史后就是 25 个空泡。现在新失败
-         * 回合都有 error 块可看；这条兜底只针对**已经结束且确实没有任何
-         * 可见内容**的老数据（raw 块按设计不渲染，不算可见）。
-         *
-         * 正在流式的消息不能走这里：它此刻就是空的，但状态行「正在处理」
-         * 正需要显示。
-         */
-        if (message.role === 'assistant' && !message.isStreaming && !msgIsImage) {
-          const visible = !!message.error
-            || message.content.trim().length > 0
-            || toBlocks(message).some(b =>
-              b.type === 'text' ? b.text.trim().length > 0 : b.type !== 'raw'
-            );
-          if (!visible) return null;
-        }
-
-        /**
-         * A55：消息级「复制全部代码 / 自动换行」已删。Cherry 代码块自带
-         * 复制按钮（Shadow DOM 内），跨块需求由「复制回答」覆盖；
-         * 换行开关绝大多数场景用不到。这里不再从纯文本解析围栏。
-         */
-
-        return (
-        <div
+      {messages.map(message => (
+        <MessageRow
           key={message.id}
-          // 知识库来源卡的「回到原对话」只带 messageId，落地页靠这个锚点定位
-          id={`msg-${message.id}`}
-          data-message-id={message.id}
-          // A35：助手侧整条改成纵向（头部一行 + 正文一行），用户侧保持
-          // 「头像在右、气泡在左」的横向排布。
-          className={
-            message.role === 'user'
-              ? 'tc-msg-enter flex flex-row-reverse gap-3'
-              : 'tc-msg-enter flex min-w-0 max-w-full flex-col gap-2'
-          }
-        >
-          {message.role === 'user' ? (
-            // 用户侧：品牌色圆 + 人像图标。用户没有「官方 logo」，
-            // 与 Agent 侧的品牌 logo 形成清晰的左右对照。
-            //
-            // A26：底色从「品牌色实心」改成**随透明度在实心与淡底之间插值**。
-            // 实心圆在 100% 透明度下是玻璃上的一颗黑点（深色主题是一颗白点），
-            // 是用户报的「扎眼」里最集中的一处。
-            //
-            // 为什么不直接换成淡底：那会连不透明模式下的观感一起改掉，
-            // 而那一档用户是认可的。用 color-mix 按 --opc-t 插值，t=0 时
-            // 100% 品牌色（与原来完全一致），t=1 时 100% 淡底 —— 中间平滑过渡。
-            // 图标色同理：白 → 品牌色，否则淡底上的白图标会消失。
-            //
-            // A115：用户在「我的资料」里换过头像/昵称后，这里跟着变 ——
-            // 否则「换了头像」在聊天里看不到任何效果，用户会以为没保存。
-            // 没设资料时仍是原来那颗人像图标（零变化的兜底）。
-            <UserAvatar
-              nickname={userProfile.nickname}
-              avatar={userProfile.avatar}
-              image={userProfile.avatarImage}
-              size={36}
-              className="self-start"
-            />
-          ) : null}
-
-          {/* A35（反馈）：助手侧改成「头部一行 + 正文另起一行」。
-              原话：「模型回答的内容，不能与 logo 放在同一行，要换行，
-              logo 后面展示的是 agent 的名字」。
-
-              改前头像与正文是同一行 flex 的两个子项，正文的第一行就贴在
-              logo 右边，读起来像「这个 logo 在说话」；而且非群聊时那行小字
-              显示的是**模型名**，用户根本看不到「是谁在回答」。
-              现在：头部 = 头像 + Agent 名 + （模型名，作为次要信息跟在后
-              面），正文整宽从下一行开始。群聊与单聊用同一套头部，不再分叉。 */}
-          {message.role === 'assistant' && (
-            <div className="flex min-w-0 items-center gap-2" data-msg-header>
-              {msgIsImage ? (
-                // 生图产物用**专属**头像：图是生图 provider 画的，不是会话绑定的
-                // 那个 Agent 画的。套用它的头像会让人以为「Hermes 会画图」。
-                // A26：同样按透明度插值到淡底（理由见上面用户头像）。
-                <div
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-                  style={{
-                    backgroundColor:
-                      'color-mix(in srgb, #D54941 calc((1 - var(--opc-t, 0)) * 100%), rgb(213 73 65 / 0.14))',
-                    color: 'color-mix(in srgb, #fff calc((1 - var(--opc-t, 0)) * 100%), #D54941)',
-                  }}
-                  title="图像生成"
-                >
-                  <ImageIcon size={14} />
-                </div>
-              ) : (
-                // 头像是按钮：点它弹出这个 Agent 的详情（P7）——
-                // 用户看到头像的第一直觉就是「这是谁，点开看看」。
-                <button
-                  type="button"
-                  onClick={() => {
-                    const id = message.agentId || msgAgent?.id;
-                    if (onShowAgentDetail && id) onShowAgentDetail(id);
-                  }}
-                  disabled={!onShowAgentDetail}
-                  title={msgAgent ? `${msgAgent.name} · 查看详情` : undefined}
-                  aria-label={msgAgent ? `查看 ${msgAgent.name} 的详情` : undefined}
-                  data-agent-avatar={message.agentId || msgAgent?.id || undefined}
-                  className="shrink-0 rounded-full transition-transform hover:scale-105 disabled:cursor-default disabled:hover:scale-100"
-                >
-                  <AgentAvatar
-                    id={message.agentId || msgAgent?.id || 'assistant'}
-                    name={msgAgent?.name || 'Agent'}
-                    icon={msgAgent?.icon}
-                    src={msgAgent?.logoUrl}
-                    color={msgAgent?.color}
-                    size={26}
-                    showStatus={false}
-                  />
-                </button>
-              )}
-              <span
-                className="min-w-0 truncate text-caption font-medium"
-                style={{ color: 'var(--td-text-color-secondary)' }}
-                data-msg-agent={msgAgent?.id || undefined}
-              >
-                {msgIsImage ? '图像生成' : msgAgent?.name || 'Agent'}
-              </span>
-              {!msgIsImage && message.model && (
-                <span
-                  className="shrink-0 text-caption"
-                  style={{ color: 'var(--td-text-color-placeholder)' }}
-                >
-                  · {formatModelName(message.model)}
-                </span>
-              )}
-              {/* A36：本轮总耗时。参考图把它放在头部右端（「已处理 47m42s」）——
-                  它描述的是**这一轮**，不是某一步，放在步骤里反而会被误读成单步耗时。
-                  流式中不显示：那一刻还没跑完，写死一个不断变大的数会和下面
-                  状态行的秒数打架。 */}
-              {!msgIsImage && !message.isStreaming && formatHandledDuration(message.durationMs) && (
-                <span
-                  className="ml-auto shrink-0 text-caption tabular-nums"
-                  style={{ color: 'var(--td-text-color-placeholder)' }}
-                  data-msg-duration
-                >
-                  已处理 {formatHandledDuration(message.durationMs)}
-                </span>
-              )}
-            </div>
-          )}
-
-          <div
-            className={`flex flex-col gap-2 ${message.role === 'user' ? 'items-end max-w-[80%] ml-auto tc-user-msg' : 'min-w-0 max-w-full'}`}
-          >
-
-            {/* 用户消息。
-                A136：去掉 `leading-relaxed`（1.625）—— 行高与字号现在都在
-                `.tc-bubble-user` 里定义（1.75，与助手正文同档）。留着一个
-                Tailwind 行高类会和那条规则抢同一个属性，谁赢取决于打包后的
-                样式顺序，改一次打包可能就变一次。 */}
-            {message.role === 'user' && (
-              <div className="tc-bubble-user px-4 py-3 break-words">
-                {message.content}
-              </div>
-            )}
-
-            {/* 用户消息操作行（A49）：复制 / 编辑 / 分享。
-                位置与助手侧对称 —— 助手在正文下方、用户在自己的气泡下方；
-                因为外层是 `items-end`，这一行自然右对齐贴在气泡右下。
-                A55：默认隐藏，只在悬停 / 聚焦这条用户消息时淡入
-                （见 index.css 的 .tc-actions-user）。 */}
-            {message.role === 'user' && (
-              <UserMessageActions
-                text={message.content}
-                onEdit={onEditMessage ? () => onEditMessage(message) : undefined}
-              />
-            )}
-
-            {/* 助手消息 - 按顺序渲染内容块 */}
-            {message.role === 'assistant' &&
-              renderAssistantContent(message, message.id === lastAssistantId)}
-
-            {/* 流式状态行（A34）：从发出请求到最后一条 token 全程在线、
-                秒数在涨；文案按阶段变化（正在处理 / 思考 / 调用工具 / 生成）。
-                imageMode 时固定为「正在生成图像」。 */}
-            {message.role === 'assistant' && message.isStreaming && !message.error && (
-              <StreamStatus
-                startedAt={message.timestamp?.getTime()}
-                blocks={message.blocks}
-                imageMode={imageMode}
-              />
-            )}
-
-            {/* D1：核对行。只在这条回答**真的改过文件**时出现 ——
-                纯问答不需要「跑测试」入口。什么都不做也照样显示（它是显式状态），
-                不能因为没数据就整块消失，否则用户会默认「应该没问题」，
-                而这正是「Agent 说完成就算完成」那个洞。
-                内容已并成一行「本轮核对」，展开才是原来的验证 / 文件核对面板。 */}
-            {message.role === 'assistant' &&
-              !message.isStreaming &&
-              !message.error &&
-              !!message.id &&
-              !!currentSessionId &&
-              hasFileEdits(toBlocks(message)) && (
-                /* D1：验证 + 文件核对并成一条「本轮核对」。
-                   原先是两条并列的状态行（A97 验证 / A99 文件核对），
-                   每条都带标题与说明；一轮改过文件的回答下面因此常驻
-                   三行（过程摘要 + 验证 + 核对），而九成时间内容是
-                   「0 验证 / 未核对」。展开后仍是原来那两个面板本身。 */
-                <RoundAudit
-                  sessionId={currentSessionId}
-                  messageId={message.id}
-                  cwd={sessionCwd}
-                  rows={verifications.filter(v => v.message_id === message.id)}
-                  stepCount={toBlocks(message).filter(b => b.type === 'tool').length}
-                  onUpdated={refreshVerifications}
-                />
-              )}
-
-            {/* P6 成本统计：耗时 / 费用 / token 一行小字，跟在气泡下面。
-                没有用量数据时 formatUsage 返回 null，整行不渲染 ——
-                不显示「0 秒 · $0.00」冒充「这次没花钱」。 */}
-            {message.role === 'assistant' && usageText && (
-              <span
-                className="text-caption"
-                style={{ color: 'var(--td-text-color-placeholder)' }}
-                data-usage={usageText}
-              >
-                {usageText}
-              </span>
-            )}
-
-            {/* 消息操作行：复制 / 重新生成 / 分享 / 分支（A55 删了赞踩与代码两个）。
-                只在「流式已结束、且没有报错」时出现 —— 正在生成或报错时不给
-                用户提供对半成品的操作。 */}
-            {message.role === 'assistant' && !message.isStreaming && !message.error && (
-              <MessageActions
-                /* A149：复制出去的内容必须与屏幕上看到的一致 —— 正文在渲染层
-                   去了 emoji，这里不跟着去，用户复制回来会发现「屏幕上没有的
-                   表情又冒出来了」。分享文本（完整 Markdown）刻意不过滤：
-                   它是导出给别的工具的原料，改动越少越安全。 */
-                text={stripEmoji(textOfBlocks(toBlocks(message)))}
-                shareText={messageToMarkdown(message)}
-                onRegenerate={onRegenerate ? () => onRegenerate(message) : undefined}
-                onBranch={onBranch ? () => onBranch(message) : undefined}
-              />
-            )}
-          </div>
-        </div>
-        );
-      })}
+          message={message}
+          isLastAssistant={message.id === lastAssistantId}
+          userProfile={userProfile}
+          verifications={verifications}
+          refreshVerifications={refreshVerifications}
+          imageMode={imageMode}
+          currentSessionId={currentSessionId}
+          sessionCwd={sessionCwd}
+          resolveAgent={resolveAgent}
+          toBlocks={toBlocks}
+          messageToMarkdown={messageToMarkdown}
+          formatModelName={formatModelName}
+          renderContent={renderContent}
+          onShowAgentDetail={onShowAgentDetail}
+          onEditMessage={onEditMessage}
+          onRegenerate={onRegenerate}
+          onBranch={onBranch}
+        />
+      ))}
       
       {/* 审批卡不再挂在这里（A132）：它已搬到 App 层的 PermissionDock。
           原因不是「换个位置好看」，而是消息流末尾这个槽位会随会话卸载 ——
