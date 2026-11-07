@@ -44,6 +44,41 @@ export interface DanglingTurn {
   reason: string;
   /** 判定依据：opencode 会话库 / 本应用 chat.db */
   source: 'opencode' | 'local';
+  /** 命中的提问工具名（说明「问不出去」，不是普通的失败回合） */
+  askTool?: string;
+}
+
+/**
+ * 「上一轮之所以没答完，是因为问不出去」。
+ *
+ * 这是 opencode `question` 工具在非交互 run 下失败的典型形态：工具报错 →
+ * 模型没有等到人回答，就直接按自己的假设继续执行（那次是 npm install）。
+ * 这种回合在 chat.db 里**是有正文的**，按「最后一条助手消息是否为空」判断
+ * 会漏掉，必须看工具块。
+ */
+const ASK_TOOL_RE = /question|ask[_ -]?user|askuser|confirm|permission|elicitation/i;
+
+function parseBlocks(raw: string | null | undefined): Array<Record<string, unknown>> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as Array<Record<string, unknown>>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 从 chat.db 的块里找「提问工具失败」；返回工具名 */
+function failedAskToolOf(row: HistorySourceRow): string | null {
+  const blocks = parseBlocks(row.blocks);
+  if (!blocks) return null;
+  const hit = blocks.find(b => {
+    if (b?.type !== 'tool') return false;
+    const failed = b.isError === true || b.status === 'failed' || b.status === 'error';
+    const name = String(b.name ?? '');
+    return failed && ASK_TOOL_RE.test(name);
+  });
+  return hit ? String(hit.name ?? '') : null;
 }
 
 /** 会话库判定结果：null = 读不到（降级到本地判断）；`answered` = CLI 已答完 */
@@ -99,6 +134,24 @@ function parseData(raw: string): Record<string, unknown> | null {
   }
 }
 
+/** 从 opencode 的 assistant content 里找「提问工具失败」 */
+function failedAskToolInData(data: Record<string, unknown>): string | null {
+  const content = data.content;
+  if (!Array.isArray(content)) return null;
+  for (const raw of content) {
+    if (!raw || typeof raw !== 'object') continue;
+    const item = raw as Record<string, unknown>;
+    const state = item.state && typeof item.state === 'object'
+      ? (item.state as Record<string, unknown>)
+      : null;
+    const name = String(item.tool ?? item.name ?? '');
+    const status = String(state?.status ?? item.status ?? '');
+    const errored = !!state?.error || !!item.error || status === 'error' || status === 'failed';
+    if (errored && ASK_TOOL_RE.test(name)) return name;
+  }
+  return null;
+}
+
 function assistantFailureReason(data: Record<string, unknown>): string {
   const err = data.error;
   if (err && typeof err === 'object') {
@@ -148,6 +201,21 @@ function probeOpencode(resumeToken: string): OpencodeProbe {
 
     if (!lastData) return null;
 
+    // 先看「问不出去」：这种回合可能有正文（模型自行继续执行了），
+    // 按「content 是否为空」判断会漏掉。
+    const askTool = failedAskToolInData(lastData);
+    if (askTool) {
+      const prevUser = rows.slice(1).find(r => r.type === 'user');
+      const prevData = prevUser ? parseData(prevUser.data) : null;
+      const userText = prevData && typeof prevData.text === 'string' ? prevData.text.trim() : '';
+      return {
+        userText,
+        reason: `CLI 会话里 ${askTool} 没能把问题送到你面前（非交互运行），模型随后可能按自己的假设继续了`,
+        source: 'opencode',
+        askTool,
+      };
+    }
+
     const content = lastData.content;
     const hasAnyPart = Array.isArray(content) && content.length > 0;
     const failed =
@@ -177,12 +245,26 @@ function probeLocal(rows: HistorySourceRow[]): DanglingTurn | null {
       source: 'local',
     };
   }
-  if (!isFailedAssistantRow(last)) return null;
 
-  let i = list.length - 2;
-  while (i >= 0 && list[i].role !== 'user') i -= 1;
+  let prev = list.length - 2;
+  while (prev >= 0 && list[prev].role !== 'user') prev -= 1;
+  const prevText = prev >= 0 ? (list[prev].content ?? '').trim() : '';
+
+  // 「提问工具失败」优先：这一轮可能有正文，但它是在没等到人回答的情况下
+  // 自己继续的，正是必须拦下来让用户确认的形态。
+  const askTool = failedAskToolOf(last);
+  if (askTool) {
+    return {
+      userText: prevText,
+      reason: `上一轮通过 ${askTool} 想向你确认，但非交互运行下工具失败；模型随后可能按自己的假设继续了`,
+      source: 'local',
+      askTool,
+    };
+  }
+
+  if (!isFailedAssistantRow(last)) return null;
   return {
-    userText: i >= 0 ? (list[i].content ?? '').trim() : '',
+    userText: prevText,
     reason: '最后一轮以错误结束，没有产出可用的回复',
     source: 'local',
   };
@@ -202,9 +284,15 @@ export function findDanglingTurn(
 ): DanglingTurn | null {
   if (!resumeToken) return null;
 
-  // 先看本地是否「看起来失败」：健康会话连库都不用开
+  // 先看本地：失败回合 / 提问工具失败都能在块里直接看出来。
+  // 但**本地「看起来健康」不等于答完了** —— opencode 的 question 工具在
+  // 非交互 run 下失败时，那一轮往往有正文，块里也不一定留痕；
+  // 真相只在 CLI 自己的会话库里。所以本地为空时也要继续往下问 CLI。
   const local = probeLocal(rows);
-  if (!local) return null;
+
+  // 「问不出去」的证据在块里，比 CLI 会话库的 answered 更硬：
+  // 即使 CLI 最后写了正文，那一轮也是模型在没等到人回答的情况下自己继续的。
+  if (local?.askTool) return local;
 
   if (agentId === 'opencode') {
     const precise = probeOpencode(resumeToken);

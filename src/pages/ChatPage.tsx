@@ -27,7 +27,9 @@ import { AgentDetailModal } from '../components/AgentDetailModal';
 import { PermissionGapNotice } from '../components/PermissionGapNotice';
 import { WorkflowDialog } from '../components/WorkflowDialog';
 import { DanglingNotice } from '../components/DanglingNotice';
+import { ResumeNotice } from '../components/ResumeNotice';
 import { useGroupChat } from '../hooks/useGroupChat';
+import type { DanglingConfirmInfo } from '../hooks/useChat';
 // A115：群头像（群设置里换的，存在 sessionFlags）
 import { useGroupAvatar } from '../sessionFlags';
 
@@ -141,6 +143,14 @@ interface ChatPageProps {
   onRebindAgent?: (agentId: string) => void;
   /** 单栏（窄屏）模式下返回列表；宽屏不传 */
   onBack?: () => void;
+  /**
+   * A207 补充：待确认的「上一轮指令未完成」。
+   *
+   * 卡片长在消息流里（不是模态弹窗），用户能边看上下文边答；
+   * 数据由 useChat 的 409 分支产出，答复经 onResolveResume 原样重发。
+   */
+  resumeConfirm?: DanglingConfirmInfo | null;
+  onResolveResume?: (choice: 'continue' | 'fresh' | 'skip' | 'cancel') => void;
 }
 
 interface NewChatOptions {
@@ -190,6 +200,8 @@ export function ChatPage({
   onBranch,
   onRebindAgent,
   onBack,
+  resumeConfirm,
+  onResolveResume,
 }: ChatPageProps) {
   const navigate = useNavigate();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -723,6 +735,13 @@ export function ChatPage({
                 // A97：验证面板要按这个目录探测「能跑哪些检查」
                 sessionCwd={currentSession?.cwd}
               />
+            )}
+
+            {/* A207 补充：悬空回合确认卡长在对话流里，跟消息一起滚 ——
+                滚动离开再回来，那条「等待你的操作」状态行仍然在，
+                用户能看出 agent 卡在哪一步。群聊走另一条编排链路，不接。 */}
+            {!isGroup && resumeConfirm && onResolveResume && (
+              <ResumeNotice info={resumeConfirm} onChoose={onResolveResume} />
             )}
           </div>
 

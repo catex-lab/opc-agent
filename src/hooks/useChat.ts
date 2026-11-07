@@ -67,7 +67,7 @@ interface NewChatOptions {
    * A207：后端返回的「上一轮指令未完成」确认请求。
    *
    * 只要 /api/chat 以 409 返回它，前端就撤回刚加上的乐观气泡、把提问放回
-   * 输入框，并在现有 ConfirmDialog 上让用户三选一。
+   * 输入框，并在**消息流里的确认卡**（ResumeNotice）让用户三选一。
    */
   export interface DanglingConfirmInfo {
     kind: 'dangling-cli-turn';
@@ -76,16 +76,28 @@ interface NewChatOptions {
     userText: string;
     reason: string;
     source: 'opencode' | 'local';
+    /** 上一轮尝试提问但工具失败的工具名（说明「问不出去」） */
+    askTool: string | null;
     modelChanged: boolean;
     fromModel: string | null;
     toModel: string | null;
     cwdMismatch: { tokenCwd: string; sessionCwd: string } | null;
-    options: Array<{ action: 'continue' | 'fresh'; label: string }>;
+    /** 安全默认选项与依据（界面据此标「推荐」） */
+    recommended: 'continue' | 'fresh';
+    recommendReason: string;
+    options: Array<{ action: 'continue' | 'fresh' | 'skip'; label: string }>;
   }
 
   /** 等待用户答复的那一次发送（保存足够的参数，确认后原样重发） */
   interface ResumePrompt {
     info: DanglingConfirmInfo;
+    /**
+     * 这次确认属于哪个会话。
+     *
+     * `resumePrompt` 是全局单值，切到别的会话时不能把卡片跟着带过去 ——
+     * 那张卡片问的是「这个会话上一轮怎么了」，换个会话就指错了对象。
+     */
+    sessionId: string;
     messageContent: string;
     newChatOptions?: NewChatOptions;
     onNavigate?: (path: string) => void;
@@ -185,7 +197,7 @@ export function useChat(options: UseChatOptions) {
     /** A33 重新生成：带上它就是「重跑最后一轮」，不是新提问 */
     regen?: RegenerateOptions,
     /** A207：用户对「上一轮指令未完成」的答复，确认后原样重发时带上 */
-    resumeChoice?: 'continue' | 'fresh'
+    resumeChoice?: 'continue' | 'fresh' | 'skip'
   ) => {
     if (!messageContent.trim()) return;
     /* A142：只拦「这个会话」自己。以前是 `|| isLoading`，全局一个布尔，
@@ -200,6 +212,15 @@ export function useChat(options: UseChatOptions) {
       MessagePlugin.warning('这个会话还在回复中 —— 等它结束，或先点停止');
       return;
     }
+
+    /**
+     * A207 补充：待确认期间，用户直接在输入框里改写后发送 = 自由输入出口。
+     *
+     * 按「新建会话」处理：旧 CLI 会话不再续接，新指令不会和那条没答完的
+     * 旧指令混在一起。确认卡片的正文里已经写明这一点。
+     */
+    const effectiveResumeChoice = resumeChoice ?? (resumePrompt ? 'fresh' : undefined);
+    if (!resumeChoice && resumePrompt) setResumePrompt(null);
 
     let sessionId = currentSessionId;
     let currentCwd = currentSession?.cwd;
@@ -448,8 +469,8 @@ export function useChat(options: UseChatOptions) {
                 replaceMessageId: regen.replaceMessageId,
               }
             : {}),
-          // A207：用户已确认「继续 / 新建」，本轮不再弹同一个确认
-          ...(resumeChoice ? { resumeChoice } : {}),
+          // A207：用户已确认「继续 / 新建 / 跳过」，本轮不再弹同一个确认
+          ...(effectiveResumeChoice ? { resumeChoice: effectiveResumeChoice } : {}),
         })
       });
 
@@ -500,6 +521,7 @@ export function useChat(options: UseChatOptions) {
           }
           setResumePrompt({
             info: confirm as DanglingConfirmInfo,
+            sessionId: sessionId ?? '',
             messageContent,
             newChatOptions,
             onNavigate,
@@ -736,7 +758,7 @@ export function useChat(options: UseChatOptions) {
       turnsRef.current.delete(turn.sessionId);
       setRunningIds(prev => prev.filter(id => id !== turn.sessionId));
     }
-  }, [currentSession, currentSessionId, selectedModel, getAgent, updateSessionModel, setCurrentSessionId, setSessions]);
+  }, [currentSession, currentSessionId, selectedModel, getAgent, updateSessionModel, setCurrentSessionId, setSessions, resumePrompt]);
 
   /**
    * A33 重新生成：用这条 assistant 回复**之前**的最近一条 user 消息重跑一轮。
@@ -816,7 +838,7 @@ export function useChat(options: UseChatOptions) {
    * 确认后原样重发同一条消息，只是多带一个 `resumeChoice`；
    * 后端据此续接或清令牌，不再重复弹确认。
    */
-  const resolveResumeConfirm = useCallback(async (choice: 'continue' | 'fresh' | 'cancel') => {
+  const resolveResumeConfirm = useCallback(async (choice: 'continue' | 'fresh' | 'skip' | 'cancel') => {
     const pending = resumePrompt;
     if (!pending) return;
     setResumePrompt(null);
@@ -829,7 +851,8 @@ export function useChat(options: UseChatOptions) {
       pending.newChatOptions,
       pending.onNavigate,
       pending.regen,
-      choice
+      // 跳过 = 按安全默认（新建、不续接旧 CLI 会话）继续，假设已写在卡片上
+      choice === 'skip' ? 'skip' : choice
     );
   }, [resumePrompt, sendMessage]);
 
@@ -843,7 +866,7 @@ export function useChat(options: UseChatOptions) {
     sendMessage,
     regenerate,
     handleStop,
-    /** A207：悬空回合确认（为空 = 不显示弹窗） */
+    /** A207：悬空回合确认（为空 = 消息流里不显示确认卡） */
     resumePrompt,
     resolveResumeConfirm,
   };

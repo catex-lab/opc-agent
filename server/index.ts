@@ -2056,8 +2056,13 @@ app.post("/api/chat", async (req, res) => {
    *   · opencode 能读到自己的会话库，就以它的结构为准（已答完的不打扰用户）。
    * 判定为权威的那份理由会写进确认文案，用户能看出是额度、超时还是别的原因。
    */
-  const resumeChoice: 'continue' | 'fresh' | null =
-    rawResumeChoice === 'fresh' ? 'fresh' : rawResumeChoice === 'continue' ? 'continue' : null;
+  // 'skip' = 用户跳过确认，按安全默认继续（等同新建会话，不续接旧 CLI 会话）
+  const resumeChoice: 'continue' | 'fresh' | 'skip' | null =
+    rawResumeChoice === 'fresh' || rawResumeChoice === 'skip'
+      ? rawResumeChoice
+      : rawResumeChoice === 'continue'
+        ? 'continue'
+        : null;
 
   let historyRows: db.DbMessage[] = [];
   try {
@@ -2085,7 +2090,9 @@ app.post("/api/chat", async (req, res) => {
           : null;
 
       const lines = [
-        '这条会话的 CLI 里还留着一条没有得到完整回复的指令。直接续接时，新模型可能会把它当成待办事项重新执行。',
+        dangling.askTool
+          ? '上一轮尝试向你提问，但问题没有送达（非交互运行），模型随后可能按自己的假设继续了。'
+          : '这条会话的 CLI 里还留着一条没有得到完整回复的指令。直接续接时，新模型可能会把它当成待办事项重新执行。',
         `未完成的指令：${preview}`,
         `判定依据：${dangling.reason}`,
       ];
@@ -2098,6 +2105,17 @@ app.post("/api/chat", async (req, res) => {
           '本轮不会自动改写；新建会话会从当前工作目录开始。'
         );
       }
+      // 契约：在用户作答之前，这一轮不会启动；任何选项都是显式选择，
+      // 模型没有机会自己批准执行有副作用的操作。
+      lines.push('在你作答前这一轮不会开始，也不会自动执行安装、删除、写入这类操作。');
+
+      const recommendReason = cwdMismatch
+        ? '该 CLI 会话属于另一个目录，续接会带上那个目录的上下文'
+        : modelChanged
+          ? '续接会把旧指令直接交给新模型，容易重放'
+          : dangling.askTool
+            ? '上一轮没等到你回答就继续了，续接可能再次越过确认'
+            : '不续接旧 CLI 会话，旧指令不会被重放';
 
       console.log(`[Chat] 发现悬空 CLI 回合（${dangling.source}），等待用户确认`);
       return res.status(409).json({
@@ -2108,13 +2126,18 @@ app.post("/api/chat", async (req, res) => {
           userText: preview,
           reason: dangling.reason,
           source: dangling.source,
+          askTool: dangling.askTool ?? null,
           modelChanged,
           fromModel: fromModel || null,
           toModel: selectedModel || null,
           cwdMismatch,
+          /** 安全默认：不续接（避免旧指令被重放），并向用户说明依据 */
+          recommended: 'fresh',
+          recommendReason,
           options: [
             { action: 'continue', label: '继续那一条' },
             { action: 'fresh', label: '新建会话（带历史摘要）' },
+            { action: 'skip', label: '跳过' },
           ],
         },
       });
@@ -2127,12 +2150,14 @@ app.post("/api/chat", async (req, res) => {
    * 只清令牌、不改 cwd —— 目录不一致时提示归提示，用户的工作目录不该被
    * 悄悄改掉。历史摘要只是背景，措辞里明确写了「不是待办指令」。
    */
-  if (resumeChoice === 'fresh' && resumeToken) {
+  if ((resumeChoice === 'fresh' || resumeChoice === 'skip') && resumeToken) {
     db.updateSession(session.id, { sdk_session_id: null });
     resumeToken = null;
     freshSummary = historySummary(historyRows);
     console.log(
-      `[Chat] 已清空续接令牌，新建 CLI 会话${freshSummary ? '（附带历史摘要）' : ''}`
+      resumeChoice === 'skip'
+        ? `[Chat] 用户跳过确认：按新建 CLI 会话继续（假设：不续接旧会话，旧指令不会被重放）`
+        : `[Chat] 已清空续接令牌，新建 CLI 会话${freshSummary ? '（附带历史摘要）' : ''}`
     );
   } else if (resumeChoice === 'continue' && resumeToken) {
     console.log(`[Chat] 用户选择继续原 CLI 会话: ${resumeToken}`);

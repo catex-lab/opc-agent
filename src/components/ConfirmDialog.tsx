@@ -8,14 +8,6 @@ interface ConfirmDialogProps {
   children: ReactNode;
   confirmText?: string;
   cancelText?: string;
-  /**
-   * 可选的第三种答复（A207）。
-   *
-   * 为什么不用两个弹窗串联：这里的问题天然是「三选一」（继续 / 新建 / 不做），
-   * 串成两个弹窗会让用户在两套按钮语义之间来回。
-   */
-  alternateText?: string;
-  onAlternate?: () => void;
   /** 危险操作：确认按钮用错误色实心 */
   danger?: boolean;
   onConfirm: () => void;
@@ -47,8 +39,6 @@ export function ConfirmDialog({
   children,
   confirmText = '确定',
   cancelText = '取消',
-  alternateText,
-  onAlternate,
   danger = false,
   onConfirm,
   onCancel,
@@ -123,11 +113,6 @@ export function ConfirmDialog({
           >
             {cancelText}
           </button>
-          {alternateText && onAlternate && (
-            <button type="button" onClick={onAlternate} className="tc-btn-secondary">
-              {alternateText}
-            </button>
-          )}
           <button
             type="button"
             onClick={onConfirm}
