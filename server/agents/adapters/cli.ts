@@ -187,6 +187,80 @@ const AUTH_HINT_RE =
   /(not logged in|please log ?in|login required|authentication required|unauthenticated|unauthorized|invalid api key|api key not|missing api key|no api key|401|403|credential)/i;
 
 /**
+ * 判断输出里是否像「额度用尽 / 被限流」。
+ *
+ * 必须和 AUTH_HINT_RE 分开判：两者都表现为 CLI 退出码非 0、stderr 可能为空，
+ * 但处置方式完全相反 —— 一个是换个模型/充值后重试，一个是去登录。
+ */
+const QUOTA_HINT_RE =
+  /(429|too many requests|rate.?limit|usage limit|quota|insufficient_quota|free usage limit|额度|限流|余额不足|配额)/i;
+
+/** `~/xxx` 展开成绝对路径（日志目录给用户看，不能带 `~` 让人猜） */
+export function expandLogPath(dir: string): string {
+  if (dir === '~') return os.homedir();
+  if (dir.startsWith('~/') || dir.startsWith('~\\')) return path.join(os.homedir(), dir.slice(2));
+  return dir;
+}
+
+/** 结构化错误往往是整段 JSON，压成一行并截断，避免把界面撑爆 */
+function clipOneLine(value: string, max = 320): string {
+  const one = value.replace(/\s+/g, ' ').trim();
+  return one.length > max ? `${one.slice(0, max)}…` : one;
+}
+
+export interface CliFailureInput {
+  name: string;
+  code: number | null;
+  /** stderr 尾部若干行（已 trim、已去 ANSI） */
+  stderrTail: string;
+  /** 从结构化输出里捕获的最后一条错误（stderr 为空时的唯一线索） */
+  lastStructuredError?: string;
+  /** 该 CLI 自己的日志目录；没配置就不要假装有 */
+  logDirs?: string[];
+  /** spawn 阶段就失败（ENOENT 等），此时没有退出码 */
+  spawnError?: { message: string; code?: string };
+}
+
+/**
+ * 组装 CLI 失败的最终文案。
+ *
+ * 三个目标：
+ *   ① 额度/限流（429）与「二进制缺失/未安装」在文案上一眼可分；
+ *   ② stderr 为空时不能只留「退出码 N」，要么给结构化错误、要么给日志目录，
+ *      两者都没有就明说「CLI 未输出原因」，不静默；
+ *   ③ 仍然只取 stderr 尾部若干行，不把整段输出倒到界面。
+ */
+export function describeCliFailure(input: CliFailureInput): string {
+  const { name, code, stderrTail } = input;
+  const logDirs = (input.logDirs ?? []).map(expandLogPath);
+
+  if (input.spawnError) {
+    const enoent =
+      input.spawnError.code === 'ENOENT' || /ENOENT|not found|找不到指定的文件/i.test(input.spawnError.message);
+    return enoent
+      ? `${name} 未找到可执行文件（可能未安装，或不在 PATH 里）：\n${clipOneLine(input.spawnError.message)}`
+      : `${name} 子进程启动失败：\n${clipOneLine(input.spawnError.message)}`;
+  }
+
+  const quota = QUOTA_HINT_RE.test(`${stderrTail}\n${input.lastStructuredError ?? ''}`);
+  const head = `${name} 退出码 ${code ?? '未知'}${quota ? '（疑似上游限流/额度用尽，不是本地没装好）' : ''}`;
+
+  if (stderrTail) return `${head}：\n${stderrTail}`;
+
+  const parts: string[] = [];
+  if (input.lastStructuredError) {
+    parts.push(`CLI 未在 stderr 输出原因，最后一次结构化错误：\n${clipOneLine(input.lastStructuredError)}`);
+  } else {
+    parts.push('CLI 未在 stderr 输出原因。');
+  }
+  if (logDirs.length) parts.push(`可查看该 CLI 自己的日志：\n${logDirs.join('\n')}`);
+  else if (!input.lastStructuredError) {
+    parts.push('也没有可用的日志目录。建议在终端里手动运行一次该命令，看它自己打印的报错。');
+  }
+  return `${head}：\n${parts.join('\n')}`;
+}
+
+/**
  * 子进程环境。
  * 在宿主环境基础上关掉交互与颜色，避免 CLI 以为自己在 TTY 里等输入。
  *
@@ -695,6 +769,14 @@ export class CliAdapter implements AgentProvider {
     let sawText = false;
     /** 是否已经由行映射给出过 error 事件（避免再补一条「没有任何输出」的废话） */
     let sawError = false;
+    /**
+     * 最后一条结构化错误。
+     *
+     * opencode 这类 CLI 把真正的失败原因（429 / quota / 模型不存在）写进自己的
+     * 服务进程日志，主进程退出时 stderr 是空的 —— 于是界面只剩「退出码 1」。
+     * 结构化输出里既然带了 error 事件，就把它留到最后拼进文案（A206）。
+     */
+    let lastStructuredError = '';
     /** 适配器是否已自行给出 done（带用量）；给了就不再由 close 兜底重复发 */
     let sawDone = false;
     /** 中途上报的用量（每步一次的那种），收尾时并进 done */
@@ -898,7 +980,10 @@ export class CliAdapter implements AgentProvider {
           continue;
         }
         if (ev.type === 'text') sawText = true;
-        if (ev.type === 'error') sawError = true;
+        if (ev.type === 'error') {
+          sawError = true;
+          lastStructuredError = ev.message;
+        }
         if (ev.type === 'done') sawDone = true;
         queue.push(ev);
       }
@@ -937,7 +1022,18 @@ export class CliAdapter implements AgentProvider {
     });
 
     child.on('error', (err: Error) => {
-      queue.fail(new Error(`子进程错误：${err.message}`));
+      // spawn 失败（ENOENT 等）没有退出码，文案必须和「跑起来但退出非 0」区分：
+      // 这一类基本就是没装 / 不在 PATH，别让用户去猜额度或登录（A206）。
+      queue.fail(
+        new Error(
+          describeCliFailure({
+            name: this.descriptor.name,
+            code: null,
+            stderrTail: '',
+            spawnError: { message: err.message, code: (err as NodeJS.ErrnoException).code },
+          })
+        )
+      );
     });
 
     /**
@@ -1021,8 +1117,14 @@ export class CliAdapter implements AgentProvider {
         queue.push({
           type: 'error',
           message: isAuth
-            ? `需要先登录 ${this.descriptor.name}：${tail || '未提供详细信息'}`
-            : `${this.descriptor.name} 退出码 ${code}${tail ? `：\n${tail}` : ''}`,
+            ? `需要先登录 ${this.descriptor.name}：${tail || lastStructuredError || '未提供详细信息'}`
+            : describeCliFailure({
+                name: this.descriptor.name,
+                code,
+                stderrTail: tail,
+                lastStructuredError: lastStructuredError || undefined,
+                logDirs: this.spec.logDir ? [this.spec.logDir] : [],
+              }),
         });
       } else if (!sawText && !sawError) {
         // 一个字都没输出 —— 明确告诉用户，而不是静默成功。

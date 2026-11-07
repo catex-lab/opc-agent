@@ -232,7 +232,36 @@ export interface RawEntry {
   truncated?: boolean;
 }
 
-export type Block = TextBlock | ThinkingBlock | ToolBlock | ImageBlock | NoteBlock | ArtifactBlock | RawBlock;
+/**
+ * 失败原因块。
+ *
+ * 为什么要落成块而不是只靠实时事件：错误原来只存在于 SSE 流里（前端挂在
+ * `message.error` 上），刷新一次就没了 —— 界面上只剩一条没有内容的助手气泡，
+ * 用户既看不到原因，也无法事后核对。落成块之后它和正文/工具走同一条
+ * blocks 持久化路径，刷新、断线重放、历史接口都一致，不需要改表结构。
+ *
+ * 只存**已经整理过的最终文案**（适配器负责把 stderr 尾部、CLI 日志目录、
+ * 最后一次结构化错误拼进去），渲染端原样展示，不做二次解释。
+ */
+export interface ErrorBlock {
+  id: string;
+  type: 'error';
+  /** 可直接展示的失败原因（可能多行） */
+  message: string;
+  retryable?: boolean;
+  /** 失败发生时刻（毫秒） */
+  at: number;
+}
+
+export type Block =
+  | TextBlock
+  | ThinkingBlock
+  | ToolBlock
+  | ImageBlock
+  | NoteBlock
+  | ArtifactBlock
+  | RawBlock
+  | ErrorBlock;
 
 // ============= 事件（v2） =============
 
@@ -463,6 +492,21 @@ export function textOfBlocks(blocks: readonly Block[]): string {
     .filter((b): b is TextBlock => b.type === 'text')
     .map(b => b.text)
     .join('');
+}
+
+/**
+ * 失败原因块的文案（取最后一条；没有则空串）。
+ *
+ * 失败回合常常只有这一块、没有任何正文，`content` 兼容字段会是空的 ——
+ * 会话列表最后一条预览、搜索、老组件都会因此显示「空白」。用它兜底，
+ * 让历史里至少能看到「失败 + 原因」，而不是一条空泡。
+ */
+export function errorTextOfBlocks(blocks: readonly Block[]): string {
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    const b = blocks[i];
+    if (b.type === 'error') return b.message;
+  }
+  return '';
 }
 
 /** 拼接所有思考块 */

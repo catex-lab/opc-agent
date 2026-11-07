@@ -28,7 +28,7 @@ import { isInternalPhase, type AgentTurnResult, type TurnPhase } from './orchest
 import { distillSkill } from './skill-distill.js';
 import { buildKbInjection, type KbInjection } from './kb/inject.js';
 import { getScenario } from '../shared/scenarios.js';
-import { textOfBlocks, toolCallsOfBlocks, type RunEvent } from '../shared/blocks.js';
+import { errorTextOfBlocks, textOfBlocks, toolCallsOfBlocks, type RunEvent } from '../shared/blocks.js';
 
 export interface TurnRunnerDeps {
   /** 所属会话（只需要三个字段，但整个 session 对象传进来也行） */
@@ -252,7 +252,9 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
     }
 
     const blocks = projector.blockList;
-    const text = textOfBlocks(blocks);
+    // A206：失败回合只有 error 块、没有正文时，用错误文案兜底 content，
+    // 否则群聊历史里这一棒会显示成一条空白消息。
+    const text = textOfBlocks(blocks) || errorTextOfBlocks(blocks);
 
     // 先落库、再通报 turn_done：客户端一收到 turn_done 就可能去刷新会话，
     // 顺序反了会在那一瞬丢掉这一棒（探针实测踩过这个窗口）。

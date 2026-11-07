@@ -143,7 +143,7 @@ import {
   MODE_LABEL as EXT_MODE_LABEL,
   TARGETS as EXT_TARGETS,
 } from "./extensions/targets.js";
-import { legacyToBlocks, textOfBlocks, toolCallsOfBlocks } from "../shared/blocks.js";
+import { errorTextOfBlocks, legacyToBlocks, textOfBlocks, toolCallsOfBlocks } from "../shared/blocks.js";
 import type { CapabilityProfile } from "../shared/capabilities.js";
 import type { RunEvent } from "../shared/blocks.js";
 import {
@@ -2266,7 +2266,9 @@ app.post("/api/chat", async (req, res) => {
       session_id: session.id,
       role: 'assistant',
       // content 仍是纯文本摘要（列表预览、搜索、老组件都靠它）
-      content: textOfBlocks(blocks),
+      // A206：失败回合往往只有错误块、没有正文，这里用错误文案兜底，
+      // 否则列表预览/老组件看到的是一条空白消息。
+      content: textOfBlocks(blocks) || errorTextOfBlocks(blocks),
       // 未指定模型时记 null（而不是把平台默认值写进去冒充它的模型）
       model: selectedModel ?? null,
       // 一对一里这个端点固定只服务一个 Agent，直接记下它；

@@ -40,6 +40,7 @@ import type {
   ArtifactBlock,
   RawBlock,
   RawEntry,
+  ErrorBlock,
 } from '../../shared/blocks.js';
 import { withCliShellQuoteHint } from '../../shared/blocks.js';
 import type {
@@ -392,16 +393,50 @@ export class RunProjector {
         return [this.make({ type: 'block_open', block: { ...block } })];
       }
 
-      case 'error':
-        return [
+      case 'error': {
+        // 网络类错误通常可重试；认证/配置类不行
+        const retryable = /timeout|network|ECONN|socket|502|503|504/i.test(ev.message);
+        /**
+         * 失败原因落成块（不只是发一条实时事件）。
+         *
+         * 同一轮只留**一块**：后来的错误（例如先 quota 失败、再重试时的
+         * 超时）覆盖前一条，而不是在消息里堆一串红块。这样历史里一条消息
+         * 最多一个失败原因，和界面上当下的观感一致。
+         */
+        const existing = this.blocks.find(b => b.type === 'error') as ErrorBlock | undefined;
+        const out: RunEvent[] = [];
+        if (existing) {
+          existing.message = ev.message;
+          existing.retryable = retryable;
+          existing.at = this.now();
+          out.push(
+            this.make({
+              type: 'block_patch',
+              blockId: existing.id,
+              patch: { message: existing.message, retryable, at: existing.at },
+            })
+          );
+        } else {
+          const block: ErrorBlock = {
+            id: this.nextId(),
+            type: 'error',
+            message: ev.message,
+            retryable,
+            at: this.now(),
+          };
+          this.blocks.push(block);
+          out.push(this.make({ type: 'block_open', block: { ...block } }));
+        }
+        out.push(
           this.make({
             type: 'error',
             scope: 'run',
             message: ev.message,
-            // 网络类错误通常可重试；认证/配置类不行
-            retryable: /timeout|network|ECONN|socket|502|503|504/i.test(ev.message),
-          }),
-        ];
+            retryable,
+          })
+        );
+        return out;
+      }
 
       case 'permission_request':
         this.observed.add('permission');

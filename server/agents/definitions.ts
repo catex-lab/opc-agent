@@ -109,6 +109,14 @@ export interface CliSpec {
    */
   parse: 'text' | 'jsonl' | 'json-object';
   /**
+   * A206：该 CLI **自己的**日志目录（相对用户主目录可用 `~` 写法）。
+   *
+   * 只在失败文案里出现：有的 CLI（opencode）把真因写进常驻服务进程的日志，
+   * 主进程退出时 stderr 是空的 —— 这时界面至少还能告诉用户去哪儿看。
+   * 没有把握就不要填：宁可不给路径，也不能指到一个不存在的位置。
+   */
+  logDir?: string;
+  /**
    * jsonl 模式下把一行 JSON 映射为统一事件；返回 null 表示该行无输出价值。
    *
    * 允许返回数组：有的 CLI 把「工具开始 + 工具结果」塞在同一行里
@@ -1291,6 +1299,9 @@ const RAW_DEFS: AgentDefinition[] = [
         return args;
       },
       parse: 'jsonl',
+      // 真因（429 / quota / 模型不存在）由常驻 serve 进程写在这里，
+      // `run` 子进程退出时 stderr 为空（A206 实测）
+      logDir: '~/.local/share/opencode/log/',
       extractResumeToken: (obj) => {
         const o = obj as { sessionID?: unknown };
         return typeof o.sessionID === 'string' ? o.sessionID : null;

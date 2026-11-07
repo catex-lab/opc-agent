@@ -1241,6 +1241,12 @@ export function ChatMessages({
       return null;
     }
 
+    // A206：失败原因块本身不参与正文/过程区渲染 —— 它已经被提到消息末尾
+    // 单独画成红色失败卡（见 renderAssistantContent 里的 errorBlock）。
+    if (block.type === 'error') {
+      return null;
+    }
+
     return (
       <div key={block.id} className="flex justify-center py-0.5">
         <span
@@ -1294,8 +1300,21 @@ export function ChatMessages({
       return `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}`;
     })();
     // 失败原因。后端会把真实错误（未登录 / 网络不可达 / 退出码）带上来，
+    const allBlocks = toBlocks(message);
+    /**
+     * A206：失败原因落库后以 error 块的形式回来。
+     *
+     * 实时那条同时挂在 `message.error` 上，所以这里必须**二选一**展示 ——
+     * 否则同一次失败会出现两个红块。块本身也不再进过程区/答案区，
+     * 它唯一的职责是让刷新后这条消息仍然有内容可看。
+     */
+    const persistedError = allBlocks.reduce<string>(
+      (acc, b) => (b.type === 'error' ? b.message : acc),
+      ''
+    );
+    const errorMessage = message.error || persistedError;
     // 这里原样展示，不用「发生错误请重试」这种无信息量的文案盖掉它。
-    const errorBlock = message.error ? (
+    const errorBlock = errorMessage ? (
       <div
         className="mt-2 whitespace-pre-wrap break-words rounded-xl px-3.5 py-2.5 text-secondary leading-relaxed"
         style={{
@@ -1304,11 +1323,12 @@ export function ChatMessages({
         }}
       >
         <div className="mb-1 font-medium">调用失败</div>
-        {message.error}
+        {errorMessage}
       </div>
     ) : null;
 
-    const blocks = toBlocks(message);
+    // 失败块已提到 errorBlock，渲染用的块序列里去掉它
+    const blocks = persistedError ? allBlocks.filter(b => b.type !== 'error') : allBlocks;
     const processNodes: React.ReactNode[] = [];
     const answerNodes: React.ReactNode[] = [];
     /**
@@ -1534,6 +1554,26 @@ export function ChatMessages({
           message.role === 'assistant' && (message.cost || message.tokens)
             ? formatUsage(message)
             : null;
+
+        /**
+         * A206：空助手消息不再画成「一行 Agent 名字 + 什么都没有」的空泡。
+         *
+         * 之前失败回合只把错误挂在实时流上，落库后是一条 content 为空、
+         * blocks 也为空的助手消息 —— 刷新历史后就是 25 个空泡。现在新失败
+         * 回合都有 error 块可看；这条兜底只针对**已经结束且确实没有任何
+         * 可见内容**的老数据（raw 块按设计不渲染，不算可见）。
+         *
+         * 正在流式的消息不能走这里：它此刻就是空的，但状态行「正在处理」
+         * 正需要显示。
+         */
+        if (message.role === 'assistant' && !message.isStreaming && !msgIsImage) {
+          const visible = !!message.error
+            || message.content.trim().length > 0
+            || toBlocks(message).some(b =>
+              b.type === 'text' ? b.text.trim().length > 0 : b.type !== 'raw'
+            );
+          if (!visible) return null;
+        }
 
         /**
          * A55：消息级「复制全部代码 / 自动换行」已删。Cherry 代码块自带
