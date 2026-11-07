@@ -11,7 +11,7 @@
  *   · 行内上下留白各 17 + 1px 低对比分隔线 ⇒ 行跳 77；
  *   · 控件高 36、宽度按内容、右边缘与内容右边界同线、左右内边距 12；
  *   · 弹层与触发器同宽、间距 4、内边距 4、圆角 8、选项高 34。
- * 详细测量与差异表在 `e:\aiapp\opc\.local-notes\settings-reference-notes.md`。
+ * 详细测量与差异表在仓库外的 .local-notes/settings-reference-notes.md（不进版本库）。
  *
  * ## 为什么是自绘而不是原生 <select>
  *

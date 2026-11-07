@@ -18,7 +18,7 @@
  *   [6] 真探测：trae 与 zcode 的 availability 必须是 ready
  *
  * **ZCode 未安装分支**（本机 2026-11-03 实测：快捷方式指向
- * `E:\AI\ZCode\ZCode.exe`，该文件已删除、PATH 也无 `zcode`）：
+ * 安装目录下的 ZCode.exe，该文件已删除、PATH 也无 `zcode`）：
  *   安装态断言（引擎存在 / 探测为 ready / 真实版本号）打印固定格式的
  *   `ZCode 未安装：<原因>，跳过 N 条安装态断言（非断言）` 并显式跳过，退出码仍 0；
  *   但「未安装时 shortcutInstallRoot 必须为 null」「探测必须返回 not-installed」
@@ -76,8 +76,10 @@ function isFile(p) {
   }
 }
 
-const TRAE_CMD = 'E:\\AI\\Trae CN\\bin\\trae-cn.cmd';
-const ZCODE_ENGINE = 'E:\\AI\\ZCode\\resources\\glm\\zcode.cjs';
+// 真实安装路径不写死进仓库：优先环境变量 A105_TRAE_CMD，
+// 其次从 PATH 解析（trae-cn 装好后就在 PATH 里）。都没有时置空，[3] 组按失败报出。
+const TRAE_CMD =
+  process.env.A105_TRAE_CMD || findExecutable('trae-cn', [], ['.cmd']) || '';
 
 // ---------- [1] findExecutable：extraExts + 数组候选 ----------
 console.log('\n[1] findExecutable 扩展名与候选数组');
@@ -135,7 +137,7 @@ console.log('\n[2] .cjs 引擎的启动目标');
 // ---------- [3] Electron-node 垫片解析 + 实跑 ----------
 console.log('\n[3] trae-cn.cmd 的 Electron-node 垫片解析');
 {
-  const t = resolveElectronNodeShim(TRAE_CMD);
+  const t = TRAE_CMD ? resolveElectronNodeShim(TRAE_CMD) : null;
   check('解析成功（旧代码三种解析都覆盖不到它）', t !== null);
   if (t) {
     check('command 是 Trae CN.exe（Electron 主程序）', t.command.endsWith('Trae CN.exe'), t.command);

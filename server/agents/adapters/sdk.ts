@@ -287,7 +287,7 @@ export class SdkAdapter implements AgentProvider {
          * A178 实测结论：WorkBuddy SDK 的 initialize 走
          * `sendControlRequest`，默认 60000ms 后抛 `Request timeout: initialize`。
          * 本机冷启动第一次必现（实测 60001ms），紧接着重试一次只需约 31s
-         * 并成功返回已登录用户（emailcatai@gmail.com）。
+         * 并成功返回已登录用户（示例邮箱 dev@example.com）。
          *
          * 因此这里对「initialize 超时」自动再试一次：不把一次冷启动的
          * 偶发失败直接判成「未登录」，否则用户会去重登一个本来就好的账号。
