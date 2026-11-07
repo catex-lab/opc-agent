@@ -16,7 +16,7 @@ export const APP_CONFIG = {
   description: '选择一个 Agent，开始对话',
 
   /** 版本号 */
-  version: '1.0.14',
+  version: '1.0.15',
 };
 
 export default APP_CONFIG;
