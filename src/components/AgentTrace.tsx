@@ -22,10 +22,9 @@
  * 但流式过程中默认展开 —— 用户此刻正在盯着它干活。
  * 手动切过之后就不再自动干预。
  *
- * 正文收拢（2026-11-03 生产口径）：`collapse` 只在「最后一个工具之后出现
- * 非空正文」时为真，因此它等价于**首个正文内容 token**，而不是任意首 token。
- * 它变真即收拢；之后若又有工具事件（`collapse` 回落），重新展开，
- * 等正文再次出现或新步骤结束后再收拢。摘要条始终保留，就是展开出口。
+ * 正文收拢（2026-11-03 生产口径，2026-11-07 修锚点）：`collapse` 的判据是
+ * 「最后一段正文出现了」，锚点跟着文本走 —— 正文之后再来的工具事件不再让
+ * `collapse` 回落，因此不会把已显示的正文重新卷进轨迹、再展开一次。
  *
  * 单步明细（2026-10-30）：执行中默认展开，**执行完立即收起**；
  * 写入/编辑、删除、权限、报错四类关键步骤完成后仍保持展开。
@@ -537,8 +536,10 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
   const summary = useMemo(() => summarizeTrace(steps), [steps]);
 
   // 既定口径：完成态默认收起；流式中默认展开。
-  // 手动切过之后不再自动干预（否则用户刚展开就被「跑完」那一刻关掉）。
-  const [expanded, setExpanded] = useState(!!isStreaming);
+  // 例外：正文**已经出现之后**才挂载的轨迹段（`collapse` 为真）属于答案
+  // 下方的后置工具，按辅助信息处理 —— 直接收着挂上来，不再展开一次
+  // 再收一次。手动切过之后不再自动干预（否则用户刚展开就被「跑完」那一刻关掉）。
+  const [expanded, setExpanded] = useState(!!isStreaming && !collapse);
   const touched = useRef(false);
   const prevStreaming = useRef(!!isStreaming);
   /** 正文是否已经开始（一旦成立就保持；后续工具到达只是临时展开） */
@@ -584,7 +585,7 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
       return;
     }
 
-    // 正文之后又来了工具事件：ChatMessages 的 hasAnswer 会暂时回落。
+    // 正文之后又来了工具事件：新锚点下 `collapse` 不再回落，这段轨迹保持收起。
     // A2：这里**不再**自动展开。旧逻辑是本段真的多了行就重开，但在
     // think/tool/answer 交错的回合里，这个「重开 → 正文再出现 → 收拢」
     // 会反复发生，每次都是 200ms、数百像素的高度变化，且正好覆盖正文
