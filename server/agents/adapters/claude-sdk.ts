@@ -56,10 +56,17 @@ function loadSdk(): Promise<ClaudeSdkModule> {
 import { AsyncQueue, PendingReplies, linkAbort } from '../channel.js';
 import { toUnpackedPath } from '../sdkRuntime.js';
 import { withMemoryContext } from '../../memory.js';
+import { withAnswerLanguage } from '../../answer-language.js';
 import { withExtensionsContext } from '../../extensions/inject.js';
 import { SDK_PERMISSION_OPTIONS } from '../../../shared/permissions.js';
 import { createCanUseToolBridge } from './sdkApproval.js';
 import { mapClaudeCodeLine } from '../definitions.js';
+import {
+  inspectClaudeCredentials,
+  formatLocalMinute,
+  type CredentialVerdict,
+} from '../credentialStatus.js';
+import { recoveryHintFor } from '../recovery.js';
 import type {
   AgentDescriptor,
   AgentEvent,
@@ -164,13 +171,54 @@ function bundledBinary(): string | null {
   return null;
 }
 
-/** 本机是否已有 Anthropic 凭据（不做在线校验，只做「有没有」的快速判断） */
-function hasCredentials(): boolean {
-  if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) return true;
-  const home = os.homedir();
-  return ['.claude/.credentials.json', '.claude.json'].some(f =>
-    fs.existsSync(path.join(home, f))
-  );
+/**
+ * 凭据检测结论 → 名册状态。
+ *
+ * 注意：`.claude.json` 只是应用配置，**不再单独作为已登录证据**。
+ * 真正的证据是 `.claude/.credentials.json` 里的 token，或 `.claude.json`
+ * 里的 `oauthAccount`（两者都没有 → 未检测到登录凭据）。
+ */
+export function resolveClaudeCredential(
+  verdict: CredentialVerdict
+): Pick<AgentStatus, 'availability' | 'message' | 'probeState'> {
+  switch (verdict.state) {
+    case 'absent':
+      return {
+        availability: 'needs-auth',
+        message: `未检测到 Anthropic 登录凭据。怎么恢复：${recoveryHintFor('claude')}`,
+      };
+    case 'unreadable':
+      return {
+        availability: 'needs-auth',
+        message: `Anthropic 凭据文件无法解析（${verdict.reason}），请重新登录。怎么恢复：${recoveryHintFor('claude')}`,
+        probeState: 'credential-invalid',
+      };
+    case 'expired-needs-login':
+      return {
+        availability: 'needs-auth',
+        message: `Anthropic 登录态已过期（${formatLocalMinute(
+          new Date(verdict.expiresAt).toISOString()
+        )}），且没有可用的刷新令牌，需要重新登录。怎么恢复：${recoveryHintFor('claude')}`,
+        probeState: 'credential-invalid',
+      };
+    case 'expired-refreshable':
+      return {
+        // 硬要求：有 refresh_token 不判不可用
+        availability: 'ready',
+        message: `已检测到 Anthropic 登录态，但已过期（${formatLocalMinute(
+          new Date(verdict.expiresAt).toISOString()
+        )}）；首次使用会尝试刷新（未校验）`,
+      };
+    case 'present':
+      return {
+        availability: 'ready',
+        message: verdict.expiresAt
+          ? `已检测到本机 Anthropic 凭据（未校验，有效期至 ${formatLocalMinute(
+              new Date(verdict.expiresAt).toISOString()
+            )}）`
+          : '已检测到本机 Anthropic 凭据（未校验）',
+      };
+  }
 }
 
 /** 权限模式 → Claude SDK 的 `PermissionMode` */
@@ -224,24 +272,42 @@ export class ClaudeSdkAdapter implements AgentProvider {
       return this.status;
     }
 
-    if (hasCredentials()) {
-      this.status = {
-        availability: 'ready',
-        installed: true,
-        binaryPath: binary,
-        message: '已检测到本机 Anthropic 凭据（未做在线校验）',
-        probedAt: now,
-      };
-    } else {
-      this.status = {
-        availability: 'needs-auth',
-        installed: true,
-        binaryPath: binary,
-        message: '未检测到 Anthropic 凭据，请运行 claude 后执行 /login，或设置 ANTHROPIC_API_KEY',
-        probedAt: now,
-      };
-    }
+    const envConfigured = Boolean(
+      process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN
+    );
+    this.status = {
+      ...(envConfigured
+        ? { availability: 'ready' as const, message: '已通过环境变量配置凭据（未校验）' }
+        : resolveClaudeCredential(inspectClaudeCredentials())),
+      installed: true,
+      binaryPath: binary,
+      probedAt: now,
+    };
     return this.status;
+  }
+
+  /**
+   * 用前校验：只读 `~/.claude` 下的凭据文件，不发网络请求。
+   * 由注册表在「本会话第一次发消息」时调一次。
+   */
+  refreshCredential(): AgentStatus | null {
+    if (!this.status?.installed) return null;
+    const now = new Date().toISOString();
+    const resolved: Pick<AgentStatus, 'availability' | 'message' | 'probeState'> =
+      process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN
+        ? { availability: 'ready', message: '已通过环境变量配置凭据（未校验）' }
+        : resolveClaudeCredential(inspectClaudeCredentials());
+    const next: AgentStatus = {
+      ...this.status,
+      availability: resolved.availability,
+      message: resolved.message,
+      probedAt: now,
+    };
+    if (resolved.probeState) next.probeState = resolved.probeState;
+    else delete next.probeState;
+    if (resolved.availability === 'ready') delete next.lastError;
+    this.status = next;
+    return next;
   }
 
   async *send(ctx: SendContext): AsyncIterable<AgentEvent> {
@@ -279,9 +345,13 @@ export class ClaudeSdkAdapter implements AgentProvider {
     // 人设与记忆：用 preset 而不是替换 systemPrompt ——
     // 替换会把 Claude Code 自己的工具使用规范一起抹掉，模型行为会明显退化。
     // A167：技能清单叠在记忆之后（P3，只对 prompt 态 Agent 生效）。
-    const extraPrompt = withExtensionsContext(
-      withMemoryContext(ctx.systemPrompt ?? '', ctx.memoryCwd),
-      this.descriptor.id
+    // A209：回答语言追加在最末；`append` 语义天然不覆盖 preset 自带的工具规范。
+    const extraPrompt = withAnswerLanguage(
+      withExtensionsContext(
+        withMemoryContext(ctx.systemPrompt ?? '', ctx.memoryCwd),
+        this.descriptor.id
+      ),
+      ctx.answerLanguage
     );
     const warmEntry = this.takeWarm(ctx, binary, extraPrompt);
 
@@ -381,9 +451,12 @@ export class ClaudeSdkAdapter implements AgentProvider {
     try {
       const binary = bundledBinary();
       if (!binary) return;
-      const extraPrompt = withExtensionsContext(
-        withMemoryContext(ctx.systemPrompt ?? '', ctx.memoryCwd),
-        this.descriptor.id
+      const extraPrompt = withAnswerLanguage(
+        withExtensionsContext(
+          withMemoryContext(ctx.systemPrompt ?? '', ctx.memoryCwd),
+          this.descriptor.id
+        ),
+        ctx.answerLanguage
       );
       const key = this.warmKeyOf(ctx, binary, extraPrompt);
       if (this.warm?.key === key) return;
@@ -603,4 +676,4 @@ function mapClaudeSdkMessage(
 }
 
 // 供验收脚本复用探测逻辑（与 sdk.ts 的 getLastAuthUrl 同属探测辅助）
-export { bundledBinary, hasCredentials };
+export { bundledBinary };

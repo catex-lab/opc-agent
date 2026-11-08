@@ -24,7 +24,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { findDef } from '../server/agents/definitions.js';
 import { createProvider } from '../server/agents/adapters/index.js';
-import { ClaudeSdkAdapter, bundledBinary, hasCredentials } from '../server/agents/adapters/claude-sdk.js';
+import { ClaudeSdkAdapter, bundledBinary } from '../server/agents/adapters/claude-sdk.js';
+import { inspectClaudeCredentials } from '../server/agents/credentialStatus.js';
 import { SdkAdapter } from '../server/agents/adapters/sdk.js';
 import { toUnpackedPath } from '../server/agents/sdkRuntime.js';
 import { resolveModelForAgent, PLATFORM_DEFAULT_MODEL } from '../server/model-routing.js';
@@ -112,7 +113,39 @@ console.log('\n[1] 定义表与工厂：claude 真的走 ClaudeSdkAdapter');
     ok(toUnpackedPath(plain) === plain, 'toUnpackedPath：无 asar 的路径不动');
     fs.rmSync(tmp, { recursive: true, force: true });
   }
-  ok(typeof hasCredentials() === 'boolean', '凭据检测返回布尔值', String(hasCredentials()));
+  // 凭据判定：`.claude.json` 只是配置，存在 ≠ 已登录（2026-11 修正）
+  const credTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'opc-claude-cred-'));
+  fs.writeFileSync(path.join(credTmp, '.claude.json'), JSON.stringify({ theme: 'dark' }));
+  ok(
+    inspectClaudeCredentials(credTmp).state === 'absent',
+    '★ .claude.json 存在但没有 oauthAccount → 未检测到登录凭据'
+  );
+  fs.mkdirSync(path.join(credTmp, '.claude'), { recursive: true });
+  const credFile = path.join(credTmp, '.claude', '.credentials.json');
+  fs.writeFileSync(credFile, JSON.stringify({ claudeAiOauth: { accessToken: 'x' } }));
+  ok(
+    inspectClaudeCredentials(credTmp).state === 'present',
+    '.credentials.json 里有 accessToken → 检测到凭据（未校验）'
+  );
+  fs.writeFileSync(
+    credFile,
+    JSON.stringify({
+      claudeAiOauth: { accessToken: 'x', refreshToken: 'r', expiresAt: Date.now() - 60_000 },
+    })
+  );
+  ok(
+    inspectClaudeCredentials(credTmp).state === 'expired-refreshable',
+    '★ 已过期但有 refresh_token → 不判不可用（过期待刷新）'
+  );
+  fs.writeFileSync(
+    credFile,
+    JSON.stringify({ claudeAiOauth: { accessToken: 'x', expiresAt: Date.now() - 60_000 } })
+  );
+  ok(
+    inspectClaudeCredentials(credTmp).state === 'expired-needs-login',
+    '已过期且无 refresh_token → 需要重新登录'
+  );
+  fs.rmSync(credTmp, { recursive: true, force: true });
 
   // 模型路由：claude 的名字空间与 WorkBuddy 不同，绝不能落到平台默认模型
   ok(resolveModelForAgent('claude', undefined) === undefined,
