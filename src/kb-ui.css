@@ -892,26 +892,32 @@
 
 /* ---------- 头部入口 ---------- */
 
+/* 头部入口：与相邻的展开工作区 / 更多按钮同一种「裸图标」形态 ——
+ * 没有外框，只有悬停时的淡底。
+ *
+ * 为什么 padding 是 9px：原先这枚带 1px 边框，去掉后左右各少了 1px，
+ * 点击热区会随之缩一圈、和旁边 32×32 的图标按钮不成比例。
+ * 把省下的 1px 挪进 padding（8 → 9），盒宽不变，视觉权重也不靠描边补偿。
+ * 聚焦走 .kb-chip:focus-visible 的 2px 品牌色 outline（见本文件上方），
+ * 不受这里影响。 */
 .kb-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   height: 28px;
-  padding: 0 8px;
+  padding: 0 9px;
   border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--tc-ink) 10%, transparent);
   background: transparent;
   color: var(--td-text-color-secondary);
   font-size: var(--text-caption);
   line-height: 1;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .kb-chip:hover {
   background: var(--tc-fill-hover);
-  border-color: color-mix(in srgb, var(--tc-ink) 18%, transparent);
   color: var(--td-text-color-primary);
 }
 
@@ -933,7 +939,7 @@
   }
 
   .kb-chip {
-    padding: 0 7px;
+    padding: 0 8px;
   }
 }
 
@@ -967,7 +973,7 @@
   }
 
   .kb-chip {
-    padding: 0 7px;
+    padding: 0 8px;
   }
 
   /* 工作区 chip 退化为「目录名 + 图标」：先让掉右侧的展开箭头。
