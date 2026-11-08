@@ -81,6 +81,15 @@ function checkContracts() {
   }
   ok(main.includes("send('opc:terminal-data'"), '契约：输出增量推送给渲染进程');
 
+  // 来源校验：opc:terminal-* 拼起来就是一个「任意命令执行」能力，而应用开着
+  // 仅回环的 CDP 端口 —— 端口能连上不等于该把终端交出去。必须校验 senderFrame。
+  ok(/function isTrustedIpcSender[\s\S]{0,2000}event\.senderFrame/.test(main),
+    '契约：IPC 有 senderFrame 来源校验');
+  ok(/opc:terminal-input[\s\S]{0,300}rejectUntrustedIpc/.test(main),
+    '契约：terminal-input 入口过来源校验');
+  ok(/opc:terminal-start[\s\S]{0,300}rejectUntrustedIpc/.test(main),
+    '契约：terminal-start 入口过来源校验');
+
   const preload = read('electron/preload.cjs');
   for (const fn of ['terminalStart(', 'terminalInput(', 'terminalKill(', 'terminalState(', 'terminalOutput(', 'onTerminalData(', 'onTerminalState(']) {
     ok(preload.includes(fn), `契约：preload 暴露 ${fn.replace('(', '')}`);

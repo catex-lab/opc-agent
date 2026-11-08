@@ -21,6 +21,7 @@ import { app, BrowserWindow, screen, shell, nativeTheme, ipcMain, dialog, Tray, 
 import { once } from 'node:events';
 import { join, isAbsolute } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { server } from '../server/index.js';
 import { registry } from '../server/agents/registry.js';
 import { loadPrefs } from '../server/preferences.js';
@@ -84,6 +85,50 @@ if (process.platform === 'win32') {
 }
 
 let mainWindow: BrowserWindow | null = null;
+
+/**
+ * 主窗口页面的 origin（`createWindow` 解析出真实 URL 后写入）。
+ *
+ * IPC 只接受这个 origin 发来的消息 —— preload 桥只挂在主窗口上，别的进程
+ * （包括 Agent 通过 CDP 连进来的页面）不该能调 `opc:terminal-*` 这类能力。
+ */
+let appOrigin: string | null = null;
+
+/**
+ * IPC 来源校验（senderFrame）。
+ *
+ * `ipcMain` 的 handler 默认对**任何**渲染进程开放；本应用又刻意开着 CDP
+ * 调试端口（整个应用、仅回环），所以「能连上端口」不等于「该给这些能力」。
+ * 这里同时校验三件事：发送方是本进程的主窗口、是主 frame、且 URL 的 origin
+ * 就是窗口加载的那个 origin。任何一条不满足都拒绝。
+ *
+ * 为什么用 origin 而不是精确 URL：窗口会导航到 `/chat/<id>`、带 `?glass=1`，
+ * 路径每轮都变，origin 才是稳定的身份。
+ */
+function isTrustedIpcSender(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (event.sender !== mainWindow.webContents) return false;
+  const frame = event.senderFrame;
+  if (!frame || frame !== event.sender.mainFrame) return false;
+  if (!appOrigin) return false;
+  try {
+    return new URL(frame.url).origin === appOrigin;
+  } catch {
+    return false;
+  }
+}
+
+/** 不可信来源统一拒绝并留一行日志（静默拒绝会让「面板点了没反应」无法排查）。 */
+function rejectUntrustedIpc(
+  event: IpcMainEvent | IpcMainInvokeEvent,
+  channel: string
+): boolean {
+  if (isTrustedIpcSender(event)) return false;
+  console.warn(
+    `[IPC] 拒绝不可信来源: ${channel} 来自 ${event.senderFrame?.url ?? '未知 frame'}`
+  );
+  return true;
+}
 
 /**
  * 是否正在退出。`true` 时 `close` 事件直接放行 —— 这一层是 A154 加拦截后
@@ -279,6 +324,7 @@ function pushWindowState() {
 function registerIpc() {
   // 前端首帧会把主题偏好发过来；此后每次用户在设置里改主题都会再发一次。
   ipcMain.on('opc:set-theme', (_e, mode: ThemeMode) => {
+    if (rejectUntrustedIpc(_e, 'opc:set-theme')) return;
     if (mode !== 'system' && mode !== 'light' && mode !== 'dark') return;
     currentThemeMode = mode;
     const bg = applyNativeTheme(mode);
@@ -295,6 +341,7 @@ function registerIpc() {
   // 三个窗口按钮（TitleBar.tsx）的动作。无边框窗口里没有系统按钮，
   // 最小化/最大化/关闭必须由页面发指令、主进程执行。
   ipcMain.on('opc:window-control', (_e, action: 'minimize' | 'maximize' | 'close') => {
+    if (rejectUntrustedIpc(_e, 'opc:window-control')) return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (action === 'minimize') mainWindow.minimize();
     else if (action === 'maximize') {
@@ -307,22 +354,28 @@ function registerIpc() {
 
   // 初始状态：页面挂载时拉一次。事件推送只能覆盖「之后的」变化，
   // 窗口若以最大化状态恢复（Electron 会记住上次尺寸/状态），首帧就拉不到了。
-  ipcMain.handle('opc:window-state', () => ({
-    maximized: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized(),
-  }));
+  ipcMain.handle('opc:window-state', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:window-state')) return null;
+    return {
+      maximized: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized(),
+    };
+  });
 
   // 关于页：版本与构建信息。版本号必须走 app.getVersion()（读打包后的
   // package.json），不能在前端 import package.json —— 那样打进 bundle 的是
   // 构建时的值，和实际运行的二进制可能不是同一个版本。
-  ipcMain.handle('opc:app-info', () => ({
-    name: app.getName(),
-    version: app.getVersion(),
-    electron: process.versions.electron,
-    node: process.versions.node,
-    chrome: process.versions.chrome,
-    platform: process.platform,
-    arch: process.arch,
-  }));
+  ipcMain.handle('opc:app-info', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:app-info')) return null;
+    return {
+      name: app.getName(),
+      version: app.getVersion(),
+      electron: process.versions.electron,
+      node: process.versions.node,
+      chrome: process.versions.chrome,
+      platform: process.platform,
+      arch: process.arch,
+    };
+  });
 
   /* ── 应用内检查更新 ──────────────────────────────────────────────
    *
@@ -330,13 +383,28 @@ function registerIpc() {
    * 请求下载 / 请求退出安装」，判定与校验全部在这里完成 ——
    * 页面拿不到「跳过验签」「指定替换路径」这类能力。
    */
-  ipcMain.handle('opc:update-state', () => updater.getState());
-  ipcMain.handle('opc:update-check', () => updater.check());
-  ipcMain.handle('opc:update-download', () => updater.download());
-  ipcMain.handle('opc:update-quit-install', () => updater.quitAndInstall());
+  ipcMain.handle('opc:update-state', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:update-state')) return null;
+    return updater.getState();
+  });
+  ipcMain.handle('opc:update-check', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:update-check')) return null;
+    return updater.check();
+  });
+  ipcMain.handle('opc:update-download', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:update-download')) return null;
+    return updater.download();
+  });
+  ipcMain.handle('opc:update-quit-install', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:update-quit-install')) return null;
+    return updater.quitAndInstall();
+  });
   // 「忽略」只清上一次交接失败的提示与残留；网络/验签/哈希类错误没有这个
   // 入口 —— 它们重试一次就会重新出现，藏起来只会误导用户。
-  ipcMain.handle('opc:update-dismiss', () => updater.dismissError());
+  ipcMain.handle('opc:update-dismiss', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:update-dismiss')) return null;
+    return updater.dismissError();
+  });
 
   // A63：工作区 —— 选目录对话框。
   //
@@ -346,7 +414,8 @@ function registerIpc() {
   //
   // 用户取消 → filePaths 是空数组 → 返回 null。前端把 null 当「没选」，
   // 保持原值不动 —— 取消是一次正常的用户决定，不该弹任何提示。
-  ipcMain.handle('opc:pick-directory', async () => {
+  ipcMain.handle('opc:pick-directory', async (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:pick-directory')) return null;
     if (!mainWindow || mainWindow.isDestroyed()) return null;
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       title: '选择工作目录',
@@ -359,6 +428,7 @@ function registerIpc() {
   // 这里同样不抛：调用方（前端）紧接着就会看到界面没有反应，
   // 而路径在上一动已经校验过，走到这里基本不可能不存在。
   ipcMain.handle('opc:reveal-in-folder', (_e, p: unknown) => {
+    if (rejectUntrustedIpc(_e, 'opc:reveal-in-folder')) return false;
     if (typeof p !== 'string' || !p) return false;
     return shell.showItemInFolder(p);
   });
@@ -387,6 +457,7 @@ function registerIpc() {
    * · 失败一律返回 null，前端据此给出「粘贴失败」提示，不抛异常。
    */
   ipcMain.handle('opc:save-pasted-image', (_e, payload: unknown) => {
+    if (rejectUntrustedIpc(_e, 'opc:save-pasted-image')) return null;
     if (!payload || typeof payload !== 'object') return null;
     const { bytes, ext } = payload as { bytes?: unknown; ext?: unknown };
     if (!(bytes instanceof Uint8Array) || bytes.length === 0) return null;
@@ -424,7 +495,8 @@ function registerIpc() {
    *
    * @returns `{path}` 成功 / `{error}` 失败原因 / `null` 用户取消
    */
-  ipcMain.handle('opc:create-workspace', async () => {
+  ipcMain.handle('opc:create-workspace', async (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:create-workspace')) return null;
     if (!mainWindow || mainWindow.isDestroyed()) return null;
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       title: '选择新工作区放在哪里',
@@ -461,6 +533,7 @@ function registerIpc() {
   // 返回空串 = 成功，返回字符串 = 失败原因（Electron 的约定）。
   // 前端据此显示一句人话，而不是「点了没反应」。
   ipcMain.handle('opc:open-path', async (_e, p: unknown) => {
+    if (rejectUntrustedIpc(_e, 'opc:open-path')) return '来源校验失败';
     if (typeof p !== 'string' || !p) return '路径为空';
     if (!isAbsolute(p)) return '只接受绝对路径';
     try {
@@ -477,6 +550,7 @@ function registerIpc() {
   // 协议是直接交给系统的 —— 那是任意程序启动面。这里用浏览器面板同款
   // `normalizeBrowserUrl`（只放行 http/https），非法一律 false。
   ipcMain.handle('opc:open-external', async (_e, raw: unknown) => {
+    if (rejectUntrustedIpc(_e, 'opc:open-external')) return false;
     if (typeof raw !== 'string') return false;
     const url = normalizeBrowserUrl(raw);
     if (!url) return false;
@@ -495,6 +569,7 @@ function registerIpc() {
    * 页面里跑的是任意远程内容，所以它拿不到我们那套 preload 桥。
    */
   ipcMain.on('opc:browser-rect', (_e, rect: unknown) => {
+    if (rejectUntrustedIpc(_e, 'opc:browser-rect')) return;
     if (!rect || typeof rect !== 'object') return;
     const r = rect as Record<string, unknown>;
     const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -507,24 +582,42 @@ function registerIpc() {
   });
 
   ipcMain.on('opc:browser-visible', (_e, visible: unknown) => {
+    if (rejectUntrustedIpc(_e, 'opc:browser-visible')) return;
     browserPanel.setVisible(visible === true);
   });
 
   ipcMain.handle('opc:browser-load', (_e, url: unknown) => {
+    if (rejectUntrustedIpc(_e, 'opc:browser-load')) return false;
     if (typeof url !== 'string') return false;
     // 只放行 http/https：拒绝时返回 false，前端在地址栏上如实提示
     return browserPanel.load(url);
   });
 
-  ipcMain.handle('opc:browser-back', () => browserPanel.goBack());
-  ipcMain.handle('opc:browser-forward', () => browserPanel.goForward());
-  ipcMain.handle('opc:browser-reload', () => browserPanel.reload());
-  ipcMain.handle('opc:browser-devtools', () => browserPanel.openDevTools());
-  ipcMain.handle('opc:browser-state', () => browserPanel.getState());
+  ipcMain.handle('opc:browser-back', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:browser-back')) return null;
+    return browserPanel.goBack();
+  });
+  ipcMain.handle('opc:browser-forward', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:browser-forward')) return null;
+    return browserPanel.goForward();
+  });
+  ipcMain.handle('opc:browser-reload', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:browser-reload')) return null;
+    return browserPanel.reload();
+  });
+  ipcMain.handle('opc:browser-devtools', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:browser-devtools')) return null;
+    return browserPanel.openDevTools();
+  });
+  ipcMain.handle('opc:browser-state', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:browser-state')) return null;
+    return browserPanel.getState();
+  });
 
   // P3：人机同屏状态。给界面底部那一行状态条用 —— 「Agent 能不能连上」
   // 必须让用户看见，而不是一个只在文档里存在的约定。
-  ipcMain.handle('opc:cdp-info', () => {
+  ipcMain.handle('opc:cdp-info', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:cdp-info')) return null;
     const d = currentCdpDescriptor();
     return {
       enabled: d.enabled,
@@ -538,8 +631,15 @@ function registerIpc() {
    *
    * 与浏览器视图同一套口径：渲染进程只能「请求」，不能「操作」。shell 由
    * 主进程创建，cwd 由主进程校验，生命周期由主进程收尾。
+   *
+   * 来源校验是这里最要紧的一条：`opc:terminal-*` 拼起来就是一个「任意命令
+   * 执行」能力，而本应用开着仅回环的 CDP 调试端口 —— 能连上端口的进程
+   * 不该顺带拿到终端。每条入口都先过 senderFrame 校验（见 rejectUntrustedIpc）。
    */
   ipcMain.handle('opc:terminal-start', (_e, cwd: unknown) => {
+    if (rejectUntrustedIpc(_e, 'opc:terminal-start')) {
+      return { ok: false, error: '来源校验失败' };
+    }
     if (typeof cwd !== 'string') return { ok: false, error: '工作目录参数不合法' };
     return terminal.start(cwd);
   });
@@ -549,12 +649,14 @@ function registerIpc() {
    * 是一整行命令文本 —— 由 `terminal.write()` 按当前通道分派。
    */
   ipcMain.on('opc:terminal-input', (_e, data: unknown) => {
+    if (rejectUntrustedIpc(_e, 'opc:terminal-input')) return;
     if (typeof data !== 'string') return;
     terminal.write(data);
   });
 
   /** 改尺寸。PTY 需要它来重排屏幕（vim 的状态栏、top 的表格都靠这个）。 */
   ipcMain.handle('opc:terminal-resize', (_e, size: unknown) => {
+    if (rejectUntrustedIpc(_e, 'opc:terminal-resize')) return null;
     if (!size || typeof size !== 'object') return terminal.getState();
     const { cols, rows } = size as { cols?: unknown; rows?: unknown };
     if (typeof cols === 'number' && typeof rows === 'number') {
@@ -563,12 +665,21 @@ function registerIpc() {
     return terminal.getState();
   });
 
-  ipcMain.handle('opc:terminal-kill', () => terminal.kill());
+  ipcMain.handle('opc:terminal-kill', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:terminal-kill')) return null;
+    return terminal.kill();
+  });
 
-  ipcMain.handle('opc:terminal-state', () => terminal.getState());
+  ipcMain.handle('opc:terminal-state', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:terminal-state')) return null;
+    return terminal.getState();
+  });
 
   // 输出历史：用户先敲几条命令再切到文件标签，回来不该看到一片空白
-  ipcMain.handle('opc:terminal-output', () => terminal.getOutput());
+  ipcMain.handle('opc:terminal-output', (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:terminal-output')) return null;
+    return terminal.getOutput();
+  });
 
   const pushTerminalData = (chunk: string) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -595,6 +706,7 @@ function registerIpc() {
    */
   const notified = new Set<string>();
   ipcMain.on('opc:permission-notify', (_e, payload: unknown) => {
+    if (rejectUntrustedIpc(_e, 'opc:permission-notify')) return;
     const p = payload as { requestId?: string; sessionId?: string; title?: string; body?: string };
     if (!p?.requestId || !p.sessionId) return;
     if (notified.has(p.sessionId)) return;
@@ -618,6 +730,13 @@ function registerIpc() {
 
 async function createWindow() {
   const url = await resolveAppUrl();
+  // IPC 来源白名单：窗口加载的 origin。必须在建窗前设好，否则首帧的
+  // preload 调用会因为「白名单还没值」被自己的校验拒掉。
+  try {
+    appOrigin = new URL(url).origin;
+  } catch {
+    appOrigin = null;
+  }
 
   /**
    * 默认窗口尺寸：按屏幕工作区取比例，再夹到合理区间。
@@ -747,7 +866,8 @@ async function createWindow() {
   browserPanel.attach(mainWindow);
 
   // P3：解析出 Chromium 实际选中的调试端口，并把应用自己的窗口 URL 记下来
-  // —— 后者用于把「主窗口」从 CDP target 里排除掉，只把预览视图交给 Agent。
+  // —— 后者只影响**描述符里**交给 Agent 的 target（把主窗口排除）。
+  // 调试端口本身仍是整个应用的（含主窗口），仅绑回环，见 cdp.ts「已知代价」。
   // 读不到（OPC_CDP=0 或文件没生成）也不影响面板：只是 Agent 连不上。
   //
   // 刻意不 await：这一步最坏要重试 5s（DevToolsActivePort 迟迟不出现），
