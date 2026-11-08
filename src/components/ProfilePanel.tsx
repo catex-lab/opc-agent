@@ -5,6 +5,7 @@ import { removeUserAvatar, uploadUserAvatar } from '../avatarApi';
 import { AvatarPickerGrid, UserAvatar } from './UserAvatar';
 import { InfoHint } from './InfoHint';
 import { AvatarCropDialog } from './AvatarCropDialog';
+import { useTranslation } from '../i18n';
 
 /**
  * 「我的资料」分区（A115）。
@@ -25,6 +26,7 @@ import { AvatarCropDialog } from './AvatarCropDialog';
  * （回滚在 userProfile.ts 里做，这里只管提示）。
  */
 export function ProfilePanel() {
+  const { t } = useTranslation();
   const profile = useUserProfile();
   const [draft, setDraft] = useState(profile.nickname);
   const [saving, setSaving] = useState(false);
@@ -57,13 +59,17 @@ export function ProfilePanel() {
       await saveUserProfile({ nickname: trimmed });
       setDraft(trimmed);
       if (!trimmed) {
-        MessagePlugin.success('已清空昵称，Agent 将不再使用称呼');
+        MessagePlugin.success(t('settings.profile.nicknameCleared'));
       } else {
         setSavedAt(Date.now());
       }
     } catch (err) {
       setDraft(profile.nickname);
-      MessagePlugin.error(`保存失败：${err instanceof Error ? err.message : String(err)}`);
+      MessagePlugin.error(
+        t('settings.profile.saveFailed', {
+          error: err instanceof Error ? err.message : String(err),
+        })
+      );
     } finally {
       setSaving(false);
     }
@@ -74,20 +80,26 @@ export function ProfilePanel() {
       {/* A160：待裁剪的图片。选完文件先弹裁剪，再上传 */}
       <AvatarCropDialog
         file={cropFile}
-        title="更换我的头像"
+        title={t('settings.profile.changeMyAvatar')}
         onCancel={() => setCropFile(null)}
         onConfirm={dataUrl => {
           setCropFile(null);
           setUploadingAvatar(true);
           void uploadUserAvatar(dataUrl)
-            .catch(err => MessagePlugin.error(`头像上传失败：${err instanceof Error ? err.message : String(err)}`))
+            .catch(err =>
+              MessagePlugin.error(
+                t('settings.profile.avatarUploadFailed', {
+                  error: err instanceof Error ? err.message : String(err),
+                })
+              )
+            )
             .finally(() => setUploadingAvatar(false));
         }}
       />
 
       <div className="mb-4">
         <h2 className="text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-          我的资料
+          {t('settings.profile.title')}
         </h2>
       </div>
 
@@ -101,7 +113,7 @@ export function ProfilePanel() {
             image={profile.avatarImage}
             size={72}
           />
-          <span className="tc-hint">这就是 Agent 看到的你</span>
+          <span className="tc-hint">{t('settings.profile.avatarSeenHint')}</span>
           {/* A160：上传本地图片。图片是覆盖层，移除后回到下面的预设 */}
           <div className="flex items-center gap-2">
             <button
@@ -111,7 +123,7 @@ export function ProfilePanel() {
               data-user-avatar-upload
               onClick={() => fileInputRef.current?.click()}
             >
-              {uploadingAvatar ? '上传中…' : '上传图片'}
+              {uploadingAvatar ? t('settings.profile.uploading') : t('settings.profile.uploadImage')}
             </button>
             {profile.avatarImage && (
               <button
@@ -121,11 +133,15 @@ export function ProfilePanel() {
                 data-user-avatar-remove
                 onClick={() => {
                   void removeUserAvatar().catch(err =>
-                    MessagePlugin.error(`移除头像失败：${err instanceof Error ? err.message : String(err)}`)
+                    MessagePlugin.error(
+                      t('settings.profile.avatarRemoveFailed', {
+                        error: err instanceof Error ? err.message : String(err),
+                      })
+                    )
                   );
                 }}
               >
-                移除图片
+                {t('settings.profile.removeImage')}
               </button>
             )}
           </div>
@@ -152,15 +168,15 @@ export function ProfilePanel() {
               style={{ color: 'var(--td-text-color-primary)' }}
             >
               <span className="flex items-center gap-1.5">
-                昵称
+                {t('settings.profile.nickname')}
                 <InfoHint
-                  label="昵称说明"
-                  text="最多 24 字。保存后 Agent 会在 systemPrompt 里看到「与你对话的人叫××」，可以直接用这个称呼 —— 正在进行的对话不会变，下一轮才带上。"
+                  label={t('settings.profile.nicknameHintLabel')}
+                  text={t('settings.profile.nicknameHint')}
                 />
               </span>
               {savedAt && (
                 <span className="text-caption" style={{ color: 'var(--td-brand-color)' }}>
-                  已保存
+                  {t('settings.profile.saved')}
                 </span>
               )}
             </label>
@@ -180,7 +196,7 @@ export function ProfilePanel() {
                   setDraft(profile.nickname);
                 }
               }}
-              placeholder="还没起昵称"
+              placeholder={t('settings.profile.nicknamePlaceholder')}
               maxLength={24}
               data-user-nickname-input
               /* A115 续：改挂 .tc-input —— 描边走 --tc-edge、聚焦态由
@@ -195,17 +211,23 @@ export function ProfilePanel() {
               className="mb-1.5 flex items-center gap-1.5 text-body font-medium"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              头像
+              {t('settings.profile.avatar')}
               <InfoHint
-                label="头像说明"
-                text="上传的图片优先于预设；点上面的预设会切回预设头像。没有头像时用昵称首字；昵称也没有就显示「我」。"
+                label={t('settings.profile.avatarHintLabel')}
+                text={t('settings.profile.avatarHint')}
               />
             </div>
             <AvatarPickerGrid
               value={profile.avatar}
-              onChange={id => void saveUserProfile({ avatar: id, avatarImage: '' }).catch(err =>
-                MessagePlugin.error(`头像保存失败：${err instanceof Error ? err.message : String(err)}`)
-              )}
+              onChange={id =>
+                void saveUserProfile({ avatar: id, avatarImage: '' }).catch(err =>
+                  MessagePlugin.error(
+                    t('settings.profile.avatarSaveFailed', {
+                      error: err instanceof Error ? err.message : String(err),
+                    })
+                  )
+                )
+              }
             />
           </div>
         </div>

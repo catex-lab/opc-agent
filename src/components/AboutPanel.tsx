@@ -52,6 +52,7 @@ import {
 } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
 import UpdateCard from './UpdateCard';
+import { useTranslation, type MessageKey } from '../i18n';
 
 const REPO_URL = 'https://github.com/catex-lab/opc-agent';
 const ISSUE_URL = `${REPO_URL}/issues`;
@@ -81,18 +82,18 @@ function bridge(): AboutBridge | undefined {
  * 不许收进 ⓘ 图标，也不许折叠成可展开区 —— 它们是这一页的合规底线。
  * 标题与正文都保持一句话，避免把「不收集」说成一段需要读完的长文。
  */
-const PRIVACY = [
+const PRIVACY: Array<{ titleKey: MessageKey; bodyKey: MessageKey }> = [
   {
-    title: '不收集任何信息',
-    body: '没有遥测、埋点、崩溃上报，也没有安装 ID；全部数据只存在本机。',
+    titleKey: 'settings.about.privacy1Title', // secret-scan:ignore
+    bodyKey: 'settings.about.privacy1Body', // secret-scan:ignore
   },
   {
-    title: '只会发给你自己配置的模型服务商',
-    body: '只有你发消息时的对话内容会离开本机，不经过任何中转服务器。',
+    titleKey: 'settings.about.privacy2Title', // secret-scan:ignore
+    bodyKey: 'settings.about.privacy2Body', // secret-scan:ignore
   },
   {
-    title: '永久免费且无广告',
-    body: '不收费、不投放广告，也没有付费墙；点星是唯一的外部支持入口。',
+    titleKey: 'settings.about.privacy3Title', // secret-scan:ignore
+    bodyKey: 'settings.about.privacy3Body', // secret-scan:ignore
   },
 ];
 
@@ -104,12 +105,12 @@ const PRIVACY = [
  * `.tmp-audit/domain-removed-2026-10-30.md`（本地文件，`.tmp-*` 已 gitignore）。
  * 注意 `verify:a141` 的「入口」断言从两条变一条 —— 条数变少不是挂了。
  */
-const LINKS = [
+const LINKS: Array<{ key: string; href: string; labelKey: MessageKey; hintKey: MessageKey; Icon: typeof Github }> = [
   {
     key: 'github',
     href: REPO_URL,
-    label: 'GitHub 开源仓库',
-    hint: 'catex-lab/opc-agent · 源码与更新日志',
+    labelKey: 'settings.about.repoLabel',
+    hintKey: 'settings.about.repoHint',
     Icon: Github,
   },
 ];
@@ -131,16 +132,16 @@ const LINKS = [
  * 只列直接依赖，不列 200+ 个传递依赖（那是 THIRD-PARTY-LICENSES.txt 的活）。
  * 不写版本号：版本随 package.json 漂移，写死必然过期；以清单文件为准。
  */
-const THIRD_PARTY = [
+const THIRD_PARTY: Array<{ name: string; license: string; licenseKey?: MessageKey; holder: string }> = [
   { name: 'Electron', license: 'MIT', holder: 'Electron contributors（运行时含 Chromium）' },
   { name: '@tencent-ai/agent-sdk', license: 'MIT', holder: 'Tencent（含内嵌 CodeBuddy CLI）' },
   // 内嵌子包，2026-10-31 起随安装包分发（+约 109MB）。它自述「许可见 README.md」
   // 而 README 没随包发布 —— 页面上如实写「条款缺失」，不替它编一个许可。
-  { name: '@tencent-ai/codebuddy-code', license: '条款缺失', holder: 'Tencent · 内嵌于 agent-sdk/cli' },
+  { name: '@tencent-ai/codebuddy-code', license: '', licenseKey: 'settings.about.licenseMissing', holder: 'Tencent · 内嵌于 agent-sdk/cli' },
   // 2026-10-31：三个 SDK 通道接入后，随包分发的直接依赖多了三项。
   // Claude 那条是**专有许可**，不是 MIT/Apache —— 页面上必须写清楚，
   // 否则读者会以为安装包里全是宽松许可。
-  { name: '@anthropic-ai/claude-agent-sdk', license: '专有（非开源）', holder: 'Anthropic PBC · © All rights reserved（含 claude.exe）' },
+  { name: '@anthropic-ai/claude-agent-sdk', license: '', licenseKey: 'settings.about.licenseProprietary', holder: 'Anthropic PBC · © All rights reserved（含 claude.exe）' },
   { name: '@openai/codex-sdk', license: 'Apache-2.0', holder: 'OpenAI（含平台二进制）' },
   { name: 'express', license: 'MIT', holder: 'TJ Holowaychuk 等贡献者' },
   { name: 'node-pty', license: 'MIT', holder: 'Christopher Jeffrey / Microsoft' },
@@ -156,6 +157,7 @@ const THIRD_PARTY = [
 ];
 
 export default function AboutPanel() {
+  const { t } = useTranslation();
   const [info, setInfo] = useState<AppInfo | null>(null);
 
   useEffect(() => {
@@ -166,7 +168,7 @@ export default function AboutPanel() {
 
   const buildLine = info
     ? `Electron ${info.electron} · Node ${info.node} · ${info.platform} ${info.arch}`
-    : '正在读取构建信息…';
+    : t('settings.about.buildLoading');
 
   return (
     <div>
@@ -194,13 +196,13 @@ export default function AboutPanel() {
       <div className="tc-about-zone" data-about-privacy>
         <div className="tc-about-eyebrow">
           <ShieldCheck />
-          隐私
+          {t('settings.about.privacy')}
         </div>
         <div className="tc-about-privacy-cards">
           {PRIVACY.map(item => (
-            <section className="tc-about-privacy-card" data-about-privacy-card key={item.title}>
-              <h4 className="tc-about-privacy-card-title">{item.title}</h4>
-              <p className="tc-about-privacy-card-body">{item.body}</p>
+            <section className="tc-about-privacy-card" data-about-privacy-card key={item.titleKey}>
+              <h4 className="tc-about-privacy-card-title">{t(item.titleKey)}</h4>
+              <p className="tc-about-privacy-card-body">{t(item.bodyKey)}</p>
             </section>
           ))}
         </div>
@@ -213,12 +215,14 @@ export default function AboutPanel() {
       <div className="tc-about-zone tc-about-star-zone" data-about-star>
         <div className="tc-about-eyebrow">
           <Star aria-hidden="true" />
-          支持
+          {t('settings.about.support')}
         </div>
         {/* 一句话、不折行（不插 <br>）：两句话是同一段注脚，断在中间会让
             第二句读起来像另一条独立声明。宽度不够时按容器自然换行。 */}
         <p className="tc-about-quiet">
-          本项目不收费、不投放广告、也不收集数据。如果它帮到了你，<b>点个星</b>就是最实际的支持。
+          {t('settings.about.starPrefix')}
+          <b>{t('settings.about.starStrong')}</b>
+          {t('settings.about.starSuffix')}
         </p>
         <a
           href={REPO_URL}
@@ -229,7 +233,7 @@ export default function AboutPanel() {
           data-about-star-cta
         >
           <Star size={14} />
-          去 GitHub 点星
+          {t('settings.about.starCta')}
         </a>
       </div>
 
@@ -237,10 +241,10 @@ export default function AboutPanel() {
       <div className="tc-about-zone">
         <div className="tc-about-eyebrow">
           <ExternalLink aria-hidden="true" />
-          官方入口
+          {t('settings.about.links')}
         </div>
         <div className="tc-about-rows">
-          {LINKS.map(({ key, href, label, hint, Icon }) => (
+          {LINKS.map(({ key, href, labelKey, hintKey, Icon }) => (
             <a
               key={key}
               href={href}
@@ -250,8 +254,8 @@ export default function AboutPanel() {
               data-about-link={key}
             >
               <Icon className="tc-about-row-lead" />
-              <span className="tc-about-row-label">{label}</span>
-              <span className="tc-about-row-meta">{hint}</span>
+              <span className="tc-about-row-label">{t(labelKey)}</span>
+              <span className="tc-about-row-meta">{t(hintKey)}</span>
               <ChevronRight className="tc-about-row-go" />
             </a>
           ))}
@@ -264,8 +268,8 @@ export default function AboutPanel() {
             data-about-feedback
           >
             <MessageSquare className="tc-about-row-lead" />
-            <span className="tc-about-row-label">反馈问题</span>
-            <span className="tc-about-row-meta">Issues · 附上版本号会更快定位</span>
+            <span className="tc-about-row-label">{t('settings.about.feedbackLabel')}</span>
+            <span className="tc-about-row-meta">{t('settings.about.feedbackHint')}</span>
             <ChevronRight className="tc-about-row-go" />
           </a>
         </div>
@@ -274,7 +278,9 @@ export default function AboutPanel() {
       {/* ── 页脚：法务小字 + 许可清单 ──────────────────────────── */}
       <div className="tc-about-zone">
         <p className="tc-about-legal">
-          本项目以 <b>MIT</b> 协议开源。OPC Agent 是独立第三方工具，与 WorkBuddy、Codex、Gemini、Claude Code 等产品无隶属关系，相关名称与商标归各自所有者；使用第三方 Agent 时，你的调用仍受对应服务商条款约束。
+          {t('settings.about.legalPrefix')}
+          <b>MIT</b>
+          {t('settings.about.legalSuffix')}
         </p>
 
         {/* 用原生 <details>：这里不需要状态，也不需要 TDesign 的折叠面板 ——
@@ -282,8 +288,8 @@ export default function AboutPanel() {
         <details className="tc-about-lic" open data-about-licenses>
           <summary>
             <Package />
-            第三方许可
-            <span className="tc-about-count">{THIRD_PARTY.length} 个组件</span>
+            {t('settings.about.licenses')}
+            <span className="tc-about-count">{t('settings.about.componentCount', { n: THIRD_PARTY.length })}</span>
             <span className="tc-about-caret">
               <ChevronDown />
             </span>
@@ -293,14 +299,14 @@ export default function AboutPanel() {
             {THIRD_PARTY.map(item => (
               <div key={item.name} className="tc-about-lic-item">
                 <span className="tc-about-lic-name">{item.name}</span>
-                <span className="tc-about-lic-tag">{item.license}</span>
+                <span className="tc-about-lic-tag">{item.licenseKey ? t(item.licenseKey) : item.license}</span>
               </div>
             ))}
           </div>
 
           {/* 不写死组件数量：依赖一变数字就过期。以清单文件为准。 */}
           <p className="tc-about-lic-note">
-            这些组件不在本项目的 MIT 范围内，各自适用自己的许可。含传递依赖的完整清单见仓库根目录 THIRD-PARTY-LICENSES.txt。
+            {t('settings.about.licenseNote')}
           </p>
         </details>
       </div>

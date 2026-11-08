@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, FolderOpen, ExternalLink, Folder, FolderPlus, RotateCcw, X } from 'lucide-react';
 import { MENU_ITEM_CLASS } from './menuItem';
 import { pickDirectory, revealInFolder, dirName, hasNativeDialogs, createWorkspace } from '../workspace';
+import { useTranslation } from '../i18n';
 
 interface WorkspaceBadgeProps {
   /** 当前会话的工作目录。undefined / 空 = 没指定，Agent 用后端进程目录 */
@@ -46,6 +47,7 @@ interface WorkspaceBadgeProps {
  * 箭头自己画（ChevronDown）—— summary 元素只承担点击热区。
  */
 export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<string[]>([]);
   const [recentLoaded, setRecentLoaded] = useState(false);
@@ -65,7 +67,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
   const [dismissed, setDismissed] = useState(0);
 
   const hasCwd = !!cwd;
-  const label = hasCwd ? dirName(cwd!) : '默认目录';
+  const label = hasCwd ? dirName(cwd!) : t('workspace.defaultDir');
 
   /** 拉一次最近目录。打开面板时拉、恢复之后也拉 —— 两处共用同一份口径 */
   const loadRecent = useCallback(async () => {
@@ -90,7 +92,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
     // 服务端同时按归一化路径记，所以 `C:\A` 与 `c:/a` 是一次忽略，不是两次。
     setRecent(prev => prev.filter(d => d !== dir));
     setDismissed(n => n + 1);
-    setNotice('已忽略，下次打开也不会再出现');
+    setNotice(t('workspace.noticeIgnored'));
     try {
       await fetch('/api/recent-directories/dismiss', {
         method: 'POST',
@@ -98,7 +100,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
         body: JSON.stringify({ path: dir }),
       });
     } catch {
-      setNotice('这次没存住，下次打开它可能还在');
+      setNotice(t('workspace.noticeIgnoreFailed'));
     }
   };
 
@@ -106,9 +108,9 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
     try {
       const r = await fetch('/api/recent-directories/restore', { method: 'POST' });
       const j = (r.ok ? await r.json() : {}) as { restored?: number };
-      setNotice(j.restored ? `已恢复 ${j.restored} 个目录` : '没有需要恢复的目录');
+      setNotice(j.restored ? t('workspace.noticeRestored', { n: j.restored }) : t('workspace.noticeNothingToRestore'));
     } catch {
-      setNotice('恢复失败，目录仍被忽略');
+      setNotice(t('workspace.noticeRestoreFailed'));
     }
     await loadRecent();
   };
@@ -176,7 +178,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
         return;
       }
       if (result.path) {
-        setNotice(`已新建：${dirName(result.path)}`);
+        setNotice(t('workspace.noticeCreated', { name: dirName(result.path) }));
         onChange(result.path);
       }
     } finally {
@@ -193,7 +195,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
    */
   const handleClear = () => {
     if (!hasCwd) return;
-    setNotice('已移除绑定（磁盘上的目录没有动）');
+    setNotice(t('workspace.noticeRemoved'));
     onChange('');
   };
 
@@ -217,8 +219,8 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
           backgroundColor: open ? 'var(--tc-fill-selected)' : undefined,
           color: hasCwd ? 'var(--td-text-color-secondary)' : 'var(--td-text-color-placeholder)',
         }}
-        title={hasCwd ? `工作目录：${cwd}` : '未指定工作目录，Agent 以后端进程目录为准'}
-        aria-label="工作目录"
+        title={hasCwd ? t('workspace.cwdTitle', { path: cwd }) : t('workspace.cwdUnsetHint')}
+        aria-label={t('workspace.cwdTitleLabel')}
       >
         <FolderOpen size={14} />
         <span className="max-w-[160px] truncate text-secondary">{label}</span>
@@ -241,7 +243,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
           style={{ color: 'var(--td-text-color-secondary)', wordBreak: 'break-all' }}
           data-workspace-current-path
         >
-          {hasCwd ? cwd : '未指定（使用后端进程目录）'}
+          {hasCwd ? cwd : t('workspace.notSpecified')}
         </div>
 
         <button
@@ -252,7 +254,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
           data-workspace-switch
         >
           <Folder size={14} />
-          切换目录
+          {t('workspace.switchDir')}
         </button>
         {/* A86：新建工作区。只在有原生对话框的环境里出现 —— 浏览器开发态点了
             也没法建目录，摆出来就是假控件。 */}
@@ -267,11 +269,11 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
               cursor: busy ? 'default' : 'pointer',
             }}
             disabled={busy}
-            title="选一个位置，在里面新建一个空文件夹并绑定到当前会话"
+            title={t('workspace.createHint')}
             data-workspace-create
           >
             <FolderPlus size={14} />
-            {busy ? '正在新建…' : '新建工作区'}
+            {busy ? t('workspace.creating') : t('workspace.newWorkspace')}
           </button>
         )}
         {/* A86：移除绑定。移除的是**会话与目录的关系**，不是磁盘上的文件。 */}
@@ -285,11 +287,11 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
             cursor: hasCwd ? 'pointer' : 'default',
           }}
           disabled={!hasCwd}
-          title={hasCwd ? '解除这个会话与当前目录的绑定（不删除磁盘上的文件）' : '当前没有绑定目录'}
+          title={hasCwd ? t('workspace.clearHint') : t('workspace.clearDisabled')}
           data-workspace-clear
         >
           <X size={14} />
-          移除工作目录
+          {t('workspace.remove')}
         </button>
         <button
           type="button"
@@ -301,11 +303,11 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
             cursor: hasCwd ? 'pointer' : 'default',
           }}
           disabled={!hasCwd}
-          title={hasCwd ? '在资源管理器中打开并选中该目录' : '未指定工作目录'}
+          title={hasCwd ? t('workspace.revealHint') : t('workspace.revealDisabled')}
           data-workspace-reveal
         >
           <ExternalLink size={14} />
-          在资源管理器中打开
+          {t('workspace.reveal')}
         </button>
 
         {notice && (
@@ -325,8 +327,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
             className="mx-3 my-1 text-caption"
             style={{ color: 'var(--td-text-color-placeholder)' }}
           >
-            当前环境没有系统目录对话框（浏览器开发态）。可在新对话页的「工作目录」
-            输入框手动填写路径。
+            {t('workspace.noNativeDialog')}
           </p>
         )}
 
@@ -339,7 +340,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
               className="px-3 pb-1 pt-0.5 text-caption"
               style={{ color: 'var(--td-text-color-placeholder)' }}
             >
-              最近目录
+              {t('workspace.recentDirs')}
             </div>
             {recent.map(dir => {
                 const active = dir === cwd;
@@ -375,7 +376,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
                           e.stopPropagation();
                           void handleRemoveRecent(dir);
                         }}
-                        title="从最近目录中移除"
+                        title={t('workspace.removeRecent')}
                       >
                         <X size={12} />
                       </span>
@@ -389,11 +390,11 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
                 onClick={() => void handleRestoreAll()}
                 className={`${MENU_ITEM_CLASS} text-caption`}
                 style={{ color: 'var(--td-text-color-placeholder)' }}
-                title="把点过 × 的目录全部放回列表"
+                title={t('workspace.restoreHint')}
                 data-workspace-restore
               >
                 <RotateCcw size={12} />
-                已忽略 {dismissed} 个 · 全部恢复
+                {t('workspace.restoreAll', { n: dismissed })}
               </button>
             )}
           </>

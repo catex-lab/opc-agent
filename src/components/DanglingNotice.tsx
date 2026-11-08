@@ -26,6 +26,7 @@
 
 import { useState } from 'react';
 import { X } from 'lucide-react';
+import { useTranslation } from '../i18n';
 
 export interface DanglingNoticeProps {
   /** 那条没有回答的用户消息时间（ISO） */
@@ -40,6 +41,7 @@ function clockOf(iso: string): string | null {
 }
 
 export function DanglingNotice({ at }: DanglingNoticeProps) {
+  const { t } = useTranslation();
   const [hidden, setHidden] = useState(false);
   if (hidden) return null;
 
@@ -73,14 +75,14 @@ export function DanglingNotice({ at }: DanglingNoticeProps) {
       </svg>
 
       <div className="min-w-0 flex-1 text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
-        <span style={{ color: 'var(--td-warning-color)' }}>上一轮没有产出回复</span>
-        {clock && <span>（{clock} 那条消息）</span>}
-        <span>：应用可能被关闭或进程中断，这一轮无法恢复。需要的话重新发送一次即可。</span>
+        <span style={{ color: 'var(--td-warning-color)' }}>{t('chat.dangling.title')}</span>
+        {clock && <span>{t('chat.dangling.at', { time: clock })}</span>}
+        <span>{t('chat.dangling.body')}</span>
       </div>
 
       <button
         type="button"
-        aria-label="收起提示"
+        aria-label={t('chat.dangling.dismiss')}
         onClick={() => setHidden(true)}
         style={{
           flexShrink: 0,

@@ -20,6 +20,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from '../i18n';
 
 /** 预览区边长（逻辑像素）。导出固定 320，与显示尺寸无关 */
 const VIEW = 280;
@@ -33,7 +34,9 @@ interface AvatarCropDialogProps {
   onConfirm: (dataUrl: string) => void;
 }
 
-export function AvatarCropDialog({ file, title = '更换头像', onCancel, onConfirm }: AvatarCropDialogProps) {
+export function AvatarCropDialog({ file, title, onCancel, onConfirm }: AvatarCropDialogProps) {
+  const { t } = useTranslation();
+  const heading = title || t('settings.profile.changeAvatar');
   const [url, setUrl] = useState<string>('');
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -61,12 +64,12 @@ export function AvatarCropDialog({ file, title = '更换头像', onCancel, onCon
       setZoom(1);
       setTransparent(hasTransparentCorner(next));
     };
-    next.onerror = () => setError('这张图片打不开，请换一张 PNG / JPEG / WebP');
+    next.onerror = () => setError(t('chat.avatar.openFailed'));
     next.src = objectUrl;
     return () => {
       URL.revokeObjectURL(objectUrl);
     };
-  }, [file]);
+  }, [file, t]);
 
   /** 当前图片在预览框里的绘制尺寸（含缩放） */
   const drawSize = img
@@ -123,12 +126,12 @@ export function AvatarCropDialog({ file, title = '更换头像', onCancel, onCon
    * 对头像这种小尺寸足够清晰，又不会让数据目录被零碎大图撑大。
    */
   const exportDataUrl = (): string => {
-    if (!img) throw new Error('图片还没加载完成');
+    if (!img) throw new Error(t('chat.avatar.notReady'));
     const canvas = document.createElement('canvas');
     canvas.width = OUTPUT;
     canvas.height = OUTPUT;
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('当前环境不支持图片裁剪');
+    if (!ctx) throw new Error(t('chat.avatar.unsupported'));
     const ratio = OUTPUT / VIEW;
     ctx.drawImage(
       img,
@@ -149,7 +152,7 @@ export function AvatarCropDialog({ file, title = '更换头像', onCancel, onCon
       data-avatar-crop
       role="dialog"
       aria-modal="true"
-      aria-label={title}
+      aria-label={heading}
     >
       <div
         className="w-full max-w-[360px] rounded-2xl p-5"
@@ -160,10 +163,10 @@ export function AvatarCropDialog({ file, title = '更换头像', onCancel, onCon
         }}
       >
         <h3 className="mb-1 text-title font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
-          {title}
+          {heading}
         </h3>
         <p className="mb-3 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          拖动调整位置，滑块缩放。导出为正圆形。
+          {t('chat.avatar.hint')}
         </p>
 
         <div
@@ -209,7 +212,7 @@ export function AvatarCropDialog({ file, title = '更换头像', onCancel, onCon
         </div>
 
         <label className="mt-4 flex items-center gap-3 text-secondary" style={{ color: 'var(--td-text-color-secondary)' }}>
-          <span className="shrink-0">缩放</span>
+          <span className="shrink-0">{t('chat.avatar.zoom')}</span>
           <input
             type="range"
             min={1}
@@ -220,7 +223,7 @@ export function AvatarCropDialog({ file, title = '更换头像', onCancel, onCon
             onChange={e => changeZoom(Number(e.target.value))}
             className="w-full"
             data-avatar-crop-zoom
-            aria-label="缩放"
+            aria-label={t('chat.avatar.zoom')}
           />
         </label>
 
@@ -232,7 +235,7 @@ export function AvatarCropDialog({ file, title = '更换头像', onCancel, onCon
 
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" className="tc-btn-secondary" onClick={onCancel} data-avatar-crop-cancel>
-            取消
+            {t('settings.common.cancel')}
           </button>
           <button
             type="button"
@@ -247,7 +250,7 @@ export function AvatarCropDialog({ file, title = '更换头像', onCancel, onCon
             }}
             data-avatar-crop-confirm
           >
-            使用这张图
+            {t('chat.avatar.confirm')}
           </button>
         </div>
       </div>

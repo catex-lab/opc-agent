@@ -69,7 +69,62 @@ import {
   type ResolvedTraceItem,
 } from '../trace/fold';
 import { buildTraceRows, isNarration, stepRows } from '../trace/rows';
+import { useTranslation, type MessageKey, type Translate } from '../i18n';
 import '../trace/traceFold.css';
+
+/**
+ * 轨迹里的动作词由 `shared/trace` 的中文常量产出（门禁与 Skill 沉淀也在用）。
+ * 界面层只按这张表翻译，`data-trace-verb` 仍写原值，判定逻辑不受语言影响。
+ */
+const VERB_KEY: Record<string, MessageKey> = {
+  '写入': 'chat.trace.verb.write',
+  '编辑': 'chat.trace.verb.edit',
+  '已读取': 'chat.trace.verb.readDone',
+  '删除': 'chat.trace.verb.delete',
+  '检查': 'chat.trace.verb.check',
+  '执行': 'chat.trace.verb.run',
+  '搜索': 'chat.trace.verb.search',
+  '获取': 'chat.trace.verb.fetch',
+  '查看': 'chat.trace.verb.view',
+  '使用技能': 'chat.trace.verb.skill',
+  '生成图像': 'chat.trace.verb.image',
+  '调用': 'chat.trace.verb.call',
+  '深度思考': 'chat.trace.verb.thinking',
+};
+
+const TARGET_KEY: Record<string, MessageKey> = {
+  '命令': 'chat.trace.target.command',
+  '网页': 'chat.trace.target.web',
+  '技能': 'chat.trace.target.skill',
+  '内容': 'chat.trace.target.content',
+};
+
+const OUTCOME_KEY: Record<string, MessageKey> = {
+  running: 'chat.trace.outcome.running',
+  error: 'chat.trace.outcome.error',
+  interrupted: 'chat.trace.outcome.interrupted',
+  ok: 'chat.trace.outcome.ok',
+};
+
+/** 与 `summarizeTrace().text` 语义一致，只是按当前语言重排 */
+function summaryText(summary: ReturnType<typeof summarizeTrace>, t: Translate): string {
+  const outcome = t(OUTCOME_KEY[summary.outcome] ?? 'chat.trace.outcome.ok');
+  const head = summary.editedFiles.length
+    ? t('chat.trace.summary.edited', { n: summary.editedFiles.length })
+    : summary.files.length
+      ? t('chat.trace.summary.read', { n: summary.files.length })
+      : summary.verbs.length
+        ? t('chat.trace.summary.verbs', {
+            verbs:
+              summary.verbs
+                .slice(0, 3)
+                .map(v => (VERB_KEY[v] ? t(VERB_KEY[v]) : v))
+                .join(t('chat.trace.listSeparator')) +
+              (summary.verbs.length > 3 ? t('chat.trace.more') : ''),
+          })
+        : '';
+  return head ? `${head} · ${outcome}` : outcome;
+}
 
 /**
  * 工具 → 图标 + 颜色。
@@ -140,6 +195,7 @@ function OutputBox({
   running: boolean;
   isError?: boolean;
 }) {
+  const { t } = useTranslation();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!running) return;
@@ -163,7 +219,7 @@ function OutputBox({
       data-tool-output
     >
       <span style={{ color: 'var(--td-text-color-placeholder)' }}>
-        {running ? '输出中' : isError ? '错误' : label}:{' '}
+        {running ? t('chat.trace.outputting') : isError ? t('chat.trace.error') : label}:{' '}
       </span>
       {shown}
     </div>
@@ -209,23 +265,24 @@ function DiffTag({ diff }: { diff: TraceDiff }) {
  * 答案出现后，过程让位，不再自动铺开。
  */
 function ThinkingNode({ item, collapse = false }: { item: TraceItem; collapse?: boolean }) {
-  const t = item.thinking;
-  if (!t) return null;
-  const running = t.state === 'streaming';
+  const { t } = useTranslation();
+  const thinkText = item.thinking;
+  if (!thinkText) return null;
+  const running = thinkText.state === 'streaming';
   // 被厂商隐去的思考：正文是密的，但「确实想过一段」是事实。
   // 这里既不能伪造内容，也不能什么都不显示 —— 空一行、标明「已隐去」最诚实。
-  const redacted = !!t.redacted;
+  const redacted = !!thinkText.redacted;
   const secs = item.durationMs != null ? Math.max(1, Math.round(item.durationMs / 1000)) : null;
 
   const row = (
     <>
       <Brain size={12} style={{ flexShrink: 0 }} />
       <span className="tc-think-note-title">
-        {redacted ? '已隐去' : running ? '深度思考中' : '深度思考'}
+        {redacted ? t('chat.trace.redacted') : running ? t('chat.trace.thinkingLive') : t('chat.trace.thinking')}
       </span>
-      {!redacted && t.format === 'summary' && <span className="tc-think-badge">摘要</span>}
+      {!redacted && thinkText.format === 'summary' && <span className="tc-think-badge">{t('chat.trace.summaryBadge')}</span>}
       <span className="tc-think-note-meta">
-        {redacted ? '内容被厂商隐去' : `${t.text.length} 字`}
+        {redacted ? t('chat.trace.redactedReason') : t('chat.thinking.chars', { n: thinkText.text.length })}
       </span>
       {secs != null && <span className="tc-think-note-meta">{secs}s</span>}
     </>
@@ -241,7 +298,7 @@ function ThinkingNode({ item, collapse = false }: { item: TraceItem; collapse?: 
       ) : (
         <details className="tc-thinking tc-think-note" open={running && !collapse}>
           <summary>{row}</summary>
-          <div className="tc-think-note-body">{t.text}</div>
+          <div className="tc-think-note-body">{thinkText.text}</div>
         </details>
       )}
     </div>
@@ -249,7 +306,7 @@ function ThinkingNode({ item, collapse = false }: { item: TraceItem; collapse?: 
 }
 
 /** 展开明细：不同工具只差在「哪几段」，样式统一交给 .tc-step-detail */
-function detailOf(item: TraceItem): ReactNode {
+function detailOf(item: TraceItem, t: Translate): ReactNode {
   const input = item.block?.input ?? {};
   const name = item.toolName;
 
@@ -294,7 +351,7 @@ function detailOf(item: TraceItem): ReactNode {
   }
   return (
     <div className="tc-step-detail">
-      <span style={{ color: 'var(--td-text-color-placeholder)' }}>输入: </span>
+      <span style={{ color: 'var(--td-text-color-placeholder)' }}>{t('chat.trace.input')}: </span>
       {json.slice(0, 300)}
     </div>
   );
@@ -326,11 +383,11 @@ const PIN_BUDGET_MS = FOLD_MS + 120;
 const STEP_DURATION_VISIBLE_MS = 3000;
 
 /** 关键步骤的 tooltip —— 说明它为什么不像别的步骤那样收起 */
-const CRITICAL_TITLE: Record<string, string> = {
-  write: '写入/编辑步骤：完成后仍保持展开',
-  delete: '删除步骤：完成后仍保持展开',
-  permission: '权限请求步骤：完成后仍保持展开',
-  error: '报错步骤：完成后仍保持展开',
+const CRITICAL_TITLE_KEY: Record<string, MessageKey> = {
+  write: 'chat.trace.criticalWrite',
+  delete: 'chat.trace.criticalDelete',
+  permission: 'chat.trace.criticalPermission',
+  error: 'chat.trace.criticalError',
 };
 
 /** 单步 */
@@ -341,6 +398,7 @@ function StepRow({
   item: ResolvedTraceItem;
   collapse?: boolean;
 }) {
+  const { t } = useTranslation();
   const running = item.status === 'running';
   /** 写入、删除、权限、报错四类：完成后不折叠，始终摊在过程流里 */
   const critical = item.critical;
@@ -387,7 +445,7 @@ function StepRow({
     return () => clearTimeout(timer);
   }, [open]);
   const Icon = iconOf(item.toolName);
-  const detail = item.kind === 'tool' ? detailOf(item) : null;
+  const detail = item.kind === 'tool' ? detailOf(item, t) : null;
   // A96：文件类工具优先给行级 diff。没有 diff 数据（read / delete / 未知工具）
   // 时返回 null，这里自动退回原来的明细渲染 —— 两条路互斥，不会重复显示。
   const hunks = useMemo(
@@ -400,12 +458,12 @@ function StepRow({
 
   const meta =
     item.status === 'running'
-      ? '执行中…'
+      ? t('chat.trace.executing')
       : item.status === 'interrupted'
         ? // 与「失败」分开说：失败是确定的坏消息，未回传可能还在后台跑
-          '结果未回传'
+          t('chat.trace.noResult')
         : item.status === 'error'
-          ? '失败'
+          ? t('chat.trace.failed')
           : // F3：< 3s 不显示。状态词（执行中 / 失败 / 未回传）照旧常驻，
             // 只有「耗时」这一档受预算约束 —— 短步骤的 1.2s 是纯噪音，
             // 长步骤的耗时才是「为什么慢」的线索。
@@ -448,11 +506,11 @@ function StepRow({
               }
             : undefined
         }
-        title={critical ? CRITICAL_TITLE[item.criticalReason ?? ''] : item.path}
+        title={critical ? t(CRITICAL_TITLE_KEY[item.criticalReason ?? ''] ?? 'chat.trace.critical') : item.path}
       >
         <Icon size={14} style={{ color: 'var(--td-text-color-secondary)', flexShrink: 0 }} />
-        <span className="tc-trace-verb">{item.verb}</span>
-        {item.target && <span className="tc-trace-target">{item.target}</span>}
+        <span className="tc-trace-verb">{VERB_KEY[item.verb] ? t(VERB_KEY[item.verb]) : item.verb}</span>
+        {item.target && <span className="tc-trace-target">{TARGET_KEY[item.target] ? t(TARGET_KEY[item.target]) : item.target}</span>}
         {item.diff && <DiffTag diff={item.diff} />}
         {critical && (
           // F2：不再写「常驻」两个字 —— 一个 7px 方块 + 左侧 3px 竖条
@@ -471,9 +529,9 @@ function StepRow({
           <span
             className="tc-trace-src"
             data-trace-source="parsed_text"
-            title="这个 Agent 只输出纯文本，工具事件由 OPC 从输出里解析得出。与官方结构化事件相比，这一步的可信度低一档"
+            title={t('chat.trace.parsedTitle')}
           >
-            文本解析
+            {t('chat.trace.parsedBadge')}
           </span>
         )}
         {meta && (
@@ -487,7 +545,7 @@ function StepRow({
           <div className="tc-step-body-inner">
             {hunks ? <DiffView hunks={hunks} /> : detail}
             <OutputBox
-              label="输出"
+              label={t('chat.trace.output')}
               text={item.block?.output ?? ''}
               running={item.status === 'running'}
               isError={item.status === 'error'}
@@ -516,6 +574,7 @@ export interface AgentTraceProps {
 }
 
 export function AgentTrace({ blocks, isStreaming = false, collapse = false }: AgentTraceProps) {
+  const { t } = useTranslation();
   /**
    * 生产口径的完成判定（见 src/trace/fold.ts）：
    * 真实结束事件优先；缺失时才用「下一条事件」兜底；没有后续事件的
@@ -681,7 +740,7 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
    * 盖掉了。文字始终是摘要 —— 流式过程中它随新步骤不断变化，本身就是「在动」
    * 的证据；运行态另有 StreamStatus 的呼吸灯表达。
    */
-  const barLabel = summary.text || (expanded ? '收起步骤' : '查看步骤');
+  const barLabel = summaryText(summary, t) || (expanded ? t('chat.trace.collapse') : t('chat.trace.viewSteps'));
   const showTotalDiff = summary.diff.added > 0 || summary.diff.removed > 0;
 
   /**
@@ -691,11 +750,11 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
   const foldedReason = expanded ? null : (foldReason ?? (isStreaming ? 'content' : 'done'));
   const foldTitle =
     foldedReason === 'content'
-      ? '正文已开始，过程已收拢 · 点击展开完整轨迹'
+      ? t('chat.trace.foldContent')
       : foldedReason === 'manual'
-        ? '已手动收起 · 点击展开完整轨迹'
+        ? t('chat.trace.foldManual')
         : foldedReason === 'done'
-          ? '过程已完成 · 点击展开完整轨迹'
+          ? t('chat.trace.foldDone')
           : undefined;
 
   return (
@@ -719,20 +778,20 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
         {/* 2026-10-30 改版：行首不再摆状态图标三件套
             （绿勾/红叉/脉冲点），chevron 紧跟摘要文案之后而不是钉在行尾 ——
             这一行读起来是「干了什么 ⌄」，状态由步骤行各自表达。 */}
-        <span className="tc-trace-summary" data-trace-summary title={summary.text}>
+        <span className="tc-trace-summary" data-trace-summary title={summaryText(summary, t)}>
           {barLabel}
         </span>
         <span className="tc-trace-count" data-trace-count>
-          {stepCount} 步
+          {t('chat.trace.stepsCount', { n: stepCount })}
         </span>
         {/* 收拢态才提示：展开时这一步的行尾已经有同名胶囊，不必重复 */}
         {!expanded && unreturned && (
           <span
             className="tc-trace-unreturned"
             data-trace-unreturned
-            title="最后一步没有等到结束事件，既不算完成也不算失败"
+            title={t('chat.trace.unreturnedTitle')}
           >
-            结果未回传
+            {t('chat.trace.unreturned')}
           </span>
         )}
         {/* A2：收拢之后新步骤不再展开占版面，用一个独立标记说明「还在跑」。
@@ -740,13 +799,13 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
             盖掉它反而是退步。 */}
         {!expanded && isStreaming && (
           <span className="tc-trace-foldtag" data-trace-running>
-            执行中
+            {t('chat.trace.running')}
           </span>
         )}
         {/* 首个正文 token 收拢时给一个可见出口；摘要条本身始终可点 */}
         {foldedReason === 'content' && (
           <span className="tc-trace-foldtag" data-trace-foldtag>
-            已收拢
+            {t('chat.trace.folded')}
           </span>
         )}
         {expanded ? (
@@ -760,7 +819,7 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
             <span className="tc-diff-del">-{summary.diff.removed}</span>
           </span>
         )}
-        {durationText && <span className="tc-trace-meta">工具 {durationText}</span>}
+        {durationText && <span className="tc-trace-meta">{t('chat.trace.toolDuration', { duration: durationText })}</span>}
       </div>
 
       {showBody && (

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Tag } from 'tdesign-react';
 import { Check, ChevronDown, KeyRound } from 'lucide-react';
 import { AgentCredentialEditor } from './AgentCredentialEditor';
+import { useTranslation } from '../i18n';
 
 /**
  * 「Agent API Key」列表 —— 设置页的批量管理视图。
@@ -27,6 +28,7 @@ interface AgentCredentialSettingsProps {
 }
 
 export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProps) {
+  const { t } = useTranslation();
   const [list, setList] = useState<CredentialView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,11 +43,11 @@ export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProp
       const data = await res.json();
       setList(Array.isArray(data.credentials) ? data.credentials : []);
     } catch (err) {
-      setError((err as Error).message || '读取凭据失败');
+      setError((err as Error).message || t('settings.credential.loadFailedShort'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -54,14 +56,14 @@ export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProp
   if (loading) {
     return (
       <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-        正在读取凭据…
+        {t('settings.credential.loading')}
       </div>
     );
   }
   if (error) {
     return (
       <div className="text-xs" style={{ color: 'var(--td-error-color)' }}>
-        读取凭据失败：{error}
+        {t('settings.credential.loadFailed', { error })}
       </div>
     );
   }
@@ -101,11 +103,11 @@ export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProp
                 </Tag>
               ) : item.fromEnv ? (
                 <Tag size="small" variant="light" theme="primary">
-                  环境变量已配置
+                  {t('settings.credential.fromEnv')}
                 </Tag>
               ) : (
                 <Tag size="small" variant="light">
-                  未配置
+                  {t('settings.credential.notConfigured')}
                 </Tag>
               )}
               <ChevronDown

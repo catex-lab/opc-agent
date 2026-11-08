@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Loading, MessagePlugin } from 'tdesign-react';
 import { Brain, Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, TextSelect, Image as ImageIcon } from 'lucide-react';
 import { Message, Model, RegisteredAgent, Block, ThinkingBlock, ToolBlock } from '../types';
-import { legacyToBlocks, runActivity, streamPhaseLabel, textOfBlocks, type KbCitationRef } from '../../shared/blocks';
+import { legacyToBlocks, runActivity, textOfBlocks, type KbCitationRef } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
 import { canGroupProcess } from '../trace/rows';
 import { shouldFoldProcess } from '../trace/fold';
@@ -23,6 +23,7 @@ import { SMOOTH_SETTLE_MS } from '../hooks/useSmoothText';
 import { TypingText } from './TypingText';
 import { formatUsage } from '../utils/formatUsage';
 import { stripEmoji } from '../utils/plainText';
+import { useTranslation } from '../i18n';
 
 /* ── 消息呈现（A33）─────────────────────────────────────────────────────
  *
@@ -74,6 +75,7 @@ function ThinkingView({
   defaultOpen?: boolean;
   collapse?: boolean;
 }) {
+  const { t } = useTranslation();
   const streaming = block.state === 'streaming';
   const live = useElapsed(block.startedAt, streaming);
   const secs =
@@ -93,14 +95,14 @@ function ThinkingView({
         ) : (
           <Brain size={13} style={{ flexShrink: 0 }} />
         )}
-        <span className="tc-think-title">{streaming ? '思考中' : '思考'}</span>
+        <span className="tc-think-title">{streaming ? t('chat.thinking.live') : t('chat.thinking.title')}</span>
         {streaming ? (
-          <span className="tc-think-meta">已用 {live ?? 0}s</span>
+          <span className="tc-think-meta">{t('chat.thinking.used', { n: live ?? 0 })}</span>
         ) : secs != null ? (
-          <span className="tc-think-meta">{secs}s</span>
+          <span className="tc-think-meta">{t('chat.thinking.usedShort', { n: secs })}</span>
         ) : null}
-        {block.format === 'summary' && <span className="tc-think-badge">摘要</span>}
-        <span className="tc-think-meta">{block.text.length} 字</span>
+        {block.format === 'summary' && <span className="tc-think-badge">{t('chat.thinking.summary')}</span>}
+        <span className="tc-think-meta">{t('chat.thinking.chars', { n: block.text.length })}</span>
       </summary>
       <div className="tc-think-body whitespace-pre-wrap">
         {/* A83：思考正文在流式时逐字浮现；思考结束后传 false ——
@@ -148,8 +150,24 @@ function StreamStatus({
   blocks?: readonly Block[];
   imageMode?: boolean;
 }) {
+  const { t } = useTranslation();
   const elapsed = useElapsed(startedAt, true);
-  const label = streamPhaseLabel(blocks ?? [], imageMode);
+  const activity = imageMode ? 'image' : runActivity(blocks ?? []);
+  const runningToolName = [...(blocks ?? [])]
+    .reverse()
+    .find((b): b is ToolBlock => b.type === 'tool' && (b.status === 'running' || b.status === 'pending'))?.name;
+  /** 与 shared/blocks 的 streamPhaseLabel 同一套判据，只把文案交给 i18n */
+  const label = imageMode
+    ? t('chat.status.image')
+    : activity === 'thinking'
+      ? t('chat.status.thinking')
+      : activity === 'tool'
+        ? runningToolName
+          ? t('chat.status.calling', { name: runningToolName })
+          : t('chat.status.callingTool')
+        : activity === 'writing'
+          ? t('chat.status.writing')
+          : t('chat.status.processing');
 
   return (
     <span
@@ -177,7 +195,7 @@ function StreamStatus({
           文字内部是普通行内流，标点紧贴。 */}
       <span>
         <TypingText text={label} />
-        <span>，用时 {elapsed ?? 0} 秒</span>
+        <span>{t('chat.status.elapsed', { n: elapsed ?? 0 })}</span>
       </span>
     </span>
   );
@@ -342,12 +360,13 @@ function MessageActions({
   onRegenerate,
   onBranch,
 }: MessageActionsProps) {
+  const { t } = useTranslation();
   const copy = async (content: string, tip: string) => {
     try {
       await navigator.clipboard.writeText(content);
       MessagePlugin.success(tip);
     } catch {
-      MessagePlugin.warning('复制失败：浏览器拒绝了剪贴板访问');
+      MessagePlugin.warning(t('chat.copy.failedBrowser'));
     }
   };
 
@@ -356,9 +375,9 @@ function MessageActions({
       <button
         type="button"
         className="tc-act-btn"
-        title="复制回答"
-        aria-label="复制回答"
-        onClick={() => copy(text, '已复制到剪贴板')}
+        title={t('chat.action.copyAnswer')}
+        aria-label={t('chat.action.copyAnswer')}
+        onClick={() => copy(text, t('chat.copy.done'))}
       >
         <Copy size={15} />
       </button>
@@ -366,8 +385,8 @@ function MessageActions({
         <button
           type="button"
           className="tc-act-btn"
-          title="重新生成"
-          aria-label="重新生成"
+          title={t('chat.action.regenerate')}
+          aria-label={t('chat.action.regenerate')}
           onClick={onRegenerate}
         >
           <RefreshCw size={15} />
@@ -376,9 +395,9 @@ function MessageActions({
       <button
         type="button"
         className="tc-act-btn"
-        title="分享（复制完整 Markdown）"
-        aria-label="分享"
-        onClick={() => copy(shareText, '已复制可分享的 Markdown')}
+        title={t('chat.action.shareTitle')}
+        aria-label={t('chat.action.share')}
+        onClick={() => copy(shareText, t('chat.copy.shareDone'))}
       >
         <Share2 size={15} />
       </button>
@@ -386,8 +405,8 @@ function MessageActions({
         <button
           type="button"
           className="tc-act-btn"
-          title="从此处分支会话"
-          aria-label="分支"
+          title={t('chat.action.branchTitle')}
+          aria-label={t('chat.action.branch')}
           onClick={onBranch}
         >
           <GitBranch size={15} />
@@ -434,13 +453,14 @@ function UserMessageActions({
   text: string;
   onEdit?: () => void;
 }) {
+  const { t } = useTranslation();
   const copy = async (content: string, tip: string) => {
     if (!content.trim()) return;
     try {
       await navigator.clipboard.writeText(content);
       MessagePlugin.success(tip);
     } catch {
-      MessagePlugin.warning('复制失败：浏览器拒绝了剪贴板访问');
+      MessagePlugin.warning(t('chat.copy.failedBrowser'));
     }
   };
 
@@ -458,10 +478,10 @@ function UserMessageActions({
       <button
         type="button"
         className="tc-act-btn"
-        title="复制这条消息"
-        aria-label="复制这条消息"
+        title={t('chat.action.copyMessage')}
+        aria-label={t('chat.action.copyMessage')}
         data-user-action="copy"
-        onClick={afterClick(() => copy(text, '已复制到剪贴板'))}
+        onClick={afterClick(() => copy(text, t('chat.copy.done')))}
       >
         <Copy size={15} />
       </button>
@@ -469,8 +489,8 @@ function UserMessageActions({
         <button
           type="button"
           className="tc-act-btn"
-          title="编辑（填回输入框）"
-          aria-label="编辑"
+          title={t('chat.action.editTitle')}
+          aria-label={t('chat.action.edit')}
           data-user-action="edit"
           onClick={afterClick(onEdit)}
         >
@@ -480,10 +500,10 @@ function UserMessageActions({
       <button
         type="button"
         className="tc-act-btn"
-        title="分享（复制 Markdown）"
-        aria-label="分享"
+        title={t('chat.action.shareMessage')}
+        aria-label={t('chat.action.share')}
         data-user-action="share"
-        onClick={afterClick(() => copy(text, '已复制可分享的 Markdown'))}
+        onClick={afterClick(() => copy(text, t('chat.copy.shareDone')))}
       >
         <Share2 size={15} />
       </button>
@@ -760,6 +780,7 @@ function SelectionToolbar({
   rootRef: React.RefObject<HTMLElement>;
   onQuote?: (text: string) => void;
 }) {
+  const { t } = useTranslation();
   const [pos, setPos] = useState<SelPos | null>(null);
 
   useEffect(() => {
@@ -990,14 +1011,14 @@ function SelectionToolbar({
         onClick={async () => {
           try {
             await copyPlainText(pos.text);
-            MessagePlugin.success('已复制选中内容');
+            MessagePlugin.success(t('chat.selection.copied'));
           } catch {
-            MessagePlugin.warning('复制失败：剪贴板不可用');
+            MessagePlugin.warning(t('chat.copy.failedClipboard'));
           }
           done();
         }}
       >
-        <Copy size={13} /> 复制
+        <Copy size={13} /> {t('chat.selection.copy')}
       </button>
       <span className="tc-sel-sep" aria-hidden="true" />
       <button
@@ -1009,7 +1030,7 @@ function SelectionToolbar({
           done();
         }}
       >
-        <Quote size={13} /> 引用
+        <Quote size={13} /> {t('chat.selection.quote')}
       </button>
       {/* 右键菜单专属：多一个「全选」。拖选出来的小条保持两项 —— 它贴着手，
           多一项反而更容易点错。 */}
@@ -1017,7 +1038,7 @@ function SelectionToolbar({
         <>
           <span className="tc-sel-sep" aria-hidden="true" />
           <button type="button" className="tc-sel-btn" data-sel-action="selectall" onClick={selectAll}>
-            <TextSelect size={13} /> 全选
+            <TextSelect size={13} /> {t('chat.selection.selectAll')}
           </button>
         </>
       )}
@@ -1104,6 +1125,7 @@ const MessageRow = memo(function MessageRow({
   onRegenerate,
   onBranch,
 }: MessageRowProps) {
+  const { t } = useTranslation();
   // 编排叙述行：不套气泡外壳，直接居中一行
   if (message.note) return <>{renderNoteRow(message)}</>;
 
@@ -1204,7 +1226,7 @@ const MessageRow = memo(function MessageRow({
                   'color-mix(in srgb, #D54941 calc((1 - var(--opc-t, 0)) * 100%), rgb(213 73 65 / 0.14))',
                 color: 'color-mix(in srgb, #fff calc((1 - var(--opc-t, 0)) * 100%), #D54941)',
               }}
-              title="图像生成"
+              title={t('chat.msg.imageGeneration')}
             >
               <ImageIcon size={14} />
             </div>
@@ -1218,8 +1240,8 @@ const MessageRow = memo(function MessageRow({
                 if (onShowAgentDetail && id) onShowAgentDetail(id);
               }}
               disabled={!onShowAgentDetail}
-              title={msgAgent ? `${msgAgent.name} · 查看详情` : undefined}
-              aria-label={msgAgent ? `查看 ${msgAgent.name} 的详情` : undefined}
+              title={msgAgent ? t('chat.msg.agentDetailTitle', { name: msgAgent.name }) : undefined}
+              aria-label={msgAgent ? t('chat.msg.agentDetailAria', { name: msgAgent.name }) : undefined}
               data-agent-avatar={message.agentId || msgAgent?.id || undefined}
               className="shrink-0 rounded-full transition-transform hover:scale-105 disabled:cursor-default disabled:hover:scale-100"
             >
@@ -1239,7 +1261,7 @@ const MessageRow = memo(function MessageRow({
             style={{ color: 'var(--td-text-color-secondary)' }}
             data-msg-agent={msgAgent?.id || undefined}
           >
-            {msgIsImage ? '图像生成' : msgAgent?.name || 'Agent'}
+            {msgIsImage ? t('chat.msg.imageGeneration') : msgAgent?.name || 'Agent'}
           </span>
           {!msgIsImage && message.model && (
             <span
@@ -1259,7 +1281,7 @@ const MessageRow = memo(function MessageRow({
               style={{ color: 'var(--td-text-color-placeholder)' }}
               data-msg-duration
             >
-              已处理 {formatHandledDuration(message.durationMs)}
+              {t('chat.msg.handled', { duration: formatHandledDuration(message.durationMs) ?? '' })}
             </span>
           )}
         </div>
@@ -1447,6 +1469,7 @@ export function ChatMessages({
   currentSessionId,
   sessionCwd,
 }: ChatMessagesProps) {
+  const { t } = useTranslation();
   /** 消息区根节点：选区工具条用它判断「选区是不是在这片消息里」 */
   const rootRef = useRef<HTMLDivElement>(null);
   /** A115：用户自己的资料（昵称 + 头像）—— 用户消息那颗头像用它渲染 */
@@ -1702,7 +1725,7 @@ export function ChatMessages({
               rel="noreferrer"
               style={{ color: 'var(--td-brand-color)' }}
             >
-              打开产物
+              {t('chat.artifact.open')}
             </a>
           )}
           {imageData && (
@@ -1720,7 +1743,7 @@ export function ChatMessages({
                     <span className="shrink-0 rounded px-1.5 py-0.5" style={{ backgroundColor: 'var(--td-bg-color-page-container)' }}>{file.kind}</span>
                     <code className="min-w-0 break-all">{file.path}</code>
                   </li>
-                )) : <li>未记录文件变更</li>}
+                )) : <li>{t('chat.artifact.noChanges')}</li>}
             </ul>
           )}
           {block.data !== undefined && !imageData && !isFileChanges && (
@@ -1828,7 +1851,7 @@ export function ChatMessages({
           color: 'var(--td-error-color-6)',
         }}
       >
-        <div className="mb-1 font-medium">调用失败</div>
+        <div className="mb-1 font-medium">{t('chat.error.callFailed')}</div>
         {errorMessage}
       </div>
     ) : null;
@@ -2021,7 +2044,7 @@ export function ChatMessages({
       }}
     >
       <summary className="cursor-pointer select-none">
-        {refs.length > 0 ? `引用了 ${refs.length} 条历史会话` : '本次未检索到相关历史会话'}
+        {refs.length > 0 ? t('chat.kb.refs', { n: refs.length }) : t('chat.kb.none')}
       </summary>
       {refs.length > 0 ? (
         <div className="mt-1.5 flex flex-col gap-1.5">
@@ -2029,9 +2052,9 @@ export function ChatMessages({
             <div key={ref.citationId} className="rounded-md px-2 py-1.5" data-kb-citation={ref.citationId}>
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <span className="font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-                  {ref.sessionTitle || '未命名会话'}
+                  {ref.sessionTitle || t('chat.kb.untitled')}
                 </span>
-                <span>{ref.sourceType === 'group' ? '群聊' : '单聊'}</span>
+                <span>{ref.sourceType === 'group' ? t('chat.kb.group') : t('chat.kb.single')}</span>
                 <span>{String(ref.timeEnd ?? '').slice(0, 16).replace('T', ' ')}</span>
                 <span className="font-mono opacity-70">{ref.citationId.slice(0, 8)}</span>
               </div>

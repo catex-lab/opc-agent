@@ -36,6 +36,7 @@ import {
   Play,
   XCircle,
 } from 'lucide-react';
+import { useTranslation, type MessageKey } from '../i18n';
 
 type FileVerdict =
   | 'landed'
@@ -75,17 +76,18 @@ export interface FileEvidencePanelProps {
 }
 
 /** 判定 → 展示文案 + 颜色。文案刻意用「结论」而不是「状态词」，用户不用猜。 */
-const VERDICT_META: Record<FileVerdict, { text: string; color: string; tone: 'ok' | 'bad' | 'meh' }> = {
-  landed: { text: '已核对，内容在磁盘上', color: 'var(--td-success-color)', tone: 'ok' },
-  landed_then_modified: { text: '已核对，但之后又被改过', color: 'var(--td-success-color)', tone: 'ok' },
-  not_landed: { text: '声明已写入，磁盘上没有这段内容', color: 'var(--td-error-color)', tone: 'bad' },
-  missing: { text: '声明已写入，文件不存在', color: 'var(--td-error-color)', tone: 'bad' },
-  ambiguous: { text: '无法判定（文件已被大改，归不了因）', color: 'var(--td-warning-color)', tone: 'meh' },
-  ephemeral: { text: '临时文件，已被系统清理', color: 'var(--td-text-color-placeholder)', tone: 'meh' },
-  skipped: { text: '未核对', color: 'var(--td-text-color-placeholder)', tone: 'meh' },
+const VERDICT_META: Record<FileVerdict, { textKey: MessageKey; color: string; tone: 'ok' | 'bad' | 'meh' }> = {
+  landed: { textKey: 'chat.evidence.verdict.landed', color: 'var(--td-success-color)', tone: 'ok' },
+  landed_then_modified: { textKey: 'chat.evidence.verdict.modified', color: 'var(--td-success-color)', tone: 'ok' },
+  not_landed: { textKey: 'chat.evidence.verdict.notLanded', color: 'var(--td-error-color)', tone: 'bad' },
+  missing: { textKey: 'chat.evidence.verdict.missing', color: 'var(--td-error-color)', tone: 'bad' },
+  ambiguous: { textKey: 'chat.evidence.verdict.ambiguous', color: 'var(--td-warning-color)', tone: 'meh' },
+  ephemeral: { textKey: 'chat.evidence.verdict.ephemeral', color: 'var(--td-text-color-placeholder)', tone: 'meh' },
+  skipped: { textKey: 'chat.evidence.verdict.skipped', color: 'var(--td-text-color-placeholder)', tone: 'meh' },
 };
 
 export function FileEvidencePanel({ sessionId, messageId, onStateChange }: FileEvidencePanelProps) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<EvidenceResponse | null>(null);
@@ -99,7 +101,7 @@ export function FileEvidencePanel({ sessionId, messageId, onStateChange }: FileE
       const res = await fetch(`/api/files/evidence?${qs.toString()}`);
       if (!res.ok) {
         const text = await res.text().catch(() => '');
-        setError(`核对失败（HTTP ${res.status}）${text ? `：${text.slice(0, 120)}` : ''}`);
+        setError(t('chat.evidence.checkFailed', { status: res.status, text: text ? `：${text.slice(0, 120)}` : '' }));
         return;
       }
       setData((await res.json()) as EvidenceResponse);
@@ -108,7 +110,7 @@ export function FileEvidencePanel({ sessionId, messageId, onStateChange }: FileE
     } finally {
       setLoading(false);
     }
-  }, [sessionId, messageId]);
+  }, [sessionId, messageId, t]);
 
   // 展开时自动核对一次；已经核对过就不再重复读盘（用户可手动重新核对）
   useEffect(() => {
@@ -126,18 +128,18 @@ export function FileEvidencePanel({ sessionId, messageId, onStateChange }: FileE
   }, [summary, alarm, onStateChange]);
 
   const head = loading
-    ? { icon: Loader2, text: '核对中', color: 'var(--td-brand-color)', spin: true }
+    ? { icon: Loader2, text: t('chat.evidence.checking'), color: 'var(--td-brand-color)', spin: true }
     : alarm
-      ? { icon: XCircle, text: '有文件对不上', color: 'var(--td-error-color)', spin: false }
+      ? { icon: XCircle, text: t('chat.evidence.alarm'), color: 'var(--td-error-color)', spin: false }
       : summary
-        ? { icon: CheckCircle2, text: '已核对', color: 'var(--td-success-color)', spin: false }
-        : { icon: CircleDashed, text: '未核对', color: 'var(--td-text-color-placeholder)', spin: false };
+        ? { icon: CheckCircle2, text: t('chat.evidence.checked'), color: 'var(--td-success-color)', spin: false }
+        : { icon: CircleDashed, text: t('chat.evidence.unchecked'), color: 'var(--td-text-color-placeholder)', spin: false };
 
   const Icon = head.icon;
 
   const metaText = summary
-    ? `${summary.landed} 个落地 · ${summary.notLanded} 个对不上 · 共 ${summary.total} 个文件`
-    : '读磁盘确认这轮的改动是否真的落地';
+    ? t('chat.evidence.meta', { landed: summary.landed, notLanded: summary.notLanded, total: summary.total })
+    : t('chat.evidence.hint');
 
   return (
     <div className="tc-verify" data-file-evidence={loading ? 'loading' : summary ? 'done' : 'idle'}>
@@ -156,7 +158,7 @@ export function FileEvidencePanel({ sessionId, messageId, onStateChange }: FileE
           }}
         />
         <span className="tc-verify-title" style={{ color: head.color }}>
-          文件核对 · {head.text}
+          {t('chat.evidence.title')} · {head.text}
         </span>
         <span className="tc-verify-meta" data-file-evidence-meta>
           {metaText}
@@ -172,7 +174,7 @@ export function FileEvidencePanel({ sessionId, messageId, onStateChange }: FileE
 
           {!loading && data && data.cwd === null && (
             <div className="tc-verify-note">
-              会话未绑定工作目录，相对路径无法解析；下面只核对绝对路径。
+              {t('chat.evidence.noCwd')}
             </div>
           )}
 
@@ -188,14 +190,14 @@ export function FileEvidencePanel({ sessionId, messageId, onStateChange }: FileE
                     title={it.file || undefined}
                   >
                     <div className="tc-verify-result-head">
-                      <span className="tc-verify-result-label">{it.display || '(无路径)'}</span>
+                      <span className="tc-verify-result-label">{it.display || t('chat.evidence.noPath')}</span>
                       <span className="tc-verify-result-status" style={{ color: meta.color }}>
-                        {it.reason ?? meta.text}
+                        {it.reason ?? t(meta.textKey)}
                       </span>
-                      {it.lines != null && <span className="tc-verify-result-code">当前 {it.lines} 行</span>}
+                      {it.lines != null && <span className="tc-verify-result-code">{t('chat.evidence.lines', { n: it.lines })}</span>}
                       {it.laterModified && (
-                        <span className="tc-verify-result-dur" title="文件修改时间晚于这条消息">
-                          之后被改过
+                        <span className="tc-verify-result-dur" title={t('chat.evidence.laterModifiedTitle')}>
+                          {t('chat.evidence.laterModified')}
                         </span>
                       )}
                     </div>
@@ -213,10 +215,10 @@ export function FileEvidencePanel({ sessionId, messageId, onStateChange }: FileE
               disabled={loading}
             >
               <Play size={12} />
-              {data ? '重新核对' : '核对磁盘'}
+              {data ? t('chat.evidence.recheck') : t('chat.evidence.check')}
             </button>
             <span className="tc-verify-notes">
-              只读：读文件比对内容，不修改任何东西。
+              {t('chat.evidence.readOnly')}
             </span>
           </div>
         </div>

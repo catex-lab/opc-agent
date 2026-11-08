@@ -7,6 +7,7 @@ import {
   modelsUrlOf,
   type ProviderDialect,
 } from '../../shared/providerUrl';
+import { useTranslation, type MessageKey } from '../i18n';
 
 /**
  * 「自定义模型厂商」（A129）。
@@ -78,7 +79,8 @@ const EMPTY_DRAFT = (): Draft => ({
 
 interface Preset {
   key: string;
-  label: string;
+  label?: string;
+  labelKey?: MessageKey;
   baseUrl: string;
   dialect: ProviderDialect;
 }
@@ -89,11 +91,11 @@ interface Preset {
  */
 const PRESETS: Preset[] = [
   { key: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', dialect: 'openai' },
-  { key: 'zhipu', label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', dialect: 'openai' },
+  { key: 'zhipu', labelKey: 'settings.provider.preset.zhipu', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', dialect: 'openai' },
   { key: 'siliconflow', label: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', dialect: 'openai' },
-  { key: 'sensenova', label: '商汤', baseUrl: 'https://token.sensenova.cn/v1', dialect: 'openai' },
+  { key: 'sensenova', labelKey: 'settings.provider.preset.sensenova', baseUrl: 'https://token.sensenova.cn/v1', dialect: 'openai' },
   { key: 'gemini', label: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', dialect: 'gemini' },
-  { key: 'ollama', label: '本地 Ollama', baseUrl: 'http://localhost:11434/v1', dialect: 'openai' },
+  { key: 'ollama', labelKey: 'settings.provider.preset.ollama', baseUrl: 'http://localhost:11434/v1', dialect: 'openai' },
 ];
 
 const DIALECT_OPTIONS: Array<{ value: ProviderDialect; label: string }> = [
@@ -110,7 +112,9 @@ interface ProviderSettingsProps {
 }
 
 export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps) {
+  const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
+  const presetLabel = (p: Preset) => (p.labelKey ? t(p.labelKey) : (p.label ?? p.key));
   const [list, setList] = useState<ProviderSpec[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -130,11 +134,11 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
       const data = await res.json();
       setList(Array.isArray(data.agents) ? data.agents : []);
     } catch (err) {
-      setError((err as Error).message || '读取厂商列表失败');
+      setError((err as Error).message || t('settings.provider.loadFailedShort'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -249,13 +253,13 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
       const models: string[] = Array.isArray(data.models) ? data.models : [];
       setFetched(models);
       if (models.length === 0) {
-        setFetchNote('该服务没有返回模型清单，请在下方手动填写模型名。');
+        setFetchNote(t('settings.provider.fetchEmptyNote'));
       } else if (draft.models.length === 0) {
         // 清单拉到了但还没选：默认全选，省掉逐个勾。用户可取消不要的。
         setDraft({ ...draft, models });
       }
     } catch (err) {
-      setError((err as Error).message || '拉取模型清单失败');
+      setError((err as Error).message || t('settings.provider.fetchFailed'));
     } finally {
       setBusy(null);
     }
@@ -264,7 +268,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
   const runTest = async () => {
     if (!draft) return;
     if (draft.models.length === 0) {
-      setError('请先添加至少一个模型，再测试连接');
+      setError(t('settings.provider.needModel'));
       return;
     }
     setBusy('test');
@@ -280,7 +284,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
       setTestResult(data as TestResult);
     } catch (err) {
-      setError((err as Error).message || '连通性测试失败');
+      setError((err as Error).message || t('settings.provider.testFailed'));
     } finally {
       setBusy(null);
     }
@@ -307,12 +311,12 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-      MessagePlugin.success(draft.id ? '厂商已更新' : '厂商已添加');
+      MessagePlugin.success(draft.id ? t('settings.provider.updated') : t('settings.provider.added'));
       closeEditor();
       await load();
       onChanged?.();
     } catch (err) {
-      setError((err as Error).message || '保存失败');
+      setError((err as Error).message || t('settings.provider.saveFailed'));
     } finally {
       setBusy(null);
     }
@@ -325,12 +329,12 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
       const res = await fetch(`/api/agents/custom/${encodeURIComponent(id)}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-      MessagePlugin.success('厂商已删除');
+      MessagePlugin.success(t('settings.provider.deleted'));
       setConfirmingDelete(null);
       await load();
       onChanged?.();
     } catch (err) {
-      setError((err as Error).message || '删除失败');
+      setError((err as Error).message || t('settings.provider.deleteFailed'));
     } finally {
       setBusy(null);
     }
@@ -345,11 +349,11 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
       {/* 已有厂商 */}
       {loading ? (
         <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          正在读取厂商…
+          {t('settings.provider.loading')}
         </div>
       ) : list.length === 0 && !draft ? (
         <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          还没有自定义厂商。添加后，通讯录里会出现一条联系人，模型下拉列出它全部模型。
+          {t('settings.provider.empty')}
         </div>
       ) : (
         <div className="space-y-2">
@@ -375,7 +379,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                     {dialectLabel(item.dialect)}
                   </Tag>
                   <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                    {item.models.length} 个模型
+                    {t('settings.provider.modelCount', { n: item.models.length })}
                   </span>
                 </div>
                 <div
@@ -392,7 +396,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                 onClick={() => openEdit(item)}
                 data-provider-edit={item.id}
               >
-                编辑
+                {t('settings.provider.edit')}
               </Button>
               {confirmingDelete === item.id ? (
                 <>
@@ -404,14 +408,14 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                     onClick={() => void remove(item.id)}
                     data-provider-delete-confirm={item.id}
                   >
-                    确认删除
+                    {t('settings.provider.confirmDelete')}
                   </Button>
                   <Button
                     size="small"
                     variant="text"
                     onClick={() => setConfirmingDelete(null)}
                   >
-                    取消
+                    {t('settings.common.cancel')}
                   </Button>
                 </>
               ) : (
@@ -423,7 +427,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                   onClick={() => setConfirmingDelete(item.id)}
                   data-provider-delete={item.id}
                 >
-                  删除
+                  {t('settings.provider.delete')}
                 </Button>
               )}
             </div>
@@ -441,7 +445,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
           onClick={openCreate}
           data-provider-add
         >
-          添加厂商
+          {t('settings.provider.add')}
         </Button>
       )}
 
@@ -457,10 +461,10 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
         >
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-              {draft.id ? '编辑厂商' : '添加厂商'}
+              {draft.id ? t('settings.provider.editTitle') : t('settings.provider.addTitle')}
             </span>
             <Button size="small" variant="text" onClick={closeEditor}>
-              收起
+              {t('settings.provider.collapse')}
             </Button>
           </div>
 
@@ -476,17 +480,18 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                     // 用户自己敲的名字不能被覆盖。原先写成 `draft.name || p.label`，
                     // 连点两个预设就会出现「名字 DeepSeek、地址 Google」的组合。
                     const wasPresetName =
-                      !draft.name.trim() || PRESETS.some(x => x.label === draft.name);
+                      !draft.name.trim() || PRESETS.some(x => presetLabel(x) === draft.name);
+                    const nextLabel = presetLabel(p);
                     setDraft({
                       ...draft,
-                      name: wasPresetName ? p.label : draft.name,
+                      name: wasPresetName ? nextLabel : draft.name,
                       baseUrl: p.baseUrl,
                       dialect: p.dialect,
                     });
                   }}
                   data-provider-preset={p.key}
                 >
-                  {p.label}
+                  {presetLabel(p)}
                 </Button>
               ))}
             </div>
@@ -501,13 +506,13 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                 className="mb-1 block text-xs"
                 style={{ color: 'var(--td-text-color-placeholder)' }}
               >
-                名称（通讯录里显示）
+                {t('settings.provider.nameLabel')}
               </label>
               <Input
                 value={draft.name}
                 maxlength={20}
                 onChange={v => patch({ name: v as string })}
-                placeholder="例如：商汤"
+                placeholder={t('settings.provider.namePlaceholder')}
                 data-provider-field="name"
               />
             </div>
@@ -516,7 +521,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                 className="mb-1 block text-xs"
                 style={{ color: 'var(--td-text-color-placeholder)' }}
               >
-                上游格式
+                {t('settings.provider.dialectLabel')}
               </label>
               {/* TDesign 的 Select 不透传 data-*，标记挂外层容器 */}
               <div data-provider-field="dialect">
@@ -539,12 +544,12 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
               className="mb-1 block text-xs"
               style={{ color: 'var(--td-text-color-placeholder)' }}
             >
-              API 地址（填到版本号那一层即可）
+              {t('settings.provider.baseUrlLabel')}
             </label>
             <Input
               value={draft.baseUrl}
               onChange={v => patch({ baseUrl: v as string })}
-              placeholder="例如：https://api.deepseek.com/v1"
+              placeholder={t('settings.provider.baseUrlPlaceholder')}
               data-provider-field="baseUrl"
             />
             {draft.baseUrl.trim() && (
@@ -554,9 +559,9 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                 data-provider-final-url
                 title={finalUrl}
               >
-                模型清单：{modelsUrlOf(draft.baseUrl)}
+                {t('settings.provider.modelsUrl', { url: modelsUrlOf(draft.baseUrl) })}
                 <br />
-                对话请求：{finalUrl}
+                {t('settings.provider.chatUrl', { url: finalUrl })}
               </div>
             )}
           </div>
@@ -566,13 +571,15 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
               className="mb-1 block text-xs"
               style={{ color: 'var(--td-text-color-placeholder)' }}
             >
-              API Key{draft.id ? '（已保存，留空则保持不变）' : ''}
+              API Key{draft.id ? t('settings.provider.keyConfiguredHint') : ''}
             </label>
             <Input
               type="password"
               value={draft.apiKey}
               onChange={v => patch({ apiKey: v as string })}
-              placeholder={draft.id ? '留空则保持现有 Key' : '粘贴 API Key'}
+              placeholder={
+                draft.id ? t('settings.provider.keyKeepPlaceholder') : t('settings.provider.keyPlaceholder')
+              }
               data-provider-field="apiKey"
             />
           </div>
@@ -580,7 +587,8 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
           <div>
             <div className="mb-1 flex items-center justify-between">
               <label className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                模型{draft.models.length > 0 ? `（已选 ${draft.models.length}）` : ''}
+                {t('settings.provider.modelsLabel')}
+                {draft.models.length > 0 ? t('settings.provider.modelsSelected', { n: draft.models.length }) : ''}
               </label>
               <div className="flex items-center gap-1">
                 <Button
@@ -592,7 +600,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                   data-provider-fetch-models
                 >
                   <RefreshCw size={12} className="mr-1" />
-                  拉取模型
+                  {t('settings.provider.fetchModels')}
                 </Button>
                 {availableModels.length > 0 && (
                   <>
@@ -601,14 +609,14 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                       variant="text"
                       onClick={() => setDraft({ ...draft, models: availableModels })}
                     >
-                      全选
+                      {t('settings.provider.selectAll')}
                     </Button>
                     <Button
                       size="small"
                       variant="text"
                       onClick={() => setDraft({ ...draft, models: [] })}
                     >
-                      清空
+                      {t('settings.provider.clearModels')}
                     </Button>
                   </>
                 )}
@@ -665,11 +673,11 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                 value={draft.manualModel}
                 onChange={v => patch({ manualModel: v as string })}
                 onEnter={addManualModel}
-                placeholder="清单里没有？手动输入模型名后回车"
+                placeholder={t('settings.provider.manualModelPlaceholder')}
                 data-provider-field="model"
               />
               <Button size="small" variant="outline" onClick={addManualModel}>
-                添加
+                {t('settings.provider.addModel')}
               </Button>
             </div>
           </div>
@@ -713,7 +721,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
               onClick={() => void save()}
               data-provider-save
             >
-              保存
+              {t('settings.provider.save')}
             </Button>
             <Button
               variant="outline"
@@ -727,7 +735,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
                  （「刷新」「添加规则」那几颗一直这么写，所以它们从来没过这条断言）。 */
               icon={<Zap size={12} />}
             >
-              测试连接
+              {t('settings.provider.testConnection')}
             </Button>
           </div>
         </div>

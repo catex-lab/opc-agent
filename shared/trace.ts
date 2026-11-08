@@ -330,6 +330,10 @@ export interface TraceSummary {
   verbs: string[];
   /** 去重后的文件名，按出现顺序 */
   files: string[];
+  /** 摘要里「改了 N 个文件」那部分用到的文件（界面按语言重排这句话） */
+  editedFiles: string[];
+  /** 结果档位：界面层用它与 `text` 等价的 i18n 文案 */
+  outcome: 'running' | 'error' | 'interrupted' | 'ok';
   diff: { added: number; removed: number };
 }
 
@@ -400,6 +404,8 @@ export function summarizeTrace(items: readonly TraceItem[]): TraceSummary {
     text: head ? `${head} · ${outcome}` : outcome,
     verbs,
     files,
+    editedFiles,
+    outcome: hasRunning ? 'running' : hasError ? 'error' : hasInterrupted ? 'interrupted' : 'ok',
     diff: { added, removed },
   };
 }

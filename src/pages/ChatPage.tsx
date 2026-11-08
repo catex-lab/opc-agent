@@ -16,7 +16,7 @@ import {
   AgentModelSource,
 } from '../types';
 import { NewChatView } from '../components/NewChatView';
-import { SCENARIOS, getScenario, enforcementGap, isModeGap, supportLimitation, PERMISSION_MODE_LABEL } from '../scenarios';
+import { SCENARIOS, getScenario, enforcementGap, isModeGap, supportLimitation } from '../scenarios';
 import { DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE } from '../imageOptions';
 import { ChatMessages } from '../components/ChatMessages';
 import { ChatInput } from '../components/ChatInput';
@@ -32,6 +32,15 @@ import { useGroupChat } from '../hooks/useGroupChat';
 import type { DanglingConfirmInfo } from '../hooks/useChat';
 // A115：群头像（群设置里换的，存在 sessionFlags）
 import { useGroupAvatar } from '../sessionFlags';
+import { useTranslation, type MessageKey } from '../i18n';
+
+/** 权限模式词在提示里也要跟着界面语言走；判定仍用 `PermissionMode` 原值 */
+const PERMISSION_MODE_TEXT: Record<PermissionMode, MessageKey> = {
+  'default': 'chat.permission.default',
+  'acceptEdits': 'chat.permission.acceptEdits',
+  'plan': 'chat.permission.plan',
+  'bypassPermissions': 'chat.permission.bypass',
+};
 
 /**
  * 在（可能嵌套的）shadow root 里找输入框的 `textarea`。
@@ -212,6 +221,7 @@ export function ChatPage({
   onResolveResume,
 }: ChatPageProps) {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -345,11 +355,11 @@ export function ChatPage({
   const [workflowOpen, setWorkflowOpen] = useState(false);
   const openWorkflow = useCallback(() => {
     if (!isGroup) {
-      MessagePlugin.info('工作流只对群聊开放：先在消息列表右上角建一个群');
+      MessagePlugin.info(t('chat.workflowGroupOnly'));
       return;
     }
     setWorkflowOpen(true);
-  }, [isGroup]);
+  }, [isGroup, t]);
 
   /**
    * 打开会话时「直接落在最后一条」，之后新消息才做平滑滚动。
@@ -682,7 +692,7 @@ export function ChatPage({
   // 指定模式下的提示：不 @ 任何人就没人会被唤醒
   const mentionHint =
     orchestration === 'mention' && groupMembers.length > 1
-      ? '当前为「指定」模式：只有被 @ 到的成员会发言，不 @ 则无人应答'
+      ? t('chat.mentionHint')
       : undefined;
 
   /**
@@ -701,9 +711,9 @@ export function ChatPage({
     if (isGroup) {
       const weak = groupMembers.filter(m => isModeGap(permissionMode, m.permissionSupport));
       if (weak.length === 0) return null;
-      const names = weak.map(m => m.name).join('、');
+      const names = weak.map(m => m.name).join(t('contacts.memberSeparator'));
       const reason = supportLimitation(weak[0].permissionSupport);
-      return `当前权限模式「${PERMISSION_MODE_LABEL[permissionMode]}」对 ${names} 无法强制：${reason}。`;
+      return t('chat.permissionGap.group', { mode: t(PERMISSION_MODE_TEXT[permissionMode]), names, reason });
     }
     const scenarioGap = enforcementGap(
       getScenario(currentSession?.scenarioId),
@@ -711,10 +721,10 @@ export function ChatPage({
     );
     if (scenarioGap) return scenarioGap;
     if (isModeGap(permissionMode, currentAgent?.permissionSupport)) {
-      return `当前权限模式「${PERMISSION_MODE_LABEL[permissionMode]}」在该 Agent 上无法强制：${supportLimitation(currentAgent?.permissionSupport)}。`;
+      return t('chat.permissionGap.agent', { mode: t(PERMISSION_MODE_TEXT[permissionMode]), reason: supportLimitation(currentAgent?.permissionSupport) });
     }
     return null;
-  }, [isGroup, groupMembers, permissionMode, currentSession?.scenarioId, currentAgent]);
+  }, [isGroup, groupMembers, permissionMode, currentSession?.scenarioId, currentAgent, t]);
 
   /**
    * 群名。没起名的群用成员名兜底 —— 与消息列表、通讯录群聊目录同一套口径，
@@ -723,7 +733,7 @@ export function ChatPage({
    * 提成变量是因为它现在有两个消费者：会话头部和右侧群设置面板的栏头。
    */
   const groupTitle =
-    currentSession?.title || groupMembers.map(m => m.name).join('、') || '群聊';
+    currentSession?.title || groupMembers.map(m => m.name).join(t('contacts.memberSeparator')) || t('chat.groupFallback');
 
   // A115：群头像。用 Hook 而不是直接读 —— 群设置面板就在本组件里，
   // 用户点「换头像」后这里必须立刻跟着变，否则要等一次无关重渲染。
@@ -876,7 +886,7 @@ export function ChatPage({
                 color: 'var(--td-text-color-secondary)',
               }}
             >
-              回到最新
+              {t('chat.jumpToLatest')}
             </button>
           )}
           </div>

@@ -34,20 +34,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { DanglingConfirmInfo } from '../hooks/useChat';
+import { useTranslation, type Translate } from '../i18n';
 
 export interface ResumeNoticeProps {
   info: DanglingConfirmInfo;
   onChoose: (choice: 'continue' | 'fresh' | 'skip' | 'cancel') => void;
 }
 
-/** 取服务端给的选项文案；拿不到时退回固定说法，保证不出现空按钮 */
-function labelOf(info: DanglingConfirmInfo, action: 'continue' | 'fresh' | 'skip'): string {
-  return info.options.find(o => o.action === action)?.label
-    || (action === 'continue'
-      ? '继续那一条'
-      : action === 'fresh'
-        ? '新建会话（带历史摘要）'
-        : '跳过');
+/** 按钮文案固定按动作取本地化说法；服务端 label 是同义的兜底数据，不参与渲染 */
+function labelOf(t: Translate, action: 'continue' | 'fresh' | 'skip'): string {
+  return action === 'continue'
+    ? t('chat.resume.continue')
+    : action === 'fresh'
+      ? t('chat.resume.fresh')
+      : t('chat.resume.skip');
 }
 
 /**
@@ -65,6 +65,7 @@ function ResumeDialog({
   onChoose: ResumeNoticeProps['onChoose'];
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -90,8 +91,8 @@ function ResumeDialog({
   }, [onClose]);
 
   const recommendedFresh = info.recommended === 'fresh';
-  const freshLabel = labelOf(info, 'fresh');
-  const continueLabel = labelOf(info, 'continue');
+  const freshLabel = labelOf(t, 'fresh');
+  const continueLabel = labelOf(t, 'continue');
 
   /** 推荐项用主按钮（品牌色实心），另一项是描边按钮 —— 两者都保留，不藏 */
   const freshButton = (
@@ -102,7 +103,7 @@ function ResumeDialog({
       onClick={() => onChoose('fresh')}
     >
       {freshLabel}
-      {recommendedFresh && '（推荐）'}
+      {recommendedFresh && t('chat.resume.recommended')}
     </button>
   );
   const continueButton = (
@@ -113,7 +114,7 @@ function ResumeDialog({
       onClick={() => onChoose('continue')}
     >
       {continueLabel}
-      {!recommendedFresh && '（推荐）'}
+      {!recommendedFresh && t('chat.resume.recommended')}
     </button>
   );
 
@@ -141,13 +142,13 @@ function ResumeDialog({
             className="min-w-0 flex-1 text-title-lg font-semibold"
             style={{ color: 'var(--td-text-color-primary)' }}
           >
-            {info.title}
+            {t('chat.resume.dialogTitle')}
           </h2>
           <button
             ref={closeRef}
             type="button"
-            aria-label="关闭（保持未决）"
-            title="关闭（保持未决）"
+            aria-label={t('chat.resume.closeKeep')}
+            title={t('chat.resume.closeKeep')}
             onClick={onClose}
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-body-lg"
             style={{ color: 'var(--td-text-color-secondary)' }}
@@ -165,7 +166,7 @@ function ResumeDialog({
             {info.detail}
           </div>
           <p className="mt-2 text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
-            推荐依据：{info.recommendReason}
+            {t('chat.resume.recommendBasis')}{info.recommendReason}
           </p>
         </div>
 
@@ -182,17 +183,16 @@ function ResumeDialog({
               style={{ color: 'var(--td-text-color-secondary)' }}
               onClick={() => onChoose('skip')}
             >
-              跳过
+              {labelOf(t, 'skip')}
             </button>
           </div>
 
           {/* 「跳过」的假设当面说清：不藏菜单、不被省略号截断，整段可读 */}
           <p className="mt-2 text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
-            跳过会按「新建会话、不续接旧 CLI 会话」继续；旧指令不会被重放。
-            也可以直接在下方输入框改写指令后发送，同样按新指令新建会话。
+            {t('chat.resume.skipHint')}
           </p>
           <p className="mt-1 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-            关闭此窗口不会替你做决定；状态行会保留，随时可以再点「查看处理」。
+            {t('chat.resume.closeHint')}
           </p>
         </footer>
       </div>
@@ -202,6 +202,7 @@ function ResumeDialog({
 }
 
 export function ResumeNotice({ info, onChoose }: ResumeNoticeProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
 
   return (
@@ -209,7 +210,7 @@ export function ResumeNotice({ info, onChoose }: ResumeNoticeProps) {
       <section
         data-resume-notice
         role="group"
-        aria-label="上一轮指令未完成，可查看处理"
+        aria-label={t('chat.resume.pendingAria')}
         className="mt-3 flex h-[38px] items-center gap-2 rounded-lg px-3"
         style={{
           background: 'color-mix(in srgb, var(--td-warning-color) 7%, transparent)',
@@ -222,7 +223,7 @@ export function ResumeNotice({ info, onChoose }: ResumeNoticeProps) {
           style={{ background: 'var(--td-warning-color)' }}
         />
         <span className="shrink-0 text-caption" style={{ color: 'var(--td-warning-color)' }}>
-          上一轮指令未完成
+          {t('chat.resume.pending')}
         </span>
         {/* 常驻行里给一句「为什么停」；全文在弹层里，这里只省空间，不删信息 */}
         <span
@@ -238,7 +239,7 @@ export function ResumeNotice({ info, onChoose }: ResumeNoticeProps) {
           style={{ color: 'var(--td-brand-color)' }}
           onClick={() => setOpen(true)}
         >
-          查看处理
+          {t('chat.resume.view')}
         </button>
       </section>
 

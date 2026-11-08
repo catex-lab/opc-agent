@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Input, MessagePlugin, Tag } from 'tdesign-react';
 import { Check, KeyRound, Network, RefreshCw, Trash2 } from 'lucide-react';
 import type { AgentAvailability } from '../types';
+import { useTranslation, type MessageKey } from '../i18n';
 
 /**
  * 单个 Agent 的凭据编辑器（取 / 存 / 清 + 连通性 + 模型清单）。
@@ -52,17 +53,18 @@ interface AgentCredentialEditorProps {
   onSaved?: () => void;
 }
 
-const AVAILABILITY_TEXT: Record<AgentAvailability, string> = {
-  ready: '可用',
-  'needs-auth': '未登录',
-  'needs-setup': '需要额外配置',
-  unreachable: '网络不通',
-  'not-installed': '未安装',
-  unsupported: '不支持',
-  unknown: '状态未知',
+const AVAILABILITY_KEY: Record<AgentAvailability, MessageKey> = {
+  ready: 'settings.credential.availability.ready',
+  'needs-auth': 'settings.credential.availability.needsAuth',
+  'needs-setup': 'settings.credential.availability.needsSetup',
+  unreachable: 'settings.credential.availability.unreachable',
+  'not-installed': 'settings.credential.availability.notInstalled',
+  unsupported: 'settings.credential.availability.unsupported',
+  unknown: 'settings.credential.availability.unknown',
 };
 
 export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEditorProps) {
+  const { t } = useTranslation();
   const [item, setItem] = useState<CredentialView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -99,11 +101,11 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
         setDraftKey('');
       }
     } catch (err) {
-      setError((err as Error).message || '读取凭据失败');
+      setError((err as Error).message || t('settings.credential.loadFailedShort'));
     } finally {
       setLoading(false);
     }
-  }, [agentId]);
+  }, [agentId, t]);
 
   useEffect(() => {
     void load();
@@ -125,7 +127,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-      MessagePlugin.success(`${item.name} 凭据已保存`);
+      MessagePlugin.success(t('settings.credential.saved', { name: item.name }));
       setDraftKey('');
       // 保存后探测结果与模型清单都可能变，清掉旧的，让用户重新点
       setProbe({ loading: false });
@@ -133,7 +135,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
       await load();
       onSaved?.();
     } catch (err) {
-      MessagePlugin.error((err as Error).message || '保存失败');
+      MessagePlugin.error((err as Error).message || t('settings.credential.saveFailed'));
     } finally {
       setBusy(null);
     }
@@ -146,13 +148,13 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
       const res = await fetch(`/api/agent-credentials/${agentId}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-      MessagePlugin.success(`${item.name} 凭据已清除`);
+      MessagePlugin.success(t('settings.credential.cleared', { name: item.name }));
       setProbe({ loading: false });
       setModels({ loading: false, fetched: false, list: [] });
       await load();
       onSaved?.();
     } catch (err) {
-      MessagePlugin.error((err as Error).message || '清除失败');
+      MessagePlugin.error((err as Error).message || t('settings.credential.clearFailed'));
     } finally {
       setBusy(null);
     }
@@ -190,21 +192,21 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
   if (loading) {
     return (
       <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-        正在读取凭据…
+        {t('settings.credential.loading')}
       </div>
     );
   }
   if (error) {
     return (
       <div className="text-xs" style={{ color: 'var(--td-error-color)' }}>
-        读取凭据失败：{error}
+        {t('settings.credential.loadFailed', { error })}
       </div>
     );
   }
   if (!item) {
     return (
       <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-        该 Agent 不支持应用内填写凭据。
+        {t('settings.credential.noInAppEntry')}
       </div>
     );
   }
@@ -229,11 +231,11 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
           </Tag>
         ) : item.fromEnv ? (
           <Tag size="small" variant="light" theme="primary">
-            环境变量已配置
+            {t('settings.credential.fromEnv')}
           </Tag>
         ) : (
           <Tag size="small" variant="light">
-            未配置
+            {t('settings.credential.notConfigured')}
           </Tag>
         )}
       </div>
@@ -245,13 +247,15 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
           style={{ color: 'var(--td-text-color-placeholder)' }}
         >
           {item.keyEnvs.join(' / ')}
-          {configured && '（已配置，留空则保持不变）'}
+          {configured && t('settings.credential.keyConfiguredHint')}
         </label>
         <Input
           type="password"
           value={draftKey}
           onChange={v => setDraftKey(v as string)}
-          placeholder={configured ? '留空则保持现有 Key' : '粘贴 API Key'}
+          placeholder={
+            configured ? t('settings.credential.keyKeepPlaceholder') : t('settings.credential.keyPlaceholder')
+          }
           data-credential-key={agentId}
         />
       </div>
@@ -263,12 +267,13 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
             className="mb-1 block text-xs"
             style={{ color: 'var(--td-text-color-placeholder)' }}
           >
-            {item.baseUrlEnv}（可选，指向兼容网关）
+            {item.baseUrlEnv}
+            {t('settings.credential.baseUrlOptional')}
           </label>
           <Input
             value={draftBaseUrl}
             onChange={v => setDraftBaseUrl(v as string)}
-            placeholder="留空则用官方端点"
+            placeholder={t('settings.credential.baseUrlPlaceholder')}
             data-credential-baseurl={agentId}
           />
         </div>
@@ -283,7 +288,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
       {/* 保存 / 清除 */}
       <div className="flex items-center gap-2">
         <Button theme="primary" loading={busy === 'save'} onClick={() => void save()}>
-          保存
+          {t('settings.credential.save')}
         </Button>
         {configured && (
           <Button
@@ -293,7 +298,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
             onClick={() => void clear()}
           >
             <Trash2 size={14} />
-            清除
+            {t('settings.credential.clear')}
           </Button>
         )}
       </div>
@@ -303,11 +308,11 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
         <div className="flex flex-wrap items-center gap-2 border-t pt-2" style={{ borderColor: 'var(--tc-edge)' }}>
           <Button variant="outline" loading={probe.loading} onClick={() => void testConnectivity()}>
             <Network size={14} />
-            检测连通性
+            {t('settings.credential.testConnectivity')}
           </Button>
           <Button variant="outline" loading={models.loading} onClick={() => void fetchModels()}>
             <RefreshCw size={14} />
-            获取模型
+            {t('settings.credential.fetchModels')}
           </Button>
         </div>
       )}
@@ -327,7 +332,9 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
         >
           {probe.availability && (
             <span style={{ fontWeight: 600 }}>
-              {AVAILABILITY_TEXT[probe.availability] ?? probe.availability}
+              {AVAILABILITY_KEY[probe.availability]
+                ? t(AVAILABILITY_KEY[probe.availability])
+                : probe.availability}
             </span>
           )}
           {probe.message && (
@@ -350,7 +357,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
             className="mb-1 text-xs"
             style={{ color: 'var(--td-text-color-placeholder)' }}
           >
-            共 {models.list.length} 个模型
+            {t('settings.credential.modelCount', { n: models.list.length })}
           </div>
           {models.list.length > 0 ? (
             <>
@@ -366,7 +373,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
                   className="mt-1 text-xs"
                   style={{ color: 'var(--td-text-color-placeholder)' }}
                 >
-                  还有 {models.list.length - 30} 个未显示
+                  {t('settings.credential.modelsHidden', { n: models.list.length - 30 })}
                 </div>
               )}
             </>
@@ -375,7 +382,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
               className="text-xs leading-relaxed"
               style={{ color: 'var(--td-text-color-placeholder)' }}
             >
-              {models.note || '该 Agent 没有预设模型清单，发起对话时手动指定模型名即可。'}
+              {models.note || t('settings.credential.noPresetModels')}
             </div>
           )}
         </div>

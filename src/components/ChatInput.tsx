@@ -29,7 +29,7 @@ import {
   ListChecks,
 } from 'lucide-react';
 import { Model, PermissionMode, RegisteredAgent, AgentModelSource } from '../types';
-import { IMAGE_SIZES, IMAGE_SIZE_LABELS, IMAGE_MODELS } from '../imageOptions';
+import { IMAGE_SIZES, IMAGE_MODELS } from '../imageOptions';
 import { PermissionGapNotice } from './PermissionGapNotice';
 import { ModelSelectPopup } from './ModelSelectPopup';
 import { MENU_ITEM_SM_CLASS } from './menuItem';
@@ -38,6 +38,7 @@ import { MENU_ITEM_SM_CLASS } from './menuItem';
 import { applySenderTypography } from '../senderTextarea';
 // A113：输入框右键菜单的执行体。穿透两层 shadow 找 textarea、下编辑命令。
 import { senderEdit } from '../senderEdit';
+import { useTranslation, type MessageKey } from '../i18n';
 
 interface ChatInputProps {
   inputValue: string;
@@ -204,44 +205,52 @@ function iconOf(kind: AttachmentKind) {
 // 14 与全站主流图标档一致（项目里 size={14} 有 70+ 处，13px 正文配 14px 图标）。
 // 不要改成 16：那一档是给「单独成行」的标题图标用的，与 13px 标签并排会偏重。
 const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
-  label: string;
-  shortLabel: string;
+  shortKey: MessageKey;
+  descKey: MessageKey;
   icon: React.ReactNode;
   color: string;
-  description: string;
 }> = {
   'default': {
-    label: '默认模式',
-    shortLabel: '默认',
+    shortKey: 'chat.permission.default',
+    descKey: 'chat.permission.defaultDesc',
     icon: <Lock size={14} />,
     color: 'var(--tc-perm-default)',
-    description: '每次操作都需要确认'
   },
   'acceptEdits': {
-    label: '自动编辑',
-    shortLabel: '自动编辑',
+    shortKey: 'chat.permission.acceptEdits',
+    descKey: 'chat.permission.acceptEditsDesc',
     icon: <PencilLine size={14} />,
     color: 'var(--tc-perm-accept)',
-    description: '自动允许文件编辑操作'
   },
   'plan': {
-    // 文案与 shared/scenarios.ts 的 PERMISSION_MODE_LABEL 保持一致：
-    // 权限缺口提示会引用这个词（「当前权限模式『只读』…」），两边措辞不同会让用户
-    // 在提示里看到一个选择器里找不到的名字。verify:permission 有断言守着。
-    label: '只读',
-    shortLabel: '只读',
+    // 中文文案仍与 shared/scenarios.ts 的 PERMISSION_MODE_LABEL 一致；
+    // 权限缺口提示里的模式词由 ChatPage 按同一个 key 渲染，两边不会漂移。
+    shortKey: 'chat.permission.plan',
+    descKey: 'chat.permission.planDesc',
     icon: <ListChecks size={14} />,
     color: 'var(--tc-perm-plan)',
-    description: '只生成计划，不执行操作'
   },
   'bypassPermissions': {
-    // 同上：与 PERMISSION_MODE_LABEL 对齐（「全放行」）
-    label: '全放行',
-    shortLabel: '全放行',
+    shortKey: 'chat.permission.bypass',
+    descKey: 'chat.permission.bypassDesc',
     icon: <Unlock size={14} />,
     color: 'var(--tc-perm-bypass)',
-    description: '跳过所有权限确认（危险）'
   },
+};
+
+/** 尺寸说明与 `imageOptions.ts` 的 IMAGE_SIZE_LABELS 一一对应，只在界面层翻译 */
+const IMAGE_SIZE_KEY: Record<string, MessageKey> = {
+  '1024x1024': 'chat.imageSize.square',
+  '1344x768': 'chat.imageSize.landscape',
+  '768x1344': 'chat.imageSize.portrait',
+  '1440x720': 'chat.imageSize.wide',
+  '1024x1536': 'chat.imageSize.tall',
+};
+
+const IMAGE_MODEL_NOTE_KEY: Record<string, MessageKey> = {
+  'cogview-3-flash': 'chat.imageModel.free',
+  'cogview-4': 'chat.imageModel.quality',
+  'cogview-3-plus': 'chat.imageModel.quota',
 };
 
 export function ChatInput({
@@ -269,6 +278,8 @@ export function ChatInput({
   onImageModelChange,
   onAddModel,
 }: ChatInputProps) {
+  const { t, locale } = useTranslation();
+  const en = locale === 'en';
   const chatSenderRef = useRef<any>(null);
 
   const isGroup = !!mentionMembers;
@@ -366,7 +377,7 @@ export function ChatInput({
       const parts = full.split(/[\\/]/);
       const folderPath =
         parts.length > relDepth ? parts.slice(0, parts.length - relDepth).join(sep) : full;
-      const name = rel ? rel.split('/')[0] : parts[parts.length - 1] || '文件夹';
+      const name = rel ? rel.split('/')[0] : parts[parts.length - 1] || t('chat.input.folder');
       let total = 0;
       for (let i = 0; i < files.length; i++) total += files[i].size;
       picked.push({ path: folderPath, name, size: total, kind: 'folder' });
@@ -388,7 +399,7 @@ export function ChatInput({
       }
       return merged;
     });
-  }, []);
+  }, [t]);
 
   /* ── A93：粘贴剪贴板里的图片 ──
    *
@@ -419,7 +430,7 @@ export function ChatInput({
       }
     ).opc;
     if (!bridge?.savePastedImage) {
-      setPasteNote('当前环境不支持粘贴图片，请用左侧附件按钮选择文件');
+      setPasteNote(t('chat.input.pasteUnsupported'));
       return;
     }
 
@@ -435,12 +446,12 @@ export function ChatInput({
         path = null;
       }
       if (!path) {
-        setPasteNote('这张图片没能保存，请改用附件按钮');
+        setPasteNote(t('chat.input.pasteSaveFailed'));
         continue;
       }
       picked.push({
         path,
-        name: f.name && f.name !== 'image.png' ? f.name : `粘贴图片.${ext}`,
+        name: f.name && f.name !== 'image.png' ? f.name : t('chat.input.pastedImageName', { ext }),
         size: f.size,
         kind: 'image',
       });
@@ -458,7 +469,7 @@ export function ChatInput({
       }
       return merged;
     });
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     const el = chatSenderRef.current as HTMLElement | null;
@@ -630,10 +641,10 @@ export function ChatInput({
      而那个值我们既没设也改不了。改成与下方徽标同一句话，语义一致。
      P3：手动模式下这个值**是**我们自己填的，所以照实写；没填才给提示语。 */
   const selectedModelName = manualModel
-    ? selectedModel || '手动指定模型'
+    ? selectedModel || t('chat.input.manualModel')
     : !canPickModel
-      ? '模型由 Agent 决定'
-      : models.find(m => m.modelId === selectedModel)?.name || '选择模型';
+      ? t('chat.input.modelByAgent')
+      : models.find(m => m.modelId === selectedModel)?.name || t('chat.input.chooseModel');
 
   return (
     <div
@@ -652,7 +663,7 @@ export function ChatInput({
         {isGroup && (
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
             <span className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              @ 成员
+              {t('chat.input.mentionMembers')}
             </span>
             {mentionMembers!.map(m => {
               // 已提过的成员高亮：告诉用户「这个人已经被叫上了」。
@@ -666,7 +677,7 @@ export function ChatInput({
                   onClick={() => toggleMention(m)}
                   // title 随状态变：点下去会发生什么，直接写在提示里。
                   // （打靶脚本改用 data-mention-name 定位，不依赖这句文案。）
-                  title={used ? `取消 @ ${m.name}` : `在输入框中 @ ${m.name}`}
+                  title={used ? t('chat.input.mentionRemove', { name: m.name }) : t('chat.input.mentionAdd', { name: m.name })}
                   aria-pressed={used}
                   data-mention-name={m.name}
                   className="flex items-center gap-1 rounded-full px-2 py-[3px] text-caption transition-opacity hover:opacity-80"
@@ -742,8 +753,8 @@ export function ChatInput({
                   <button
                     type="button"
                     onClick={() => setAttachments(prev => prev.filter(x => x.path !== a.path))}
-                    title="移除附件"
-                    aria-label={`移除附件 ${a.name}`}
+                    title={t('chat.input.removeAttachment')}
+                    aria-label={t('chat.input.removeAttachmentNamed', { name: a.name })}
                     className="ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--tc-hover-chrome)]"
                   >
                     <X size={10} />
@@ -758,7 +769,7 @@ export function ChatInput({
               style={{ color: 'var(--td-text-color-placeholder)' }}
               data-attach-clear
             >
-              清空
+              {t('chat.input.clear')}
             </button>
           </div>
         )}
@@ -766,7 +777,7 @@ export function ChatInput({
         <ChatSender
           ref={chatSenderRef}
           value={inputValue}
-          placeholder={imageMode ? '描述你想生成的图像...' : '输入消息...'}
+          placeholder={imageMode ? t('chat.input.imagePlaceholder') : t('chat.input.placeholder')}
           disabled={modelRequired && !selectedModel}
           loading={isLoading}
           autosize={{ minRows: 1, maxRows: 6 }}
@@ -800,8 +811,8 @@ export function ChatInput({
                     prev ? null : { left: r.left, bottom: window.innerHeight - r.top + 6 }
                   );
                 }}
-                title="添加附件"
-                aria-label="添加附件"
+                title={t('chat.input.addAttachment')}
+                aria-label={t('chat.input.addAttachment')}
                 aria-expanded={!!attachMenu}
                 aria-haspopup="menu"
                 data-attach-toggle
@@ -828,8 +839,9 @@ export function ChatInput({
                   <div
                     ref={attachMenuRef}
                     role="menu"
-                    className="tc-glass fixed z-[60] w-[184px] overflow-hidden rounded-lg py-1 shadow-popup"
+                    className="tc-glass fixed z-[60] overflow-hidden rounded-lg py-1 shadow-popup"
                     style={{
+                      width: en ? 210 : 184,
                       left: attachMenu.left,
                       bottom: attachMenu.bottom,
                       // A115 续：内联描边会压掉 .tc-glass 的 border-color
@@ -851,7 +863,7 @@ export function ChatInput({
                       style={{ color: 'var(--td-text-color-primary)' }}
                     >
                       <FileUp size={14} style={{ color: 'var(--td-text-color-secondary)' }} />
-                      图片 / 文档 / 视频
+                      {t('chat.input.attachFile')}
                     </button>
                     <button
                       type="button"
@@ -865,7 +877,7 @@ export function ChatInput({
                       style={{ color: 'var(--td-text-color-primary)' }}
                     >
                       <FolderOpen size={14} style={{ color: 'var(--td-text-color-secondary)' }} />
-                      文件夹
+                      {t('chat.input.attachFolder')}
                     </button>
                   </div>,
                   document.body
@@ -910,15 +922,15 @@ export function ChatInput({
                 <Select
                   value={imageModel}
                   onChange={(value) => onImageModelChange?.(value as string)}
-                  placeholder="生图模型"
+                  placeholder={t('chat.input.imageModel')}
                   size="medium"
-                  style={{ width: 190 }}
+                  style={{ width: en ? 210 : 190 }}
                   suffixIcon={<ChevronDown size={14} />}
                   popupVisible={openSelect === 'imageModel'}
                   onPopupVisibleChange={v => setOpenSelect(v ? 'imageModel' : null)}
                   popupProps={{
                     overlayClassName: 'image-model-select-popup',
-                    overlayInnerStyle: { width: 250, padding: '6px 4px' },
+                    overlayInnerStyle: { width: en ? 280 : 250, padding: '6px 4px' },
                   }}
                 >
                   {IMAGE_MODELS.map(m => (
@@ -930,7 +942,7 @@ export function ChatInput({
                             className="text-caption leading-4 truncate"
                             style={{ color: 'var(--td-text-color-secondary)' }}
                           >
-                            {m.note}
+                            {t(IMAGE_MODEL_NOTE_KEY[m.id])}
                           </span>
                         )}
                       </div>
@@ -948,19 +960,19 @@ export function ChatInput({
                 <Select
                   value={imageSize}
                   onChange={(value) => onImageSizeChange?.(value as string)}
-                  placeholder="尺寸"
+                  placeholder={t('chat.input.imageSize')}
                   size="medium"
-                  style={{ width: 170 }}
+                  style={{ width: en ? 200 : 170 }}
                   suffixIcon={<ChevronDown size={14} />}
                   popupVisible={openSelect === 'imageSize'}
                   onPopupVisibleChange={v => setOpenSelect(v ? 'imageSize' : null)}
                   popupProps={{
                     overlayClassName: 'image-size-select-popup',
-                    overlayInnerStyle: { width: 200, padding: '6px 4px' },
+                    overlayInnerStyle: { width: en ? 230 : 200, padding: '6px 4px' },
                   }}
                 >
                   {IMAGE_SIZES.map(s => (
-                    <Select.Option key={s} value={s} label={IMAGE_SIZE_LABELS[s] || s} />
+                    <Select.Option key={s} value={s} label={t(IMAGE_SIZE_KEY[s])} />
                   ))}
                 </Select>
               </>
@@ -1079,9 +1091,9 @@ export function ChatInput({
                   backgroundColor: 'var(--td-bg-color-secondarycontainer)',
                   color: 'var(--td-text-color-placeholder)',
                 }}
-                title="该 Agent 自行决定使用哪个模型"
+                title={t('chat.input.modelByAgentHint')}
               >
-                模型由 Agent 决定
+                {t('chat.input.modelByAgent')}
               </span>
             )}
             
@@ -1107,8 +1119,8 @@ export function ChatInput({
                 <Tooltip
                   content={
                     reasoningOfSelectedModel?.defaultLevel
-                      ? `该模型默认：${reasoningLevels.find(l => l.value === reasoningOfSelectedModel.defaultLevel)?.label ?? reasoningOfSelectedModel.defaultLevel}`
-                      : '默认 = 用 CLI 自己的默认档位'
+                      ? t('chat.input.reasoningDefaultLevel', { level: reasoningLevels.find(l => l.value === reasoningOfSelectedModel.defaultLevel)?.label ?? reasoningOfSelectedModel.defaultLevel })
+                      : t('chat.input.reasoningDefaultHint')
                   }
                   placement="top"
                 >
@@ -1118,24 +1130,24 @@ export function ChatInput({
                     value={reasoningEffort}
                     onChange={(value) => onReasoningEffortChange?.(value as string)}
                     size="medium"
-                    style={{ width: 100 }}
+                    style={{ width: en ? 118 : 100 }}
                     suffixIcon={<ChevronDown size={14} />}
                     popupVisible={openSelect === 'reasoning'}
                     onPopupVisibleChange={v => setOpenSelect(v ? 'reasoning' : null)}
                     prefixIcon={<Brain size={14} />}
                     popupProps={{
                       overlayClassName: 'opc-choice-popup reasoning-select-popup',
-                      overlayInnerStyle: { width: 180, padding: '6px 4px' }
+                      overlayInnerStyle: { width: en ? 210 : 180, padding: '6px 4px' }
                     }}
                   >
-                    <Select.Option value="" label="默认">
+                    <Select.Option value="" label={t('chat.input.default')}>
                       <div className="flex items-center gap-2 py-0.5">
-                        <span className="text-body leading-5">默认</span>
+                        <span className="text-body leading-5">{t('chat.input.default')}</span>
                         <span
                           className="text-caption leading-4"
                           style={{ color: 'var(--td-text-color-placeholder)' }}
                         >
-                          用 CLI 自己的档位
+                          {t('chat.input.defaultOptionHint')}
                         </span>
                       </div>
                     </Select.Option>
@@ -1174,7 +1186,7 @@ export function ChatInput({
                   （菜单行只有图标+短标签，没有说明），菜单收起时仍然有用 ——
                   要的是「两者不同时出现」，不是「删掉一个」。 */}
               <Tooltip
-                content={currentModeConfig.description}
+                content={t(currentModeConfig.descKey)}
                 placement="top"
                 visible={permTipVisible && openSelect !== 'permission'}
                 onVisibleChange={v => setPermTipVisible(v)}
@@ -1185,7 +1197,7 @@ export function ChatInput({
                   value={permissionMode}
                   onChange={(value) => onPermissionModeChange(value as PermissionMode)}
                   size="medium"
-                  style={{ width: 112 }}
+                  style={{ width: en ? 128 : 112 }}
                   suffixIcon={<ChevronDown size={14} />}
                   popupVisible={openSelect === 'permission'}
                   onPopupVisibleChange={v => setOpenSelect(v ? 'permission' : null)}
@@ -1205,7 +1217,7 @@ export function ChatInput({
                   }
                   popupProps={{
                     overlayClassName: 'opc-choice-popup permission-select-popup',
-                    overlayInnerStyle: { width: 160, padding: '6px 4px' }
+                    overlayInnerStyle: { width: en ? 190 : 160, padding: '6px 4px' }
                   }}
                 >
                   {(Object.keys(PERMISSION_MODE_CONFIG) as PermissionMode[]).map(mode => {
@@ -1214,7 +1226,7 @@ export function ChatInput({
                       <Select.Option 
                         key={mode} 
                         value={mode} 
-                        label={config.shortLabel}
+                        label={t(config.shortKey)}
                       >
                         <div className="flex items-center gap-2 py-0.5">
                           {/* A84：同 prefixIcon，去掉 `${color}15` 方块，只留图标。
@@ -1225,7 +1237,7 @@ export function ChatInput({
                           >
                             {config.icon}
                           </span>
-                          <span className="text-body leading-5">{config.shortLabel}</span>
+                          <span className="text-body leading-5">{t(config.shortKey)}</span>
                         </div>
                       </Select.Option>
                     );
@@ -1247,21 +1259,21 @@ export function ChatInput({
           y={editMenu.y}
           onClose={() => setEditMenu(null)}
           items={[
-            { key: 'undo', label: '撤销', icon: <Undo2 size={14} />, onSelect: () => void runEdit('undo') },
-            { key: 'redo', label: '重做', icon: <Redo2 size={14} />, onSelect: () => void runEdit('redo') },
-            { key: 'cut', label: '剪切', icon: <Scissors size={14} />, onSelect: () => void runEdit('cut'), divider: true },
-            { key: 'copy', label: '复制', icon: <Copy size={14} />, onSelect: () => void runEdit('copy') },
-            { key: 'paste', label: '粘贴', icon: <ClipboardPaste size={14} />, onSelect: () => void runEdit('paste') },
+            { key: 'undo', label: t('chat.edit.undo'), icon: <Undo2 size={14} />, onSelect: () => void runEdit('undo') },
+            { key: 'redo', label: t('chat.edit.redo'), icon: <Redo2 size={14} />, onSelect: () => void runEdit('redo') },
+            { key: 'cut', label: t('chat.edit.cut'), icon: <Scissors size={14} />, onSelect: () => void runEdit('cut'), divider: true },
+            { key: 'copy', label: t('chat.edit.copy'), icon: <Copy size={14} />, onSelect: () => void runEdit('copy') },
+            { key: 'paste', label: t('chat.edit.paste'), icon: <ClipboardPaste size={14} />, onSelect: () => void runEdit('paste') },
             {
               key: 'selectall',
-              label: '全选',
+              label: t('chat.edit.selectAll'),
               icon: <TextCursorInput size={14} />,
               onSelect: () => void runEdit('selectAll'),
               divider: true,
             },
             {
               key: 'clear',
-              label: '清空输入框',
+              label: t('chat.edit.clear'),
               icon: <Eraser size={14} />,
               danger: true,
               onSelect: () => void runEdit('clear'),

@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { VerificationRow } from '../hooks/useVerifications';
 import { VerifyPanel } from './VerifyPanel';
 import { FileEvidencePanel } from './FileEvidencePanel';
+import { useTranslation } from '../i18n';
 
 interface RoundAuditProps {
   sessionId: string;
@@ -36,6 +37,7 @@ export function RoundAudit({
   stepCount,
   onUpdated,
 }: RoundAuditProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   /** 文件核对是否已经跑过（由面板回报；展开前一律是「未核对」） */
   const [evidence, setEvidence] = useState<{ done: boolean; alarm: boolean }>({
@@ -55,9 +57,9 @@ export function RoundAudit({
   const verifiedCount = rows.length;
   const evidenceText = evidence.done
     ? evidence.alarm
-      ? '文件有对不上'
-      : '文件已核对'
-    : '文件未核对';
+      ? t('chat.audit.mismatch')
+      : t('chat.audit.matched')
+    : t('chat.audit.unchecked');
 
   return (
     <div className="tc-verify" data-round-audit>
@@ -68,9 +70,9 @@ export function RoundAudit({
         onClick={() => setOpen(v => !v)}
         aria-expanded={open}
       >
-        <span className="tc-verify-title">本轮核对</span>
+        <span className="tc-verify-title">{t('chat.audit.title')}</span>
         <span className="tc-verify-meta" data-round-audit-meta>
-          {stepCount} 步 · {verifiedCount} 验证 · {evidenceText}
+          {t('chat.audit.meta', { steps: stepCount, verified: verifiedCount, evidence: evidenceText })}
         </span>
         {open ? <ChevronDown size={13} className="tc-verify-chev" /> : <ChevronRight size={13} className="tc-verify-chev" />}
       </button>

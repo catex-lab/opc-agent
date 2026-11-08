@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Loading } from 'tdesign-react';
+import { useTranslation } from '../i18n';
 import { ImageOff } from 'lucide-react';
 import type { ImageBlock } from '../types';
 
@@ -18,6 +19,7 @@ interface ImageBubbleProps {
 }
 
 export function ImageBubble({ image }: ImageBubbleProps) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
   const caption = image.prompt?.trim();
 
@@ -37,7 +39,7 @@ export function ImageBubble({ image }: ImageBubbleProps) {
             style={{ color: 'var(--td-text-color-secondary)' }}
           >
             <ImageOff size={22} />
-            <span>图像无法加载（链接可能已过期，或本地缓存已被清理）</span>
+            <span>{t('chat.image.loadFailed')}</span>
             {image.sourceUrl && image.sourceUrl !== image.url && (
               <a
                 href={image.sourceUrl}
@@ -46,14 +48,14 @@ export function ImageBubble({ image }: ImageBubbleProps) {
                 className="underline"
                 style={{ color: 'var(--td-brand-color)' }}
               >
-                尝试打开原始链接
+                {t('chat.image.openSource')}
               </a>
             )}
           </div>
         ) : (
           <img
             src={image.url}
-            alt={image.alt || caption || '生成的图像'}
+            alt={image.alt || caption || t('chat.image.generated')}
             loading="lazy"
             draggable={false}
             onLoad={() => setStatus('loaded')}
@@ -72,7 +74,7 @@ export function ImageBubble({ image }: ImageBubbleProps) {
           <div className="absolute inset-0 flex items-center justify-center gap-2">
             <Loading size="small" />
             <span className="text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
-              图像加载中…
+              {t('chat.image.loading')}
             </span>
           </div>
         )}
@@ -95,7 +97,7 @@ export function ImageBubble({ image }: ImageBubbleProps) {
 
       {image.expiresAt && (
         <div className="px-2 pt-1 text-caption" style={{ color: 'var(--td-warning-color-6, #E37318)' }}>
-          此图未缓存到本地，远端链接可能已失效
+          {t('chat.image.notCached')}
         </div>
       )}
     </div>

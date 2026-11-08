@@ -24,6 +24,7 @@ import type { UpdateState } from '../../shared/update';
 import { UPDATE_RELEASES_PAGE } from '../../shared/update';
 import { InfoHint } from './InfoHint';
 import { parseUpdateNotes, type NotesInline } from '../utils/updateNotes';
+import { useTranslation } from '../i18n';
 
 /** 行内片段：加粗 / 行内代码 / 纯文本 —— 只生成元素，不拼 HTML */
 function renderInlines(inlines: NotesInline[]): ReactNode[] {
@@ -85,6 +86,7 @@ function UpdateNotesDialog({
   onClose: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const { t } = useTranslation();
 
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -122,17 +124,17 @@ function UpdateNotesDialog({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="更新内容"
+        aria-label={t('settings.update.notes')}
         className="tc-update-notes-dialog"
         data-update-notes-dialog
       >
         <div className="tc-update-notes-dialog-head">
-          <span className="tc-update-notes-dialog-title">更新内容</span>
+          <span className="tc-update-notes-dialog-title">{t('settings.update.notes')}</span>
           <button
             ref={closeRef}
             type="button"
             className="tc-update-notes-close"
-            aria-label="关闭更新内容"
+            aria-label={t('settings.update.closeNotes')}
             onClick={onClose}
             data-update-notes-close
           >
@@ -184,6 +186,7 @@ function formatTime(iso?: string): string {
 }
 
 export function UpdateCard() {
+  const { t } = useTranslation();
   const api = useMemo(() => bridge()?.update, []);
   const [state, setState] = useState<UpdateState>(INITIAL);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -216,7 +219,7 @@ export function UpdateCard() {
     try {
       await fn();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : '操作失败');
+      setActionError(e instanceof Error ? e.message : t('settings.update.actionFailed'));
     } finally {
       setBusy(false);
     }
@@ -236,7 +239,7 @@ export function UpdateCard() {
     if (!api) return;
     void run(async () => {
       const r = await api.quitAndInstall();
-      if (!r?.ok) setActionError(r?.error ?? '无法开始安装');
+      if (!r?.ok) setActionError(r?.error ?? t('settings.update.cannotStart'));
     });
   };
 
@@ -254,19 +257,19 @@ export function UpdateCard() {
     <div className="tc-about-zone" data-update-section>
       <div className="tc-about-eyebrow">
         <RefreshCw />
-        更新
+        {t('settings.update.section')}
         <InfoHint
-          label="更新方式说明"
-          text="本项目没有代码签名证书，NSIS 安装包每次都会触发 UAC / SmartScreen 警告。所以常规更新只替换代码层 resources/app.asar；只有 Electron 运行时也变了，才会提示下载完整安装包。"
+          label={t('settings.update.hintLabel')}
+          text={t('settings.update.hintText')}
         />
       </div>
 
       <div className="tc-update-head">
         <div className="tc-update-version">
-          <span className="tc-update-label">当前版本</span>
+          <span className="tc-update-label">{t('settings.update.currentVersion')}</span>
           <span className="tc-about-ver">v{state.currentVersion}</span>
           {state.checkedAt && phase !== 'checking' ? (
-            <span className="tc-update-checked">上次检查 {formatTime(state.checkedAt)}</span>
+            <span className="tc-update-checked">{t('settings.update.lastChecked', { time: formatTime(state.checkedAt) })}</span>
           ) : null}
         </div>
 
@@ -275,12 +278,12 @@ export function UpdateCard() {
             {phase === 'ready' ? (
               <button type="button" className="tc-btn-brand" onClick={install} disabled={busy}>
                 <RotateCcw size={14} />
-                退出并重启
+                {t('settings.update.restart')}
               </button>
             ) : phase === 'available' && release && !release.requiresFull ? (
               <button type="button" className="tc-btn-brand" onClick={download}>
                 <Download size={14} />
-                下载更新
+                {t('settings.update.download')}
               </button>
             ) : (
               <button
@@ -291,7 +294,7 @@ export function UpdateCard() {
                 data-update-check
               >
                 <RefreshCw size={14} className={checking ? 'tc-update-spin' : undefined} />
-                {checking ? '检查中…' : '检查更新'}
+                {checking ? t('settings.update.checking') : t('settings.update.check')}
               </button>
             )}
           </div>
@@ -299,23 +302,23 @@ export function UpdateCard() {
       </div>
 
       {!state.supported ? (
-        <p className="tc-update-note">应用内更新只在安装后的桌面版可用；当前是浏览器开发态。</p>
+        <p className="tc-update-note">{t('settings.update.unsupported')}</p>
       ) : (
         <>
           <div className="tc-update-status" data-update-phase={phase}>
-            {phase === 'idle' && <span className="tc-update-text">尚未检查更新</span>}
+            {phase === 'idle' && <span className="tc-update-text">{t('settings.update.idle')}</span>}
 
             {checking && (
               <span className="tc-update-text tc-update-text--busy">
                 <RefreshCw className="tc-update-spin" size={14} />
-                正在检查更新…
+                {t('settings.update.checkingLong')}
               </span>
             )}
 
             {phase === 'latest' && (
               <span className="tc-update-text">
                 <Check size={14} />
-                已是最新版本
+                {t('settings.update.latest')}
               </span>
             )}
 
@@ -323,11 +326,11 @@ export function UpdateCard() {
               <div className="tc-update-available">
                 <div className="tc-update-text">
                   <Download size={14} />
-                  发现新版本 <b>v{release.version}</b>
+                  {t('settings.update.foundNew')} <b>v{release.version}</b>
                   <span className="tc-update-dim">
                     {release.requiresFull
-                      ? `完整包 ${formatSize(release.fullSize)}`
-                      : `代码层 ${formatSize(release.size)}`}
+                      ? t('settings.update.fullPackage', { size: formatSize(release.fullSize) })
+                      : t('settings.update.codeLayer', { size: formatSize(release.size) })}
                   </span>
                 </div>
                 {release.notes ? (
@@ -337,14 +340,13 @@ export function UpdateCard() {
                     onClick={() => setNotesOpen(true)}
                     data-update-notes-toggle
                   >
-                    查看更新内容
+                    {t('settings.update.viewNotes')}
                   </button>
                 ) : null}
                 {release.requiresFull ? (
                   <div className="tc-update-incompatible">
                     <p className="tc-update-note">
-                      本机 Electron 运行时与发布版本不一致，不能只替换代码层。请下载完整包覆盖安装；
-                      你的 data/ 与设置会保留。
+                      {t('settings.update.incompatibleNote')}
                     </p>
                     <a
                       href={release.fullUrl}
@@ -354,7 +356,7 @@ export function UpdateCard() {
                       data-update-full-link
                     >
                       <Download size={14} />
-                      下载完整包
+                      {t('settings.update.downloadFull')}
                     </a>
                   </div>
                 ) : null}
@@ -365,7 +367,7 @@ export function UpdateCard() {
               <div className="tc-update-progress" data-update-progress>
                 <div className="tc-update-text">
                   <Download size={14} />
-                  正在下载 {`${progress?.percent ?? 0}%`}
+                  {t('settings.update.downloading', { percent: progress?.percent ?? 0 })}
                   <span className="tc-update-dim">
                     {formatSize(progress?.received ?? 0)} / {formatSize(progress?.total ?? 0)}
                   </span>
@@ -380,10 +382,10 @@ export function UpdateCard() {
               <div className="tc-update-ready">
                 <span className="tc-update-text">
                   <RotateCcw size={14} />
-                  v{state.stagedVersion ?? release?.version ?? ''} 已下载，重启后生效
+                  {t('settings.update.ready', { version: state.stagedVersion ?? release?.version ?? '' })}
                 </span>
                 <p className="tc-update-note">
-                  退出时会替换 resources/app.asar；新版本若启动失败，会自动恢复旧版本。
+                  {t('settings.update.readyNote')}
                 </p>
               </div>
             )}
@@ -397,7 +399,7 @@ export function UpdateCard() {
                 <div className="tc-update-error" data-update-error data-update-legacy>
                   <span className="tc-update-text">
                     <AlertCircle size={14} />
-                    此版本需手动更新一次
+                    {t('settings.update.legacyTitle')}
                   </span>
                   <a
                     href={error.manualUrl || UPDATE_RELEASES_PAGE}
@@ -406,7 +408,7 @@ export function UpdateCard() {
                     className="tc-update-link"
                     data-update-legacy-link
                   >
-                    下载完整安装包
+                    {t('settings.update.downloadFullInstaller')}
                   </a>
                 </div>
               ) : (
@@ -422,7 +424,7 @@ export function UpdateCard() {
                     className="tc-update-link"
                     data-update-manual-link
                   >
-                    手动下载
+                    {t('settings.update.manualDownload')}
                   </a>
                   {error.code === 'apply-failed' || error.code === 'rollback' ? (
                     <button
@@ -432,7 +434,7 @@ export function UpdateCard() {
                       disabled={busy}
                       data-update-dismiss
                     >
-                      忽略
+                      {t('settings.update.dismiss')}
                     </button>
                   ) : null}
                 </div>
@@ -444,8 +446,9 @@ export function UpdateCard() {
 
           {/* 风险常驻：这些后果不该藏在浮层里 */}
           <p className="tc-update-note tc-update-risk">
-            更新只替换代码层的 <code>app.asar</code>，不会触碰 data/ 里的会话、图片与设置。
-            清单验签、sha512 与体积校验任何一项不通过都会拒绝安装。
+            {t('settings.update.riskPrefix')}
+            <code>app.asar</code>
+            {t('settings.update.riskSuffix')}
           </p>
         </>
       )}

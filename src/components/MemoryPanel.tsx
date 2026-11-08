@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Textarea, MessagePlugin, Input, Select } from 'tdesign-react';
 import { InfoHint } from './InfoHint';
+import { useTranslation } from '../i18n';
 
 /**
  * 记忆（A38）—— Hermes 式四层记忆的设置面板。
@@ -63,10 +64,10 @@ interface ProjectBrief {
   sessionCount: number;
 }
 
-const BUDGET_HINT =
-  '这是「跨会话必须知道的事」，不是日记。超预算不会保存失败，但注入时会被截断 —— 越靠前的内容优先级越高。';
+const BUDGET_HINT_KEY = 'settings.memory.budgetHint';
 
 export function MemoryPanel() {
+  const { t, locale } = useTranslation();
   const [core, setCore] = useState('');
   const [user, setUser] = useState('');
   const [skills, setSkills] = useState<SkillBrief[]>([]);
@@ -132,11 +133,11 @@ export function MemoryPanel() {
         setProjectStats(null);
       }
     } catch {
-      MessagePlugin.error('读取记忆失败');
+      MessagePlugin.error(t('settings.memory.readFailed'));
     } finally {
       setLoading(false);
     }
-  }, [projectPath]);
+  }, [projectPath, t]);
 
   // 项目列表只在挂载时拉一次：项目是「用过的目录」，不需要跟着记忆刷新
   useEffect(() => {
@@ -169,13 +170,23 @@ export function MemoryPanel() {
         body: JSON.stringify(body),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || '保存失败');
+      if (!r.ok) throw new Error(j.error || t('settings.memory.saveFailedShort'));
       if (isProject) setProjectStats(j.projectStats ?? null);
       else setStats(j.stats ?? null);
       const over = which === 'core' ? j.core?.overBudget : j.user?.overBudget;
-      const where = which === 'core' && isProject ? '项目记忆' : '记忆';
-      if (over) MessagePlugin.warning(`${where}已保存，但超出预算，注入时会被截断`);
-      else MessagePlugin.success(`${where}已保存`);
+      if (over) {
+        MessagePlugin.warning(
+          isProject && which === 'core'
+            ? t('settings.memory.projectSavedOverBudget')
+            : t('settings.memory.savedOverBudget')
+        );
+      } else {
+        MessagePlugin.success(
+          isProject && which === 'core'
+            ? t('settings.memory.projectSaved')
+            : t('settings.memory.saved')
+        );
+      }
       if (isProject) void refresh();
     } catch (e) {
       MessagePlugin.error((e as Error).message);
@@ -204,9 +215,9 @@ export function MemoryPanel() {
       });
       const j = await r.json();
       setHits(j.hits ?? []);
-      if (!(j.hits ?? []).length) MessagePlugin.info('没有命中');
+      if (!(j.hits ?? []).length) MessagePlugin.info(t('settings.memory.noHits'));
     } catch {
-      MessagePlugin.error('检索失败');
+      MessagePlugin.error(t('settings.memory.searchFailed'));
     }
   };
 
@@ -217,7 +228,7 @@ export function MemoryPanel() {
       setDraft(j.body ?? '');
       setEditing(name);
     } catch {
-      MessagePlugin.error('读取技能失败');
+      MessagePlugin.error(t('settings.memory.skillReadFailed'));
     }
   };
 
@@ -230,8 +241,8 @@ export function MemoryPanel() {
         body: JSON.stringify({ body: draft, cwd: projectPath || undefined }),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || '保存失败');
-      MessagePlugin.success('技能已保存');
+      if (!r.ok) throw new Error(j.error || t('settings.memory.saveFailedShort'));
+      MessagePlugin.success(t('settings.memory.skillSaved'));
       setEditing(null);
       void refresh();
     } catch (e) {
@@ -242,11 +253,11 @@ export function MemoryPanel() {
   const removeSkill = async (name: string) => {
     try {
       await fetch(`/api/memory/skills/${encodeURIComponent(name)}${scopeQs}`, { method: 'DELETE' });
-      MessagePlugin.success('已删除');
+      MessagePlugin.success(t('settings.memory.deleted'));
       if (editing === name) setEditing(null);
       void refresh();
     } catch {
-      MessagePlugin.error('删除失败');
+      MessagePlugin.error(t('settings.memory.deleteFailed'));
     }
   };
 
@@ -255,31 +266,33 @@ export function MemoryPanel() {
       className="text-xs"
       style={{ color: tokens > budget ? 'var(--td-warning-color)' : 'var(--td-text-color-placeholder)' }}
     >
-      {tokens} / {budget} token{tokens > budget ? ' · 已超预算' : ''}
+      {tokens} / {budget} token{tokens > budget ? t('settings.memory.overBudget') : ''}
     </span>
   );
 
-  if (loading) return <div className="py-10 text-center text-body">加载中…</div>;
+  if (loading) return <div className="py-10 text-center text-body">{t('settings.memory.loading')}</div>;
 
   return (
     <div>
       <div className="mb-4 flex items-center gap-2">
         <h2 className="text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-          记忆
+          {t('settings.memory.title')}
         </h2>
         <InfoHint
           warn
-          label="记忆注入范围说明"
-          text="只对「模型直连」与 WorkBuddy（SDK）两类注入 —— 它们的系统提示由我们装配。CLI / ACP 类 Agent（Claude Code、Hermes 等）的提示词在它们自己的 harness 里，我们塞不进去，也不该塞。"
+          label={t('settings.memory.injectionHintLabel')}
+          text={t('settings.memory.injectionHint')}
         />
       </div>
 
       {/* A98：作用域切换 */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <span className="text-xs" style={{ color: 'var(--td-text-color-secondary)' }}>
-          作用域
+          {t('settings.memory.scope')}
         </span>
-        <div style={{ width: 260 }}>
+        {/* 英文的「Global (shared by all projects)」比中文长一半：给下拉多留 40px，
+            中文仍是 260px，不改变既有布局 */}
+        <div style={{ width: locale === 'en' ? 300 : 260 }}>
           <Select
             value={projectPath}
             onChange={v => {
@@ -288,19 +301,24 @@ export function MemoryPanel() {
               setHits([]);
             }}
             options={[
-              { label: '全局（所有项目共用）', value: '' },
-              ...projects.map(p => ({ label: `${p.name}（${p.sessionCount} 个会话）`, value: p.path })),
+              { label: t('settings.memory.scopeGlobal'), value: '' },
+              ...projects.map(p => ({
+                label: t('settings.memory.scopeProject', { name: p.name, n: p.sessionCount }),
+                value: p.path,
+              })),
             ]}
-            placeholder="选择作用域"
+            placeholder={t('settings.memory.scopePlaceholder')}
           />
         </div>
         <InfoHint
-          label="作用域说明"
-          text="全局记忆注入到所有会话；项目记忆只在工作目录属于该项目时注入，并且排在全局之后（更具体、优先级更高）。用户画像始终是全局的。"
+          label={t('settings.memory.scopeHintLabel')}
+          text={t('settings.memory.scopeHint')}
         />
         {isProject && (
           <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-            {projectStats?.exists ? '该项目已有记忆' : '该项目还没有记忆，保存后才会创建'}
+            {projectStats?.exists
+              ? t('settings.memory.projectHasMemory')
+              : t('settings.memory.projectNoMemory')}
           </span>
         )}
       </div>
@@ -312,17 +330,21 @@ export function MemoryPanel() {
       >
         {isProject ? (
           <>
-            <span>项目技能 {projectStats?.skillCount ?? 0} 个</span>
-            <span>技能合计 {projectStats?.skillTokens ?? 0} token</span>
-            <span>核心记忆 {counter(projectStats?.coreTokens ?? 0, projectStats?.coreBudget ?? 800)}</span>
-            <span>全局技能 {globalSkillCount} 个仍然生效</span>
+            <span>{t('settings.memory.projectSkillsCount', { n: projectStats?.skillCount ?? 0 })}</span>
+            <span>{t('settings.memory.projectSkillTokens', { n: projectStats?.skillTokens ?? 0 })}</span>
+            <span>
+              {t('settings.memory.coreMemory')} {counter(projectStats?.coreTokens ?? 0, projectStats?.coreBudget ?? 800)}
+            </span>
+            <span>{t('settings.memory.globalSkillsEffective', { n: globalSkillCount })}</span>
           </>
         ) : (
           <>
-            <span>技能 {stats?.skillCount ?? 0} 个</span>
-            <span>技能合计 {stats?.skillTokens ?? 0} token</span>
-            <span>已索引 {stats?.indexedDocs ?? 0} 条</span>
-            <span>核心记忆 {counter(stats?.coreTokens ?? 0, stats?.coreBudget ?? 800)}</span>
+            <span>{t('settings.memory.skillsCount', { n: stats?.skillCount ?? 0 })}</span>
+            <span>{t('settings.memory.skillTokens', { n: stats?.skillTokens ?? 0 })}</span>
+            <span>{t('settings.memory.indexedCount', { n: stats?.indexedDocs ?? 0 })}</span>
+            <span>
+              {t('settings.memory.coreMemory')} {counter(stats?.coreTokens ?? 0, stats?.coreBudget ?? 800)}
+            </span>
           </>
         )}
       </div>
@@ -331,9 +353,9 @@ export function MemoryPanel() {
       <section className="mb-6">
         <div className="mb-1 flex items-center gap-2">
           <h3 className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-            核心记忆{isProject ? '（本项目）' : '（全局）'}
+            {isProject ? t('settings.memory.coreTitleProject') : t('settings.memory.coreTitleGlobal')}
           </h3>
-          <InfoHint label="核心记忆说明" text={BUDGET_HINT} />
+          <InfoHint label={t('settings.memory.budgetHintLabel')} text={t(BUDGET_HINT_KEY)} />
         </div>
         <Textarea
           value={core}
@@ -341,14 +363,14 @@ export function MemoryPanel() {
           autosize={{ minRows: 6, maxRows: 16 }}
           placeholder={
             isProject
-              ? '只写这个项目的事：技术栈、构建命令、目录约定、本项目踩过的坑…'
-              : '写跨项目必须知道的事实：通用环境约定、长期任务…'
+              ? t('settings.memory.corePlaceholderProject')
+              : t('settings.memory.corePlaceholderGlobal')
           }
         />
         <div className="mt-1 flex items-center justify-between">
           {counter(estimate(core), isProject ? (projectStats?.coreBudget ?? 800) : (stats?.coreBudget ?? 800))}
           <Button variant="outline" loading={saving === 'core'} onClick={() => void save('core')}>
-            保存
+            {t('settings.memory.save')}
           </Button>
         </div>
       </section>
@@ -357,23 +379,23 @@ export function MemoryPanel() {
       <section className="mb-6">
         <div className="mb-1 flex items-center gap-2">
           <h3 className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-            用户画像（全局）
+            {t('settings.memory.userTitle')}
           </h3>
           <InfoHint
-            label="用户画像说明"
-            text="你的技术栈偏好、沟通风格、长期目标。画像要短 —— 长了就等于没画像。约 500 token。这一份始终是全局的：它描述「你这个人」，不随项目变。"
+            label={t('settings.memory.userHintLabel')}
+            text={t('settings.memory.userHint')}
           />
         </div>
         <Textarea
           value={user}
           onChange={v => setUser(String(v))}
           autosize={{ minRows: 4, maxRows: 12 }}
-          placeholder="- 技术栈偏好：&#10;- 沟通风格：&#10;- 长期目标："
+          placeholder={t('settings.memory.userPlaceholder')}
         />
         <div className="mt-1 flex items-center justify-between">
           {counter(estimate(user), stats?.userBudget ?? 500)}
           <Button variant="outline" loading={saving === 'user'} onClick={() => void save('user')}>
-            保存
+            {t('settings.memory.save')}
           </Button>
         </div>
       </section>
@@ -381,17 +403,17 @@ export function MemoryPanel() {
       {/* L4 检索 */}
       <section className="mb-6">
         <h3 className="mb-2 text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-          检索长期记忆
+          {t('settings.memory.searchTitle')}
         </h3>
         <div className="flex items-center gap-2">
           <Input
             value={query}
             onChange={v => setQuery(String(v))}
-            placeholder="关键词（支持全文检索，输入 - 也不会报错）"
+            placeholder={t('settings.memory.searchPlaceholder')}
             onEnter={() => void search()}
           />
           <Button variant="outline" onClick={() => void search()}>
-            检索
+            {t('settings.memory.search')}
           </Button>
         </div>
         {hits.length > 0 && (
@@ -416,19 +438,21 @@ export function MemoryPanel() {
       <section>
         <div className="mb-2 flex items-center gap-2">
           <h3 className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-            技能（{skills.length}）{isProject ? ' · 本项目' : ' · 全局'}
+            {isProject
+              ? t('settings.memory.skillsTitleProject', { n: skills.length })
+              : t('settings.memory.skillsTitleGlobal', { n: skills.length })}
           </h3>
           {isProject && globalSkillCount > 0 && (
             <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              另有 {globalSkillCount} 个全局技能仍会生效（同名时项目覆盖全局）
+              {t('settings.memory.globalSkillsNote', { n: globalSkillCount })}
             </span>
           )}
         </div>
         {skills.length === 0 ? (
           <p className="text-body" style={{ color: 'var(--td-text-color-placeholder)' }}>
             {isProject
-              ? '这个项目还没有自己的技能。全局技能仍然生效。'
-              : '还没有沉淀下来的技能。任务跑完后会自动提炼（可复用步骤 + diff 统计）。'}
+              ? t('settings.memory.noProjectSkills')
+              : t('settings.memory.noSkills')}
           </p>
         ) : (
           <ul className="space-y-1">
@@ -450,10 +474,10 @@ export function MemoryPanel() {
                   {/* A137：技能列表**行内**动作，留 24。下面的「取消/保存技能」
                       是编辑器提交档，走 32 —— 同一个文件里两档是故意的。 */}
                   <Button size="small" variant="text" onClick={() => void openSkill(s.name)}>
-                    编辑
+                    {t('settings.memory.edit')}
                   </Button>
                   <Button size="small" variant="text" onClick={() => void removeSkill(s.name)}>
-                    删除
+                    {t('settings.memory.delete')}
                   </Button>
                 </div>
               </li>
@@ -464,7 +488,7 @@ export function MemoryPanel() {
         {editing && (
           <div className="mt-2" ref={editorRef} data-memory-editor>
             <div className="mb-1 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              正在编辑：{editing}.md
+              {t('settings.memory.editing', { name: editing })}
             </div>
             <Textarea value={draft} onChange={v => setDraft(String(v))} autosize={{ minRows: 8, maxRows: 24 }} />
             <div className="mt-1 flex justify-end gap-2">
@@ -472,10 +496,10 @@ export function MemoryPanel() {
                   列表行里那两颗「编辑/删除」（text 按钮、缩在行尾）才留 24。
                   两者的区别是「跟输入框」还是「跟列表行」，不是按钮大小偏好。 */}
               <Button variant="text" onClick={() => setEditing(null)}>
-                取消
+                {t('settings.common.cancel')}
               </Button>
               <Button variant="outline" onClick={() => void saveSkill()}>
-                保存技能
+                {t('settings.memory.saveSkill')}
               </Button>
             </div>
           </div>

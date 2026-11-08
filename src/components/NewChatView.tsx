@@ -8,6 +8,17 @@ import { AgentAvatar } from './AgentAvatar';
 import { PermissionGapNotice } from './PermissionGapNotice';
 import { InfoHint } from './InfoHint';
 import { pickDirectory, hasNativeDialogs } from '../workspace';
+import { useTranslation, type MessageKey } from '../i18n';
+
+/** 场景数据仍是中文常量（服务端与门禁在用），界面按 id 取本地化文案 */
+const SCENARIO_TEXT: Record<string, { label: MessageKey; desc: MessageKey }> = {
+  work: { label: 'chat.scenario.work', desc: 'chat.scenario.workDesc' },
+  qa: { label: 'chat.scenario.qa', desc: 'chat.scenario.qaDesc' },
+  dev: { label: 'chat.scenario.dev', desc: 'chat.scenario.devDesc' },
+  code: { label: 'chat.scenario.code', desc: 'chat.scenario.codeDesc' },
+  write: { label: 'chat.scenario.write', desc: 'chat.scenario.writeDesc' },
+  image: { label: 'chat.scenario.image', desc: 'chat.scenario.imageDesc' },
+};
 
 /** 场景图标键 → lucide 组件。数据层只存字符串键，映射留在 UI（避免数据耦合 UI 库） */
 const SCENARIO_ICONS: Record<string, LucideIcon> = {
@@ -57,6 +68,7 @@ export function NewChatView({
   onSetPermissionMode,
   onSelectScenario,
 }: NewChatViewProps) {
+  const { t } = useTranslation();
   const selectedAgent = agents.find(a => a.id === newChatAgentId);
   const selectedScenario = scenarios.find(s => s.id === selectedScenarioId);
   /**
@@ -91,7 +103,7 @@ export function NewChatView({
             {APP_CONFIG.name}
           </h2>
           <p style={{ color: 'var(--td-text-color-secondary)' }}>
-            选择一个 Agent 开始对话
+            {t('chat.new.subtitle')}
           </p>
         </div>
 
@@ -99,10 +111,10 @@ export function NewChatView({
         <div className="mb-6">
           <div className="flex items-baseline justify-between mb-3">
             <label className="block text-body-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-              场景
+              {t('chat.new.scenario')}
             </label>
             <span className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              {selectedScenario ? '再点一次可取消，回到自定义' : '可选，不选则直接挑 Agent'}
+              {selectedScenario ? t('chat.new.scenarioSelectedHint') : t('chat.new.scenarioOptionalHint')}
             </span>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -115,7 +127,7 @@ export function NewChatView({
                   type="button"
                   data-scenario={s.id}
                   onClick={() => onSelectScenario(isSelected ? undefined : s.id)}
-                  title={s.description}
+                  title={SCENARIO_TEXT[s.id] ? t(SCENARIO_TEXT[s.id].desc) : s.description}
                   className={`tc-choice-card flex flex-col items-start gap-1.5 p-2.5 text-left${isSelected ? ' is-selected' : ''}`}
                   style={
                     isSelected
@@ -137,10 +149,10 @@ export function NewChatView({
                     {Icon ? <Icon size={15} /> : null}
                   </span>
                   <span className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-                    {s.label}
+                    {SCENARIO_TEXT[s.id] ? t(SCENARIO_TEXT[s.id].label) : s.label}
                   </span>
                   <span className="text-caption leading-snug" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                    {s.description}
+                    {SCENARIO_TEXT[s.id] ? t(SCENARIO_TEXT[s.id].desc) : s.description}
                   </span>
                 </button>
               );
@@ -151,7 +163,7 @@ export function NewChatView({
         {/* Agent 选择 */}
         <div className="mb-6">
           <label className="block text-body-lg font-medium mb-3" style={{ color: 'var(--td-text-color-primary)' }}>
-            选择 Agent
+            {t('chat.new.chooseAgent')}
           </label>
           {/* A83：Agent 数量不固定（奇数时固定两列会剩一张孤卡）。
               换成 .tc-cards：换行后最后一行自动撑满，孤卡变成一张宽卡。
@@ -223,18 +235,18 @@ export function NewChatView({
         {/* 工作目录 */}
         <div className="mb-6">
           <label className="block text-body-lg font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>
-            工作目录{' '}
+            {t('chat.new.workspace')}{' '}
             {selectedScenario?.needsCwd ? (
-              <span style={{ color: 'var(--td-error-color)' }}>（该场景建议填写）</span>
+              <span style={{ color: 'var(--td-error-color)' }}>{t('chat.new.workspaceRequired')}</span>
             ) : (
-              <span style={{ color: 'var(--td-text-color-placeholder)' }}>(可选)</span>
+              <span style={{ color: 'var(--td-text-color-placeholder)' }}>{t('chat.new.optional')}</span>
             )}
           </label>
           <div className="flex items-center gap-2">
             <Input
               value={newChatCwd}
               onChange={(v) => onSetCwd(v as string)}
-              placeholder="例如：/Users/username/projects/my-app"
+              placeholder={t('chat.new.cwdPlaceholder')}
               prefixIcon={<FolderOpen />}
             />
             {/*
@@ -260,14 +272,14 @@ export function NewChatView({
                 data-newchat-pick-dir
               >
                 <FolderOpen />
-                选择目录
+                {t('chat.new.pickDir')}
               </button>
             )}
           </div>
           <p className="text-secondary mt-1.5" style={{ color: 'var(--td-text-color-placeholder)' }}>
             {selectedScenario?.needsCwd
-              ? '该场景会读写文件 / 执行命令，请指定它可作业的目录'
-              : '指定 Agent 的工作目录，用于文件操作等'}
+              ? t('chat.new.cwdRequiredHint')
+              : t('chat.new.cwdHint')}
           </p>
         </div>
 
@@ -285,17 +297,17 @@ export function NewChatView({
               className="mb-2 flex items-center gap-1.5 text-body-lg font-medium"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              思考强度 <span style={{ color: 'var(--td-text-color-placeholder)' }}>(可选)</span>
+              {t('chat.new.reasoning')} <span style={{ color: 'var(--td-text-color-placeholder)' }}>{t('chat.new.optional')}</span>
               <InfoHint
-                label="思考强度说明"
-                text={`档位由官方 CLI 提供（${reasoningLevels.length} 档）；换模型后档位表会跟着变`}
+                label={t('chat.new.reasoningHintLabel')}
+                text={t('chat.new.reasoningHint', { n: reasoningLevels.length })}
               />
             </label>
             <Tooltip
               content={
                 reasoningOfModel?.defaultLevel
-                  ? `该模型默认：${reasoningLevels.find(l => l.value === reasoningOfModel.defaultLevel)?.label ?? reasoningOfModel.defaultLevel}`
-                  : '默认 = 用 CLI 自己的默认档位'
+                  ? t('chat.input.reasoningDefaultLevel', { level: reasoningLevels.find(l => l.value === reasoningOfModel.defaultLevel)?.label ?? reasoningOfModel.defaultLevel })
+                  : t('chat.input.reasoningDefaultHint')
               }
               placement="top"
             >
@@ -311,14 +323,14 @@ export function NewChatView({
                    260px，内容（档位名 + 一句说明）刚好排得下。 */
                 popupProps={{ overlayInnerStyle: { width: 260, padding: '6px 4px' } }}
               >
-                <Select.Option value="" label="默认">
+                <Select.Option value="" label={t('chat.input.default')}>
                   <div className="flex items-center gap-2 py-0.5">
-                    <span className="text-body leading-5">默认</span>
+                    <span className="text-body leading-5">{t('chat.input.default')}</span>
                     <span
                       className="text-caption leading-4"
                       style={{ color: 'var(--td-text-color-placeholder)' }}
                     >
-                      用 CLI 自己的档位
+                      {t('chat.input.defaultOptionHint')}
                     </span>
                   </div>
                 </Select.Option>
@@ -354,10 +366,12 @@ export function NewChatView({
                     color: selectedScenario.color,
                   }}
                 >
-                  {selectedScenario.label}场景
+                  {SCENARIO_TEXT[selectedScenario.id]
+                    ? t(SCENARIO_TEXT[selectedScenario.id].label)
+                    : selectedScenario.label}{t('chat.new.scenarioSuffix')}
                 </span>
                 <span className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                  {selectedScenario.description}
+                  {SCENARIO_TEXT[selectedScenario.id] ? t(SCENARIO_TEXT[selectedScenario.id].desc) : selectedScenario.description}
                 </span>
               </div>
             )}
@@ -387,7 +401,7 @@ export function NewChatView({
 
         {/* 提示文字 */}
         <p className="text-center text-secondary mt-6" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          模型和权限模式可在输入框下方切换
+          {t('chat.new.switchHint')}
         </p>
         </div>
       </div>

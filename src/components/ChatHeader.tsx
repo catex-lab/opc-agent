@@ -7,9 +7,25 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { WorkspaceBadge } from './WorkspaceBadge';
 import { KbScopeChip } from './kb/KbScopeChip';
 import { MENU_ITEM_TEXT_CLASS } from './menuItem';
-import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent } from '../types';
+import { agentStatusViewOf, type RegisteredAgent } from '../types';
 import type { ScenarioTemplate } from '../scenarios';
 import { useAgentRemarks } from '../agentRemarks';
+import { useTranslation, type MessageKey } from '../i18n';
+
+/** 状态词仍由 `agentStatusViewOf` 判定，这里只把它的 key 映射到文案表 */
+const STATUS_KEY: Record<string, MessageKey> = {
+  ready: 'status.ready',
+  'needs-auth': 'status.needs-auth',
+  'needs-setup': 'status.needs-setup',
+  unreachable: 'status.unreachable',
+  'not-installed': 'status.not-installed',
+  unsupported: 'status.unsupported',
+  unknown: 'status.unknown',
+  'probe-timeout': 'status.probe-timeout',
+  'credential-invalid': 'status.credential-invalid',
+  'probe-failed': 'status.probe-failed',
+  'needs-key': 'status.needs-key',
+};
 
 interface ChatHeaderProps {
   agent: RegisteredAgent | undefined;
@@ -75,6 +91,7 @@ export function ChatHeader({
   sessionId,
   sessionTitle,
 }: ChatHeaderProps) {
+  const { t } = useTranslation();
   const [showDetail, setShowDetail] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const moreRef = useRef<HTMLDetailsElement>(null);
@@ -82,8 +99,9 @@ export function ChatHeader({
   const remarks = useAgentRemarks();
   const displayName = (agent && remarks[agent.id]) || agent?.name || fallbackTitle;
 
-  const avail = agent?.status.availability;
   const meta = agent ? agentStatusViewOf(agent) : null;
+  /** 状态词由 `agentStatusViewOf` 的 key 决定展示语言，判定逻辑不变 */
+  const statusText = agent && meta ? t(STATUS_KEY[meta.key] ?? 'status.unknown') : t('chat.offline');
 
   const closeMore = () => {
     if (moreRef.current) moreRef.current.open = false;
@@ -128,7 +146,7 @@ export function ChatHeader({
       surface="chrome"
       className="relative"
       onBack={onBack}
-      backLabel="返回消息列表"
+      backLabel={t('chat.back')}
       // 名字允许被截断，但截断后的完整名字要能读回来：
       // h1 自带 truncate，这里再套一层只为挂 title（原生悬停提示）。
       title={<span className="block truncate" title={displayName}>{displayName}</span>}
@@ -142,10 +160,10 @@ export function ChatHeader({
               data-chat-status
               className="flex shrink-0 items-center gap-1 whitespace-nowrap text-secondary"
               style={{ color: meta.color }}
-              title={agent?.status.message || (agent ? availabilityLabelOf(agent) : meta.label)}
+              title={agent?.status.message || statusText}
             >
-              <StatusDot color={meta.dot} shape={meta.dotShape} size={6} statusLabel={meta.label} />
-              {agent ? availabilityLabelOf(agent) : meta.label}
+              <StatusDot color={meta.dot} shape={meta.dotShape} size={6} statusLabel={statusText} />
+              {statusText}
             </span>
           ) : (
             <span
@@ -153,7 +171,7 @@ export function ChatHeader({
               className="shrink-0 whitespace-nowrap text-secondary"
               style={{ color: 'var(--td-text-color-placeholder)' }}
             >
-              离线
+              {t('chat.offline')}
             </span>
           )}
           {scenario && (
@@ -165,7 +183,7 @@ export function ChatHeader({
                 backgroundColor: `color-mix(in srgb, ${scenario.color} 12%, transparent)`,
                 color: scenario.color,
               }}
-              title={`场景：${scenario.description}`}
+              title={t('chat.scenarioTitle', { description: scenario.description })}
             >
               {scenario.label}
             </span>
@@ -203,8 +221,8 @@ export function ChatHeader({
             <button
               type="button"
               onClick={onToggleWorkspace}
-              title="展开工作区"
-              aria-label="展开工作区"
+              title={t('chat.expandWorkspace')}
+              aria-label={t('chat.expandWorkspace')}
               data-workspace-toggle="expand"
               className="flex h-8 w-8 items-center justify-center rounded-lg bg-transparent transition-colors hover:bg-[var(--tc-hover-chrome)]"
               style={{ color: 'var(--td-text-color-secondary)' }}
@@ -216,8 +234,8 @@ export function ChatHeader({
           <summary
             className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg bg-transparent transition-colors hover:bg-[var(--tc-hover-chrome)]"
             style={{ color: 'var(--td-text-color-secondary)' }}
-            title="更多"
-            aria-label="更多操作"
+            title={t('chat.more')}
+            aria-label={t('chat.moreActions')}
           >
             <MoreHorizontal size={16} />
           </summary>
@@ -239,7 +257,7 @@ export function ChatHeader({
               className={MENU_ITEM_TEXT_CLASS}
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              Agent 详情
+              {t('chat.agentDetail')}
             </button>
             <button
               type="button"
@@ -250,7 +268,7 @@ export function ChatHeader({
               className={MENU_ITEM_TEXT_CLASS}
               style={{ color: 'var(--td-error-color)' }}
             >
-              删除会话
+              {t('chat.deleteChat')}
             </button>
           </div>
         </details>
@@ -263,8 +281,8 @@ export function ChatHeader({
       {/* 删除确认：与会话列表同一个对话框（两步确认，不误删） */}
       <ConfirmDialog
         open={confirmDelete}
-        title="删除会话"
-        confirmText="删除"
+        title={t('chat.deleteTitle')}
+        confirmText={t('chat.delete')}
         danger
         onConfirm={() => {
           setConfirmDelete(false);
@@ -272,7 +290,7 @@ export function ChatHeader({
         }}
         onCancel={() => setConfirmDelete(false)}
       >
-        删除后聊天记录不可恢复。删除的只是这个会话，不会影响 Agent 本身。
+        {t('chat.deleteDesc')}
       </ConfirmDialog>
     </PanelHeader>
   );

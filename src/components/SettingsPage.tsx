@@ -211,38 +211,44 @@ const PRESET_COLORS = [
   '#e34d59', '#834ec2', '#b0479e', '#0e7a8c',
 ];
 
-const PERMISSION_MODES: { value: PermissionMode; label: string; description: string }[] = [
-  { value: 'default', label: 'default', description: '默认模式，所有操作需确认' },
-  { value: 'acceptEdits', label: 'acceptEdits', description: '自动批准文件编辑，Bash 仍需确认' },
-  { value: 'plan', label: 'plan', description: '规划模式，仅允许读取操作' },
-  { value: 'bypassPermissions', label: 'bypassPermissions', description: '跳过所有权限检查（谨慎使用）' },
+const PERMISSION_MODES: { value: PermissionMode; label: string; descKey: MessageKey }[] = [
+  { value: 'default', label: 'default', descKey: 'chat.permission.defaultDesc' },
+  { value: 'acceptEdits', label: 'acceptEdits', descKey: 'chat.permission.acceptEditsDesc' },
+  { value: 'plan', label: 'plan', descKey: 'chat.permission.planDesc' },
+  { value: 'bypassPermissions', label: 'bypassPermissions', descKey: 'chat.permission.bypassDesc' },
 ];
 
-const PRESET_TEMPLATES = [
+const PRESET_TEMPLATES: Array<{
+  nameKey: MessageKey;
+  descKey: MessageKey;
+  systemPrompt: string;
+  icon: string;
+  color: string;
+}> = [
   {
-    name: '代码助手',
-    description: '专注于编程和代码相关任务',
+    nameKey: 'settings.agents.template.codeName',
+    descKey: 'settings.agents.template.codeDesc',
     systemPrompt: '你是一个专业的编程助手。你擅长编写、审查和解释代码。请提供清晰、高效且符合最佳实践的代码解决方案。在解释时，请考虑代码的可读性、性能和可维护性。',
     icon: 'Code',
     color: '#0e7a8c',
   },
   {
-    name: '写作助手',
-    description: '帮助撰写和优化各类文档',
+    nameKey: 'settings.agents.template.writeName',
+    descKey: 'settings.agents.template.writeDesc',
     systemPrompt: '你是一个专业的写作助手。你擅长撰写、编辑和优化各类文档，包括文章、报告、邮件等。请帮助用户提升文字表达的清晰度、逻辑性和吸引力。',
     icon: 'FileText',
     color: '#00a870',
   },
   {
-    name: '翻译助手',
-    description: '提供高质量的多语言翻译',
+    nameKey: 'settings.agents.template.translateName',
+    descKey: 'settings.agents.template.translateDesc',
     systemPrompt: '你是一个专业的翻译助手。你精通多种语言，能够提供准确、自然、符合语境的翻译。请在翻译时保持原文的语气和风格，同时确保目标语言的地道表达。',
     icon: 'Globe',
     color: '#ed7b2f',
   },
   {
-    name: '创意助手',
-    description: '激发灵感，提供创意建议',
+    nameKey: 'settings.agents.template.creativeName',
+    descKey: 'settings.agents.template.creativeDesc',
     systemPrompt: '你是一个富有创意的助手。你善于头脑风暴、提供创新想法和独特视角。请帮助用户突破思维定式，探索新的可能性，激发创造力。',
     icon: 'Lightbulb',
     color: '#834ec2',
@@ -328,17 +334,17 @@ export function SettingsPage({
       setLoginStatus({
         isLoggedIn: false,
         checking: false,
-        error: error?.message || '检查登录状态失败',
+        error: error?.message || t('settings.login.checkFailed'),
       });
     }
-  }, []);
+  }, [t]);
   
   // 保存环境变量配置
   const saveEnvConfig = async () => {
     // 至少需要配置一个有效的值
     const hasAnyConfig = envConfig.apiKey.trim() || envConfig.authToken.trim();
     if (!hasAnyConfig) {
-      MessagePlugin.warning('请至少配置 API Key 或 Auth Token');
+      MessagePlugin.warning(t('settings.login.needKey'));
       return;
     }
     
@@ -364,10 +370,10 @@ export function SettingsPage({
         // 重新检查登录状态
         checkLoginStatus();
       } else {
-        MessagePlugin.error(data.error || '保存失败');
+        MessagePlugin.error(data.error || t('settings.login.saveFailed'));
       }
     } catch (error: any) {
-      MessagePlugin.error(error?.message || '保存失败');
+      MessagePlugin.error(error?.message || t('settings.login.saveFailed'));
     } finally {
       setSavingEnv(false);
     }
@@ -460,24 +466,27 @@ export function SettingsPage({
 
   const handleSave = () => {
     if (!formData.name.trim() || !formData.systemPrompt.trim()) {
-      MessagePlugin.warning('请填写名称和系统提示词');
+      MessagePlugin.warning(t('settings.agents.nameRequired'));
       return;
     }
 
     if (editingAgent) {
       onUpdate(editingAgent.id, formData);
-      MessagePlugin.success('Agent 已更新');
+      MessagePlugin.success(t('settings.agents.updated'));
     } else {
       onAdd(formData);
-      MessagePlugin.success('Agent 已创建');
+      MessagePlugin.success(t('settings.agents.created'));
     }
     resetForm();
   };
 
   const handleUseTemplate = (template: typeof PRESET_TEMPLATES[0]) => {
     setFormData({
-      ...template,
-      description: template.description,
+      name: t(template.nameKey),
+      description: t(template.descKey),
+      systemPrompt: template.systemPrompt,
+      icon: template.icon,
+      color: template.color,
       // 模板里没有权限模式，沿用用户当前的选择，别把他刚改过的值重置掉
       permissionMode: formData.permissionMode,
     });
@@ -486,7 +495,7 @@ export function SettingsPage({
 
   const handleDelete = (id: string) => {
     onDelete(id);
-    MessagePlugin.success('Agent 已删除');
+    MessagePlugin.success(t('settings.agents.deleted'));
   };
 
   const getIconComponent = (iconName: string) => {
@@ -767,7 +776,7 @@ export function SettingsPage({
                 className="text-lg font-medium"
                 style={{ color: 'var(--td-text-color-primary)' }}
               >
-                登录配置
+                {t('settings.login.title')}
               </h2>
             </div>
             <Button
@@ -781,7 +790,7 @@ export function SettingsPage({
               icon={<RefreshCw size={13} />}
               onClick={checkLoginStatus}
               loading={loginStatus.checking}
-              aria-label="刷新"
+              aria-label={t('settings.login.refresh')}
               /* A116（反馈）：「暗色模式下，图标、文字使用亮白色，不要灰色，
                  例如刷新按钮图标及文案」。
                  ⚠️ 全局 `.t-button--variant-outline { color: ... !important }`
@@ -789,7 +798,7 @@ export function SettingsPage({
                  所以这里不再写内联色值，避免误导后来的人。 */
               data-refresh-login
             >
-              刷新
+              {t('settings.login.refresh')}
             </Button>
           </div>
           
@@ -799,7 +808,7 @@ export function SettingsPage({
               <>
                 <Loading size="small" />
                 <span style={{ color: 'var(--td-text-color-secondary)' }}>
-                  正在检查登录状态...
+                  {t('settings.login.checking')}
                 </span>
               </>
             ) : loginStatus.isLoggedIn ? (
@@ -809,10 +818,10 @@ export function SettingsPage({
                   style={{ color: 'var(--td-success-color)' }}
                 />
                 <span style={{ color: 'var(--td-text-color-primary)' }}>
-                  检测到登录态（未校验）
+                  {t('settings.login.detected')}
                 </span>
                 <Tag size="small" variant="outline">
-                  {loginStatus.method === 'env' ? '环境变量' : 'CLI'}
+                  {loginStatus.method === 'env' ? t('settings.login.methodEnv') : t('settings.login.methodCli')}
                 </Tag>
                 {loginStatus.method === 'env' && loginStatus.apiKey && (
                   <span 
@@ -830,7 +839,7 @@ export function SettingsPage({
                   style={{ color: 'var(--td-text-color-placeholder)' }}
                 />
                 <span style={{ color: 'var(--td-text-color-secondary)' }}>
-                  未登录
+                  {t('settings.login.notLoggedIn')}
                 </span>
               </>
             )}
@@ -845,7 +854,7 @@ export function SettingsPage({
               className="text-sm font-medium mb-3"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              方式一：环境变量
+              {t('settings.login.method1')}
             </h3>
             
             {showEnvConfig ? (
@@ -867,7 +876,7 @@ export function SettingsPage({
                       type="password"
                       value={envConfig.apiKey}
                       onChange={(v) => setEnvConfig(prev => ({ ...prev, apiKey: v as string }))}
-                      placeholder="API 密钥（推荐）"
+                      placeholder={t('settings.login.apiKeyPlaceholder')}
                     />
                   </div>
                   <div>
@@ -881,7 +890,7 @@ export function SettingsPage({
                       type="password"
                       value={envConfig.authToken}
                       onChange={(v) => setEnvConfig(prev => ({ ...prev, authToken: v as string }))}
-                      placeholder="认证令牌"
+                      placeholder={t('settings.login.authTokenPlaceholder')}
                     />
                   </div>
                   <div>
@@ -894,7 +903,7 @@ export function SettingsPage({
                     <Select
                       value={envConfig.internetEnv}
                       onChange={(v) => setEnvConfig(prev => ({ ...prev, internetEnv: v as any }))}
-                      placeholder="网络环境（可选）"
+                      placeholder={t('settings.login.internetEnvPlaceholder')}
                       clearable
                       options={[
                         { label: 'internal', value: 'internal' },
@@ -912,7 +921,7 @@ export function SettingsPage({
                     <Input
                       value={envConfig.baseUrl}
                       onChange={(v) => setEnvConfig(prev => ({ ...prev, baseUrl: v as string }))}
-                      placeholder="自定义 URL（可选）"
+                      placeholder={t('settings.login.baseUrlPlaceholder')}
                     />
                   </div>
                 </div>
@@ -922,7 +931,7 @@ export function SettingsPage({
                     onClick={saveEnvConfig}
                     loading={savingEnv}
                   >
-                    保存
+                    {t('settings.login.save')}
                   </Button>
                   <Button 
                     variant="text" 
@@ -931,13 +940,13 @@ export function SettingsPage({
                       setEnvConfig({ apiKey: '', authToken: '', internetEnv: '', baseUrl: '' });
                     }}
                   >
-                    取消
+                    {t('settings.common.cancel')}
                   </Button>
                   <span 
                     className="text-xs"
                     style={{ color: 'var(--td-text-color-placeholder)' }}
                   >
-                    仅当前进程有效
+                    {t('settings.login.processOnly')}
                   </span>
                 </div>
               </div>
@@ -946,7 +955,7 @@ export function SettingsPage({
                 variant="outline" 
                 onClick={() => setShowEnvConfig(true)}
               >
-                配置环境变量
+                {t('settings.login.configureEnv')}
               </Button>
             )}
           </div>
@@ -958,7 +967,7 @@ export function SettingsPage({
               className="text-sm font-medium mb-3"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              方式二：CodeBuddy CLI
+              {t('settings.login.method2')}
             </h3>
             <div className="flex items-center gap-3">
               <code 
@@ -976,7 +985,7 @@ export function SettingsPage({
                 theme="primary"
                 size="small"
               >
-                查看文档
+                {t('settings.login.viewDocs')}
               </Link>
             </div>
           </div>
@@ -1000,10 +1009,10 @@ export function SettingsPage({
               className="mb-3 flex items-center gap-1.5 text-sm font-medium"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              方式三：Agent API Key
+              {t('settings.login.method3')}
               <InfoHint
-                label="Agent API Key 说明"
-                text="豆包 / Gemini / Kimi 等按 Key 计费的 Agent 在这里填写，保存后立即生效。"
+                label={t('settings.login.method3HintLabel')}
+                text={t('settings.login.method3Hint')}
               />
             </h3>
             <AgentCredentialSettings onSaved={onCredentialsSaved} />
@@ -1018,10 +1027,10 @@ export function SettingsPage({
               className="mb-3 flex items-center gap-1.5 text-sm font-medium"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              方式四：自定义模型厂商
+              {t('settings.login.method4')}
               <InfoHint
-                label="自定义模型厂商说明"
-                text="任何 OpenAI / Anthropic / Gemini 兼容的接口都能接：填地址和 Key，拉取模型清单并测试连通后保存。保存后通讯录出现一条联系人，模型下拉列出它全部模型。"
+                label={t('settings.login.method4HintLabel')}
+                text={t('settings.login.method4Hint')}
               />
             </h3>
             <ProviderSettings onChanged={onCredentialsSaved} autoOpen={autoOpenProvider} />
@@ -1040,10 +1049,10 @@ export function SettingsPage({
               className="flex items-center gap-1.5 text-lg font-medium"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              模型清单
+              {t('settings.models.title')}
               <InfoHint
-                label="模型清单说明"
-                text="清单由各 Agent 自己的命令行 / SDK 实时枚举，官方上新后会跟着变；结果缓存 24 小时，过期自动重取。想立刻看到最新清单就点「刷新」。"
+                label={t('settings.models.hintLabel')}
+                text={t('settings.models.hint')}
               />
             </h2>
           </div>
@@ -1059,7 +1068,7 @@ export function SettingsPage({
               className="text-lg font-medium"
               style={{ color: 'var(--td-text-color-primary)' }}
             >
-              助手人设
+              {t('settings.agents.title')}
             </h2>
           </div>
 
@@ -1076,29 +1085,29 @@ export function SettingsPage({
                   <div className="space-y-4">
                     <div className="flex justify-between items-center mb-2">
                       <h4 className="text-base font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-                        {editingAgent ? '编辑 Agent' : '创建新 Agent'}
+                        {editingAgent ? t('settings.agents.editTitle') : t('settings.agents.createTitle')}
                       </h4>
-                      <Button variant="text" onClick={resetForm}>取消</Button>
+                      <Button variant="text" onClick={resetForm}>{t('settings.common.cancel')}</Button>
                     </div>
                     
                     <Form labelAlign="top">
-                      <Form.FormItem label="名称" requiredMark>
+                      <Form.FormItem label={t('settings.agents.nameLabel')} requiredMark>
                         <Input 
                           value={formData.name}
                           onChange={(v) => setFormData(prev => ({ ...prev, name: v as string }))}
-                          placeholder="例如：代码助手"
+                          placeholder={t('settings.agents.namePlaceholder')}
                         />
                       </Form.FormItem>
                       
-                      <Form.FormItem label="描述">
+                      <Form.FormItem label={t('settings.agents.descLabel')}>
                         <Input 
                           value={formData.description}
                           onChange={(v) => setFormData(prev => ({ ...prev, description: v as string }))}
-                          placeholder="简短描述这个 Agent 的用途"
+                          placeholder={t('settings.agents.descPlaceholder')}
                         />
                       </Form.FormItem>
                       
-                      <Form.FormItem label="图标和颜色">
+                      <Form.FormItem label={t('settings.agents.iconColorLabel')}>
                         <div className="flex gap-4">
                           <div className="flex gap-2">
                             {PRESET_ICONS.map(({ name, icon: Icon }) => (
@@ -1133,7 +1142,7 @@ export function SettingsPage({
                         </div>
                       </Form.FormItem>
                       
-                      <Form.FormItem label="权限模式">
+                      <Form.FormItem label={t('settings.agents.permissionLabel')}>
                         <Select
                           value={formData.permissionMode}
                           onChange={(v) => setFormData(prev => ({ ...prev, permissionMode: v as PermissionMode }))}
@@ -1146,7 +1155,7 @@ export function SettingsPage({
                                   {mode.label}
                                 </span>
                                 <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                                  {mode.description}
+                                  {t(mode.descKey)}
                                 </span>
                               </div>
                             </Select.Option>
@@ -1154,20 +1163,20 @@ export function SettingsPage({
                         </Select>
                       </Form.FormItem>
                       
-                      <Form.FormItem label="系统提示词" requiredMark>
+                      <Form.FormItem label={t('settings.agents.systemPromptLabel')} requiredMark>
                         <Textarea 
                           value={formData.systemPrompt}
                           onChange={(v) => setFormData(prev => ({ ...prev, systemPrompt: v as string }))}
-                          placeholder="定义 Agent 的行为和能力..."
+                          placeholder={t('settings.agents.systemPromptPlaceholder')}
                           autosize={{ minRows: 4, maxRows: 8 }}
                         />
                       </Form.FormItem>
                     </Form>
                     
                     <div className="flex justify-end gap-2 pt-2">
-                      <Button variant="outline" onClick={resetForm}>取消</Button>
+                      <Button variant="outline" onClick={resetForm}>{t('settings.common.cancel')}</Button>
                       <Button theme="primary" onClick={handleSave}>
-                        {editingAgent ? '保存修改' : '创建 Agent'}
+                        {editingAgent ? t('settings.agents.saveChanges') : t('settings.agents.create')}
                       </Button>
                     </div>
                   </div>
@@ -1177,19 +1186,19 @@ export function SettingsPage({
                   {/* 快速模板 */}
                   <div>
                     <h4 className="text-sm font-medium mb-3" style={{ color: 'var(--td-text-color-secondary)' }}>
-                      快速创建
+                      {t('settings.agents.quickCreate')}
                     </h4>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       {PRESET_TEMPLATES.map(template => {
                         const Icon = getIconComponent(template.icon);
                         return (
                           <div 
-                            key={template.name} 
+                            key={template.nameKey} 
                             // A37：内置助手不再用彩色块（需求「不要彩色填充」）。
                             // 四个模板各一个高饱和色块，一屏看下来像四条色带，
                             // 而它们只是「快捷入口」—— 真正的身份色属于用户自己
                             // 创建的 Agent（下面「我的 Agent」里仍保留）。
-                            title={template.description}
+                            title={t(template.descKey)}
                             className="flex cursor-pointer items-center gap-3 rounded-lg p-3 transition-all hover:shadow-card"
                             style={{ backgroundColor: 'var(--td-bg-color-component)' }}
                             onClick={() => handleUseTemplate(template)}
@@ -1207,7 +1216,7 @@ export function SettingsPage({
                               className="min-w-0 flex-1 truncate font-medium"
                               style={{ color: 'var(--td-text-color-primary)' }}
                             >
-                              {template.name}
+                              {t(template.nameKey)}
                             </span>
                           </div>
                         );
@@ -1230,7 +1239,7 @@ export function SettingsPage({
                       onClick={() => setIsCreating(true)}
                       data-create-agent
                     >
-                      创建 Agent
+                      {t('settings.agents.create')}
                     </Button>
                   </div>
 
@@ -1238,7 +1247,7 @@ export function SettingsPage({
                   {customAgents.length > 0 && (
                     <div>
                       <h4 className="text-sm font-medium mb-3" style={{ color: 'var(--td-text-color-secondary)' }}>
-                        我的 Agent ({customAgents.length})
+                        {t('settings.agents.myAgents', { n: customAgents.length })}
                       </h4>
                       <div className="space-y-2">
                         {customAgents.map(agent => {
@@ -1267,7 +1276,7 @@ export function SettingsPage({
                                   {agent.name}
                                 </div>
                                 <div className="flex gap-1">
-                                  <Tooltip content="编辑">
+                                  <Tooltip content={t('settings.agents.editTooltip')}>
                                     <Button 
                                       variant="text" 
                                       shape="circle" 
@@ -1277,10 +1286,10 @@ export function SettingsPage({
                                     />
                                   </Tooltip>
                                   <Popconfirm
-                                    content="确定删除这个 Agent 吗？"
+                                    content={t('settings.agents.deleteConfirm')}
                                     onConfirm={() => handleDelete(agent.id)}
                                   >
-                                    <Tooltip content="删除">
+                                    <Tooltip content={t('settings.agents.deleteTooltip')}>
                                       <Button 
                                         variant="text" 
                                         shape="circle" 

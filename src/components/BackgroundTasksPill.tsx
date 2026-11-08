@@ -16,6 +16,7 @@
  */
 
 import type { BackgroundTask } from '../hooks/useBackgroundTasks';
+import { useTranslation } from '../i18n';
 
 export function BackgroundTasksPill({
   tasks,
@@ -28,7 +29,8 @@ export function BackgroundTasksPill({
   /** 点击跳到那个还在跑的会话 */
   onOpen?: (sessionId: string) => void;
 }) {
-  const total = tasks.length + lingering;
+  const { t } = useTranslation();
+  const total = tasks.length + (lingering ?? 0);
   if (total <= 0) return null;
 
   /**
@@ -41,10 +43,10 @@ export function BackgroundTasksPill({
    */
   const label =
     lingering === 0
-      ? `${total} 个后台任务运行中`
+      ? t('chat.bgTasks.running', { n: total })
       : tasks.length === 0
-        ? `${total} 个工具调用未回结果`
-        : `${total} 个任务未结束`;
+        ? t('chat.bgTasks.lingering', { n: total })
+        : t('chat.bgTasks.unfinished', { n: total });
 
   const target = tasks.find(t => t.sessionId);
   const clickable = !!(target?.sessionId && onOpen);
@@ -61,8 +63,8 @@ export function BackgroundTasksPill({
         disabled={!clickable}
         title={
           [
-            tasks.length ? `${tasks.length} 个会话仍在生成` : '',
-            lingering ? `${lingering} 个工具调用未收到完成事件` : '',
+            tasks.length ? t('chat.bgTasks.sessionsRunning', { n: tasks.length }) : '',
+            lingering ? t('chat.bgTasks.toolsNoResult', { n: lingering }) : '',
           ]
             .filter(Boolean)
             .join('\n') || undefined
@@ -73,7 +75,7 @@ export function BackgroundTasksPill({
           <span className="tc-live-ring" style={{ borderColor: 'var(--td-brand-color)' }} />
         </span>
         <span>{label}</span>
-        {clickable && <span className="tc-bg-tasks-go">查看</span>}
+        {clickable && <span className="tc-bg-tasks-go">{t('chat.bgTasks.view')}</span>}
       </button>
     </div>
   );

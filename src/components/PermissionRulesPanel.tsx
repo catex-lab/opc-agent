@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Input, Select, MessagePlugin } from 'tdesign-react';
 import { Plus, Trash2 } from 'lucide-react';
+import { useTranslation, type MessageKey } from '../i18n';
 
 /**
  * 权限门禁规则（A40）。
@@ -18,14 +19,16 @@ interface PermissionRule {
   note?: string;
 }
 
-const DECISION_LABEL: Record<PermissionRule['decision'], string> = {
-  allow: '允许',
-  deny: '禁止',
+const DECISION_KEY: Record<PermissionRule['decision'], MessageKey> = {
+  allow: 'settings.permission.allow',
+  deny: 'settings.permission.deny',
 };
 
 const EMPTY_ROW: PermissionRule = { tool: '', decision: 'deny', match: '', note: '' };
 
 export function PermissionRulesPanel() {
+  const { t, locale } = useTranslation();
+  const en = locale === 'en';
   const [rules, setRules] = useState<PermissionRule[]>([]);
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -38,11 +41,11 @@ export function PermissionRulesPanel() {
       setRules(j.rules ?? []);
       setNote(j.note ?? '');
     } catch {
-      MessagePlugin.error('读取权限规则失败');
+      MessagePlugin.error(t('settings.permission.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void refresh();
@@ -66,9 +69,9 @@ export function PermissionRulesPanel() {
         }),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || '保存失败');
+      if (!r.ok) throw new Error(j.error || t('settings.permission.saveFailedShort'));
       setRules(j.rules ?? []);
-      MessagePlugin.success('已保存，下次工具调用生效');
+      MessagePlugin.success(t('settings.permission.saved'));
     } catch (e) {
       MessagePlugin.error((e as Error).message);
     } finally {
@@ -85,11 +88,12 @@ export function PermissionRulesPanel() {
     <div className="space-y-4">
       <div>
         <h2 className="mb-1 text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-          权限门禁
+          {t('settings.permission.title')}
         </h2>
         <p className="text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>
-          在弹窗问人之前，服务端先按内置分类器（23 条危险 + 14 条需确认）与下面的自定义规则判一遍。
-          高危命令（<code>rm -rf /</code>、强推主分支、写块设备等）任何模式都直接拒绝。
+          {t('settings.permission.introPrefix')}
+          <code>rm -rf /</code>
+          {t('settings.permission.introSuffix')}
         </p>
       </div>
 
@@ -101,21 +105,22 @@ export function PermissionRulesPanel() {
         }}
       >
         <p>
-          自定义规则命中「禁止」时<strong>无条件生效</strong>（deny 优先于 allow），包括全放行模式；
-          命中「允许」时跳过弹窗直接放行，但拦不住内置分类器判出的高危命令。
+          {t('settings.permission.denyPrefix')}
+          <strong>{t('settings.permission.denyStrong')}</strong>
+          {t('settings.permission.denySuffix')}
           {note ? ` ${note}` : ''}
         </p>
         <p className="mt-2">
-          只对「WorkBuddy（SDK）」类 Agent 生效。CLI / ACP 类 Agent 的工具调用跑在它们自己的
-          harness 里，这一层门禁够不到 —— 那边的强度取决于 <code>--permission-mode</code> 等启动参数
-          （见「自定义 Agent」里的权限说明）。
+          {t('settings.permission.scopePrefix')}
+          <code>--permission-mode</code>
+          {t('settings.permission.scopeSuffix')}
         </p>
       </div>
 
       <div className="space-y-3">
         {rules.length === 0 && !loading && (
           <p className="text-sm" style={{ color: 'var(--td-text-color-placeholder)' }}>
-            还没有自定义规则，先走内置分类器 + 逐次弹窗。
+            {t('settings.permission.empty')}
           </p>
         )}
 
@@ -128,28 +133,28 @@ export function PermissionRulesPanel() {
             <Input
               value={rule.tool}
               onChange={v => patch(i, { tool: v })}
-              placeholder="工具名，如 Bash / Write / *"
-              style={{ width: 150 }}
-              tips="支持 * 结尾通配，如 mcp__*"
+              placeholder={t('settings.permission.toolPlaceholder')}
+              style={{ width: en ? 180 : 150 }}
+              tips={t('settings.permission.toolTips')}
             />
             <Input
               value={rule.match ?? ''}
               onChange={v => patch(i, { match: v })}
-              placeholder="命令/路径包含的关键词（可空）"
-              style={{ width: 220 }}
+              placeholder={t('settings.permission.matchPlaceholder')}
+              style={{ width: en ? 250 : 220 }}
             />
             <Select
               value={rule.decision}
               onChange={v => patch(i, { decision: v as PermissionRule['decision'] })}
-              style={{ width: 100 }}
+              style={{ width: en ? 110 : 100 }}
             >
-              <Select.Option value="deny">{DECISION_LABEL.deny}</Select.Option>
-              <Select.Option value="allow">{DECISION_LABEL.allow}</Select.Option>
+              <Select.Option value="deny">{t(DECISION_KEY.deny)}</Select.Option>
+              <Select.Option value="allow">{t(DECISION_KEY.allow)}</Select.Option>
             </Select>
             <Input
               value={rule.note ?? ''}
               onChange={v => patch(i, { note: v })}
-              placeholder="给人看的理由（可空）"
+              placeholder={t('settings.permission.notePlaceholder')}
               style={{ flex: 1, minWidth: 140 }}
             />
             <Button
@@ -172,13 +177,13 @@ export function PermissionRulesPanel() {
           icon={<Plus size={14} />}
           onClick={() => setRules(prev => [...prev, { ...EMPTY_ROW }])}
         >
-          添加规则
+          {t('settings.permission.add')}
         </Button>
         <Button theme="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>
-          保存
+          {t('settings.permission.save')}
         </Button>
         <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          最多 50 条，写道 data/permission-rules.json
+          {t('settings.permission.footerNote')}
         </span>
       </div>
     </div>

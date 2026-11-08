@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, MessagePlugin } from 'tdesign-react';
 import { RefreshCw } from 'lucide-react';
+import { useTranslation, type Translate } from '../i18n';
 
 /**
  * 「模型清单」设置分区。
@@ -58,13 +59,13 @@ function labelOf(id: string): string {
 }
 
 /** 相对时间：只说到「分钟/小时/天」，不显示精确时刻（那需要时区与格式化的取舍） */
-function relTime(ts: number): string {
-  if (!ts) return '尚未枚举';
+function relTime(ts: number, t: Translate): string {
+  if (!ts) return t('settings.models.never');
   const diff = Date.now() - ts;
-  if (diff < 60_000) return '刚刚';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-  return `${Math.floor(diff / 86_400_000)} 天前`;
+  if (diff < 60_000) return t('settings.models.justNow');
+  if (diff < 3_600_000) return t('settings.models.minAgo', { n: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return t('settings.models.hourAgo', { n: Math.floor(diff / 3_600_000) });
+  return t('settings.models.dayAgo', { n: Math.floor(diff / 86_400_000) });
 }
 
 interface ModelCatalogSettingsProps {
@@ -73,6 +74,7 @@ interface ModelCatalogSettingsProps {
 }
 
 export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps) {
+  const { t } = useTranslation();
   const [data, setData] = useState<CatalogSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -85,11 +87,11 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
       setData((await res.json()) as CatalogSummary);
       setError(null);
     } catch (err) {
-      setError((err as Error).message || '读取模型清单失败');
+      setError((err as Error).message || t('settings.models.loadFailedShort'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -111,11 +113,13 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
         parts.push(`WorkBuddy ${json.workbuddy.count}`);
       }
       MessagePlugin.success(
-        parts.length ? `模型清单已刷新：${parts.join(' · ')}` : '模型清单已刷新'
+        parts.length
+          ? t('settings.models.refreshedWith', { parts: parts.join(' · ') })
+          : t('settings.models.refreshed')
       );
       onRefreshed?.();
     } catch (err) {
-      MessagePlugin.error((err as Error).message || '刷新失败');
+      MessagePlugin.error((err as Error).message || t('settings.models.refreshFailed'));
     } finally {
       setRefreshing(false);
     }
@@ -142,11 +146,11 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
     <div className="space-y-3" data-model-catalog>
       {loading ? (
         <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          正在读取模型清单…
+          {t('settings.models.loading')}
         </div>
       ) : error ? (
         <div className="text-xs" style={{ color: 'var(--td-error-color)' }}>
-          读取失败：{error}
+          {t('settings.models.loadFailed', { error })}
         </div>
       ) : (
         <div
@@ -185,7 +189,7 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
                 style={{ color: 'var(--td-text-color-secondary)' }}
                 data-catalog-count={row.id}
               >
-                {typeof row.count === 'number' ? `${row.count} 个` : '—'}
+                {typeof row.count === 'number' ? t('settings.models.count', { n: row.count }) : '—'}
               </span>
             </div>
           ))}
@@ -216,7 +220,7 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
               style={{ color: 'var(--td-text-color-secondary)' }}
               data-catalog-count="workbuddy"
             >
-              {workbuddyCount ? `${workbuddyCount} 个` : '—'}
+              {workbuddyCount ? t('settings.models.count', { n: workbuddyCount }) : '—'}
             </span>
           </div>
         </div>
@@ -233,11 +237,11 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
         >
           <span className="flex items-center gap-1.5">
             {!refreshing && <RefreshCw size={13} />}
-            刷新模型清单
+            {t('settings.models.refresh')}
           </span>
         </Button>
         <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          上次枚举：{relTime(data?.fetchedAt ?? 0)}
+          {t('settings.models.lastFetched', { time: relTime(data?.fetchedAt ?? 0, t) })}
         </span>
       </div>
     </div>
