@@ -346,6 +346,8 @@ ok(aboutSource.includes("from './UpdateCard'"), '关于页引入 UpdateCard');
 ok(aboutSource.includes('<UpdateCard'), '关于页渲染 UpdateCard');
 
 const stale = read('src/components/UpdateCard.tsx');
+/** i18n 改造后中文文案的权威来源：界面取 key，正文落在语言包里 */
+const zhSource = read('src/i18n/zh.ts');
 for (const phase of ['checking', 'latest', 'available', 'downloading', 'ready']) {
   ok(stale.includes(`'${phase}'`), `更新卡片有 ${phase} 状态`);
 }
@@ -358,8 +360,16 @@ ok(
 ok(stale.includes('data-update-check'), '检查更新按钮带测试锚点');
 ok(stale.includes('data-update-progress'), '下载进度带测试锚点');
 ok(stale.includes('legacyManualUpdate'), '更新卡片根据旧版标记切换文案');
-ok(stale.includes('此版本需手动更新一次'), '旧版提示是一句结论');
-ok(stale.includes('下载完整安装包'), '旧版提示给一个完整包动作');
+ok(
+  stale.includes("t('settings.update.legacyTitle')") &&
+    zhSource.includes("'settings.update.legacyTitle': '此版本需手动更新一次'"),
+  '旧版提示是一句结论'
+);
+ok(
+  stale.includes("t('settings.update.downloadFullInstaller')") &&
+    zhSource.includes("'settings.update.downloadFullInstaller': '下载完整安装包'"),
+  '旧版提示给一个完整包动作'
+);
 ok(stale.includes('data-update-legacy'), '旧版提示带测试锚点');
 ok(stale.includes('data-update-manual-link'), '普通失败仍保留「手动下载」入口');
 
@@ -577,15 +587,27 @@ ok(
 );
 ok(aboutSrc.includes("appInfo?.().then"), '版本仍取自 app.getVersion() 的桥（不改口径）');
 
-const privacyEntries = aboutSrc.slice(aboutSrc.indexOf('const PRIVACY = ['));
+const privacyKeys = ['settings.about.privacy1Title', 'settings.about.privacy2Title', 'settings.about.privacy3Title'];
+const privacyTitles = ['不收集任何信息', '只会发给你自己配置的模型服务商', '永久免费且无广告'];
+// i18n 后 PRIVACY 只存 key，正文落在 zh 语言包 —— 结构仍要钉住「三条、同一模板」，
+// 文案仍要逐条命中中文语言包，避免把「组件里找不到字面量」当成文案缺失。
+const privacyStart = aboutSrc.indexOf('const PRIVACY');
+const privacyBody =
+  privacyStart >= 0
+    ? aboutSrc.slice(aboutSrc.indexOf('= [', privacyStart), aboutSrc.indexOf('];', privacyStart))
+    : '';
 ok(
-  aboutSrc.includes('{PRIVACY.map(') &&
+  privacyStart >= 0 &&
+    aboutSrc.includes('{PRIVACY.map(') &&
     (aboutSrc.match(/data-about-privacy-card/g) ?? []).length === 1 &&
-    ['不收集任何信息', '只会发给你自己配置的模型服务商', '永久免费且无广告'].every(t => privacyEntries.includes(t)),
+    (privacyBody.match(/titleKey:/g) ?? []).length === 3 &&
+    privacyKeys.every(k => privacyBody.includes(k)) &&
+    privacyKeys.every(k => zhSource.includes(`'${k}':`)) &&
+    privacyTitles.every(t => zhSource.includes(t)),
   '隐私区由 PRIVACY 三条常量渲染成三张条目卡（同一个模板，不手写三份）'
 );
-for (const title of ['不收集任何信息', '只会发给你自己配置的模型服务商', '永久免费且无广告']) {
-  ok(aboutSrc.includes(title), `合规文案命中：${title}`);
+for (const title of privacyTitles) {
+  ok(zhSource.includes(title), `合规文案命中：${title}`);
 }
 ok(!aboutSrc.includes('InfoHint'), '关于页没有引入 InfoHint（合规文案不得收进 ⓘ）');
 ok(
