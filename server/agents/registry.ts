@@ -14,6 +14,7 @@ import type { AgentDefinition } from './definitions.js';
 import { createProvider, AcpAdapter } from './adapters/index.js';
 import { familyHintsFor } from './familyHints.js';
 import { installEnv } from './installEnv.js';
+import { recoveryHintFor, appendFailureAdvice } from './recovery.js';
 import { getModelsForAgent, mergeModelOptions, type ModelOption } from './modelCatalog.js';
 import { permissionSupportFor } from './permissions.js';
 import { toAgentInfo, unknownStatus } from './types.js';
@@ -22,6 +23,9 @@ import { toAgentInfo, unknownStatus } from './types.js';
 import { getAgentLogoUrl } from '../avatar-store.js';
 // A115：用户资料注入（昵称 → systemPrompt）。见 withUserIdentity 的注释。
 import { withUserIdentity } from '../user-profile.js';
+// A209：回答语言偏好的唯一读取点。适配器不各自读 prefs，避免「有的通道生效、
+// 有的不生效」这种没有报错的静默分歧。
+import { loadAnswerLanguage } from '../answer-language.js';
 import type { EventSource } from '../../shared/blocks.js';
 import type {
   AgentDescriptor,
@@ -103,6 +107,31 @@ export function classifyProbeFailure(status: AgentStatus): ProbeFailureReason | 
   return undefined;
 }
 
+/**
+ * 把「这次探测的结果」落到 `lastError` 上，让名册页不用点进详情就能看到
+ * 上次失败是什么。
+ *
+ * 只改这一个字段，**不动 availability**（状态机保持原样）：
+ *   - ready / unsupported / not-installed：清掉上一次的失败原因。
+ *     「没装」本身就是名册上的既定状态，不算一次失败，别让每个未安装的
+ *     Agent 都挂一行红字；
+ *   - 其它非 ready（未登录 / 探测超时 / 需要修复 / 网络不可达）：把探测文案
+ *     镜像到 lastError。
+ */
+export function withProbeOutcome(status: AgentStatus): AgentStatus {
+  if (
+    status.availability === 'ready' ||
+    status.availability === 'unsupported' ||
+    status.availability === 'not-installed'
+  ) {
+    if (!status.lastError) return status;
+    const { lastError: _dropped, ...rest } = status;
+    return rest;
+  }
+  if (!status.message || status.lastError === status.message) return status;
+  return { ...status, lastError: status.message };
+}
+
 class AgentRegistry {
   private providers = new Map<string, AgentProvider>();
   private statuses = new Map<string, AgentStatus>();
@@ -117,6 +146,16 @@ class AgentRegistry {
   private inflight = new Map<string, Promise<AgentStatus>>();
   /** 是否已经完成过至少一轮全量探测 */
   private probedOnce = false;
+  /**
+   * 已经做过「用前凭据校验」的会话。
+   *
+   * 触发点刻意克制：每个会话只在**第一次发消息**时校验一次，之后不再读盘；
+   * 手动「重新探测」走 probeSingle，是另一条显式路径。这样既不会每条消息
+   * 都校验，也不会拖垮首字延迟（三个适配器的校验都只是读一个小文件）。
+   */
+  private credentialChecked = new Set<string>();
+  /** 与上面的 Set 配套的淘汰顺序（防止会话数无限增长） */
+  private credentialCheckedOrder: string[] = [];
   /** 本机安装前置条件（A71）：启动时预热，toInfo 同步读取 */
   private installEnvCache?: InstallEnv;
 
@@ -220,6 +259,8 @@ class AgentRegistry {
         ? { localSiblings: hints.localSiblings }
         : {}),
       ...(hints?.lastRequest ? { lastRequest: hints.lastRequest } : {}),
+      // 每个 Agent 一句「怎么恢复」：名册与详情页的非 ready 状态都能直接给下一步。
+      recoveryHint: recoveryHintFor(id),
       permissionSupport: permissionSupportFor(id),
       ...(env ? { installEnv: env } : {}),
     };
@@ -347,7 +388,7 @@ class AgentRegistry {
           probedAt: new Date().toISOString(),
         };
       }
-      this.statuses.set(id, status);
+      this.statuses.set(id, withProbeOutcome(status));
       this.probedAt.set(id, Date.now());
       return status;
     })().finally(() => {
@@ -420,12 +461,13 @@ class AgentRegistry {
         probedAt: new Date().toISOString(),
       };
       // 只写目标 Agent；底层探测若后来返回，会以真实结果覆盖这条超时标记
-      this.statuses.set(id, status);
+      const marked = withProbeOutcome(status);
+      this.statuses.set(id, marked);
       this.probedAt.set(id, Date.now());
       return {
         agentId: id,
         ok: false,
-        status,
+        status: marked,
         durationMs,
         probedAt: status.probedAt,
         reason: 'timeout',
@@ -520,7 +562,9 @@ class AgentRegistry {
   recordError(id: string, message: string): void {
     const prev = this.statuses.get(id);
     if (!prev) return;
-    this.statuses.set(id, { ...prev, lastError: message });
+    // 运行期失败同样要可执行：401/403 → 重新登录，429 → 额度/限流，ENOENT → 未安装。
+    const annotated = appendFailureAdvice(id, message);
+    this.statuses.set(id, { ...prev, lastError: annotated });
   }
 
   /**
@@ -530,11 +574,53 @@ class AgentRegistry {
    * （昵称）注入的**唯一**入口。选注册表而不是逐个适配器：适配器有五个
    * （sdk / http / acp / qoder-sdk / mock），漏一个就变成「有的 Agent
    * 认得我、有的不认得」，而这种不一致没有任何报错，只有用户会发现。
+   *
+   * A209：回答语言也在这里定（`answerLanguage`），但**不直接改 systemPrompt**：
+   * SDK 在 systemPrompt 为空时会回落到自己的 DEFAULT_SYSTEM_PROMPT，注册表
+   * 若凭空写进一句语言指令，就把那份默认提示顶掉了。所以决策在这里、
+   * 拼接在适配器各自的提示词组装处（顺序仍保持「用户人设 → 项目记忆 → 语言」）。
+   * 调用方显式传 `'auto'`（群聊编排的内部阶段）时不覆盖。
    */
   stream(id: string, ctx: SendContext): AsyncIterable<AgentEvent> | null {
     const provider = this.providers.get(id);
     if (!provider) return null;
-    return provider.send({ ...ctx, systemPrompt: withUserIdentity(ctx.systemPrompt) });
+    // 用前校验：每个会话第一次发消息时做一次（只读本地文件，不发网络请求）。
+    // 失败会写回名册，界面上的绿点会在下一次刷新时撤回。
+    this.validateCredentialOnce(id, provider, ctx.sessionId);
+    return provider.send({
+      ...ctx,
+      systemPrompt: withUserIdentity(ctx.systemPrompt),
+      answerLanguage: ctx.answerLanguage ?? loadAnswerLanguage(),
+    });
+  }
+
+  /**
+   * 会话级的「用前凭据校验」。
+   *
+   * 为什么放在注册表而不是每个适配器的 send()：
+   *   - 适配器只管自己的探测，不知道「这是不是本会话第一条消息」；
+   *   - 校验结果必须写回**注册表缓存**，否则名册上的绿点不会撤回；
+   *   - 只对实现了 `refreshCredential` 的适配器生效（Codex / Claude / Kimi Code），
+   *     WorkBuddy 等没有廉价校验接口的不参与，避免拖垮首字延迟。
+   */
+  private validateCredentialOnce(id: string, provider: AgentProvider, sessionId?: string): void {
+    if (!sessionId || !provider.refreshCredential) return;
+    if (this.credentialChecked.has(sessionId)) return;
+    this.credentialChecked.add(sessionId);
+    this.credentialCheckedOrder.push(sessionId);
+    if (this.credentialCheckedOrder.length > 2000) {
+      const oldest = this.credentialCheckedOrder.shift();
+      if (oldest) this.credentialChecked.delete(oldest);
+    }
+    try {
+      const refreshed = provider.refreshCredential();
+      if (!refreshed) return;
+      this.statuses.set(id, withProbeOutcome(refreshed));
+      this.probedAt.set(id, Date.now());
+    } catch (err) {
+      // 校验是附加保护，失败不能挡住用户发消息
+      console.error(`[Registry] ${id} 用前校验失败（忽略）:`, (err as Error).message);
+    }
   }
 
   abort(id: string, sessionId: string): void {
@@ -551,7 +637,11 @@ class AgentRegistry {
     try {
       const fire = () => {
         try {
-          this.providers.get(id)?.prewarm?.({ ...ctx, systemPrompt: withUserIdentity(ctx.systemPrompt) });
+          this.providers.get(id)?.prewarm?.({
+            ...ctx,
+            systemPrompt: withUserIdentity(ctx.systemPrompt),
+            answerLanguage: ctx.answerLanguage ?? loadAnswerLanguage(),
+          });
         } catch (err) {
           console.error('[Registry] prewarm 失败（忽略）:', (err as Error).message);
         }

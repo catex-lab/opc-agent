@@ -41,8 +41,10 @@ import { AsyncQueue, linkAbort } from '../channel.js';
 import type { AgentDefinition, HttpSpec } from '../definitions.js';
 import { chatUrlOf } from '../../../shared/providerUrl.js';
 import { withMemoryContext } from '../../memory.js';
+import { withAnswerLanguage } from '../../answer-language.js';
 import { withExtensionsContext } from '../../extensions/inject.js';
 import { checkHostReachable } from '../probe.js';
+import { appendFailureAdvice, recoveryHintFor } from '../recovery.js';
 import type {
   AgentEvent,
   AgentProvider,
@@ -250,7 +252,7 @@ export class HttpAdapter implements AgentProvider {
       this.status = {
         availability: 'needs-auth',
         installed: false,
-        message: `未配置 API Key：${how}`,
+        message: `未配置 API Key：${how}。怎么恢复：${recoveryHintFor(this.descriptor.id)}`,
         probedAt: now,
       };
       return this.status;
@@ -279,7 +281,9 @@ export class HttpAdapter implements AgentProvider {
     this.status = {
       availability: 'ready',
       installed: true,
-      message: `已配置密钥（环境变量 ${keyEnv}）`,
+      // 只确认「环境变量里有 Key」+ 后端 TCP 可达；没有发过一次带 Key 的请求，
+      // 所以不能说「已登录/就绪」，只能说「已检测到凭据（未校验）」。
+      message: `已检测到凭据（未校验）：环境变量 ${keyEnv}`,
       probedAt: now,
     };
     return this.status;
@@ -360,9 +364,13 @@ export class HttpAdapter implements AgentProvider {
         // A98：带上 cwd，让记忆层把「当前项目」那一层也注入进来
         // A167：技能清单叠在记忆之后。HTTP 型 Agent 没有本地技能目录，
         // 清单里走的是「正文内联」那条路（见 extensions/inject.ts）。
-        const systemPrompt = withExtensionsContext(
-          withMemoryContext(ctx.systemPrompt, ctx.memoryCwd),
-          this.descriptor.id
+        // A209：回答语言追加在最末（自动档原样返回，不产生 system 消息）
+        const systemPrompt = withAnswerLanguage(
+          withExtensionsContext(
+            withMemoryContext(ctx.systemPrompt, ctx.memoryCwd),
+            this.descriptor.id
+          ),
+          ctx.answerLanguage
         );
 
         if (this.spec.dialect === 'openai') {
@@ -443,14 +451,22 @@ export class HttpAdapter implements AgentProvider {
               res.setEncoding('utf8');
               res.on('data', c => (buf += c));
               res.on('end', () => {
+                const detail = buf.slice(0, 400) || res.statusMessage;
+                const message = appendFailureAdvice(
+                  this.descriptor.id,
+                  code === 401 || code === 403
+                    ? `HTTP ${code}（API Key 被拒绝，需要更新凭据）：${detail}`
+                    : `HTTP ${code}：${detail}`
+                );
                 if (code === 401 || code === 403) {
                   this.status = {
                     ...(this.status as AgentStatus),
                     availability: 'needs-auth',
-                    lastError: buf.slice(0, 400),
+                    message,
+                    lastError: message,
                   };
                 }
-                reject(new Error(`HTTP ${code}：${buf.slice(0, 400) || res.statusMessage}`));
+                reject(new Error(message));
               });
               return;
             }

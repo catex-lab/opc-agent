@@ -17,6 +17,7 @@ import {
 } from '@tencent-ai/agent-sdk';
 import { AsyncQueue, PendingReplies, linkAbort } from '../channel.js';
 import { withMemoryContext } from '../../memory.js';
+import { withAnswerLanguage } from '../../answer-language.js';
 import { withExtensionsContext } from '../../extensions/inject.js';
 import { SDK_PERMISSION_OPTIONS } from '../../../shared/permissions.js';
 import { createCanUseToolBridge } from './sdkApproval.js';
@@ -31,6 +32,8 @@ import type {
 import type { AgentDefinition } from '../definitions.js';
 import { resolveSdkRuntime, type SdkRuntime } from '../sdkRuntime.js';
 import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
+import { workbuddyKeyblobInfo, formatLocalMinute } from '../credentialStatus.js';
+import { appendFailureAdvice } from '../recovery.js';
 
 /** 权限请求等待上限，与前端提示一致 */
 const PERMISSION_TIMEOUT = 5 * 60 * 1000;
@@ -172,7 +175,12 @@ interface SessionSlot {
  *  仍然成立。 */
 export function configKeyOf(ctx: SendContext, agentId?: string): string {
   const base = withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd);
-  const sys = agentId ? withExtensionsContext(base, agentId) : base;
+  // A209：回答语言也进指纹 —— 用户改了档位之后，长驻会话必须重建才能吃到新指令，
+  // 否则要等下一个结构变更（表现是「改了设置，旧会话还按老语言答」）。
+  const sys = withAnswerLanguage(
+    agentId ? withExtensionsContext(base, agentId) : base,
+    ctx.answerLanguage
+  );
   return [
     ctx.cwd || process.cwd(),
     ctx.model ?? '',
@@ -315,14 +323,25 @@ export class SdkAdapter implements AgentProvider {
         };
       } else {
         lastAuthUrl = null;
+        // 2026-11：不再说「已登录」。SDK 的 authenticate 只返回 CLI 本地缓存的
+        // account，不发业务请求；而 WorkBuddy 的 keyblob 可能早已停止刷新
+        // （实测停在 2026-09-24，桌面端却每天活跃）。所以把「本地登录态」
+        // 与「keyblob 最后更新时间」一起给出，让用户自己判断是否可信。
+        const kb =
+          this.descriptor.id === 'workbuddy' ? workbuddyKeyblobInfo() : null;
+        const kbNote = kb
+          ? `（keyblob 最后更新 ${
+              kb.exists ? formatLocalMinute(kb.mtime) : '未找到'
+            }；桌面端活跃不代表此文件被刷新）`
+          : '';
         this.status = {
           availability: 'ready',
           installed: true,
-          message: userinfo?.userName
-            ? `已登录：${userinfo.userName}`
-            : envOk
-              ? '已通过环境变量配置凭据'
-              : '已登录',
+          message: envOk
+            ? '已通过环境变量配置凭据（未校验）'
+            : userinfo?.userName
+              ? `检测到本地登录态（未校验）：${userinfo.userName}${kbNote}`
+              : `检测到本地登录态（未校验）${kbNote}`,
           probedAt: now,
         };
       }
@@ -351,7 +370,7 @@ export class SdkAdapter implements AgentProvider {
         this.status = {
           availability: 'ready',
           installed: true,
-          message: '已通过环境变量配置凭据',
+          message: '已通过环境变量配置凭据（未校验）',
           probedAt: now,
         };
       } else {
@@ -385,7 +404,10 @@ export class SdkAdapter implements AgentProvider {
           this.status = {
             availability: 'needs-auth',
             installed: true,
-            message: `凭据无效：${message}`,
+            message: appendFailureAdvice(
+              this.descriptor.id,
+              `凭据无效：${message}`
+            ),
             probeState: 'credential-invalid',
             ...(lastAuthUrl ? { authUrl: lastAuthUrl } : {}),
             probedAt: now,
@@ -402,7 +424,7 @@ export class SdkAdapter implements AgentProvider {
             : {
                 availability: 'needs-auth',
                 installed: true,
-                message: `探测失败：${message}`,
+                message: appendFailureAdvice(this.descriptor.id, `探测失败：${message}`),
                 probeState: 'probe-failed',
                 probedAt: now,
               };
@@ -642,9 +664,13 @@ export class SdkAdapter implements AgentProvider {
       model: ctx.model,
       maxTurns: 10,
       // A38/A98：提示词装配与 one-shot 路径完全一致（记忆层在这里注入）
-      systemPrompt: withExtensionsContext(
-        withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd),
-        this.descriptor.id
+      // A209：回答语言追加在最末，用户人设与项目记忆保持在前
+      systemPrompt: withAnswerLanguage(
+        withExtensionsContext(
+          withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd),
+          this.descriptor.id
+        ),
+        ctx.answerLanguage
       ),
       permissionMode: ctx.permissionMode || 'default',
       // A176：腾讯 SDK 同样按 mcpServers 起知识库 stdio server，
@@ -816,9 +842,12 @@ export class SdkAdapter implements AgentProvider {
           cwd: ctx.cwd || process.cwd(),
           model: ctx.model,
           maxTurns: 10,
-          systemPrompt: withExtensionsContext(
-            withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd),
-            this.descriptor.id
+          systemPrompt: withAnswerLanguage(
+            withExtensionsContext(
+              withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd),
+              this.descriptor.id
+            ),
+            ctx.answerLanguage
           ),
           permissionMode: ctx.permissionMode || 'default',
           canUseTool,

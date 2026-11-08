@@ -472,7 +472,11 @@ export interface AgentSkill {
 
 /**
  * 可用性状态。IM 范式下它对应「在线状态」：
- * ready = 在线，needs-auth = 未登录，not-installed = 未添加，unsupported = 不可用。
+ * ready = 已检测到凭据（未校验），needs-auth = 未登录，not-installed = 未添加，
+ * unsupported = 不可用。
+ *
+ * 2026-11 起 ready 不再等价于「一定能用」：探测只确认命令/凭据文件存在，
+ * 没有发真实业务请求。界面文案必须写「未校验」，不能写「就绪」。
  */
 export type AgentAvailability =
   | 'ready'
@@ -594,6 +598,8 @@ export interface RegisteredAgent {
    */
   installEnv?: InstallEnv;
   status: AgentStatus;
+  /** 该 Agent 的恢复指引（后端按 id 下发；非 ready 时界面展示） */
+  recoveryHint?: string;
   /** P4-5：权限强制能力 */
   permissionSupport?: PermissionSupport;
 

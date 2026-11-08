@@ -38,6 +38,8 @@ import type {
   SendContext,
 } from '../types.js';
 import { decideAcpToolAccess } from '../toolPolicy.js';
+import { appendFailureAdvice, recoveryHintFor } from '../recovery.js';
+import { withAnswerLanguage } from '../../answer-language.js';
 import type { ScenarioTool } from '../../../shared/scenarios.js';
 import {
   normalizePermissionOptions,
@@ -409,13 +411,16 @@ export class AcpAdapter implements AgentProvider {
       this.status = {
         availability: 'not-installed',
         installed: false,
-        message: `未找到 \`${this.def.descriptor.command}\``,
+        message: `未找到 \`${this.def.descriptor.command}\`。怎么恢复：${
+          this.def.descriptor.installHint ?? recoveryHintFor(this.descriptor.id)
+        }`,
         probedAt: now,
       };
       return this.status;
     }
 
-    // 真正跑一次 initialize —— 这是唯一能确证「ACP 可用」的方式
+    // 真正跑一次 initialize —— 这是唯一能确证「ACP 进程可用」的方式。
+    // 但 initialize 不验证凭据：所以 ready 的文案必须写「未校验」。
     try {
       await this.ensureRpc();
       this.status = {
@@ -424,8 +429,8 @@ export class AcpAdapter implements AgentProvider {
         binaryPath: binPath,
         version: this.agentInfo?.version,
         message: this.agentInfo?.version
-          ? `ACP 握手成功：${this.agentInfo.name ?? 'agent'} v${this.agentInfo.version}`
-          : 'ACP 握手成功',
+          ? `ACP 握手成功（凭据未校验）：${this.agentInfo.name ?? 'agent'} v${this.agentInfo.version}`
+          : 'ACP 握手成功（凭据未校验）',
         probedAt: now,
       };
     } catch (err) {
@@ -433,7 +438,10 @@ export class AcpAdapter implements AgentProvider {
         availability: 'needs-setup',
         installed: true,
         binaryPath: binPath,
-        message: `ACP 握手失败：${(err as Error).message}`,
+        message: appendFailureAdvice(
+          this.descriptor.id,
+          `ACP 握手失败：${(err as Error).message}`
+        ),
         probedAt: now,
       };
     }
@@ -683,7 +691,10 @@ function stringifyToolOutput(update: Json): string {
 
 /** ACP 没有独立的 system prompt 概念，需要时并入用户消息 */
 function buildPrompt(ctx: SendContext): string {
-  return ctx.systemPrompt
-    ? `${ctx.systemPrompt}\n\n${ctx.prompt}`
+  // A209：ACP 同样没有系统提示参数，回答语言并入「提示段」末尾；
+  // 自动档下 withAnswerLanguage 原样返回 ctx.systemPrompt（含 undefined）。
+  const system = withAnswerLanguage(ctx.systemPrompt, ctx.answerLanguage);
+  return system
+    ? `${system}\n\n${ctx.prompt}`
     : ctx.prompt;
 }

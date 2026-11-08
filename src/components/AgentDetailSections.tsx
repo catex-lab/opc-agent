@@ -210,6 +210,12 @@ export function AgentDetailSections({
                 : availabilityLabelOf(agent)
             }
           />
+          {/* 每个非 ready 的 Agent 都给一句「怎么恢复」：401/403 去重登、
+              429 是额度/限流、ENOENT 是没装好。文案由后端按 id 下发，
+              前端不做猜测（自建 Agent 也有兜底话术）。 */}
+          {agent.status.availability !== 'ready' && agent.recoveryHint && (
+            <DetailRow label="怎么恢复" value={agent.recoveryHint} />
+          )}
           {/* A177：单 Agent 重新探测。放在状态行下面而不是页脚：
               用户是看到「状态不对」才想重探，入口贴着状态最近；
               同时这里离「获取」「凭据配置」都只有一屏，修完凭据可以立刻验。 */}

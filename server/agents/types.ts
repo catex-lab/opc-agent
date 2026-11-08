@@ -234,7 +234,7 @@ const SKILL_META: Record<AgentCapability, { name: string; description: string }>
 
 /** 可用性状态。前端据此渲染徽标与修复指引。 */
 export type AgentAvailability =
-  | 'ready'         // 已就绪，可直接调用
+  | 'ready'         // 已检测到凭据（未校验），不代表一次真实调用一定成功
   | 'needs-auth'    // 已安装但未登录
   | 'needs-setup'   // 已安装但需额外配置（如修复原生二进制）
   /**
@@ -508,11 +508,19 @@ export type AgentProbeState = 'timeout' | 'credential-invalid' | 'probe-failed';
  */
 import type { PermissionMode, PermissionSupport } from '../../shared/types.js';
 import type { ScenarioTool } from '../../shared/scenarios.js';
+import type { AnswerLanguage } from '../../shared/answer-language.js';
 export type { PermissionMode, PermissionSupport, ToolWhitelistSupport } from '../../shared/types.js';
 
 /** 描述 + 状态，即 /api/agents 返回的条目。 */
 export interface AgentInfo extends AgentDescriptor {
   status: AgentStatus;
+  /**
+   * 这个 Agent 的恢复指引（一句话）。
+   *
+   * 由注册表按定义表 id 挂上，随 `/api/agents` 下发；界面在非 ready 时展示。
+   * 与 status.message 分开：message 说「现在怎么了」，这里说「下一步做什么」。
+   */
+  recoveryHint?: string;
   /**
    * A156：SDK 通道的厂商（`tencent` / `claude` / `codex`）。
    *
@@ -556,6 +564,16 @@ export interface SendContext {
   prompt: string;
   /** 系统提示词（并非所有 CLI 都支持，不支持则拼进 prompt） */
   systemPrompt?: string;
+  /**
+   * A209：本轮的回答语言（`auto` = 不注入任何指令）。
+   *
+   * 由**注册表**统一填（`server/agents/registry.ts` → `server/answer-language.ts`），
+   * 适配器只负责拼到自己那条提示词里：
+   *   · SDK / HTTP / Claude-SDK / ACP —— 追加到各自的 system prompt（不覆盖用户人设与项目记忆）
+   *   · CLI —— `cli.ts` 不读 systemPrompt，改成给本轮 prompt 加前缀
+   * 显式传 `'auto'` 表示「本轮不要指令」（群聊编排的内部阶段用），注册表不会覆盖。
+   */
+  answerLanguage?: AnswerLanguage;
   /** 工作目录 */
   cwd?: string;
   /**
@@ -638,6 +656,14 @@ export interface AgentProvider {
    * 必须是「失败静默」的 —— 它只是优化，不能影响任何正常请求。
    */
   prewarm?(ctx: SendContext): void;
+  /**
+   * 用前凭据校验（可选）：只重读本地凭据文件，不发网络请求。
+   *
+   * 由注册表在「本会话第一次发消息」时调一次，把结果写回名册缓存，
+   * 失效时撤回绿点。只有能廉价读盘判断的适配器才实现（Codex / Claude /
+   * Kimi Code）；没有实现 = 不参与，避免把首字延迟拖长。
+   */
+  refreshCredential?(): AgentStatus | null;
   /**
    * 进程退出时回收本适配器持有的长驻资源（子进程 / 定时器）。
    * 只有会「跨轮存活」的适配器需要实现 —— 目前是 ACP 与 SDK 会话池。

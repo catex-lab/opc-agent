@@ -140,6 +140,18 @@ export function useAgentRegistry() {
     [agents]
   );
 
+  /**
+   * 低频重拉（只读缓存，不触发新的探测）。
+   *
+   * 为什么需要：Codex / Claude / Kimi Code 的「用前校验」发生在**发送第一条
+   * 消息时**，结果只写回后端名册缓存；前端不重拉就看不到绿点撤回。
+   * 60 秒只是兜底节奏 —— 用户打开通讯录或手动重新探测都会立刻刷新。
+   */
+  useEffect(() => {
+    const timer = setInterval(() => void load(), 60_000);
+    return () => clearInterval(timer);
+  }, [load]);
+
   /** 按状态分组，供通讯录展示 */
   const grouped = useMemo(() => {
     const ready: RegisteredAgent[] = [];
