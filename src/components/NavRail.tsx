@@ -1,4 +1,13 @@
-import { MessageCircle, Users, Menu, FolderKanban, Boxes, Database } from 'lucide-react';
+import {
+  MessageCircle,
+  Users,
+  Menu,
+  FolderKanban,
+  Boxes,
+  Database,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from 'lucide-react';
 import { useTranslation } from '../i18n';
 
 export type NavKey = 'chats' | 'projects' | 'contacts' | 'extensions';
@@ -13,6 +22,17 @@ interface NavRailProps {
   knowledgeDisabled?: boolean;
   /** 窄屏（单栏模式）下收窄，把像素让给内容 */
   compact?: boolean;
+  /** 二级栏当前是否收起（收起时图标翻到「展开」方向） */
+  sidebarCollapsed?: boolean;
+  /**
+   * 当前页是否允许收起二级栏。
+   *
+   * 通讯录 / 项目 / 扩展在没有选中项时，收起会把唯一的入口藏起来，
+   * 主区只剩一句「从左侧选一个…」—— 这时按钮置灰，页面保持展开。
+   */
+  canCollapseSidebar?: boolean;
+  /** 切换二级栏的收起状态。键盘走原生 button：Tab 可达，Enter / 空格触发 */
+  onToggleSidebar?: () => void;
 }
 
 /**
@@ -53,6 +73,9 @@ export function NavRail({
   onOpenKnowledge,
   knowledgeDisabled = false,
   compact = false,
+  sidebarCollapsed = false,
+  canCollapseSidebar = false,
+  onToggleSidebar,
 }: NavRailProps) {
   const { t } = useTranslation();
   /**
@@ -195,8 +218,51 @@ export function NavRail({
 
       <div className="flex-1" />
 
-      {/* 底部工具按钮。这里只剩「设置」—— 主题切换已移入设置页。 */}
+      {/* 底部工具按钮：二级栏折叠钮 + 设置。主题切换已移入设置页。
+          `gap-1` = 两个按钮间距 4px（折叠钮 44×40，栏内左右各 6px）。 */}
       <div className="flex flex-col items-center gap-1 pb-1">
+        {/* 二级栏折叠钮。
+            放在这里而不是标题栏：logo、标题栏拖拽区与双击最大化全部不动。
+            窄屏（单栏模式）下两栏本来就互斥，这个按钮不渲染；
+            当前页没有可看内容时置灰（收起会把唯一的列表藏起来，见
+            App 的 `canCollapseSidebar`）。 */}
+        {!compact && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            disabled={!canCollapseSidebar}
+            /* title 在置灰时说明原因；aria-label 始终是「这一下会做什么」 */
+            title={
+              canCollapseSidebar
+                ? sidebarCollapsed
+                  ? t('nav.expandSidebar')
+                  : t('nav.collapseSidebar')
+                : t('nav.collapseUnavailable')
+            }
+            aria-label={
+              sidebarCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')
+            }
+            /* 折叠钮控制的是左侧二级栏；`aria-expanded` 让辅助技术知道
+               当前是展开还是收起。收起后图标翻到「展开」方向。 */
+            aria-expanded={!sidebarCollapsed}
+            data-nav-sidebar-toggle
+            className={`
+              relative flex items-center justify-center rounded-lg
+              transition-all duration-200
+              focus-visible:outline-none focus-visible:ring-2
+              focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
+              h-[40px] w-[44px]
+              ${canCollapseSidebar
+                ? 'text-[var(--td-text-color-secondary)] hover:text-[var(--td-text-color-primary)] hover:bg-[var(--tc-hover-chrome)]'
+                : 'cursor-not-allowed text-[var(--td-text-color-secondary)] opacity-40'
+              }
+            `}
+          >
+            {sidebarCollapsed
+              ? <PanelLeftOpen size={20} strokeWidth={2} />
+              : <PanelLeftClose size={20} strokeWidth={2} />}
+          </button>
+        )}
         <button
           type="button"
           onClick={onOpenSettings}

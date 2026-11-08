@@ -39,6 +39,8 @@ export interface Prefs {
   sidebarWidth?: number;
   workspaceWidth?: number;
   workspaceOpen?: boolean;
+  /** 左侧二级栏是否收起（导航条底部折叠钮）。缺键 = 展开 */
+  sidebarCollapsed?: boolean;
   glow?: GlowPrefs;
   defaultModel?: string;
   /** 关闭窗口的行为（A154），三档见 `shared/close-behavior.ts` */

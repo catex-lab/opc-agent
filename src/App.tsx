@@ -242,6 +242,40 @@ function AppContent() {
     });
   }, []);
 
+  /**
+   * 左侧二级栏是否收起（导航条底部的折叠钮）。
+   *
+   * 与 `workspaceOpen` 同一条链：**服务端偏好是事实来源**，localStorage 只是
+   * 镜像（打包态每次启动换端口，按源隔离的 localStorage 会归零，见 A135）。
+   * 缺键 = 展开，所以既有用户的界面不变。
+   *
+   * 这里存的是**用户意愿**；当前页能不能真的收起由下面的 `canCollapseSidebar`
+   * 决定（通讯录 / 项目 / 扩展没有选中项时收起，主区那句「从左侧选一个…」
+   * 就指向一块被藏起来的列表 —— 那是记录过的死路）。
+   */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    const injected = bootPref('sidebarCollapsed');
+    if (injected !== undefined) return injected;
+    try {
+      return localStorage.getItem('opc.sidebar-collapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('opc.sidebar-collapsed', next ? '1' : '0');
+      } catch {
+        /* 同 toggleWorkspace：存不进去只影响下次启动 */
+      }
+      pushPrefs({ sidebarCollapsed: next });
+      return next;
+    });
+  }, []);
+
   // Hooks
   const { preference, setPreference } = useTheme();
   /**
@@ -1598,6 +1632,31 @@ function AppContent() {
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }, [sessions, selectedProject]);
 
+  /**
+   * 折叠钮在当前页是否可用。
+   *
+   * 只有「当前页确实有内容可看」时才允许收起二级栏：否则收起后主区只剩
+   * 一句「从左侧选一个…」，而左侧那块正是唯一的入口 —— 通讯录 / 项目 /
+   * 扩展三页都有这个死路（空态把用户指回一块被藏起来的列表），聊天页在
+   * 没有选中会话时同理。窄屏（≤899px）本来就是列表与内容二选一，收起没有
+   * 意义（主区可能整块不渲染），一律不可用。
+   *
+   * 判据用**已解析的对象**而不是 URL 里的 id：项目 / 会话还在加载或已经被
+   * 删掉时，id 仍在而主区没有内容 —— 那正是「空白页」的成因。
+   */
+  const canCollapseSidebar =
+    !compact &&
+    (nav === 'projects'
+      ? !!selectedProject
+      : nav === 'extensions'
+        ? !!selectedExt
+        : nav === 'contacts'
+          ? !!detailAgent
+          : !!currentSession);
+
+  /** 真正生效的收起状态 = 用户意愿 + 当前页允许收起 */
+  const collapsedSidebar = sidebarCollapsed && canCollapseSidebar;
+
   return (
     /*
      * 纵向两段：自绘标题栏（40px 固定）+ 三栏主体。
@@ -1637,6 +1696,9 @@ function AppContent() {
           onOpenKnowledge={openKnowledgeBase}
           knowledgeDisabled={!kbAnchorSession}
           compact={compact}
+          sidebarCollapsed={collapsedSidebar}
+          canCollapseSidebar={canCollapseSidebar}
+          onToggleSidebar={toggleSidebarCollapsed}
         />
 
         {/* C1：全局知识库面板。与会话头里的入口共用一套组件与状态语义，
@@ -1655,8 +1717,9 @@ function AppContent() {
         {/* A37：设置不再替换主内容，而是浮在它上面（见下面的弹窗）。
             主界面继续渲染 —— 遮罩后面能看见原来的会话，关掉就接着看。 */}
         <>
-          {/* 中间：会话列表 / 项目 / 通讯录。单栏模式下与内容区互斥。 */}
-            {showColumn && (nav === 'chats' ? (
+          {/* 中间：会话列表 / 项目 / 通讯录。单栏模式下与内容区互斥；
+              收起二级栏后整块不渲染，主区 flex-1 自动补位（图标栏 56px 不动）。 */}
+            {showColumn && !collapsedSidebar && (nav === 'chats' ? (
               <ConversationList
                 sessions={sessions}
                 currentSessionId={currentSessionId}
@@ -1721,7 +1784,7 @@ function AppContent() {
                 中间没有缝可拖。手柄自己用负边距把 5px 的占位抵掉，所以
                 渲染它不会让主内容右移、也不会在接缝处露一条异色竖带
                 （见 SidebarResizer.tsx 的「手柄不占布局宽度」）。 */}
-            {showColumn && !compact && <SidebarResizer />}
+            {showColumn && !compact && !collapsedSidebar && <SidebarResizer />}
 
             {/* 右侧：会话内容。
                 A103：这一层**不再自己铺底色** —— 底色交给里面的聊天列，

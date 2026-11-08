@@ -54,6 +54,14 @@ export interface Prefs {
   sidebarWidth?: number;
   workspaceWidth?: number;
   workspaceOpen?: boolean;
+  /**
+   * 左侧二级栏是否收起（导航条底部的折叠钮）。
+   *
+   * 只决定「二级栏在不在」，不动 56px 图标栏、不动标题栏。缺键 = 展开，
+   * 与加这个开关之前逐像素一致。哪些页面上真的允许收起由前端按当前选中项
+   * 判断（通讯录 / 项目 / 扩展没有选中项时，收起会把唯一的入口藏起来）。
+   */
+  sidebarCollapsed?: boolean;
   glow?: GlowPrefs;
   defaultModel?: string;
   /**
@@ -136,6 +144,7 @@ export function normalizePrefs(input: unknown): Prefs {
   if (isIntIn(o.sidebarWidth, PREFS_LIMITS.sidebarWidth)) out.sidebarWidth = o.sidebarWidth;
   if (isIntIn(o.workspaceWidth, PREFS_LIMITS.workspaceWidth)) out.workspaceWidth = o.workspaceWidth;
   if (typeof o.workspaceOpen === 'boolean') out.workspaceOpen = o.workspaceOpen;
+  if (typeof o.sidebarCollapsed === 'boolean') out.sidebarCollapsed = o.sidebarCollapsed;
   if (typeof o.defaultModel === 'string' && o.defaultModel.trim()) {
     out.defaultModel = o.defaultModel.trim().slice(0, MAX_MODEL_ID_LEN);
   }
@@ -224,6 +233,11 @@ export function validatePrefsPatch(input: unknown): PrefsValidation {
         if (v === null) patch.workspaceOpen = null;
         else if (typeof v === 'boolean') patch.workspaceOpen = v;
         else return { ok: false, error: `workspaceOpen 必须是布尔值，收到 ${JSON.stringify(v)}` };
+        break;
+      case 'sidebarCollapsed':
+        if (v === null) patch.sidebarCollapsed = null;
+        else if (typeof v === 'boolean') patch.sidebarCollapsed = v;
+        else return { ok: false, error: `sidebarCollapsed 必须是布尔值，收到 ${JSON.stringify(v)}` };
         break;
       case 'defaultModel':
         if (v === null) patch.defaultModel = null;
