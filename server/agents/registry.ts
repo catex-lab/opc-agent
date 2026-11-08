@@ -42,25 +42,37 @@ import type {
 const PROBE_TTL_MS = 5 * 60 * 1000;
 
 /** 探测并发上限：ACP 要起 Python 进程，SDK 要走网络，一次性全开会很慢 */
-const PROBE_CONCURRENCY = 3;
+const PROBE_CONCURRENCY = 2;
 
 /**
- * 单 Agent 探测的默认预算（A177）。
+ * 启动后延迟多久再开始全量探测。
  *
- * 为什么按 kind 分开而不是统一 8–10 秒：探测的成本结构差异太大。
- * - CLI / SDK-with-fast-probe：9 秒足够覆盖一次进程启动 + 版本读取；
- * - ACP：要拉起 Python 并完成 initialize，本机实测常在 20 秒上下；
- * - SDK（WorkBuddy/CodeBuddy）：冷启动 initialize 单次就可能超过 60 秒
- *   （SDK 内部 requestTimeoutMs 默认 60000），首探必须给更长预算。
- *
- * `SDK_COLD` 取 120 秒：60 秒（首次 initialize 超时）+ 31 秒（重试成功）
- * 的实测总耗时约 91 秒，留出余量。`SDK_WARM` 取 45 秒覆盖重试路径。
- * 这些只是**上限**，正常探测远低于它。
+ * 窗口刚起来时最需要资源：渲染首帧、加载会话、用户往往在几秒内就发第一条
+ * 消息。这时候 15 个 Agent 一起探（每个都 spawn 子进程）会把首字拖慢。
+ * 实测启动瞬间能看到挂死的 `gemini version` / `codebuddy-headless` 在抢 CPU。
+ * 让出 5 秒，等窗口 idle 之后再探。
  */
-const SINGLE_PROBE_TIMEOUT_MS = 9_000;
-const ACP_PROBE_TIMEOUT_MS = 30_000;
-const SDK_COLD_PROBE_TIMEOUT_MS = 120_000;
-const SDK_WARM_PROBE_TIMEOUT_MS = 45_000;
+const PROBE_START_DELAY_MS = 5_000;
+
+/**
+ * 单 Agent 探测的**硬预算**（A177）。
+ *
+ * 这里给的是「到点就按未知放行」的上限，不再是「等到 SDK 自己放弃」：
+ * - CLI：版本探测单参数 3 秒 + 后端可达性 2.5 秒，12 秒足够；
+ * - ACP：拉起 Python 并完成 initialize，本机实测常在 20 秒上下；
+ * - SDK（WorkBuddy/CodeBuddy）：initialize 60 秒超时 + 31 秒重试的旧预算
+ *   （120/45 秒）会直接挡在首字前面。探测只负责「能不能用」的粗略判断，
+ *   20 秒拿不到就降级为「状态未知」，真正的调用由用户发消息时的运行时决定。
+ */
+const SINGLE_PROBE_TIMEOUT_MS = 12_000;
+const ACP_PROBE_TIMEOUT_MS = 20_000;
+const SDK_PROBE_TIMEOUT_MS = 20_000;
+
+/**
+ * 群聊这类「先确认成员状态」的等待上限。
+ * 超过就按「状态未知但可发」继续，绝不让一轮对话无限挂着。
+ */
+const ENSURE_PROBED_BUDGET_MS = 3_000;
 /** 前端可显式指定预算，但不允许无限等 */
 export const MAX_SINGLE_PROBE_TIMEOUT_MS = 180_000;
 
@@ -384,19 +396,46 @@ class AgentRegistry {
    */
   private startProbe(id: string, provider: AgentProvider): Promise<AgentStatus> {
     const task = (async (): Promise<AgentStatus> => {
-      let status: AgentStatus;
-      try {
-        status = await provider.probe();
-      } catch (err) {
+      const budget = this.probeBudgetFor(provider);
+      const live = provider.probe().catch((err: unknown): AgentStatus => {
         const message = (err as Error)?.message || String(err);
-        status = {
+        return {
           availability: 'unknown',
           installed: false,
           message: `探测失败：${message}`,
           probeState: 'probe-failed',
           probedAt: new Date().toISOString(),
         };
+      });
+
+      // 硬超时：探测**只是状态判断**，不能成为发消息的前置阻塞。
+      // 到点先按「未知」放行；底层探测若之后真的回来，再覆盖成真实结果。
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<AgentStatus>(resolve => {
+        timer = setTimeout(() => {
+          resolve({
+            availability: 'unknown',
+            installed: this.statuses.get(id)?.installed ?? false,
+            message: `探测超过 ${Math.round(budget / 1000)} 秒未返回，状态未知（可直接发消息）`,
+            probeState: 'timeout',
+            probedAt: new Date().toISOString(),
+          });
+        }, budget);
+      });
+
+      const status = await Promise.race([live, timeout]);
+      if (timer) clearTimeout(timer);
+
+      if (status.probeState === 'timeout') {
+        // 超时标记不写 probedAt：下一轮仍应重试，不能被 5 分钟 TTL 冻住
+        this.statuses.set(id, withProbeOutcome(status));
+        void live.then(real => {
+          this.statuses.set(id, withProbeOutcome(real));
+          this.probedAt.set(id, Date.now());
+        }).catch(() => {});
+        return status;
       }
+
       this.statuses.set(id, withProbeOutcome(status));
       this.probedAt.set(id, Date.now());
       return status;
@@ -407,6 +446,18 @@ class AgentRegistry {
 
     this.inflight.set(id, task);
     return task;
+  }
+
+  /** 按 Agent 类型给探测硬预算：SDK 不再沿用 120/45 秒的冷启动长预算 */
+  private probeBudgetFor(provider: AgentProvider): number {
+    switch (provider.descriptor.kind) {
+      case 'sdk':
+        return SDK_PROBE_TIMEOUT_MS;
+      case 'acp':
+        return ACP_PROBE_TIMEOUT_MS;
+      default:
+        return SINGLE_PROBE_TIMEOUT_MS;
+    }
   }
 
   /** 复用进行中的探测（同一 Agent 并发点击只起一次进程） */
@@ -506,9 +557,12 @@ class AgentRegistry {
     if (typeof requested === 'number' && Number.isFinite(requested) && requested > 0) {
       return Math.min(Math.floor(requested), MAX_SINGLE_PROBE_TIMEOUT_MS);
     }
+    // `hadProbe` 不再区分冷/热：SDK 的 60s+31s 长预算已被硬超时取代，
+    // 留参是为了不改变调用方签名（前端仍可按需传 requested）。
+    void hadProbe;
     switch (provider.descriptor.kind) {
       case 'sdk':
-        return hadProbe ? SDK_WARM_PROBE_TIMEOUT_MS : SDK_COLD_PROBE_TIMEOUT_MS;
+        return SDK_PROBE_TIMEOUT_MS;
       case 'acp':
         return ACP_PROBE_TIMEOUT_MS;
       default:
@@ -522,6 +576,14 @@ class AgentRegistry {
    * @param force 忽略 TTL 强制重探
    */
   async probeAll(force = false): Promise<AgentInfo[]> {
+    // 首轮全量探测让窗口先 idle 5 秒，别和首帧/首批消息抢进程资源。
+    // 显式 force（用户在设置里点「重新探测」）不等。
+    if (!force && !this.probedOnce) {
+      // 不能 unref：这个延迟是「本轮探测的前半段」，不是可丢弃的装饰。
+      // unref 之后如果进程里暂时没有别的句柄，Node 会直接退出，
+      // 首轮探测就再也不会发生（闸门脚本里实测 exit 13）。
+      await new Promise<void>(resolve => setTimeout(resolve, PROBE_START_DELAY_MS));
+    }
     const ids = [...this.providers.keys()];
     const queue = [...ids];
     const workers = Array.from(
@@ -562,9 +624,50 @@ class AgentRegistry {
   /**
    * 确保指定 Agent 的状态是新鲜的（供群聊这类「必须先知道谁能用」的场景）。
    * 已新鲜的直接命中缓存，不会重复起进程。
+   *
+   * 带**总预算**：到点没探完就按「未知但可发」放行并返回 timedOut。
+   * 群聊不应该因为某个成员冷启动慢（比如 SDK 的 initialize）把整轮挂住。
    */
-  async ensureProbed(ids: string[]): Promise<void> {
-    await Promise.all(ids.map(id => this.probeOne(id)));
+  async ensureProbed(
+    ids: string[],
+    budgetMs = ENSURE_PROBED_BUDGET_MS
+  ): Promise<{ timedOut: string[] }> {
+    const targets = ids.filter(id => this.providers.has(id));
+    if (!targets.length) return { timedOut: [] };
+    // 全都新鲜：零等待
+    if (!targets.some(id => !this.isFresh(id))) return { timedOut: [] };
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<'timeout'>(resolve => {
+      timer = setTimeout(() => resolve('timeout'), budgetMs);
+    });
+    const done = Promise.all(
+      targets.map(id => this.probeOne(id).then(() => null).catch(() => null))
+    ).then(() => 'done' as const);
+
+    const winner = await Promise.race([done, timeout]);
+    if (timer) clearTimeout(timer);
+    if (winner === 'done') return { timedOut: [] };
+
+    const timedOut = targets.filter(id => !this.isFresh(id));
+    for (const id of timedOut) {
+      const prev = this.statuses.get(id);
+      // 不写 probedAt：下一轮还会重试；这一轮只保证「能继续发」
+      this.statuses.set(
+        id,
+        withProbeOutcome({
+          ...(prev ?? {}),
+          availability: 'unknown',
+          installed: prev?.installed ?? false,
+          message:
+            `成员状态检查超过 ${Math.round(budgetMs / 1000)} 秒，暂按未知处理（不影响发送）。` +
+            (prev?.message ? `上一次结果：${prev.message}` : ''),
+          probeState: 'timeout',
+          probedAt: new Date().toISOString(),
+        } as AgentStatus)
+      );
+    }
+    return { timedOut };
   }
 
   /** 把运行时错误回写到状态里，让名册页能显示「上次为什么失败」 */
