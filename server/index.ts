@@ -2048,6 +2048,38 @@ app.post("/api/chat", async (req, res) => {
   const selectedModel = resolvedModel;
   let resumeToken = session.sdk_session_id;
 
+  // A123：生效顺序与 cwd / 档位一致 —— 请求体 > 会话里存的值 > 'default'。
+  // 放在续接判定之前算，因为下面要用它决定「旧线程还能不能续」。
+  const effectivePermissionMode = permissionMode || session.permission_mode || 'default';
+
+  /**
+   * Codex 的特殊约束：`codex exec resume` 没有 `--sandbox` 选项。
+   *
+   * 续接只能沿用**线程创建时**定下的沙箱，没法在 resume 时改档；而本应用
+   * 允许每轮换权限档。所以创建线程时把当时的档位记在会话上，本轮档位与
+   * 记录不一致就丢掉续接令牌、强制新建线程 —— 代价是丢一次上下文，换来
+   * 「界面上选的权限 = 实际跑的沙箱」，而不是静默错配。
+   *
+   * 老库没有这一列（NULL）：按 'default' 兜底比较。早期会话绝大多数就是
+   * 默认档，只有真换了档的才会被强制新建一次。
+   *
+   * 只管 codex：别的适配器每轮都能重新传权限参数，没必要为了记账丢上下文。
+   */
+  if (
+    agentId === 'codex' &&
+    resumeToken &&
+    (session.sdk_thread_permission ?? 'default') !== effectivePermissionMode
+  ) {
+    console.log(
+      `[Chat] Codex 权限档变更（${session.sdk_thread_permission ?? '未记录'} → ${effectivePermissionMode}），丢弃续接令牌并新建线程`
+    );
+    db.updateSession(session.id, {
+      sdk_session_id: null,
+      sdk_thread_permission: null,
+    });
+    resumeToken = null;
+  }
+
   /**
    * A207：切模型 / 重发之前先确认「CLI 会话里是否留着没答完的指令」。
    *
@@ -2155,7 +2187,7 @@ app.post("/api/chat", async (req, res) => {
    * 悄悄改掉。历史摘要只是背景，措辞里明确写了「不是待办指令」。
    */
   if ((resumeChoice === 'fresh' || resumeChoice === 'skip') && resumeToken) {
-    db.updateSession(session.id, { sdk_session_id: null });
+    db.updateSession(session.id, { sdk_session_id: null, sdk_thread_permission: null });
     resumeToken = null;
     freshSummary = historySummary(historyRows);
     console.log(
@@ -2369,7 +2401,7 @@ app.post("/api/chat", async (req, res) => {
     // A123：生效顺序与 cwd / 档位一致 —— 请求体 > 会话里存的值 > 'default'。
     // 中间那一级是这轮补上的：以前这一档只活在请求体里，而前端读的是会话对象，
     // 于是「芯片显示全放行、发出去的是 default」—— 会话里存了也没人看。
-    permissionMode: permissionMode || session.permission_mode || 'default',
+    permissionMode: effectivePermissionMode,
     allowedTools: allowedToolsFor(scenarioId, session.scenario_id),
     signal: ac.signal,
   });
@@ -2391,7 +2423,14 @@ app.post("/api/chat", async (req, res) => {
       // 续接令牌要在投影之前处理：它属于会话状态，不是可渲染的块
       if (ev.type === 'init' && ev.resumeToken && ev.resumeToken !== resumeToken) {
         newResumeToken = ev.resumeToken;
-        db.updateSession(session.id, { sdk_session_id: ev.resumeToken });
+        db.updateSession(session.id, {
+          sdk_session_id: ev.resumeToken,
+          // 新建线程时把**实际生效**的权限档记下。Codex resume 没有 sandbox
+          // 选项，下一轮只能靠这条记录判断「档位变了就得新建线程」。
+          ...(agentId === 'codex'
+            ? { sdk_thread_permission: effectivePermissionMode }
+            : {}),
+        });
         console.log(`[Chat] 已保存续接令牌: ${ev.resumeToken}`);
       }
 

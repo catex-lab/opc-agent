@@ -312,6 +312,18 @@ ensureColumn('sessions', 'system_prompt', 'system_prompt TEXT');
  * NULL 才有地方放。`pinned` 那种布尔位才需要 NOT NULL。
  */
 ensureColumn('sessions', 'permission_mode', 'permission_mode TEXT');
+/**
+ * Codex 线程创建时的权限档。
+ *
+ * `codex exec resume` 没有 `--sandbox` 选项，续接只能沿用线程创建时定下的
+ * 沙箱；而本应用允许每轮换权限档。不记住创建时的档位，就会出现「界面上
+ * 写着全放行、实际仍跑在只读沙箱里」这种没有任何报错的静默错配。
+ *
+ * 老库为 NULL = 迁移前创建的线程，读取侧按 'default' 处理；与显式选择了
+ * 非默认档位的本轮请求不一致时会丢掉续接令牌、强制新建线程（宁可丢一次
+ * 上下文，也不让权限档位说谎）。
+ */
+ensureColumn('sessions', 'sdk_thread_permission', 'sdk_thread_permission TEXT');
 ensureColumn('sessions', 'pinned', 'pinned INTEGER NOT NULL DEFAULT 0');
 /**
  * A166（P1）：扩展的归一化前原文。
@@ -420,6 +432,14 @@ export interface DbSession {
    * 让每个调用点写一遍 `permission_mode: null` 只是噪音。
    */
   permission_mode?: string | null;
+  /**
+   * 创建 SDK 线程时实际生效的权限档（目前只有 Codex 用）。
+   *
+   * NULL = 迁移前创建的线程（当时没记录）。续接时与本轮档位不一致就强制
+   * 新建线程，理由见 `ensureColumn('sessions', 'sdk_thread_permission', ...)`
+   * 上方的注释。
+   */
+  sdk_thread_permission?: string | null;
   /**
    * A98：所属项目 id。NULL = 会话没绑定工作目录，或来自回填之前的旧数据。
    *
@@ -847,6 +867,7 @@ export function updateSession(
       | 'scenario_id'
       | 'system_prompt'
       | 'permission_mode'
+      | 'sdk_thread_permission'
       | 'pinned'
       | 'project_id'
     >
@@ -906,6 +927,11 @@ export function updateSession(
   if (updates.permission_mode !== undefined) {
     fields.push('permission_mode = ?');
     values.push(updates.permission_mode);
+  }
+  // 线程创建档位：与 permission_mode 同构，null = 清空（下次续接一律新建）。
+  if (updates.sdk_thread_permission !== undefined) {
+    fields.push('sdk_thread_permission = ?');
+    values.push(updates.sdk_thread_permission);
   }
   if (updates.pinned !== undefined) {
     fields.push('pinned = ?');

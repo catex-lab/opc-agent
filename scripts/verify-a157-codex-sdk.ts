@@ -120,7 +120,18 @@ console.log('\n[2] 源码契约：无假审批 / 续接不传沙箱 / 映射复�
 
   // 续接时不能传 sandboxMode：exec resume 选项表里没有它
   ok(codex.some(l => l.includes('!ctx.resumeToken') && l.includes('codexSandboxFor(ctx.permissionMode)')),
-    '★ 仅新建会话传 sandboxMode，续接沿用原配置');
+    '★ 仅新建会话传 sandboxMode，续接不硬塞（exec resume 没有该选项）');
+
+  /* 权限档变更必须新建线程：resume 沿用创建时的 sandbox，改档后续接
+     会让「界面选的权限」与「实际沙箱」静默错配。所以创建时记档、续接前比对，
+     不一致就丢令牌。这里钉住 chat 路由里的两条实现契约。 */
+  const chat = codeLines(read('server/index.ts'));
+  ok(chat.some(l => l.includes('sdk_thread_permission') && l.includes('effectivePermissionMode')),
+    '★ 续接前比对线程创建时的权限档');
+  ok(chat.some(l => l.includes('权限档变更')) && chat.some(l => l.includes('resumeToken = null')),
+    '★ 权限变更后丢弃续接令牌（强制新建线程）');
+  ok(chat.some(l => l.includes('sdk_thread_permission: effectivePermissionMode')),
+    '★ 线程创建时记录实际生效的权限档');
 
   ok(codex.some(l => l.includes('createCodexLineageMapper(')),
     '复用带状态的增量映射器');
