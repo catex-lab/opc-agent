@@ -59,6 +59,13 @@ import { AsyncQueue, linkAbort } from '../channel.js';
 import { toUnpackedPath } from '../sdkRuntime.js';
 import { createCodexLineageMapper } from '../definitions.js';
 import { codexSandboxFor } from '../permissions.js';
+import {
+  inspectCodexCredentials,
+  formatLocalMinute,
+  type CredentialVerdict,
+} from '../credentialStatus.js';
+import { recoveryHintFor } from '../recovery.js';
+import { withAnswerLanguagePrefix } from '../../answer-language.js';
 import type {
   AgentDescriptor,
   AgentEvent,
@@ -117,10 +124,55 @@ function bundledBinary(): string | null {
   return null;
 }
 
-/** 是否已有 OpenAI 凭据（`codex login` 写 ~/.codex/auth.json，或环境变量） */
-function hasCredentials(): boolean {
-  if (process.env.OPENAI_API_KEY) return true;
-  return fs.existsSync(path.join(os.homedir(), '.codex', 'auth.json'));
+/**
+ * 凭据检测结论 → 名册状态。
+ *
+ * 三条口径写死在这里，供 probe 与「用前校验」共用：
+ *   - 过期但有 refresh_token：**仍是可用**，文案写「首次使用会尝试刷新」；
+ *   - 过期且没有 refresh_token：`needs-auth`，文案写「需要重新登录」；
+ *   - 文件在但读不懂：不假装已登录，也不直接判未登录 —— 让用户重新登录一次。
+ */
+export function resolveCodexCredential(
+  verdict: CredentialVerdict
+): Pick<AgentStatus, 'availability' | 'message' | 'probeState'> {
+  switch (verdict.state) {
+    case 'absent':
+      return {
+        availability: 'needs-auth',
+        message: `未检测到 OpenAI 登录凭据。怎么恢复：${recoveryHintFor('codex')}`,
+      };
+    case 'unreadable':
+      return {
+        availability: 'needs-auth',
+        message: `OpenAI 凭据文件无法解析（${verdict.reason}），请重新登录。怎么恢复：${recoveryHintFor('codex')}`,
+        probeState: 'credential-invalid',
+      };
+    case 'expired-needs-login':
+      return {
+        availability: 'needs-auth',
+        message: `OpenAI 登录态已过期（${formatLocalMinute(
+          new Date(verdict.expiresAt).toISOString()
+        )}），且没有可用的刷新令牌，需要重新登录。怎么恢复：${recoveryHintFor('codex')}`,
+        probeState: 'credential-invalid',
+      };
+    case 'expired-refreshable':
+      return {
+        // 硬要求：有 refresh_token 就不判不可用，宁可显示「过期待刷新」
+        availability: 'ready',
+        message: `已检测到 OpenAI 登录态，但已过期（${formatLocalMinute(
+          new Date(verdict.expiresAt).toISOString()
+        )}）；首次使用会尝试刷新（未校验）`,
+      };
+    case 'present':
+      return {
+        availability: 'ready',
+        message: verdict.expiresAt
+          ? `已检测到 OpenAI 凭据（未校验，有效期至 ${formatLocalMinute(
+              new Date(verdict.expiresAt).toISOString()
+            )}）`
+          : '已检测到 OpenAI 凭据（未校验）',
+      };
+  }
 }
 
 export class CodexSdkAdapter implements AgentProvider {
@@ -144,22 +196,45 @@ export class CodexSdkAdapter implements AgentProvider {
       };
       return this.status;
     }
-    this.status = hasCredentials()
-      ? {
-          availability: 'ready',
-          installed: true,
-          binaryPath: binary,
-          message: '已检测到 OpenAI 登录态或 API Key',
-          probedAt: now,
-        }
-      : {
-          availability: 'needs-auth',
-          installed: true,
-          binaryPath: binary,
-          message: '未检测到 OpenAI 凭据，请运行 codex login 或设置 OPENAI_API_KEY',
-          probedAt: now,
-        };
+    this.status = {
+      ...(process.env.OPENAI_API_KEY
+        ? {
+            availability: 'ready' as const,
+            message: '已通过环境变量配置凭据（未校验）',
+          }
+        : resolveCodexCredential(inspectCodexCredentials())),
+      installed: true,
+      binaryPath: binary,
+      probedAt: now,
+    };
     return this.status;
+  }
+
+  /**
+   * 用前校验：只读凭据文件，不发任何网络请求。
+   *
+   * 由注册表在「本会话第一次发消息」时调一次；过期且有 refresh_token 时
+   * 只更新文案，不撤回可用状态。
+   */
+  refreshCredential(): AgentStatus | null {
+    if (!this.status?.installed) return null;
+    const now = new Date().toISOString();
+    const resolved: Pick<AgentStatus, 'availability' | 'message' | 'probeState'> =
+      process.env.OPENAI_API_KEY
+        ? { availability: 'ready', message: '已通过环境变量配置凭据（未校验）' }
+        : resolveCodexCredential(inspectCodexCredentials());
+    const next: AgentStatus = {
+      ...this.status,
+      availability: resolved.availability,
+      message: resolved.message,
+      probedAt: now,
+    };
+    if (resolved.probeState) next.probeState = resolved.probeState;
+    else delete next.probeState;
+    // 绿点回来了就顺手清掉上一次的失败原因；仍失败则保留并补建议
+    if (resolved.availability === 'ready') delete next.lastError;
+    this.status = next;
+    return next;
   }
 
   async *send(ctx: SendContext): AsyncIterable<AgentEvent> {
@@ -205,7 +280,12 @@ export class CodexSdkAdapter implements AgentProvider {
           ? codex.resumeThread(ctx.resumeToken, threadOptions)
           : codex.startThread(threadOptions);
 
-        const { events } = await thread.runStreamed(ctx.prompt, { signal: controller.signal });
+        // A209：Codex SDK 的 ThreadOptions 没有系统提示面，只能像 CLI 一样
+        // 把回答语言并入本轮 prompt（自动档原样返回，不加字节）。
+        const { events } = await thread.runStreamed(
+          withAnswerLanguagePrefix(ctx.prompt, ctx.answerLanguage),
+          { signal: controller.signal }
+        );
 
         for await (const event of events) {
           if (aborted) break;
@@ -290,4 +370,4 @@ function bundledPathOption(): { codexPathOverride?: string } {
   return binary ? { codexPathOverride: binary } : {};
 }
 
-export { bundledBinary, hasCredentials };
+export { bundledBinary };
