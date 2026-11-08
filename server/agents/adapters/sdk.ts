@@ -21,6 +21,14 @@ import { withAnswerLanguage } from '../../answer-language.js';
 import { withExtensionsContext } from '../../extensions/inject.js';
 import { SDK_PERMISSION_OPTIONS } from '../../../shared/permissions.js';
 import { createCanUseToolBridge } from './sdkApproval.js';
+import {
+  createStreamTextState,
+  mapStreamTextEvent,
+  takeStreamedText,
+  takeStreamedThinking,
+  takeStreamedTotalText,
+  type StreamTextState,
+} from './streamText.js';
 import type {
   AgentDescriptor,
   AgentEvent,
@@ -663,6 +671,8 @@ export class SdkAdapter implements AgentProvider {
       cwd: ctx.cwd || process.cwd(),
       model: ctx.model,
       maxTurns: 10,
+      // P1：正文/思考要逐块到达，不能等整条 assistant 消息。
+      includePartialMessages: true,
       // A38/A98：提示词装配与 one-shot 路径完全一致（记忆层在这里注入）
       // A209：回答语言追加在最末，用户人设与项目记忆保持在前
       systemPrompt: withAnswerLanguage(
@@ -842,6 +852,7 @@ export class SdkAdapter implements AgentProvider {
           cwd: ctx.cwd || process.cwd(),
           model: ctx.model,
           maxTurns: 10,
+          includePartialMessages: true,
           systemPrompt: withAnswerLanguage(
             withExtensionsContext(
               withMemoryContext(ctx.systemPrompt || DEFAULT_SYSTEM_PROMPT, ctx.memoryCwd),
@@ -975,6 +986,8 @@ export interface TurnState {
   currentToolId: string | null;
   openTools: string[];
   started: number;
+  /** P1：`includePartialMessages` 的增量缓存；缺省时按无增量处理 */
+  stream?: StreamTextState;
 }
 
 /**
@@ -992,6 +1005,21 @@ export function mapSdkMessage(
   queue: AsyncQueue<AgentEvent>,
   st: TurnState
 ): 'continue' | 'result' | 'error' {
+  const stream = (st.stream ??= createStreamTextState());
+  // 子 Agent 的流与主回答是两段独立正文，不能共用一份去重缓存（同 claude-sdk）
+  const isSubAgent = m.parent_tool_use_id != null && m.parent_tool_use_id !== '';
+
+  // P1：`includePartialMessages` 打开后，正文会先以 content_block_delta 到达。
+  // 认识的事件在这里直接变成 text/thinking；不认识的仍落到函数末尾的 raw 旁路。
+  if (m.type === 'stream_event') {
+    if (isSubAgent) return 'continue';
+    const events = mapStreamTextEvent(m, stream);
+    if (events) {
+      for (const event of events) queue.push(event);
+      return 'continue';
+    }
+  }
+
   if (m.type === 'system' && m.subtype === 'init') {
     queue.push({
       type: 'init',
@@ -1006,11 +1034,16 @@ export function mapSdkMessage(
   if (m.type === 'assistant') {
     const content = (m.message as { content?: unknown })?.content;
     if (typeof content === 'string') {
-      queue.push({ type: 'text', content });
+      // 增量已推过的部分不再重复；否则同一条正文会翻倍。子 Agent 不参与去重。
+      const text = isSubAgent ? content : takeStreamedTotalText(stream, content);
+      if (text) queue.push({ type: 'text', content: text });
     } else if (Array.isArray(content)) {
-      for (const block of content as Array<Record<string, unknown>>) {
+      for (let index = 0; index < content.length; index += 1) {
+        const block = content[index] as Record<string, unknown>;
         if (block.type === 'text') {
-          queue.push({ type: 'text', content: String(block.text ?? '') });
+          const full = String(block.text ?? '');
+          const text = isSubAgent ? full : takeStreamedText(stream, index, full);
+          if (text) queue.push({ type: 'text', content: text });
         } else if (block.type === 'thinking') {
           // A111：思考块以前在这里被**静默丢弃** —— 这个循环只认 text / image /
           // tool_use，`{type:'thinking', thinking:'…'}` 落不到任何分支，然后就没了。
@@ -1019,7 +1052,8 @@ export function mapSdkMessage(
           // 这正是「多报 = 伪造」那类缺陷 —— 声明了能力、界面照着声明去画折叠条，
           // 可适配器一次都没往那儿送过东西。修法是让适配器兑现清单，而不是
           // 把清单改小：能力本来就有，是我们没接。
-          const think = String(block.thinking ?? '');
+          const fullThink = String(block.thinking ?? '');
+          const think = isSubAgent ? fullThink : takeStreamedThinking(stream, index, fullThink);
           if (think) queue.push({ type: 'thinking', content: think });
         } else if (block.type === 'redacted_thinking') {
           // 厂商把这段思考加密了：正文拿不到，但「确实想过一段」是事实。

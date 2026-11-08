@@ -60,6 +60,14 @@ import { withAnswerLanguage } from '../../answer-language.js';
 import { withExtensionsContext } from '../../extensions/inject.js';
 import { SDK_PERMISSION_OPTIONS } from '../../../shared/permissions.js';
 import { createCanUseToolBridge } from './sdkApproval.js';
+import {
+  createStreamTextState,
+  mapStreamTextEvent,
+  takeStreamedText,
+  takeStreamedThinking,
+  takeStreamedTotalText,
+  type StreamTextState,
+} from './streamText.js';
 import { mapClaudeCodeLine } from '../definitions.js';
 import {
   inspectClaudeCredentials,
@@ -385,8 +393,9 @@ export class ClaudeSdkAdapter implements AgentProvider {
           });
         }
 
+        const streamState = createStreamTextState();
         for await (const msg of q) {
-          const mapped = mapClaudeSdkMessage(msg, ctx, queue);
+          const mapped = mapClaudeSdkMessage(msg, ctx, queue, streamState);
           if (mapped === 'result') {
             const r = msg as {
               subtype?: string;
@@ -584,6 +593,9 @@ export class ClaudeSdkAdapter implements AgentProvider {
       ...(binary ? { pathToClaudeCodeExecutable: binary } : {}),
       abortController,
       canUseTool,
+      // P1：0.3.316 的 Options 已支持该字段；打开后才会收到 `stream_event`
+      // （SDKPartialAssistantMessage），正文才能逐块而不是整条到达。
+      includePartialMessages: true,
       // A176：知识库检索是只读能力，sessionId 由宿主塞进子进程环境；
       // 工具的权限放行在 sdkApproval 里按 mcp__kb__ 前缀单独处理。
       mcpServers: {
@@ -630,10 +642,42 @@ export class ClaudeSdkAdapter implements AgentProvider {
  * `system/init` 之外的 system 子类型（status / compact_boundary / …）走
  * raw 旁路，与 WorkBuddy 通道的「不静默丢弃」保持一致。
  */
-function mapClaudeSdkMessage(
+/**
+ * 整条 assistant 消息到达时，把「增量已经推出去的部分」剪掉再交给块级映射。
+ * 不剪的话，同一段正文会先按 delta 推一遍、再按整条消息推一遍，直接翻倍。
+ * 空块直接丢弃，避免产生空 text/thinking 节点。
+ */
+function dedupeAssistant(message: Record<string, unknown>, stream: StreamTextState): Record<string, unknown> {
+  const payload = message.message;
+  if (!payload || typeof payload !== 'object') return message;
+  const content = (payload as { content?: unknown }).content;
+  if (typeof content === 'string') {
+    return { ...message, message: { ...payload, content: takeStreamedTotalText(stream, content) } };
+  }
+  if (!Array.isArray(content)) return message;
+  const next = content
+    .map((block, index) => {
+      if (!block || typeof block !== 'object') return block;
+      const item = block as Record<string, unknown>;
+      if (item.type === 'text') {
+        const text = takeStreamedText(stream, index, String(item.text ?? ''));
+        return text ? { ...item, text } : null;
+      }
+      if (item.type === 'thinking') {
+        const thinking = takeStreamedThinking(stream, index, String(item.thinking ?? ''));
+        return thinking ? { ...item, thinking } : null;
+      }
+      return item;
+    })
+    .filter((block) => block !== null);
+  return { ...message, message: { ...payload, content: next } };
+}
+
+export function mapClaudeSdkMessage(
   msg: SDKMessage,
   ctx: SendContext,
-  queue: AsyncQueue<AgentEvent>
+  queue: AsyncQueue<AgentEvent>,
+  stream: StreamTextState
 ): 'continue' | 'result' {
   const m = msg as unknown as {
     type?: string;
@@ -641,6 +685,9 @@ function mapClaudeSdkMessage(
     session_id?: string;
     model?: string;
     message?: unknown;
+    event?: unknown;
+    /** 子 Agent 的流带这个字段；它的增量不能和主回答共用一份去重缓存 */
+    parent_tool_use_id?: string | null;
   };
 
   if (m.type === 'system' && m.subtype === 'init') {
@@ -656,8 +703,24 @@ function mapClaudeSdkMessage(
 
   if (m.type === 'result') return 'result';
 
+  // P1：`includePartialMessages` 打开后，正文先以流事件到达。
+  // 能识别的直接下发；不能识别的继续落到 raw 旁路。
+  if (m.type === 'stream_event') {
+    // 子 Agent（Task 工具）的流事件也带 type='stream_event'，但和主回答是
+    // 两段独立正文。混进同一份缓存会让 message_start 清掉主回答的进度，
+    // 整条消息随后又被重发一遍 —— 正是要防的翻倍。子流不取增量：
+    // 它随后的整条 assistant 消息按原样下发（与打开 includePartialMessages 前一致）。
+    if (m.parent_tool_use_id) return 'continue';
+    const events = mapStreamTextEvent(m, stream);
+    if (events) {
+      for (const ev of events) queue.push(ev);
+      return 'continue';
+    }
+  }
+
   if (m.type === 'assistant' || m.type === 'user') {
-    const events = mapClaudeCodeLine(m);
+    const payload = m.type === 'assistant' && !m.parent_tool_use_id ? dedupeAssistant(m, stream) : m;
+    const events = mapClaudeCodeLine(payload);
     if (Array.isArray(events)) {
       for (const ev of events) queue.push(ev);
     } else if (events) {

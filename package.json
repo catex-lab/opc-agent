@@ -125,6 +125,7 @@
     "verify:a123-permission-mode": "node scripts/verify-a123-permission-mode.mjs",
     "verify:think-view": "node scripts/verify-think-view.mjs",
     "verify:smooth-text": "tsx scripts/verify-smooth-text.ts",
+    "verify:stream-text": "tsx scripts/verify-stream-text.ts",
     "verify:opencode-thinking": "tsx scripts/verify-opencode-thinking.ts",
     "verify:a124-button-spec": "node scripts/verify-a124-button-spec.mjs && node scripts/verify-a124-button-spec.mjs --dark",
     "verify:a126-capability-profile": "tsx scripts/verify-a126-capability-profile.ts && node scripts/verify-a126-capability-ui.mjs",
