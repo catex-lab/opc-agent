@@ -196,6 +196,13 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
       permissionMode: deps.permissionMode || 'default',
       // 群聊/工作流同样受场景白名单约束：进了群不等于放开
       allowedTools: allowedToolsFor(deps.scenarioId || undefined, session.scenario_id),
+      /**
+       * A209：群聊与工作流走的是另一条组装路径（这里），但**同样经过注册表**，
+       * 所以不传也会拿到用户选的回答语言（`undefined` = 由注册表读偏好）。
+       * 唯一的例外是内部阶段 `route`：它产出的是 `ROUTE: <id>` 机器令牌，
+       * 掺进一句「始终用中文回答」只会干扰解析，显式钉成 `auto`。
+       */
+      answerLanguage: internal ? 'auto' : undefined,
       signal: deps.signal,
     });
 

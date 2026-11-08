@@ -22,6 +22,7 @@ import { InfoHint } from './InfoHint';
 import { AgentCredentialSettings } from './AgentCredentialSettings';
 import { type CloseBehavior, readCloseBehavior, saveCloseBehavior } from '../closeBehavior';
 import { type LinkOpenMode, readLinkOpenMode, saveLinkOpenMode } from '../answer/linkRouter';
+import { type AnswerLanguage, readAnswerLanguage, saveAnswerLanguage } from '../answerLanguage';
 import { ProviderSettings } from './ProviderSettings';
 import { ModelCatalogSettings } from './ModelCatalogSettings';
 import { MemoryPanel } from './MemoryPanel';
@@ -648,6 +649,11 @@ export function SettingsPage({
               靠上方留白分段、下方只留 12px 接内容。样式见 settings-select.css。 */}
           <h2 className="opc-settings-section-title">外观</h2>
 
+          {/* A209：语言区。界面语言尚未落地，所以这里目前只有「回答语言」一项；
+              将来加「界面语言」时紧挨在它下面（两者语义独立：一个管界面文案，
+              一个管 Agent 回答正文）。 */}
+          <AnswerLanguageSetting />
+
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {THEME_OPTIONS.map(({ value, label, hint, Icon }) => {
               const selected = themePreference === value;
@@ -760,7 +766,7 @@ export function SettingsPage({
                   style={{ color: 'var(--td-success-color)' }}
                 />
                 <span style={{ color: 'var(--td-text-color-primary)' }}>
-                  已登录
+                  检测到登录态（未校验）
                 </span>
                 <Tag size="small" variant="outline">
                   {loginStatus.method === 'env' ? '环境变量' : 'CLI'}
@@ -1384,6 +1390,57 @@ function LinkOpenModeSetting() {
           value={mode}
           options={LINK_OPEN_OPTIONS}
           onChange={next => setMode(saveLinkOpenMode(next))}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 「回答语言」设置（A209）。
+ *
+ * 与「链接打开方式」同一套 enum-setting 版式（容器查询负责窄窗折行），
+ * 所以不放任何固定宽度。三档语义：
+ *   auto  不注入任何指令，模型跟随用户来信的语言（默认，等同旧行为）
+ *   zh    始终用简体中文回答
+ *   en    始终用英文回答
+ *
+ * 这一项**不影响界面文案**；界面 i18n 是另一条独立的线。
+ */
+const ANSWER_LANGUAGE_OPTIONS: Array<{ value: AnswerLanguage; label: string; hint: string }> = [
+  { value: 'auto', label: '自动', hint: '不注入任何指令，由模型跟随你来信的语言（默认）' },
+  { value: 'zh', label: '中文', hint: '始终用简体中文回答，即使你用其他语言提问' },
+  { value: 'en', label: '英文', hint: '始终用英文回答，即使你用其他语言提问' },
+];
+
+function AnswerLanguageSetting() {
+  const [language, setLanguage] = useState<AnswerLanguage>(readAnswerLanguage);
+  const current =
+    ANSWER_LANGUAGE_OPTIONS.find(option => option.value === language) ?? ANSWER_LANGUAGE_OPTIONS[0];
+
+  return (
+    <div className="opc-enum-setting" data-answer-language-setting>
+      <div className="opc-enum-setting__row">
+        <div className="opc-enum-setting__text">
+          <div className="opc-enum-setting__title">
+            <label className="opc-enum-setting__label" id="opc-answer-language-label">
+              回答语言
+            </label>
+            <InfoHint
+              label="回答语言说明"
+              text="只影响 Agent 回答正文的语言，不改变界面文字。选「自动」时不向模型注入任何指令，行为与之前完全一致；选中文或英文会要求它在每轮对话里始终使用该语言，即使你来信使用另一种语言。"
+            />
+          </div>
+          <p className="opc-enum-setting__hint">{current.hint}</p>
+        </div>
+        <EnumSelect
+          id="opc-answer-language"
+          labelledBy="opc-answer-language-label"
+          triggerAttrs={{ 'data-answer-language-select': '' }}
+          optionAttrs={value => ({ 'data-answer-language-option': value })}
+          value={language}
+          options={ANSWER_LANGUAGE_OPTIONS}
+          onChange={next => setLanguage(saveAnswerLanguage(next))}
         />
       </div>
     </div>

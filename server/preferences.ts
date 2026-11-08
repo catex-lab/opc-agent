@@ -29,6 +29,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { dataDirPath } from './paths.js';
 import { isCloseBehavior, type CloseBehavior } from '../shared/close-behavior.js';
+import { isAnswerLanguage, type AnswerLanguage } from '../shared/answer-language.js';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 
@@ -69,6 +70,14 @@ export interface Prefs {
    * `in-app` = 右侧工作区里的浏览标签页。缺键 = 没设过，前端回落到 `system`。
    */
   linkOpenMode?: LinkOpenMode;
+  /**
+   * 回答语言（A209）。
+   *
+   * 只决定 Agent 回答正文的语言，与界面文案无关；缺键 = `auto`
+   * （不向模型注入任何指令，与加这个设置之前的行为逐字节一致）。
+   * 判定与指令组装见 `server/answer-language.ts`。
+   */
+  answerLanguage?: AnswerLanguage;
 }
 
 export type LinkOpenMode = 'system' | 'in-app';
@@ -123,6 +132,7 @@ export function normalizePrefs(input: unknown): Prefs {
   }
   if (isCloseBehavior(o.closeBehavior)) out.closeBehavior = o.closeBehavior;
   if (isLinkOpenMode(o.linkOpenMode)) out.linkOpenMode = o.linkOpenMode;
+  if (isAnswerLanguage(o.answerLanguage)) out.answerLanguage = o.answerLanguage;
   const g = o.glow as Record<string, unknown> | undefined;
   if (g && typeof g === 'object') {
     const size = isIntIn(g.size, PREFS_LIMITS.glowSize) ? g.size : null;
@@ -228,6 +238,16 @@ export function validatePrefsPatch(input: unknown): PrefsValidation {
           return {
             ok: false,
             error: `linkOpenMode 只能是 system / in-app，收到 ${JSON.stringify(v)}`,
+          };
+        }
+        break;
+      case 'answerLanguage':
+        if (v === null) patch.answerLanguage = null;
+        else if (isAnswerLanguage(v)) patch.answerLanguage = v;
+        else {
+          return {
+            ok: false,
+            error: `answerLanguage 只能是 auto / zh / en，收到 ${JSON.stringify(v)}`,
           };
         }
         break;
