@@ -45,8 +45,17 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
           npm_config_registry: https://registry.npmjs.org/
 
+      - name: 密钥扫描
+        # 与本地 pre-commit 同一个脚本。CI 里没有暂存区，必须 --all 扫全部
+        # 受跟踪文件 —— 否则这一步永远「通过」，等于没挂。
+        run: node scripts/secret-scan.mjs --all
+
       - name: 类型检查
         run: npx tsc -b
+
+      - name: run-hub 离线回归
+        # 覆盖断线重连的快照去重与成员 run_end 收尾（纯内存，不依赖本机 Agent）。
+        run: npm run verify:runhub
 
       - name: 设计令牌与控件尺寸棘轮
         run: npm run verify:uiux-tokens
