@@ -24,6 +24,13 @@ import {
   buildDenialMessage,
   reasonCodeOfKind,
 } from '../../../shared/permissions.js';
+import {
+  inspectKimiCodeCredentials,
+  formatLocalMinute,
+  type CredentialVerdict,
+} from '../credentialStatus.js';
+import { appendFailureAdvice, recoveryHintFor } from '../recovery.js';
+import { withAnswerLanguagePrefix } from '../../answer-language.js';
 import type { AgentDefinition, CliSpec } from '../definitions.js';
 import {
   findExecutable,
@@ -219,6 +226,8 @@ export interface CliFailureInput {
   logDirs?: string[];
   /** spawn 阶段就失败（ENOENT 等），此时没有退出码 */
   spawnError?: { message: string; code?: string };
+  /** 失败的是哪个 Agent —— 用于把「怎么恢复」贴到文案里 */
+  agentId?: string;
 }
 
 /**
@@ -229,6 +238,8 @@ export interface CliFailureInput {
  *   ② stderr 为空时不能只留「退出码 N」，要么给结构化错误、要么给日志目录，
  *      两者都没有就明说「CLI 未输出原因」，不静默；
  *   ③ 仍然只取 stderr 尾部若干行，不把整段输出倒到界面。
+ *
+ * 2026-11：末尾统一补「怎么恢复：…」，把 401/403、429、未安装翻译成下一步动作。
  */
 export function describeCliFailure(input: CliFailureInput): string {
   const { name, code, stderrTail } = input;
@@ -237,15 +248,16 @@ export function describeCliFailure(input: CliFailureInput): string {
   if (input.spawnError) {
     const enoent =
       input.spawnError.code === 'ENOENT' || /ENOENT|not found|找不到指定的文件/i.test(input.spawnError.message);
-    return enoent
+    const base = enoent
       ? `${name} 未找到可执行文件（可能未安装，或不在 PATH 里）：\n${clipOneLine(input.spawnError.message)}`
       : `${name} 子进程启动失败：\n${clipOneLine(input.spawnError.message)}`;
+    return appendFailureAdvice(input.agentId ?? '', base);
   }
 
   const quota = QUOTA_HINT_RE.test(`${stderrTail}\n${input.lastStructuredError ?? ''}`);
   const head = `${name} 退出码 ${code ?? '未知'}${quota ? '（疑似上游限流/额度用尽，不是本地没装好）' : ''}`;
 
-  if (stderrTail) return `${head}：\n${stderrTail}`;
+  if (stderrTail) return appendFailureAdvice(input.agentId ?? '', `${head}：\n${stderrTail}`);
 
   const parts: string[] = [];
   if (input.lastStructuredError) {
@@ -257,7 +269,7 @@ export function describeCliFailure(input: CliFailureInput): string {
   else if (!input.lastStructuredError) {
     parts.push('也没有可用的日志目录。建议在终端里手动运行一次该命令，看它自己打印的报错。');
   }
-  return `${head}：\n${parts.join('\n')}`;
+  return appendFailureAdvice(input.agentId ?? '', `${head}：\n${parts.join('\n')}`);
 }
 
 /**
@@ -318,6 +330,53 @@ export function cliRawChannel(obj: unknown): string {
     }
   }
   return Array.isArray(obj) ? 'array' : typeof obj;
+}
+
+/**
+ * Kimi Code 的凭据检测结论 → checkAuth 结果。
+ *
+ * 与 Codex / Claude 同一口径：过期但有 refresh_token **不判死**，
+ * 只把文案改成「首次使用会尝试刷新」。
+ */
+export function resolveKimiCodeCredential(verdict: CredentialVerdict): {
+  ok: boolean;
+  hint: string;
+} {
+  switch (verdict.state) {
+    case 'absent':
+      return {
+        ok: false,
+        hint: `未检测到 Kimi Code 登录凭据（~/.kimi-code/credentials/kimi-code.json）。怎么恢复：${recoveryHintFor('kimicli')}`,
+      };
+    case 'unreadable':
+      return {
+        ok: false,
+        hint: `Kimi Code 凭据文件无法解析（${verdict.reason}），请重新登录。怎么恢复：${recoveryHintFor('kimicli')}`,
+      };
+    case 'expired-needs-login':
+      return {
+        ok: false,
+        hint: `Kimi Code 登录态已过期（${formatLocalMinute(
+          new Date(verdict.expiresAt).toISOString()
+        )}），且没有可用的刷新令牌，需要重新登录。怎么恢复：${recoveryHintFor('kimicli')}`,
+      };
+    case 'expired-refreshable':
+      return {
+        ok: true,
+        hint: `已检测到 Kimi Code 凭据，但已过期（${formatLocalMinute(
+          new Date(verdict.expiresAt).toISOString()
+        )}）；首次使用会尝试刷新（未校验）`,
+      };
+    case 'present':
+      return {
+        ok: true,
+        hint: verdict.expiresAt
+          ? `已检测到 Kimi Code 凭据（未校验，有效期至 ${formatLocalMinute(
+              new Date(verdict.expiresAt).toISOString()
+            )}）`
+          : '已检测到 Kimi Code 凭据（未校验）',
+      };
+  }
 }
 
 export class CliAdapter implements AgentProvider {
@@ -426,7 +485,9 @@ export class CliAdapter implements AgentProvider {
       this.status = {
         availability: 'not-installed',
         installed: false,
-        message: `PATH 中未找到命令 \`${label}\``,
+        message: `PATH 中未找到命令 \`${label}\`。怎么恢复：${
+          this.def.descriptor.installHint ?? recoveryHintFor(this.descriptor.id)
+        }`,
         probedAt: now,
       };
       return this.status;
@@ -523,10 +584,17 @@ export class CliAdapter implements AgentProvider {
       // 能起来但输出里没有可识别的版本 —— 多半是原生二进制缺失
       // （Claude Code 的典型症状），或者是首次运行需要初始化
       availability = 'needs-setup';
-      message = `命令存在但无法正常获取版本：${raw.slice(0, 160)}`;
+      message = `命令存在但无法正常获取版本：${raw.slice(0, 160)}。怎么恢复：${
+        this.def.descriptor.installHint ?? recoveryHintFor(this.descriptor.id)
+      }`;
     } else {
-      // 有版本，或者命令静默退出（部分 CLI 不支持 --version）——都算就绪
-      message = version ? '就绪' : '就绪（该命令不支持版本探测）';
+      // 有版本，或者命令静默退出（部分 CLI 不支持 --version）。
+      // 2026-11：不再说「就绪」。这里**没有发真实请求**，能证明的只是
+      // 「命令在、凭据文件/环境变量在」，所以统一口径为「已检测到凭据（未校验）」。
+      const versionText = version ? `；版本 v${version}` : '（该命令不支持版本探测）';
+      message = auth.declared
+        ? `${auth.hint}${versionText}`
+        : `命令可用，但该 Agent 未声明可检测的凭据入口（登录态未校验）${versionText}`;
     }
 
     this.status = {
@@ -540,8 +608,40 @@ export class CliAdapter implements AgentProvider {
     return this.status;
   }
 
-  /** 低成本凭据检查：看环境变量或常见凭据文件是否存在 */
-  private checkAuth(): { ok: boolean; hint: string } {
+  /**
+   * 用前校验：只重读凭据文件（Kimi Code），不重新起进程、不发请求。
+   * 其它 CLI 的探测成本高（要起子进程拿版本），这里返回 null 表示「无需/无法
+   * 在发消息前做廉价校验」，由注册表跳过。
+   */
+  refreshCredential(): AgentStatus | null {
+    if (this.def.descriptor.id !== 'kimicli' || !this.status?.installed) return null;
+    const now = new Date().toISOString();
+    const resolved = resolveKimiCodeCredential(inspectKimiCodeCredentials());
+    const versionText = this.status.version ? `；版本 v${this.status.version}` : '';
+    const next: AgentStatus = {
+      ...this.status,
+      availability: resolved.ok ? 'ready' : 'needs-auth',
+      message: `${resolved.hint}${versionText}`,
+      probedAt: now,
+    };
+    if (resolved.ok) {
+      delete next.probeState;
+      delete next.lastError;
+    } else {
+      next.probeState = 'credential-invalid';
+    }
+    this.status = next;
+    return next;
+  }
+
+  /**
+   * 低成本凭据检查：看环境变量或常见凭据文件是否存在。
+   *
+   * 返回的 `declared` 表示这个 Agent 有没有「可检测的凭据入口」。
+   * 没有声明入口的 Agent（系统钥匙串登录等）仍然按可用处理 —— 但不假装
+   * 「已登录」，文案会明确写「登录态未校验」，并由 recoveryHintFor 给出恢复路径。
+   */
+  private checkAuth(): { ok: boolean; hint: string; declared: boolean } {
     const d = this.def;
 
     if (d.authEnvs?.length) {
@@ -549,7 +649,16 @@ export class CliAdapter implements AgentProvider {
         const v = process.env[name];
         return typeof v === 'string' && v.trim().length > 0;
       });
-      if (hit) return { ok: true, hint: `已通过环境变量 ${hit} 配置凭据` };
+      if (hit) {
+        return { ok: true, declared: true, hint: `已通过环境变量 ${hit} 配置凭据（未校验）` };
+      }
+    }
+
+    // Kimi Code：凭据是 credentials/kimi-code.json，不是 config.toml。
+    // 它带 expires_at / refresh_token，所以能预知过期；有刷新令牌不判死。
+    if (d.descriptor.id === 'kimicli') {
+      const resolved = resolveKimiCodeCredential(inspectKimiCodeCredentials());
+      return { declared: true, ...resolved };
     }
 
     if (d.authFiles?.length) {
@@ -561,22 +670,50 @@ export class CliAdapter implements AgentProvider {
           return false;
         }
       });
-      if (hit) return { ok: true, hint: `已找到凭据文件 ~/${hit}` };
+      if (hit) {
+        return { ok: true, declared: true, hint: `已检测到凭据（未校验）：~/${hit}` };
+      }
+
+      // 声明了凭据文件但一个都不在 —— 这是**确定的**未登录，不是「检测不到」。
+      const files = d.authFiles.map(f => `~/${f}`).join('、');
+      return {
+        ok: false,
+        declared: true,
+        hint: `未检测到登录凭据（已检查 ${files}）。怎么恢复：${recoveryHintFor(
+          d.descriptor.id
+        )}`,
+      };
     }
 
-    // 没配任何可检测的凭据：不算失败（有些 CLI 用系统钥匙串，检测不到），
-    // 但把提示挂上去，第一次调用失败时前端能显示原因。
+    // 只声明了环境变量（没有凭据文件）：环境变量也没命中就是确定的未登录。
+    if (d.authEnvs?.length) {
+      return {
+        ok: false,
+        declared: true,
+        hint: `未检测到登录凭据（已检查环境变量 ${d.authEnvs.join(
+          '、'
+        )}）。怎么恢复：${recoveryHintFor(d.descriptor.id)}`,
+      };
+    }
+
+    // 没配任何可检测的凭据：不判失败（有些 CLI 用系统钥匙串，磁盘上确实没有），
+    // 但把「怎么恢复」挂上去，运行失败时用户能直接执行。
     //
     // A30：声明了 `credential` 的 Agent 直接把「去哪儿填」写进提示 ——
     // 之前这里只重复 installHint（「设置 GEMINI_API_KEY」），而打包版用户
     // 根本没有「设置环境变量」这个动作可用，等于告诉他一条走不通的路。
     const hint = d.credential
-      ? `未配置凭据：请在「设置 → 登录配置 → Agent API Key」填入 ${d.credential.keyEnv.join(' 或 ')}（也支持环境变量）`
-      : d.descriptor.installHint || '未检测到登录凭据，首次调用可能需要先登录';
+      ? `未配置凭据：请在「设置 → 登录配置 → Agent API Key」填入 ${d.credential.keyEnv.join(
+          ' 或 '
+        )}（也支持环境变量）。怎么恢复：${recoveryHintFor(d.descriptor.id)}`
+      : `${d.descriptor.installHint || '未检测到登录凭据，首次调用可能需要先登录'}。怎么恢复：${recoveryHintFor(
+          d.descriptor.id
+        )}`;
 
     return {
       ok: !d.authEnvs?.length && !d.authFiles?.length,
       hint,
+      declared: false,
     };
   }
 
@@ -623,8 +760,17 @@ export class CliAdapter implements AgentProvider {
     // `--input-format stream-json`。flag 位置只有 buildArgs 知道
     // （与 variadic 的 --allowedTools 有冲突），适配器只做「要不要双向」的决定。
     const bidi = this.spec.bidi === true;
+    /**
+     * A209：CLI **不读 `systemPrompt`** —— 各家的 CLI 没有统一的系统提示参数，
+     * `CLI_PERMISSION_OPTIONS` 与 `buildArgs` 也只认自己的 flag。所以回答语言
+     * 只能并进本轮用户消息（一行指令 + 空行 + 原文）。
+     *
+     * 「自动」档下 `withAnswerLanguagePrefix()` **原样返回 ctx.prompt**，
+     * 不多一个字节 —— 这是本项设置「零副作用」的定义方式。
+     */
+    const promptForCli = withAnswerLanguagePrefix(ctx.prompt, ctx.answerLanguage);
     const args = this.spec.buildArgs(
-      ctx.prompt,
+      promptForCli,
       bidi ? { ...ctx, inputFormat: 'stream-json' as const } : ctx
     );
 
@@ -691,7 +837,7 @@ export class CliAdapter implements AgentProvider {
         /* 对端没了，忽略 —— 终止链会收尸 */
       });
       try {
-        (child as BidiChild).stdin.write(buildStdinUserMessage(ctx.prompt) + '\n');
+        (child as BidiChild).stdin.write(buildStdinUserMessage(promptForCli) + '\n');
       } catch (err) {
         yield { type: 'error', message: `写入 stdin 失败：${(err as Error).message}` };
         return;
@@ -1031,6 +1177,7 @@ export class CliAdapter implements AgentProvider {
             code: null,
             stderrTail: '',
             spawnError: { message: err.message, code: (err as NodeJS.ErrnoException).code },
+            agentId: this.descriptor.id,
           })
         )
       );
@@ -1100,11 +1247,12 @@ export class CliAdapter implements AgentProvider {
         //   - 登录态缺失（agy 未登录时会打印授权 URL 然后干等 60 秒）
         //   - 真正的不可恢复错误（kimi 的 No model configured、codex 的重连）
         const isAuth = AUTH_HINT_RE.test(stderrBuf);
+        const base = isAuth
+          ? `需要先登录 ${this.descriptor.name}：\n${fatalDetail || '未提供详细信息'}`
+          : `${this.descriptor.name} 遇到不可恢复的错误，已终止：\n${fatalDetail || '未提供详细信息'}`;
         queue.push({
           type: 'error',
-          message: isAuth
-            ? `需要先登录 ${this.descriptor.name}：\n${fatalDetail || '未提供详细信息'}`
-            : `${this.descriptor.name} 遇到不可恢复的错误，已终止：\n${fatalDetail || '未提供详细信息'}`,
+          message: appendFailureAdvice(this.descriptor.id, base),
         });
         queue.push({ type: 'done', durationMs: elapsed });
         queue.close();
@@ -1114,18 +1262,20 @@ export class CliAdapter implements AgentProvider {
       if (code !== 0) {
         const tail = stderrBuf.trim().split(/\r?\n/).slice(-6).join('\n');
         const isAuth = AUTH_HINT_RE.test(stderrBuf);
-        queue.push({
-          type: 'error',
-          message: isAuth
-            ? `需要先登录 ${this.descriptor.name}：${tail || lastStructuredError || '未提供详细信息'}`
-            : describeCliFailure({
-                name: this.descriptor.name,
-                code,
-                stderrTail: tail,
-                lastStructuredError: lastStructuredError || undefined,
-                logDirs: this.spec.logDir ? [this.spec.logDir] : [],
-              }),
-        });
+        const message = isAuth
+          ? appendFailureAdvice(
+              this.descriptor.id,
+              `需要先登录 ${this.descriptor.name}：${tail || lastStructuredError || '未提供详细信息'}`
+            )
+          : describeCliFailure({
+              name: this.descriptor.name,
+              code,
+              stderrTail: tail,
+              lastStructuredError: lastStructuredError || undefined,
+              logDirs: this.spec.logDir ? [this.spec.logDir] : [],
+              agentId: this.descriptor.id,
+            });
+        queue.push({ type: 'error', message });
       } else if (!sawText && !sawError) {
         // 一个字都没输出 —— 明确告诉用户，而不是静默成功。
         // stderr 里往往有真正的原因（网络失败、需要初始化等），一并带出来。

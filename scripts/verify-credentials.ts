@@ -44,6 +44,15 @@ const { AGENT_DEFS, findDef } = await import('../server/agents/definitions.js');
 const { listCredentials, getCredential, saveCredential, clearCredential } = await import(
   '../server/agent-credentials.js'
 );
+const {
+  inspectCodexCredentials,
+  inspectKimiCodeCredentials,
+  inspectClaudeCredentials,
+  workbuddyKeyblobInfo,
+} = await import('../server/agents/credentialStatus.js');
+const { resolveCodexCredential } = await import('../server/agents/adapters/codex-sdk.js');
+const { resolveKimiCodeCredential } = await import('../server/agents/adapters/cli.js');
+const { recoveryHintFor } = await import('../server/agents/recovery.js');
 
 console.log('\n[1] 定义表：凭据声明与识别口径一致');
 {
@@ -60,6 +69,15 @@ console.log('\n[1] 定义表：凭据声明与识别口径一致');
   eq(findDef('gemini')?.backendHostOverrideEnv, 'GOOGLE_GEMINI_BASE_URL', 'gemini 的可达性检查按网关地址走');
   ok(!findDef('qoder')?.credential, 'qoder 不提供 Key 输入（它靠 CLI 登录态，填 Key 是假控件）');
   ok(!findDef('codex')?.credential, 'codex 不提供 Key 输入（它靠 chatgpt 登录态）');
+  // 2026-11 修正：Kimi Code 的凭据是 credentials/kimi-code.json，不是 config.toml
+  ok(
+    !!findDef('kimicli')?.authFiles?.includes('.kimi-code/credentials/kimi-code.json'),
+    'Kimi Code 探测看真正的凭据文件，而不是 config.toml'
+  );
+  ok(
+    !findDef('kimicli')?.authFiles?.includes('.kimi-code/config.toml'),
+    'Kimi Code 不再把 config.toml 当登录凭据'
+  );
 }
 
 console.log('\n[2] 列表：只列声明过的，且初始为未配置');
@@ -129,7 +147,96 @@ console.log('\n[6] 边界：不支持的 Agent 直接拒绝');
   eq(clearCredential('qoder'), null, '清除不支持的 Agent 返回 null');
 }
 
-// 收尾：临时目录尽力清理即可。
+console.log('\n[7] 凭据有效期：过期可预知；有 refresh_token 不判死');
+{
+  const home = path.join(tmp, 'home');
+  fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.kimi-code', 'credentials'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.workbuddy'), { recursive: true });
+
+  const b64 = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+  const jwt = (expSeconds: number) =>
+    `${b64({ alg: 'none', typ: 'JWT' })}.${b64({ exp: expSeconds })}.sig`;
+  const past = Math.floor(Date.now() / 1000) - 60;
+
+  // Codex：已过期 + refresh_token → 可用（过期待刷新）
+  const codexFile = path.join(home, '.codex', 'auth.json');
+  fs.writeFileSync(
+    codexFile,
+    JSON.stringify({ tokens: { id_token: jwt(past), refresh_token: 'r' } })
+  );
+  ok(
+    inspectCodexCredentials(home).state === 'expired-refreshable',
+    '★ Codex 过期但有 refresh_token → expired-refreshable'
+  );
+  const codexResolved = resolveCodexCredential(inspectCodexCredentials(home));
+  ok(codexResolved.availability === 'ready', '★ Codex 有 refresh_token 时不得判不可用');
+  ok(
+    /首次使用会尝试刷新/.test(codexResolved.message ?? ''),
+    'Codex 文案是「已过期，首次使用会尝试刷新」',
+    codexResolved.message
+  );
+
+  // Codex：已过期且没有 refresh_token → 需要重新登录
+  fs.writeFileSync(codexFile, JSON.stringify({ tokens: { id_token: jwt(past) } }));
+  const codexDead = resolveCodexCredential(inspectCodexCredentials(home));
+  ok(codexDead.availability === 'needs-auth', 'Codex 过期且无 refresh_token → needs-auth');
+  ok(/需要重新登录/.test(codexDead.message ?? ''), 'Codex 文案写「需要重新登录」');
+  ok(/怎么恢复/.test(codexDead.message ?? ''), 'Codex 失败文案带可执行建议');
+
+  // Kimi Code：读取真正的凭据文件；过期 + refresh_token 不判死
+  const kimiFile = path.join(home, '.kimi-code', 'credentials', 'kimi-code.json');
+  fs.writeFileSync(
+    kimiFile,
+    JSON.stringify({ access_token: 'a', refresh_token: 'r', expires_at: past })
+  );
+  ok(
+    inspectKimiCodeCredentials(home).state === 'expired-refreshable',
+    '★ Kimi Code 过期但有 refresh_token → expired-refreshable'
+  );
+  ok(
+    resolveKimiCodeCredential(inspectKimiCodeCredentials(home)).ok,
+    '★ Kimi Code 有 refresh_token 时 checkAuth 仍通过'
+  );
+  fs.writeFileSync(kimiFile, JSON.stringify({ access_token: 'a', expires_at: past }));
+  ok(
+    !resolveKimiCodeCredential(inspectKimiCodeCredentials(home)).ok,
+    'Kimi Code 过期且无 refresh_token → 未登录'
+  );
+
+  // Claude：只有 .claude.json 没有 oauthAccount → 不算登录
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ theme: 'dark' }));
+  ok(
+    inspectClaudeCredentials(home).state === 'absent',
+    '★ Claude 只有 .claude.json（无 oauthAccount）→ 未检测到登录凭据'
+  );
+
+  // WorkBuddy：keyblob 的 mtime 可得（桌面端活跃不代表它被刷新）
+  const blob = path.join(home, '.workbuddy', 'keyblob');
+  fs.writeFileSync(blob, 'x');
+  const info = workbuddyKeyblobInfo(home);
+  ok(info.exists && !!info.mtime, 'WorkBuddy keyblob 的 mtime 可读', info.mtime);
+
+  // 11 个没有凭据入口的 Agent：每个都要有一句「怎么恢复」
+  for (const id of [
+    'codex',
+    'claude',
+    'hermes',
+    'qoder',
+    'qoder-cn',
+    'opencode',
+    'kimicli',
+    'cursor',
+    'zcode',
+    'pi',
+    'antigravity',
+  ]) {
+    const hint = recoveryHintFor(id);
+    ok(hint.trim().length > 0, `${id} 有恢复指引`, hint);
+  }
+}
+
+
 // 导入 db.ts 会打开 SQLite 连接（模块副作用），Windows 上 chat.db 被持有，
 // 删不掉是**预期**的 —— 不因为清理失败让整个断言脚本红掉。
 try {

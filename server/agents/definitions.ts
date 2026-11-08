@@ -2172,9 +2172,12 @@ const RAW_DEFS: AgentDefinition[] = [
     },
     // 装在 PATH 之外（官方安装器落到 ~/.kimi-code/bin），必须显式加搜索目录
     extraPaths: ['%USERPROFILE%\\.kimi-code\\bin'],
-    // 登录态：kimi login（device-code）写入 ~/.kimi-code 下，未登录时只有 bin/ 与
-    // sessions/。本机实测未登录状态下没有 config.toml —— 用它做判定依据。
-    authFiles: ['.kimi-code/config.toml'],
+    // 登录态：kimi login（device-code）写入 ~/.kimi-code/credentials/kimi-code.json。
+    //
+    // 2026-11 修正：之前看的是 `config.toml` —— 那是配置，不是凭据。
+    // 本机实测：config.toml 在未登录/过期后仍可能存在，而真正的凭据文件
+    // 带 `expires_at` 与 `refresh_token`，能直接判断「已过期」。
+    authFiles: ['.kimi-code/credentials/kimi-code.json'],
   },
   {
     descriptor: {
