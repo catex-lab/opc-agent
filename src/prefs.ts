@@ -39,7 +39,7 @@ export interface Prefs {
   sidebarWidth?: number;
   workspaceWidth?: number;
   workspaceOpen?: boolean;
-  /** 左侧二级栏是否收起（导航条底部折叠钮）。缺键 = 展开 */
+  /** 左侧二级栏是否收起（标题栏 logo 格的折叠开关）。缺键 = 展开 */
   sidebarCollapsed?: boolean;
   glow?: GlowPrefs;
   defaultModel?: string;

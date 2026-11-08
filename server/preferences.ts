@@ -55,7 +55,7 @@ export interface Prefs {
   workspaceWidth?: number;
   workspaceOpen?: boolean;
   /**
-   * 左侧二级栏是否收起（导航条底部的折叠钮）。
+   * 左侧二级栏是否收起（标题栏左侧 logo 格的折叠开关）。
    *
    * 只决定「二级栏在不在」，不动 56px 图标栏、不动标题栏。缺键 = 展开，
    * 与加这个开关之前逐像素一致。哪些页面上真的允许收起由前端按当前选中项

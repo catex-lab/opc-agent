@@ -243,7 +243,7 @@ function AppContent() {
   }, []);
 
   /**
-   * 左侧二级栏是否收起（导航条底部的折叠钮）。
+   * 左侧二级栏是否收起（标题栏左侧 logo 格的折叠开关）。
    *
    * 与 `workspaceOpen` 同一条链：**服务端偏好是事实来源**，localStorage 只是
    * 镜像（打包态每次启动换端口，按源隔离的 localStorage 会归零，见 A135）。
@@ -1669,7 +1669,12 @@ function AppContent() {
      * 消息列表一旦变长就会把整行撑出视口，`h-screen` 也拦不住。
      */
     <div className="flex h-screen w-screen flex-col overflow-hidden">
-      <TitleBar compact={compact} />
+      <TitleBar
+        compact={compact}
+        sidebarCollapsed={collapsedSidebar}
+        canCollapseSidebar={canCollapseSidebar}
+        onToggleSidebar={toggleSidebarCollapsed}
+      />
       {/* 跟随鼠标的玻璃反光。固定定位 + `pointer-events: none`，不参与布局；
           只在窗口真有 acrylic 材质时（`data-opc-glass=1`）才亮，见组件注释。 */}
       <CursorGlow />
@@ -1696,9 +1701,6 @@ function AppContent() {
           onOpenKnowledge={openKnowledgeBase}
           knowledgeDisabled={!kbAnchorSession}
           compact={compact}
-          sidebarCollapsed={collapsedSidebar}
-          canCollapseSidebar={canCollapseSidebar}
-          onToggleSidebar={toggleSidebarCollapsed}
         />
 
         {/* C1：全局知识库面板。与会话头里的入口共用一套组件与状态语义，
