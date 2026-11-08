@@ -665,6 +665,38 @@ export interface ExecResult {
 }
 
 /**
+ * 强杀一整棵子进程树。
+ *
+ * 为什么不能只 `child.kill()`：探测的目标常常是垫片 —— 我们 spawn 的是
+ * node / powershell，真正跑 CLI 的是它的孙进程。只杀直接子进程会留下一堆
+ * 挂死的 `gemini version` / `codebuddy-headless`（实测观察到过），它们继续
+ * 占 CPU、占探测并发槽，而且下次探测还会再起一层。
+ *
+ * Windows 用 `taskkill /T` 按进程树回收；POSIX 没有进程组（spawn 未 detached），
+ * 只能尽力杀直接子进程。
+ */
+export function killProcessTree(pid: number | undefined): void {
+  if (!pid) return;
+  if (isWindows) {
+    try {
+      spawn('taskkill', ['/F', '/T', '/PID', String(pid)], {
+        stdio: 'ignore',
+        windowsHide: true,
+        shell: false,
+      });
+      return;
+    } catch {
+      /* 落到下面的单进程 kill */
+    }
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    /* 已经退了 */
+  }
+}
+
+/**
  * 执行命令并捕获输出（用于版本探测等短任务）。
  * 使用 shell:false，参数以数组传递，不做任何字符串拼接。
  */
@@ -715,7 +747,12 @@ export function runCapture(
 
     timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      // 超时必须回收整棵进程树：只杀垫片进程会留下挂死的 CLI 孙进程。
+      killProcessTree(child.pid);
+      // taskkill 之后 close 仍可能迟迟不来（句柄被子进程继承）。
+      // 探测结果绝不能被一个死掉的进程无限拖住，1.5s 后直接收口。
+      const hardStop = setTimeout(() => finish(null), 1500);
+      hardStop.unref?.();
     }, timeoutMs);
 
     child.stdout?.on('data', d => {
@@ -758,37 +795,37 @@ function extractVersion(raw: string): string | undefined {
 }
 
 /**
- * 探测某个命令的版本。
- * 依次尝试 `--version` / `-v` / `version`，任一成功即返回。
+ * 版本探测只跑一次、只试一个参数。
+ *
+ * 为什么不再依次试 `--version` / `-v` / `version`：那是**探测路径上的串行**
+ * 三次 8 秒（最坏 24 秒）。探测是发消息的前置步骤，一个不支持 `--version`
+ * 的 CLI 能把首字硬生生拖过半分钟。现在统一 3 秒、单参数，失败就降级。
  *
  * 只有退出码为 0 才采信输出：进程起不来（ENOENT）时 code 为 null，
  * 此时 stdout/stderr 里是报错信息，绝不能当版本用。
+ *
+ * `timedOut` 必须如实返回：调用方要据此把状态标成「未知」，
+ * 不能因为"没拿到版本号"就当它不可用或可用。
  */
+export const PROBE_VERSION_TIMEOUT_MS = 3000;
+
 export async function probeVersion(
   binPath: string,
-  timeoutMs = 8000
-): Promise<{ version?: string; raw?: string }> {
+  timeoutMs = PROBE_VERSION_TIMEOUT_MS
+): Promise<{ version?: string; raw?: string; timedOut?: boolean }> {
   const target = resolveAnyLaunchTarget(binPath);
   // 已知不是可执行程序就别去试了 —— 徒增一次失败和一段误导性的输出
   if (target.problem) return { raw: target.problem };
 
-  let lastRaw = '';
+  const res = await runCapture(target, ['--version'], { timeoutMs });
+  const combined = `${res.stdout}\n${res.stderr}`.trim().slice(0, 400);
 
-  for (const args of [['--version'], ['-v'], ['version']]) {
-    const res = await runCapture(target, args, { timeoutMs });
-    if (res.timedOut) continue;
+  if (res.timedOut) return { raw: combined || undefined, timedOut: true };
+  // 起不来（code === null）或非零退出 → 不采信
+  if (res.code !== 0) return { raw: combined || undefined, timedOut: false };
 
-    const combined = `${res.stdout}\n${res.stderr}`.trim();
-    if (combined) lastRaw = combined.slice(0, 400);
-
-    // 起不来（code === null）或非零退出 → 不采信
-    if (res.code !== 0) continue;
-
-    const version = extractVersion(res.stdout) || extractVersion(res.stderr);
-    if (version) return { version, raw: combined.slice(0, 400) };
-  }
-
-  return { raw: lastRaw || undefined };
+  const version = extractVersion(res.stdout) || extractVersion(res.stderr);
+  return { version, raw: combined || undefined, timedOut: false };
 }
 
 export { isWindows };

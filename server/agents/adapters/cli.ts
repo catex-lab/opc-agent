@@ -38,6 +38,7 @@ import {
   isUnresolvedShim,
   isIdeLauncher,
   probeVersion,
+  PROBE_VERSION_TIMEOUT_MS,
   expandPath,
   shortcutInstallRoot,
   allHostsUnreachable,
@@ -466,9 +467,13 @@ export class CliAdapter implements AgentProvider {
 
   // ============= 探测 =============
 
-  async probe(): Promise<AgentStatus> {
-    const now = new Date().toISOString();
-
+  /**
+   * 探测的同步前半段：定位可执行文件 + 形态守卫，**不 spawn 任何进程**。
+   *
+   * 单独拆出来，是因为发消息路径不能再等一次版本探测：冷启动时先定位、
+   * 先放行，版本/凭据/网络在后台回填（见 send）。
+   */
+  private probeTarget(now: string): { binPath?: string; blocked?: AgentStatus } {
     if (this.def.unsupportedReason) {
       this.status = {
         availability: 'unsupported',
@@ -476,7 +481,7 @@ export class CliAdapter implements AgentProvider {
         message: this.def.unsupportedReason,
         probedAt: now,
       };
-      return this.status;
+      return { blocked: this.status };
     }
 
     const binPath = this.findBin();
@@ -490,7 +495,7 @@ export class CliAdapter implements AgentProvider {
         }`,
         probedAt: now,
       };
-      return this.status;
+      return { blocked: this.status };
     }
 
     this.target = resolveAnyLaunchTarget(binPath);
@@ -504,7 +509,7 @@ export class CliAdapter implements AgentProvider {
         message: '无法解析该命令的启动垫片，已跳过（不退回 shell 执行以保证安全）',
         probedAt: now,
       };
-      return this.status;
+      return { blocked: this.status };
     }
 
     // 目标文件存在但根本不是可执行程序（npm 占位脚本的典型症状）
@@ -516,7 +521,7 @@ export class CliAdapter implements AgentProvider {
         message: `${this.target.problem}。${this.def.descriptor.installHint ?? ''}`.trim(),
         probedAt: now,
       };
-      return this.status;
+      return { blocked: this.status };
     }
 
     /**
@@ -541,10 +546,34 @@ export class CliAdapter implements AgentProvider {
           `${this.def.descriptor.installHint ?? ''}`.trim(),
         probedAt: now,
       };
-      return this.status;
+      return { blocked: this.status };
     }
 
-    const { version, raw } = await probeVersion(binPath);
+    return { binPath };
+  }
+
+  async probe(): Promise<AgentStatus> {
+    const now = new Date().toISOString();
+    const { binPath, blocked } = this.probeTarget(now);
+    if (!binPath) return blocked ?? (this.status as AgentStatus);
+
+    const { version, raw, timedOut } = await probeVersion(binPath);
+
+    // 版本探测超时（不再连环试三个参数）：状态如实标成「未知」。
+    // 不能因为"没拿到版本号"就判不可用 —— CLI 本身可能是好的，只是启动慢；
+    // 也不能静默当可用 —— 用户需要知道后续可能变慢。
+    if (timedOut) {
+      this.status = {
+        availability: 'unknown',
+        installed: true,
+        binaryPath: binPath,
+        message:
+          `命令版本探测超过 ${PROBE_VERSION_TIMEOUT_MS / 1000} 秒未返回，状态未知。` +
+          '这不影响发送消息；首条消息可能需要等进程冷启动。',
+        probedAt: now,
+      };
+      return this.status;
+    }
 
     // 凭据启发式检查：只做低成本判断，不发起真实调用
     // （提前到可达性检查之前：两条信息要在同一条 message 里一起给出，
@@ -742,8 +771,24 @@ export class CliAdapter implements AgentProvider {
   // ============= 调用 =============
 
   async *send(ctx: SendContext): AsyncIterable<AgentEvent> {
-    // 未探测过就先探测，顺便拿到 launch target
-    if (!this.status) await this.probe();
+    /**
+     * 冷启动优化：不要再把首字等在一次进程探测上。
+     *
+     * 定位（findBin / 垫片解析）是纯同步的，先做掉；版本/凭据/网络探测
+     * 放到后台回填。探测结果只会影响「状态徽标」和错误提示，不影响
+     * 这一轮能不能发 —— 唯一例外是连可执行文件都定位不到，那就按原
+     * 路径快速失败（这条路径不 spawn 任何东西）。
+     */
+    if (!this.status) {
+      if (!this.target) this.probeTarget(new Date().toISOString());
+      if (this.target) {
+        void this.probe().catch(() => {
+          /* 后台探测失败不影响本轮；状态会停在未知 */
+        });
+      } else {
+        await this.probe();
+      }
+    }
 
     if (!this.target) {
       yield {
