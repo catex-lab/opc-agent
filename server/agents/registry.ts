@@ -367,6 +367,15 @@ class AgentRegistry {
   }
 
   /**
+   * P1：给调用方一个「需不需要等探测」的廉价判断。
+   * 只在缓存缺失/过期时返回 true，用于在 SSE 头之后决定要不要先发一条
+   * 「正在检查成员状态」——缓存热的时候不该每轮都制造一条噪声 note。
+   */
+  needsProbe(ids: string[]): boolean {
+    return ids.some(id => !this.isFresh(id));
+  }
+
+  /**
    * 内部：真正跑一次探测并把结果写回**目标 Agent** 的缓存。
    *
    * A177 的隔离性基座：全量探测与单 Agent 探测都只走这一个函数，

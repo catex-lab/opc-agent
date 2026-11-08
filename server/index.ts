@@ -3383,11 +3383,10 @@ app.post("/api/group-chat", async (req, res) => {
     return res.status(400).json({ error: "群聊至少需要一个成员" });
   }
 
-  // 编排层要靠 availability 决定「谁能上」，而状态来自探测缓存。
-  // 冷启动或 TTL 过期时缓存是空的，成员会被一律判成不可用、整场群聊直接空转
-  // （实测：名册显示 opencode/hermes 在线，群聊却报「没有可用的成员」）。
-  // 所以这里必须先确保成员状态是新鲜的 —— 已新鲜的会命中缓存，不会重复起进程。
-  await registry.ensureProbed(members);
+  // 编排层要靠 availability 决定「谁能上」，状态来自探测缓存。
+  // P1：探测必须放在 SSE 头之后 —— 冷启动时 SDK 单探最长 120 秒，
+  // 放在头之前会让前端「点发送后零帧」。这里只记录意图，真正等待挪到下面。
+  const needsProbe = registry.needsProbe(members);
 
   const membersJson = JSON.stringify(members);
   const now = new Date().toISOString();
@@ -3507,6 +3506,18 @@ app.post("/api/group-chat", async (req, res) => {
     userMessageId,
   });
 
+  // P1：先让前端拿到 group_init，再等探测。
+  // 缓存热时不发 note，避免每轮都多一条噪声。
+  if (needsProbe) {
+    sse({ type: 'group_note', text: '正在检查成员状态，首次启动可能需要几秒…' });
+    await registry.ensureProbed(members);
+    // 探测期间用户可能已经点了停止/关掉面板；别再对着已关闭的 SSE 跑一整场。
+    if (ac.signal.aborted) {
+      console.log('[GroupChat] 探测期间客户端离开，跳过本轮');
+      return res.end();
+    }
+  }
+
   try {
     await runOrchestration(
       { mode: orchestration, members, prompt: message },
@@ -3589,7 +3600,8 @@ app.post("/api/workflow/run", async (req, res) => {
     return res.status(404).json({ error: "会话不存在，请先建群再跑工作流" });
   }
 
-  await registry.ensureProbed(members);
+  // P1：同群聊 —— 探测放在 SSE 头之后，前端先拿到反馈再等状态。
+  const needsProbe = registry.needsProbe(members);
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -3641,6 +3653,14 @@ app.post("/api/workflow/run", async (req, res) => {
   });
 
   sse({ type: 'group_init', sessionId: session.id, orchestration: 'workflow', members, userMessageId: null });
+  if (needsProbe) {
+    sse({ type: 'group_note', text: '正在检查成员状态，首次启动可能需要几秒…' });
+    await registry.ensureProbed(members);
+    if (ac.signal.aborted) {
+      console.log('[Workflow] 探测期间客户端离开，跳过本轮');
+      return res.end();
+    }
+  }
   sse({ type: 'group_note', text: '工作流开始执行' });
 
   try {
