@@ -247,7 +247,9 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
 
     const status = deps.signal.aborted ? 'aborted' : errorMsg ? 'error' : 'ok';
     const { closes, end } = projector.finish(status, turnDone ?? undefined);
-    emit(closes);
+    // closes 和 end 必须一起发：只发 closes 会让这个成员 run 永远停在活跃清单里，
+    // 重连流也等不到 run_end；后续对旧 runId 的 stop 还可能误伤同一请求里的其他成员。
+    emit([...closes, end]);
     // P2：内部阶段的"能力"不是用户看到的这一轮，不记；
     // 其余每一棒都记 —— 群聊里谁给得出思考，正是这里最想知道的事。
     if (!internal && end.type === 'run_end' && end.capabilities) {

@@ -9,6 +9,7 @@
  *
  * 运行：npx tsx scripts/verify-run-hub.ts
  */
+import { readFileSync } from 'node:fs';
 import { runHub, publishRunEvent } from '../server/run-hub.js';
 import { RunProjector, type RunMeta } from '../server/agents/projector.js';
 import { applyRunEvent, textOfBlocks, type Block } from '../shared/blocks.js';
@@ -83,32 +84,38 @@ makeRun('rh-1');
   eq(replayOf('rh-1', last)!.length, 0, 'after=最后一条时补发为空');
 }
 
-// ============= 2. 断点滚出缓冲 → 先快照后增量 =============
+// ============= 2. 断点滚出缓冲 → 快照恢复完整正文，且不重复回放 =============
 {
   const runId = 'rh-rolled';
   runHub.create(runId);
-  // 灌 5000 条同 run 的事件，超过 MAX_EVENTS(4096) 把前面挤出去。
-  // 用 block_delta 而非投影器输出：这里只测裁剪与快照回退，与块内容无关。
+  // 用投影器产出真实事件：run_start + block_open + 5000 条 block_delta，
+  // 超过 MAX_EVENTS(4096) 后前面的开块事件会被挤出去 —— 正是「断点滚出缓冲」。
+  const p = new RunProjector({ ...meta, runId }, () => 1_000);
+  for (const out of p.push({ type: 'init', sessionId: 'sess-h' })) publishRunEvent(out);
   for (let i = 0; i < 5000; i++) {
-    publishRunEvent({
-      seq: i + 1,
-      runId,
-      type: 'block_delta',
-      blockId: `b-${i % 3}`,
-      channel: 'text' as const,
-      delta: 'x',
-    } as never);
+    for (const out of p.push({ type: 'text', content: 'x' })) publishRunEvent(out);
   }
-  const oldest = runHub.replay(runId, 0)![0]?.seq ?? 1;
+  const serverText = textOfBlocks(p.blockList);
+  eq(serverText.length, 5000, '溢出前：服务端正文是 5000 字');
+
+  const buffered = replayOf(runId, 0)!;
+  const oldest = buffered[0]?.seq ?? 1;
+  const newest = buffered[buffered.length - 1]?.seq ?? 1;
   ok(oldest > 500, '裁剪：缓冲已按 4096 上限裁剪', `oldest=${oldest}`);
-  eq(oldest, 5000 - 4096 + 1, '裁剪：保留的正是最近 4096 条');
+  eq(newest - oldest + 1, 4096, '裁剪：保留的正是最近 4096 条');
 
   const out = replayOf(runId, 1)!;
   ok(out[0].type === 'snapshot', '滚出缓冲：首条必须是全量快照', out[0].type);
   ok(Array.isArray((out[0] as { blocks: Block[] }).blocks), '快照：携带块数组');
-  ok(out.length > 1, '滚出缓冲：快照之后仍有增量');
-  // 快照的 seq 用请求的断点，不占用新序号
-  eq(out[0].seq, 1, '快照：seq 用请求断点');
+  // 快照已覆盖到最新 seq：缓冲里的历史增量不能再重放，否则正文会被重复加一遍
+  eq(out[0].seq, newest, '快照：seq 取最新一条，而不是请求断点');
+  ok(out.slice(1).every(e => e.seq > out[0].seq), '滚出缓冲：快照之后只允许更新的增量',
+    out.slice(1).map(e => e.seq).join(','));
+
+  const client: Block[] = [];
+  for (const e of out) applyRunEvent(client, e);
+  eq(textOfBlocks(client), serverText, '恢复正文：快照回放后与服务端原文完全一致');
+  eq(textOfBlocks(client).length, 5000, '恢复正文：没有把缓冲增量重复加一遍（应为 5000 而不是 9096）');
 }
 
 // ============= 3. run 不存在 → null（调用方据此回 404） =============
@@ -154,17 +161,18 @@ eq(runHub.subscribe('no-such-run', () => {}), null, '不存在的 run：subscrib
     { type: 'text', content: '第二段' },
   ];
   for (const e of feed) for (const out of p.push(e)) publishRunEvent(out);
-  for (const out of p.finish('ok').closes) publishRunEvent(out);
+  const fin = p.finish('ok');
+  for (const out of [...fin.closes, fin.end]) publishRunEvent(out);
 
   const out = replayOf(runId, 0)!;
   const client: Block[] = [];
   for (const e of out) applyRunEvent(client, e);
   eq(client, p.blockList, '回放：客户端还原的块与服务端一致');
   eq(textOfBlocks(client), textOfBlocks(p.blockList), '回放：正文文本一致');
-  // 只发了 closes、没发 end —— 这个 run 不该被认成已结束。
-  // 原来这里写的是 `isFinished(runId) === false || true`，恒为真的一条假守卫
-  // （A116 教训的同一类病：条件里带了 `|| true` 就等于没断言）。
-  ok(runHub.isFinished(runId) === false, '回放：只闭合块未发 run_end 时 run 仍未结束');
+  // 块闭合和 run_end 必须一起发：只发 closes 会让 run 永远留在活跃清单里，
+  // 重连流也等不到收尾。原来是反着断言的（把缺陷写成了契约），这里改成正确行为。
+  ok(runHub.isFinished(runId) === true, '回放：闭合块并补发 run_end 后 run 已结束');
+  eq(runHub.activeRuns().some(r => r.runId === runId), false, '回放：run_end 后从 active 清单消失');
 }
 
 // ============= 6. 即时中止（A122：界面上的「停止」） =============
@@ -212,6 +220,14 @@ eq(runHub.subscribe('no-such-run', () => {}), null, '不存在的 run：subscrib
   }
   eq(threw, false, '停止：中止动作抛错被吞住，不把异常甩给调用方');
   eq(runHub.isFinished('rh-throw'), false, '停止：抛错也不会把 run 标成已结束');
+}
+
+// ============= 7. 成员运行收尾：turn-runner 必须同时下发 closes 与 run_end =============
+// 这里做源码级守卫：turn-runner 不 import db，直接跑起来会开真实数据库；
+// 用离线断言锁住「正常结束必须是 emit([...closes, end])」这一个收尾动作。
+{
+  const src = readFileSync(new URL('../server/turn-runner.ts', import.meta.url), 'utf8');
+  ok(/emit\(\[\.\.\.closes,\s*end\]\)/.test(src), 'turn-runner：正常结束同时下发块关闭与 run_end');
 }
 
 // ============= 结果 =============

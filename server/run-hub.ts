@@ -10,7 +10,8 @@
  * 现在的做法：
  *   1. 每个 run 的事件既写 POST 响应，也进这里的 ring buffer
  *   2. 断线后前端带着 `after=<最后收到的 seq>` 重新 GET
- *   3. 缓冲里还有 → 补发缺的；已经滚出去了 → 先发一条 snapshot（当前全部块）再续增量
+ *   3. 缓冲里还有 → 补发缺的；已经滚出去了 → 先发一条 snapshot（当前全部块）。
+ *      快照已经覆盖到最新 seq，缓冲里的事件不再重放（重放会把同一段正文加两遍）。
  *
  * ## 为什么不做完整 event sourcing
  *
@@ -122,15 +123,21 @@ class RunHub {
     const oldest = run.events[0]?.seq ?? 1;
     const out: RunEvent[] = [];
 
-    // 请求的断点已经滚出缓冲：先给全量快照，再给缓冲里的全部增量
+    // 请求的断点已经滚出缓冲：只给全量快照。
+    // 快照里的 blocks 已经应用了缓冲中的全部事件，快照 seq 取最新一条；
+    // 再回放缓冲会把已经算进快照的正文重复加一遍（实测 5000 字变 9096 字）。
+    // 之后的实时增量由 subscribe() 继续推，seq 都大于快照 seq。
     if (after > 0 && after < oldest - 1) {
+      const snapshotSeq = run.events[run.events.length - 1]?.seq ?? after;
       out.push({
-        seq: after,
+        seq: snapshotSeq,
         runId,
         type: 'snapshot',
         blocks: run.blocks.map(b => ({ ...b })),
       });
-      out.push(...run.events);
+      for (const ev of run.events) {
+        if (ev.seq > snapshotSeq) out.push(ev);
+      }
       return out;
     }
 
