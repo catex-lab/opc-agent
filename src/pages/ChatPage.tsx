@@ -848,9 +848,10 @@ export function ChatPage({
               />
             )}
 
-            {/* A207 补充：悬空回合确认卡长在对话流里，跟消息一起滚 ——
-                滚动离开再回来，那条「等待你的操作」状态行仍然在，
-                用户能看出 agent 卡在哪一步。群聊走另一条编排链路，不接。 */}
+            {/* A207 补充（方案 C）：悬空回合只在对话流里留一条 38px 状态行，
+                点「查看处理」才弹出轻量对话框；状态行跟着消息一起滚 ——
+                滚动离开再回来、切走再切回、刷新后（useChat 落了 localStorage）
+                都仍然在，用户能看出 agent 卡在哪一步。群聊走另一条编排链路，不接。 */}
             {!isGroup && resumeConfirm && onResolveResume && (
               <ResumeNotice info={resumeConfirm} onChoose={onResolveResume} />
             )}

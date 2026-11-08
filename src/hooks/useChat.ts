@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { MessagePlugin } from 'tdesign-react';
 import { v4 as uuidv4 } from 'uuid';
 import { Message, PermissionMode, Session, CustomAgent, ImageBlock } from '../types';
@@ -17,6 +17,14 @@ import {
 
 const STORAGE_KEYS = {
   draftInput: 'draftInput',
+  /**
+   * A207 补充：待确认的「上一轮指令未完成」。
+   *
+   * 状态行要「刷新后仍常驻」，所以把可序列化的那部分按会话存一份；
+   * `onNavigate` 是函数、`replacedOriginal` 是刷新前内存里的临时对象，
+   * 这两项不落盘（重发时会按当前会话重新取）。
+   */
+  resumePrompt: 'resumePrompt',
 };
 
 interface UseChatOptions {
@@ -117,6 +125,66 @@ interface NewChatOptions {
     replaceMessageId: string;
   }
 
+/** 待决项落盘时只保留刷新后仍用得上的字段（见 STORAGE_KEYS.resumePrompt） */
+type PersistedResumePrompt = Pick<
+  ResumePrompt,
+  'info' | 'sessionId' | 'messageContent' | 'newChatOptions' | 'regen'
+>;
+
+/**
+ * A207 补充：刷新后恢复待决项。
+ *
+ * 不校验「会话是否还存在」：App 只在 `resumePrompt.sessionId === 当前会话 id`
+ * 时才显示状态行，过期条目不会串到别的会话里。形状校验只是防止手改
+ * localStorage 或旧版本残留把界面喂进坏数据。
+ */
+function readPersistedResumePrompt(): ResumePrompt | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.resumePrompt);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as Partial<PersistedResumePrompt> | null;
+    if (
+      !saved
+      || !saved.info
+      || saved.info.kind !== 'dangling-cli-turn'
+      || typeof saved.sessionId !== 'string'
+      || !saved.sessionId
+      || typeof saved.messageContent !== 'string'
+      || !saved.messageContent
+    ) {
+      return null;
+    }
+    return {
+      info: saved.info,
+      sessionId: saved.sessionId,
+      messageContent: saved.messageContent,
+      newChatOptions: saved.newChatOptions,
+      regen: saved.regen,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistResumePrompt(prompt: ResumePrompt | null) {
+  try {
+    if (!prompt) {
+      localStorage.removeItem(STORAGE_KEYS.resumePrompt);
+      return;
+    }
+    const saved: PersistedResumePrompt = {
+      info: prompt.info,
+      sessionId: prompt.sessionId,
+      messageContent: prompt.messageContent,
+      newChatOptions: prompt.newChatOptions,
+      regen: prompt.regen,
+    };
+    localStorage.setItem(STORAGE_KEYS.resumePrompt, JSON.stringify(saved));
+  } catch {
+    // 隐私模式等写不进去：本次确认照常可用，只是刷新后状态行会丢
+  }
+}
+
 /**
  * 一轮对话的句柄（A142 起每会话一个）。
  *
@@ -163,7 +231,18 @@ export function useChat(options: UseChatOptions) {
   /** 正在跑的会话 id。派生给 UI 的 `isLoading` 只反映**当前会话** */
   const [runningIds, setRunningIds] = useState<string[]>([]);
   /** A207：等待用户答复的悬空回合确认（同一时刻只会有一个） */
-  const [resumePrompt, setResumePrompt] = useState<ResumePrompt | null>(null);
+  const [resumePrompt, setResumePrompt] = useState<ResumePrompt | null>(readPersistedResumePrompt);
+
+  /**
+   * A207 补充：待决项跟着状态一起落盘。
+   *
+   * 初始值直接从 localStorage 恢复，所以刷新后状态行仍然在；用户在
+   * 弹层里作答（或直接在输入框改写发送）时 setResumePrompt(null)
+   * 会触发这里把旧条目清掉 —— 不留过期数据。
+   */
+  useEffect(() => {
+    persistResumePrompt(resumePrompt);
+  }, [resumePrompt]);
 
   const [inputValue, setInputValue] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.draftInput) || '';
@@ -217,10 +296,17 @@ export function useChat(options: UseChatOptions) {
      * A207 补充：待确认期间，用户直接在输入框里改写后发送 = 自由输入出口。
      *
      * 按「新建会话」处理：旧 CLI 会话不再续接，新指令不会和那条没答完的
-     * 旧指令混在一起。确认卡片的正文里已经写明这一点。
+     * 旧指令混在一起。弹层正文里已经写明这一点。
+     *
+     * 只认**同一个会话**的待决项：待确认是「这个会话上一轮怎么了」，
+     * 在别的会话里发消息不该把它悄悄清掉（否则切走再切回就看不出卡在哪了）；
+     * 也不该把 `fresh` 这个答复带到别的会话上。
      */
-    const effectiveResumeChoice = resumeChoice ?? (resumePrompt ? 'fresh' : undefined);
-    if (!resumeChoice && resumePrompt) setResumePrompt(null);
+    const pendingHere = resumePrompt && resumePrompt.sessionId === (currentSessionId ?? '')
+      ? resumePrompt
+      : null;
+    const effectiveResumeChoice = resumeChoice ?? (pendingHere ? 'fresh' : undefined);
+    if (!resumeChoice && pendingHere) setResumePrompt(null);
 
     let sessionId = currentSessionId;
     let currentCwd = currentSession?.cwd;

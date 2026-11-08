@@ -1896,8 +1896,8 @@ function AppContent() {
                         onBranch={!(currentSession?.kind === 'group') ? handleBranch : undefined}
                         // A119：空壳会话换 Agent（新建页的 Agent 卡片）
                         onRebindAgent={handleRebindAgent}
-                        // A207 补充：悬空回合确认卡渲染在消息流里（见 ChatPage），
-                        // 不再用模态弹窗 —— 用户要能边看上下文边答。
+                        // A207 补充（方案 C）：悬空回合只有一条流内状态行，
+                        // 决策与全文在「查看处理」弹层里（见 ResumeNotice）。
                         // 只在这个确认所属的会话里显示：切到别的会话不该挂着它。
                         resumeConfirm={
                           resumePrompt && resumePrompt.sessionId === currentSession.id
