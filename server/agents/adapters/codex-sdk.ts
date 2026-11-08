@@ -299,6 +299,21 @@ export class CodexSdkAdapter implements AgentProvider {
             });
             continue;
           }
+          /**
+           * Codex 的 ThreadEvent 没有 token 级正文增量：`turn.started` 之后
+           * 要等到整段 `item.completed` 才有正文（实测首正文 22.5 秒）。
+           * 这段时间原本一条可渲染事件都没有，界面看起来像卡死。
+           *
+           * 这里立刻给一条**明确的**思考态：说清「首事件已到、正文未到」，
+           * 而不是假装有正文，也不让用户在 20 秒里对着空白猜。
+           */
+          if (event.type === 'turn.started') {
+            queue.push({
+              type: 'thinking',
+              content: '思考中：首事件已到（turn.started），正文未到。Codex 在整段完成后才返回正文。',
+            });
+            continue;
+          }
           if (event.type === 'turn.completed') {
             const u = event.usage;
             tokens = Number(u.input_tokens ?? 0) + Number(u.output_tokens ?? 0);
@@ -310,7 +325,6 @@ export class CodexSdkAdapter implements AgentProvider {
           } else if (mapped) {
             queue.push(mapped);
           } else if (
-            event.type !== 'turn.started' &&
             event.type !== 'turn.completed' &&
             event.type !== 'item.started' &&
             event.type !== 'item.updated' &&
