@@ -948,14 +948,15 @@ async function fetchProviders(
   }
 }
 
-function readDiskCache(): CatalogState | null {
+function readDiskCache(opts: { allowStale?: boolean } = {}): CatalogState | null {
   try {
     const raw = fs.readFileSync(CACHE_PATH, 'utf8');
     const parsed = JSON.parse(raw) as CatalogState;
     if (!parsed?.agents || !parsed?.providers) return null;
     // 结构变过就作废：旧缓存里没有 details，读回来菜单会只剩裸 id
     if (parsed.version !== CACHE_VERSION) return null;
-    if (Date.now() - parsed.fetchedAt >= TTL_MS) return null;
+    // 过期缓存仍可用（allowStale）：调用方先拿旧值，刷新放后台
+    if (!opts.allowStale && Date.now() - parsed.fetchedAt >= TTL_MS) return null;
     return parsed;
   } catch {
     // 文件不存在 / 损坏：当没缓存，走一次真实刷新
@@ -1108,19 +1109,50 @@ async function refreshCatalog(): Promise<CatalogState> {
  *
  * 并发调用共用同一个 Promise：模型列表接口可能被多个会话同时打，
  * 不能因此跑出多次 CLI 子进程。
+ *
+ * ## 过期缓存绝不挡调用方（stale-while-revalidate）
+ *
+ * 真实刷新要并行跑 `codex debug models` / `qodercli --list-models` 等枚举，
+ * 实测 5~8 秒。原来缓存一过 24 小时 TTL，第一个打模型列表的请求就得**同步
+ * 等完这一轮枚举**；如果这个请求恰好排在 `thread/start` 前面，首字就被目录
+ * 拖住了。现在过期缓存照旧返回（菜单照常可用），刷新只在后台跑：
+ *   - 有磁盘旧值 → 立即返回旧值 + 后台刷新（同一时间只跑一份）；
+ *   - 连旧值都没有（首装）→ 仍然同步刷新，此时没有别的事实来源可给。
  */
 export function loadCatalog(force = false): Promise<CatalogState> {
-  if (!force && state && Date.now() - memFetchedAt < TTL_MS) {
-    return Promise.resolve(state);
-  }
-  if (loading) return loading;
+  if (!force) {
+    if (state && Date.now() - memFetchedAt < TTL_MS) {
+      return Promise.resolve(state);
+    }
 
-  const disk = force ? null : readDiskCache();
-  if (disk) {
-    state = disk;
-    memFetchedAt = disk.fetchedAt;
-    return Promise.resolve(disk);
+    const disk = readDiskCache();
+    if (disk) {
+      state = disk;
+      memFetchedAt = disk.fetchedAt;
+      return Promise.resolve(disk);
+    }
+
+    const stale = readDiskCache({ allowStale: true });
+    if (stale) {
+      state = stale;
+      memFetchedAt = stale.fetchedAt;
+      if (!loading) {
+        let p: Promise<CatalogState>;
+        p = refreshCatalog()
+          .catch(e => {
+            console.warn('[ModelCatalog] 后台刷新失败（继续用旧目录）：', String(e));
+            return stale;
+          })
+          .finally(() => {
+            if (loading === p) loading = null;
+          });
+        loading = p;
+      }
+      return Promise.resolve(stale);
+    }
   }
+
+  if (loading) return loading;
 
   loading = refreshCatalog().finally(() => {
     loading = null;
