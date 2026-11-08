@@ -475,7 +475,9 @@ console.log('\n[7] 滑杆：默认刻度 + 拖动数值 + 统一恢复默认');
   await size.fill('600');
   await page.waitForTimeout(250);
   const bubble = await page.evaluate(() => {
-    const el = document.querySelector('[data-range-bubble="光斑大小"]');
+    // i18n pilot：`data-range-bubble` 改挂稳定语义 id（`glow-size`），
+    // 不再用可见文案当锚点 —— 中英文切换时同一个断言继续成立。
+    const el = document.querySelector('[data-range-bubble="glow-size"]');
     return el ? el.innerText.trim() : null;
   });
   ok(bubble === '600px', '拖动时浮出精确数值气泡', String(bubble));
@@ -485,7 +487,7 @@ console.log('\n[7] 滑杆：默认刻度 + 拖动数值 + 统一恢复默认');
   await bright.fill('150');
   await page.waitForTimeout(250);
   const bubble2 = await page.evaluate(() => {
-    const el = document.querySelector('[data-range-bubble="光斑亮度"]');
+    const el = document.querySelector('[data-range-bubble="glow-brightness"]');
     return el ? el.innerText.trim() : null;
   });
   ok(bubble2 === '150%', '亮度滑杆也有数值气泡', String(bubble2));

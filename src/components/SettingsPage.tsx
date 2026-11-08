@@ -23,6 +23,13 @@ import { AgentCredentialSettings } from './AgentCredentialSettings';
 import { type CloseBehavior, readCloseBehavior, saveCloseBehavior } from '../closeBehavior';
 import { type LinkOpenMode, readLinkOpenMode, saveLinkOpenMode } from '../answer/linkRouter';
 import { type AnswerLanguage, readAnswerLanguage, saveAnswerLanguage } from '../answerLanguage';
+import {
+  useTranslation,
+  readInterfaceLanguage,
+  saveInterfaceLanguage,
+  type InterfaceLanguage,
+  type MessageKey,
+} from '../i18n';
 import { ProviderSettings } from './ProviderSettings';
 import { ModelCatalogSettings } from './ModelCatalogSettings';
 import { MemoryPanel } from './MemoryPanel';
@@ -89,13 +96,28 @@ interface SettingsPageProps {
  *  分不清前两栏到底会不会随系统变。 */
 const THEME_OPTIONS: Array<{
   value: ThemePreference;
-  label: string;
-  hint: string;
+  labelKey: MessageKey;
+  hintKey: MessageKey;
   Icon: typeof Monitor;
 }> = [
-  { value: 'system', label: '跟随系统', hint: '跟着 Windows 的深浅色设置走', Icon: Monitor },
-  { value: 'light', label: '浅色', hint: '固定浅色', Icon: Sun },
-  { value: 'dark', label: '深色', hint: '固定深色', Icon: Moon },
+  {
+    value: 'system',
+    labelKey: 'settings.appearance.themeSystem',
+    hintKey: 'settings.appearance.themeSystemHint',
+    Icon: Monitor,
+  },
+  {
+    value: 'light',
+    labelKey: 'settings.appearance.themeLight',
+    hintKey: 'settings.appearance.themeLightHint',
+    Icon: Sun,
+  },
+  {
+    value: 'dark',
+    labelKey: 'settings.appearance.themeDark',
+    hintKey: 'settings.appearance.themeDarkHint',
+    Icon: Moon,
+  },
 ];
 
 type LoginMethod = 'env' | 'cli' | 'none';
@@ -122,22 +144,37 @@ type SettingsSectionKey =
 
 const SETTINGS_SECTIONS: Array<{
   key: SettingsSectionKey;
-  label: string;
-  hint: string;
+  labelKey: MessageKey;
+  hintKey: MessageKey;
   Icon: typeof Monitor;
 }> = [
   // A115（需求「增加用户更换自己头像和昵称的功能」）：排第一。
   // 这是唯一一项「关于我而不是关于软件」的设置，放在最前面才找得到 ——
   // 设置页的通行做法是把个人资料摆在首位。
-  { key: 'profile', label: '我的资料', hint: '昵称与头像，昵称会被 Agent 识别', Icon: UserRound },
-  { key: 'memory', label: '记忆', hint: '跨会话记忆、用户画像与沉淀的技能', Icon: Brain },
-  { key: 'permission', label: '权限门禁', hint: '危险命令分类与自定义规则', Icon: ShieldAlert },
-  { key: 'appearance', label: '外观', hint: '主题、透明度、光斑、关闭窗口行为', Icon: Monitor },
-  { key: 'login', label: '登录配置', hint: 'API Key 或命令行登录', Icon: KeyRound },
-  { key: 'models', label: '模型清单', hint: '枚举来源与手动刷新', Icon: Layers },
-  { key: 'agents', label: '助手人设', hint: '本地提示词与工具权限', Icon: Bot },
+  {
+    key: 'profile',
+    labelKey: 'settings.section.profile',
+    hintKey: 'settings.section.profileHint',
+    Icon: UserRound,
+  },
+  { key: 'memory', labelKey: 'settings.section.memory', hintKey: 'settings.section.memoryHint', Icon: Brain },
+  {
+    key: 'permission',
+    labelKey: 'settings.section.permission',
+    hintKey: 'settings.section.permissionHint',
+    Icon: ShieldAlert,
+  },
+  {
+    key: 'appearance',
+    labelKey: 'settings.section.appearance',
+    hintKey: 'settings.section.appearanceHint',
+    Icon: Monitor,
+  },
+  { key: 'login', labelKey: 'settings.section.login', hintKey: 'settings.section.loginHint', Icon: KeyRound },
+  { key: 'models', labelKey: 'settings.section.models', hintKey: 'settings.section.modelsHint', Icon: Layers },
+  { key: 'agents', labelKey: 'settings.section.agents', hintKey: 'settings.section.agentsHint', Icon: Bot },
   // 排最后：这是「偶尔来一次」的分区，不该抢占前六项的位置
-  { key: 'about', label: '关于与隐私', hint: '版本、隐私承诺与官方入口', Icon: Info },
+  { key: 'about', labelKey: 'settings.section.about', hintKey: 'settings.section.aboutHint', Icon: Info },
 ];
 
 interface LoginStatus {
@@ -224,6 +261,7 @@ export function SettingsPage({
   onBack,
   onClose
 }: SettingsPageProps) {
+  const { t } = useTranslation();
   const [editingAgent, setEditingAgent] = useState<CustomAgent | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [formData, setFormData] = useState({
@@ -491,7 +529,7 @@ export function SettingsPage({
           此前这里是自己写的 h1 + text-2xl（24px），比别处大 50%，
           且没有 header 容器与底边线，是全应用最显眼的标题栏不一致。 */}
       <PanelHeader
-        title="设置"
+        title={t('settings.title')}
         // A116（反馈）：「设置页的红框位置上下占了太多空间，请缩小」。
         // dense 把垂直留白 20px→12px、整栏 88px→60px。设置是浮层，
         // 没有「与旁边一栏标题对齐」的约束，可以单独压。
@@ -501,7 +539,7 @@ export function SettingsPage({
         // 是同一句话说了两遍，而且它描述的正是下面三个分区按钮的内容，
         // 属于「导航能自解释」的重复信息。
         onBack={onBack}
-        backLabel="返回"
+        backLabel={t('settings.back')}
         // 双行标题栏：操作区跟标题行对齐，不跟着整条 84px 居中
         // （否则 × 会落在「设置」下方约 10px，看着像没对齐）。
         actionsAlign="title"
@@ -528,7 +566,7 @@ export function SettingsPage({
                 // A114 实测过的位置；横向 9px 不变（那一维没动）。
                 transform: 'translate(9px, 0)',
               }}
-              aria-label="关闭设置"
+              aria-label={t('settings.close')}
               data-settings-close
             >
               <X size={16} />
@@ -541,11 +579,15 @@ export function SettingsPage({
         {/* 左侧分区导航。宽屏才占位，窄屏换成下面那条横向滚动条 ——
             mp 宽度下再切一条竖栏会把内容挤成一拃宽。 */}
         <nav
-          className="hidden w-[168px] shrink-0 flex-col gap-1 overflow-y-auto border-r py-4 pl-4 pr-2 sm:flex"
+          /* i18n pilot：168px 是按「助手人设」「关于与隐私」这类四字中文量出来的；
+             英文最长项 `Assistant personas`（17 字符）加上图标与内边距约 186px。
+             固定栏宽放宽到 188px，避免英文标签被 ellipsis 吞掉。宽屏下内容区
+             仍有 452px 以上，窄屏本来就换成横向药丸，不受影响。 */
+          className="hidden w-[188px] shrink-0 flex-col gap-1 overflow-y-auto border-r py-4 pl-4 pr-2 sm:flex"
           style={{ borderColor: 'var(--tc-divider)' }}
-          aria-label="设置分区"
+          aria-label={t('settings.sections')}
         >
-          {SETTINGS_SECTIONS.map(({ key, label, hint, Icon }) => {
+          {SETTINGS_SECTIONS.map(({ key, labelKey, hintKey, Icon }) => {
             const active = section === key;
             return (
               <button
@@ -556,7 +598,7 @@ export function SettingsPage({
                 // A37：每一项下面那行灰色小字去掉了（需求「取消组件内的小字」）。
                 // 信息没有丢 —— 挂到 title 上，悬停仍能看到这一区管什么；
                 // 常驻显示时它只是把三个按钮各撑高一行，读起来像目录。
-                title={hint}
+                title={t(hintKey)}
                 className="relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--tc-fill-hover)]"
                 style={{
                   backgroundColor: active ? 'var(--td-brand-color-light)' : 'transparent',
@@ -571,7 +613,7 @@ export function SettingsPage({
                 <Icon size={16} className="shrink-0" />
                 {/* `text-sm` 是本项目唯一一处 Tailwind 裸字号；换成 --text-body-lg(14px)，
                     与设置页其余文字同一刻度 */}
-                <span className="text-body-lg">{label}</span>
+                <span className="text-body-lg">{t(labelKey)}</span>
               </button>
             );
           })}
@@ -583,7 +625,7 @@ export function SettingsPage({
           className="scrollbar-none flex shrink-0 gap-2 overflow-x-auto border-b px-4 py-2 sm:hidden"
           style={{ borderColor: 'var(--tc-divider)' }}
         >
-          {SETTINGS_SECTIONS.map(({ key, label, Icon }) => {
+          {SETTINGS_SECTIONS.map(({ key, labelKey, Icon }) => {
             const active = section === key;
             return (
               <button
@@ -605,7 +647,7 @@ export function SettingsPage({
                 }}
               >
                 <Icon size={14} />
-                {label}
+                {t(labelKey)}
               </button>
             );
           })}
@@ -647,15 +689,16 @@ export function SettingsPage({
         <div>
           {/* 分区标题只做文字：参考图里「外观」与主标签同档（14px），
               靠上方留白分段、下方只留 12px 接内容。样式见 settings-select.css。 */}
-          <h2 className="opc-settings-section-title">外观</h2>
+          <h2 className="opc-settings-section-title">{t('settings.appearance.title')}</h2>
 
-          {/* A209：语言区。界面语言尚未落地，所以这里目前只有「回答语言」一项；
-              将来加「界面语言」时紧挨在它下面（两者语义独立：一个管界面文案，
-              一个管 Agent 回答正文）。 */}
+          {/* 语言区两项紧挨着（语义独立：一个管界面文案，一个管 Agent 回答正文）。
+              界面语言排在前面：它决定这一页其余文案的语言，属于「先选语言再调外观」
+              的阅读顺序。 */}
+          <InterfaceLanguageSetting />
           <AnswerLanguageSetting />
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {THEME_OPTIONS.map(({ value, label, hint, Icon }) => {
+            {THEME_OPTIONS.map(({ value, labelKey, hintKey, Icon }) => {
               const selected = themePreference === value;
               return (
                 <button
@@ -670,7 +713,7 @@ export function SettingsPage({
                   // 去掉 —— 三个按钮的标签本身已经说清了全部意思，
                   // 那行字只是把「跟随系统」四个字又解释了一遍。
                   // 需要时悬停仍能看到（title）。
-                  title={hint}
+                  title={t(hintKey)}
                   className="flex items-center gap-3 rounded-lg p-3 text-left transition-all"
                   style={{
                     // 选中态用品牌色描边 + 淡底，不用实心填充：
@@ -696,7 +739,7 @@ export function SettingsPage({
                     className="min-w-0 text-body-lg font-medium"
                     style={{ color: 'var(--td-text-color-primary)' }}
                   >
-                    {label}
+                    {t(labelKey)}
                   </span>
                 </button>
               );
@@ -1284,29 +1327,39 @@ export function SettingsPage({
  */
 const CLOSE_BEHAVIOR_OPTIONS: Array<{
   value: CloseBehavior;
-  label: string;
-  hint: string;
+  labelKey: MessageKey;
+  hintKey: MessageKey;
   Icon: typeof Monitor;
 }> = [
-  { value: 'quit', label: '直接退出', hint: '关闭窗口即退出应用（默认）', Icon: Power },
+  {
+    value: 'quit',
+    labelKey: 'settings.closeBehavior.quit',
+    hintKey: 'settings.closeBehavior.quitHint',
+    Icon: Power,
+  },
   {
     value: 'tray',
-    label: '最小化到托盘',
-    hint: '窗口隐藏，任务继续在后台运行；单击托盘图标恢复',
+    labelKey: 'settings.closeBehavior.tray',
+    hintKey: 'settings.closeBehavior.trayHint',
     Icon: Minimize2,
   },
   {
     value: 'ask',
-    label: '每次询问',
-    hint: '每次关闭都问一次：退出还是最小化到托盘',
+    labelKey: 'settings.closeBehavior.ask',
+    hintKey: 'settings.closeBehavior.askHint',
     Icon: HelpCircle,
   },
 ];
 
 function CloseBehaviorSetting() {
+  const { t } = useTranslation();
   const [behavior, setBehavior] = useState<CloseBehavior>(readCloseBehavior);
-  const current =
-    CLOSE_BEHAVIOR_OPTIONS.find(option => option.value === behavior) ?? CLOSE_BEHAVIOR_OPTIONS[0];
+  const options = CLOSE_BEHAVIOR_OPTIONS.map(o => ({
+    ...o,
+    label: t(o.labelKey),
+    hint: t(o.hintKey),
+  }));
+  const current = options.find(option => option.value === behavior) ?? options[0];
 
   return (
     <div className="opc-enum-setting" data-close-behavior-setting>
@@ -1318,11 +1371,11 @@ function CloseBehaviorSetting() {
         <div className="opc-enum-setting__text">
           <div className="opc-enum-setting__title">
             <label className="opc-enum-setting__label" id="opc-close-behavior-label">
-              关闭窗口时
+              {t('settings.closeBehavior.label')}
             </label>
             <InfoHint
-              label="关闭窗口行为说明"
-              text="选择「直接退出」时，如果还有 Agent 任务在运行，会先弹一次确认；选择「最小化到托盘」则不会中断任务，进程继续留在托盘里，托盘右键菜单可以退出。"
+              label={t('settings.common.about', { label: t('settings.closeBehavior.label') })}
+              text={t('settings.closeBehavior.info')}
             />
           </div>
           <p className="opc-enum-setting__hint">{current.hint}</p>
@@ -1335,7 +1388,7 @@ function CloseBehaviorSetting() {
           triggerAttrs={{ 'data-close-behavior-select': '' }}
           optionAttrs={value => ({ 'data-close-behavior': value })}
           value={behavior}
-          options={CLOSE_BEHAVIOR_OPTIONS}
+          options={options}
           onChange={next => setBehavior(saveCloseBehavior(next))}
         />
       </div>
@@ -1355,17 +1408,33 @@ function CloseBehaviorSetting() {
  */
 const LINK_OPEN_OPTIONS: Array<{
   value: LinkOpenMode;
-  label: string;
-  hint: string;
+  labelKey: MessageKey;
+  hintKey: MessageKey;
   Icon: typeof Globe;
 }> = [
-  { value: 'system', label: '系统浏览器', hint: '交给操作系统默认浏览器打开（默认）', Icon: Globe },
-  { value: 'in-app', label: '应用内打开', hint: '在右侧工作区的浏览标签页里打开', Icon: Layers },
+  {
+    value: 'system',
+    labelKey: 'settings.linkOpen.system',
+    hintKey: 'settings.linkOpen.systemHint',
+    Icon: Globe,
+  },
+  {
+    value: 'in-app',
+    labelKey: 'settings.linkOpen.inApp',
+    hintKey: 'settings.linkOpen.inAppHint',
+    Icon: Layers,
+  },
 ];
 
 function LinkOpenModeSetting() {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<LinkOpenMode>(readLinkOpenMode);
-  const current = LINK_OPEN_OPTIONS.find(option => option.value === mode) ?? LINK_OPEN_OPTIONS[0];
+  const options = LINK_OPEN_OPTIONS.map(o => ({
+    ...o,
+    label: t(o.labelKey),
+    hint: t(o.hintKey),
+  }));
+  const current = options.find(option => option.value === mode) ?? options[0];
 
   return (
     <div className="opc-enum-setting" data-link-open-setting>
@@ -1373,11 +1442,11 @@ function LinkOpenModeSetting() {
         <div className="opc-enum-setting__text">
           <div className="opc-enum-setting__title">
             <label className="opc-enum-setting__label" id="opc-link-open-mode-label">
-              链接打开方式
+              {t('settings.linkOpen.label')}
             </label>
             <InfoHint
-              label="链接打开方式说明"
-              text="正文里的 http(s) 链接点击时用哪种方式打开。悬停链接时会有完整地址提示，里面也能临时改用另一种方式打开。应用内打开会占用右侧工作区；窄屏或群聊里会自动改用系统浏览器。"
+              label={t('settings.common.about', { label: t('settings.linkOpen.label') })}
+              text={t('settings.linkOpen.info')}
             />
           </div>
           <p className="opc-enum-setting__hint">{current.hint}</p>
@@ -1388,8 +1457,85 @@ function LinkOpenModeSetting() {
           triggerAttrs={{ 'data-link-open-select': '' }}
           optionAttrs={value => ({ 'data-link-open-option': value })}
           value={mode}
-          options={LINK_OPEN_OPTIONS}
+          options={options}
           onChange={next => setMode(saveLinkOpenMode(next))}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 「界面语言」设置（i18n pilot）。
+ *
+ * 三档：
+ *   system  跟随系统 locale；系统不是中文或英文时回落中文（默认）
+ *   zh      固定简体中文
+ *   en      固定英文
+ *
+ * 切换即时生效、不需要重启：`saveInterfaceLanguage()` 改的是 i18n 模块单例，
+ * 四个 pilot 区域的组件通过 `useTranslation()` 订阅重渲染。
+ *
+ * 持久化沿用偏好链路（localStorage 镜像 + PATCH `/api/preferences`），
+ * 不新建存储。`data-interface-language-*` 是给闸门用的稳定锚点，不随文案变。
+ */
+const INTERFACE_LANGUAGE_OPTIONS: Array<{
+  value: InterfaceLanguage;
+  labelKey: MessageKey;
+  hintKey: MessageKey;
+}> = [
+  {
+    value: 'system',
+    labelKey: 'settings.interfaceLanguage.optionSystem',
+    hintKey: 'settings.interfaceLanguage.hintSystem',
+  },
+  {
+    value: 'zh',
+    labelKey: 'settings.interfaceLanguage.optionZh',
+    hintKey: 'settings.interfaceLanguage.hintZh',
+  },
+  {
+    value: 'en',
+    labelKey: 'settings.interfaceLanguage.optionEn',
+    hintKey: 'settings.interfaceLanguage.hintEn',
+  },
+];
+
+function InterfaceLanguageSetting() {
+  const { t } = useTranslation();
+  const [language, setLanguage] = useState<InterfaceLanguage>(readInterfaceLanguage);
+  const options = INTERFACE_LANGUAGE_OPTIONS.map(o => ({
+    value: o.value,
+    label: t(o.labelKey),
+    hint: t(o.hintKey),
+  }));
+  const current = options.find(option => option.value === language) ?? options[0];
+
+  return (
+    <div className="opc-enum-setting" data-interface-language-setting>
+      <div className="opc-enum-setting__row">
+        <div className="opc-enum-setting__text">
+          <div className="opc-enum-setting__title">
+            <label className="opc-enum-setting__label" id="opc-interface-language-label">
+              {t('settings.interfaceLanguage.label')}
+            </label>
+            <InfoHint
+              label={t('settings.common.about', {
+                label: t('settings.interfaceLanguage.label'),
+              })}
+              text={t('settings.interfaceLanguage.info')}
+            />
+          </div>
+          <p className="opc-enum-setting__hint">{current.hint}</p>
+        </div>
+        <EnumSelect
+          id="opc-interface-language"
+          labelledBy="opc-interface-language-label"
+          triggerAttrs={{ 'data-interface-language-select': '' }}
+          optionAttrs={value => ({ 'data-interface-language-option': value })}
+          value={language}
+          options={options}
+          onChange={next => setLanguage(saveInterfaceLanguage(next))}
         />
       </div>
     </div>
@@ -1405,18 +1551,39 @@ function LinkOpenModeSetting() {
  *   zh    始终用简体中文回答
  *   en    始终用英文回答
  *
- * 这一项**不影响界面文案**；界面 i18n 是另一条独立的线。
+ * 这一项**不影响界面文案**；界面语言是上面另一项。
  */
-const ANSWER_LANGUAGE_OPTIONS: Array<{ value: AnswerLanguage; label: string; hint: string }> = [
-  { value: 'auto', label: '自动', hint: '不注入任何指令，由模型跟随你来信的语言（默认）' },
-  { value: 'zh', label: '中文', hint: '始终用简体中文回答，即使你用其他语言提问' },
-  { value: 'en', label: '英文', hint: '始终用英文回答，即使你用其他语言提问' },
+const ANSWER_LANGUAGE_OPTIONS: Array<{
+  value: AnswerLanguage;
+  labelKey: MessageKey;
+  hintKey: MessageKey;
+}> = [
+  {
+    value: 'auto',
+    labelKey: 'settings.answerLanguage.optionAuto',
+    hintKey: 'settings.answerLanguage.hintAuto',
+  },
+  {
+    value: 'zh',
+    labelKey: 'settings.answerLanguage.optionZh',
+    hintKey: 'settings.answerLanguage.hintZh',
+  },
+  {
+    value: 'en',
+    labelKey: 'settings.answerLanguage.optionEn',
+    hintKey: 'settings.answerLanguage.hintEn',
+  },
 ];
 
 function AnswerLanguageSetting() {
+  const { t } = useTranslation();
   const [language, setLanguage] = useState<AnswerLanguage>(readAnswerLanguage);
-  const current =
-    ANSWER_LANGUAGE_OPTIONS.find(option => option.value === language) ?? ANSWER_LANGUAGE_OPTIONS[0];
+  const options = ANSWER_LANGUAGE_OPTIONS.map(o => ({
+    value: o.value,
+    label: t(o.labelKey),
+    hint: t(o.hintKey),
+  }));
+  const current = options.find(option => option.value === language) ?? options[0];
 
   return (
     <div className="opc-enum-setting" data-answer-language-setting>
@@ -1424,11 +1591,13 @@ function AnswerLanguageSetting() {
         <div className="opc-enum-setting__text">
           <div className="opc-enum-setting__title">
             <label className="opc-enum-setting__label" id="opc-answer-language-label">
-              回答语言
+              {t('settings.answerLanguage.label')}
             </label>
             <InfoHint
-              label="回答语言说明"
-              text="只影响 Agent 回答正文的语言，不改变界面文字。选「自动」时不向模型注入任何指令，行为与之前完全一致；选中文或英文会要求它在每轮对话里始终使用该语言，即使你来信使用另一种语言。"
+              label={t('settings.common.about', {
+                label: t('settings.answerLanguage.label'),
+              })}
+              text={t('settings.answerLanguage.info')}
             />
           </div>
           <p className="opc-enum-setting__hint">{current.hint}</p>
@@ -1439,7 +1608,7 @@ function AnswerLanguageSetting() {
           triggerAttrs={{ 'data-answer-language-select': '' }}
           optionAttrs={value => ({ 'data-answer-language-option': value })}
           value={language}
-          options={ANSWER_LANGUAGE_OPTIONS}
+          options={options}
           onChange={next => setLanguage(saveAnswerLanguage(next))}
         />
       </div>
@@ -1480,6 +1649,7 @@ function AnswerLanguageSetting() {
  * 那个位置上了，数字既多余又容易和右上角的实时值混淆。
  */
 function TransparencySlider({ resetToken = 0 }: { resetToken?: number }) {
+  const { t } = useTranslation();
   const [value, setValue] = useState(readTransparency);
   /**
    * 拖动中：在滑块正上方浮出**精确数值**气泡（A35 反馈）。
@@ -1509,18 +1679,18 @@ function TransparencySlider({ resetToken = 0 }: { resetToken?: number }) {
       <div className="mb-3 flex items-baseline justify-between">
         <span className="flex items-center gap-1.5">
           <span className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-            界面透明度
+            {t('settings.transparency.label')}
           </span>
           {/* A37：原来这里是三行说明文字，现在收进一个 i 图标。
               玻璃不可用时图标转警示色 —— 那时滑杆是禁用的，
               用户需要一个「为什么不能拖」的入口。 */}
           <InfoHint
-            label="界面透明度说明"
+            label={t('settings.common.about', { label: t('settings.transparency.label') })}
             warn={!glassOn}
             text={
               glassOn
-                ? '数值越大，桌面透出来越明显。标题条、导航条、列表栏、内容区、消息气泡、输入框、卡片和弹窗一起生效；拉到 100% 只剩一层磨砂玻璃，文字仍然清晰。'
-                : '当前系统不支持窗口玻璃（需要 Windows 11 22H2 及以上），此项暂不生效。'
+                ? t('settings.transparency.info')
+                : t('settings.transparency.unsupported')
             }
           />
         </span>
@@ -1564,7 +1734,7 @@ function TransparencySlider({ resetToken = 0 }: { resetToken?: number }) {
           step={1}
           value={value}
           disabled={!glassOn}
-          aria-label="界面透明度"
+          aria-label={t('settings.transparency.label')}
           aria-valuetext={`${value}%`}
           onChange={e => {
             const next = saveTransparency(Number(e.target.value));
@@ -1591,14 +1761,14 @@ function TransparencySlider({ resetToken = 0 }: { resetToken?: number }) {
           不匹配」）。所以第三个标签用绝对定位 + 负半宽居中，left 复用
           轨道那套 posOf()，刻度挪了文案就跟着挪，不会各写一份公式。 */}
       <div className="relative mt-1 flex justify-between text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-        <span>不透明</span>
-        <span>纯磨砂</span>
+        <span>{t('settings.transparency.opaque')}</span>
+        <span>{t('settings.transparency.frosted')}</span>
         <span
           className="absolute top-0 -translate-x-1/2 whitespace-nowrap"
           style={{ left: posOf(TRANSPARENCY_DEFAULT) }}
           data-transparency-default-label
         >
-          默认
+          {t('settings.transparency.default')}
         </span>
       </div>
     </div>
@@ -1620,6 +1790,7 @@ function TransparencySlider({ resetToken = 0 }: { resetToken?: number }) {
  * 整层不参与渲染。所以开关优先，关了就不要再让用户调一个无效的参数。
  */
 function GlowSettings({ resetToken = 0 }: { resetToken?: number }) {
+  const { t } = useTranslation();
   const [prefs, setPrefs] = useState<GlowPrefs>(readGlow);
   // size 为 null 表示「没动过，跟随主题」—— 这时显示的是主题自己的设计值
   // （浅色 440 / 深色 380），从计算样式读，避免在 JS 里再抄一份主题常量。
@@ -1654,43 +1825,45 @@ function GlowSettings({ resetToken = 0 }: { resetToken?: number }) {
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-            鼠标光斑
+            {t('settings.glow.label')}
           </span>
           <InfoHint
-            label="鼠标光斑说明"
-            text="跟随光标移动的玻璃反光。默认关闭，想要玻璃质感时打开；录屏、演示或觉得晃眼就保持关闭。"
+            label={t('settings.common.about', { label: t('settings.glow.label') })}
+            text={t('settings.glow.info')}
           />
         </div>
         <Switch
           value={prefs.enabled}
           onChange={v => patch({ enabled: !!v })}
-          aria-label="鼠标光斑开关"
+          aria-label={t('settings.glow.switch')}
         />
       </div>
 
       {prefs.enabled && (
         <>
           <GlowRange
-            label="光斑大小"
+            label={t('settings.glow.size')}
+            dataId="glow-size"
             value={sizeValue}
             min={GLOW_SIZE_MIN}
             max={GLOW_SIZE_MAX}
             unit="px"
             defaultValue={sizeDefault}
-            hint={`「默认」刻度处是当前主题的设计值（${sizeDefault}px）；不调它就一直跟随主题`}
+            hint={t('settings.glow.sizeHint', { px: sizeDefault })}
             onChange={n => {
               setSizeValue(n);
               patch({ size: n });
             }}
           />
           <GlowRange
-            label="光斑亮度"
+            label={t('settings.glow.brightness')}
+            dataId="glow-brightness"
             value={brightValue}
             min={GLOW_BRIGHT_MIN}
             max={GLOW_BRIGHT_MAX}
             unit="%"
             defaultValue={GLOW_BRIGHT_DEFAULT}
-            hint="「默认」刻度 100% 为设计值（深色主题的基准比浅色更亮）"
+            hint={t('settings.glow.brightnessHint')}
             onChange={n => {
               setBrightValue(n);
               patch({ brightness: n });
@@ -1717,6 +1890,7 @@ function GlowSettings({ resetToken = 0 }: { resetToken?: number }) {
  * 三套互不相干的逻辑搅在一起，而令牌只是「现在该复位了」这一个信号。
  */
 function AppearanceSliders() {
+  const { t } = useTranslation();
   const [resetToken, setResetToken] = useState(0);
 
   return (
@@ -1736,7 +1910,7 @@ function AppearanceSliders() {
           // 那条断言依旧成立。
           data-glow-reset
           data-ui-prefs-reset
-          title="同时还原界面透明度、光斑大小、光斑亮度（光斑开关保持不变）"
+          title={t('settings.glow.resetTitle')}
           className="flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
           style={{
             color: 'var(--td-text-color-secondary)',
@@ -1747,7 +1921,7 @@ function AppearanceSliders() {
           }}
         >
           <RefreshCw size={13} />
-          恢复默认
+          {t('settings.glow.reset')}
         </button>
       </div>
     </>
@@ -1757,6 +1931,7 @@ function AppearanceSliders() {
 /** 光斑的两档滑杆。与透明度滑杆同一条几何链（见 TransparencySlider 的注释）。 */
 function GlowRange({
   label,
+  dataId,
   value,
   min,
   max,
@@ -1766,6 +1941,8 @@ function GlowRange({
   onChange,
 }: {
   label: string;
+  /** 稳定锚点（`glow-size` / `glow-brightness`），给闸门用，不随文案翻译变 */
+  dataId: string;
   value: number;
   min: number;
   max: number;
@@ -1775,6 +1952,7 @@ function GlowRange({
   defaultValue?: number;
   onChange: (n: number) => void;
 }) {
+  const { t } = useTranslation();
   /** 与透明度滑杆同一套「滑块中心」几何：两端各留半个滑块（7px） */
   const posOf = (v: number) => `calc(7px + (100% - 14px) * ${(v - min) / (max - min)})`;
   /** 刻度容器本身已经 inset 7px，所以刻度用裸百分比就落在滑块中心 */
@@ -1790,7 +1968,12 @@ function GlowRange({
             {label}
           </span>
           {/* A37：`hint` 不再渲染成标签下方的小字，收进 i 图标 */}
-          {hint && <InfoHint label={`${label}说明`} text={hint} />}
+          {hint && (
+            <InfoHint
+              label={t('settings.common.about', { label })}
+              text={hint}
+            />
+          )}
         </span>
         <span className="text-caption tabular-nums" style={{ color: 'var(--td-text-color-secondary)' }}>
           {value}
@@ -1814,8 +1997,8 @@ function GlowRange({
             <span
               className="tc-range-tick"
               style={{ left: pctOf(defaultValue), height: 3 }}
-              title={`默认 ${defaultValue}${unit}`}
-              data-range-tick={label}
+              title={`${t('settings.common.default')} ${defaultValue}${unit}`}
+              data-range-tick={dataId}
             />
           </div>
         )}
@@ -1839,7 +2022,7 @@ function GlowRange({
           <div
             className="tc-range-bubble"
             style={{ left: posOf(value) }}
-            data-range-bubble={label}
+            data-range-bubble={dataId}
           >
             {value}
             {unit}
@@ -1859,14 +2042,14 @@ function GlowRange({
           style={{ color: 'var(--td-text-color-placeholder)' }}
         >
           <span className="invisible" aria-hidden>
-            默认
+            {t('settings.common.default')}
           </span>
           <span
             className="absolute top-0 -translate-x-1/2 whitespace-nowrap"
             style={{ left: posOf(defaultValue) }}
-            data-range-default-label={label}
+            data-range-default-label={dataId}
           >
-            默认
+            {t('settings.common.default')}
           </span>
         </div>
       )}

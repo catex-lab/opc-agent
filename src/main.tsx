@@ -23,9 +23,18 @@ import 'tdesign-react/esm/style/index.js';
 import '@tdesign/web-components-chat/style/index.css';
 import './index.css';
 import { applyUiPrefs } from './uiPrefs';
+import { initI18n } from './i18n';
 
 // 设置页面标题
 document.title = APP_CONFIG.name;
+
+/**
+ * i18n pilot：首帧前把解析出的界面语言写到 `<html lang>`。
+ *
+ * 只写标记，不做任何翻译决定 —— 组件里的 `t()` 读的是同一个模块单例，
+ * 所以不会出现「标记是英文、组件还按中文渲染」的中间态。
+ */
+initI18n();
 
 /**
  * 窗口级玻璃（应用本体透出桌面）。

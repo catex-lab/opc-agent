@@ -41,6 +41,7 @@ import { createPortal } from 'react-dom';
 import { Check, Info, Plus } from 'lucide-react';
 import { Tooltip } from 'tdesign-react';
 import type { Model } from '../types';
+import { modelTagKind } from '../../shared/model-tag';
 
 export interface ModelSelectPopupProps {
   models: Model[];
@@ -115,7 +116,8 @@ const LIST_MAX_HEIGHT = 320;
 
 /** 角标配色：免费/限时免费 = 成功色，付费 = 中性灰（付费不是坏事，不用警告色） */
 function tagStyle(tag: NonNullable<Model['tag']>): React.CSSProperties {
-  return tag === '付费'
+  // 判断走语义分类，不比较中文文案：标签以后要翻译时这里不会跟着坏。
+  return modelTagKind(tag) === 'paid'
     ? { color: 'var(--td-text-color-placeholder)', backgroundColor: 'var(--td-bg-color-component)' }
     : { color: 'var(--td-success-color)', backgroundColor: 'var(--td-success-color-1)' };
 }

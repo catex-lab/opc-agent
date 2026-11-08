@@ -173,12 +173,16 @@ import {
   validatePrefsPatch,
   prefsAsInlineScript,
 } from "./preferences.js";
+// i18n pilot：把系统 locale 一并注入 index.html，前端据此解析默认界面语言。
+// 计算放在服务端的原因见 server/system-locale.ts 顶部注释。
+import { systemLocaleTag } from "./system-locale.js";
 import { mapSdkModels } from "./agents/sdk-models.js";
 import { readDeclaredModels } from "./agents/wbProductConfig.js";
 import type { ModelOption } from "./agents/modelCatalog.js";
 import { getScenario, PERMISSION_MODE_LABEL } from "../shared/scenarios.js";
 import { parsePermissionBody } from "../shared/permissions.js";
 import { isProviderDialect } from "../shared/providerUrl.js";
+import { AUTO_SESSION_TITLE } from "../shared/session-title.js";
 
 /**
  * 注册用户自建 Agent，再把应用内保存的凭据注入进程环境。
@@ -1365,7 +1369,7 @@ app.post("/api/sessions", (req, res) => {
   try {
     const {
       model,
-      title = "新对话",
+      title = AUTO_SESSION_TITLE,
       agentId = null,
       kind = "direct",
       agentIds = null,
@@ -4119,7 +4123,14 @@ function sendIndexHtml(res: express.Response) {
     return;
   }
   const prefsSrc = prefsAsInlineScript();
-  const script = `<script>${prefsSrc}</script>`;
+  // 系统 locale 与偏好同一个内联脚本：多一个 <script> 就要多算一条 CSP hash，
+  // 合并后只保留既有那一处 inline 豁免。`<` 仍需转义（标签来自环境变量）。
+  const localeSrc = `window.__OPC_SYSTEM_LOCALE__=${JSON.stringify(systemLocaleTag()).replace(
+    /</g,
+    '\\u003c'
+  )};`;
+  const inlineSrc = prefsSrc + localeSrc;
+  const script = `<script>${inlineSrc}</script>`;
   // 没有 </head> 的 HTML 不合法，但真遇到也不该整页打不开 —— 那就退化成
   // 「没注入」，前端会回落到 localStorage（见 src/prefs.ts 的读取顺序）。
   const injected = html.includes('</head>')
@@ -4131,7 +4142,7 @@ function sendIndexHtml(res: express.Response) {
   //   · `style-src 'unsafe-inline'` 保留 —— React 组件大量 `style={{…}}`，
   //     这是 SPA 的常规低风险豁免（样式注入的危险性远低于脚本注入）；
   //   · SSE 流（EventSource / fetch）走同源，`connect-src 'self'` 即覆盖。
-  const cspHash = 'sha256-' + crypto.createHash('sha256').update(prefsSrc, 'utf8').digest('base64');
+  const cspHash = 'sha256-' + crypto.createHash('sha256').update(inlineSrc, 'utf8').digest('base64');
   res.setHeader(
     'Content-Security-Policy',
     `default-src 'self'; ` +

@@ -30,6 +30,7 @@ import path from 'node:path';
 import { dataDirPath } from './paths.js';
 import { isCloseBehavior, type CloseBehavior } from '../shared/close-behavior.js';
 import { isAnswerLanguage, type AnswerLanguage } from '../shared/answer-language.js';
+import { isInterfaceLanguage, type InterfaceLanguage } from '../shared/interface-language.js';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 
@@ -78,6 +79,14 @@ export interface Prefs {
    * 判定与指令组装见 `server/answer-language.ts`。
    */
   answerLanguage?: AnswerLanguage;
+  /**
+   * 界面语言（i18n pilot）。
+   *
+   * `system` = 启动时按系统 locale 解析；`zh` / `en` = 用户显式固定。
+   * 缺键等同 `system`。缺键与 `system` 在 UI 上都显示「跟随系统」，
+   * 但缺键不会写文件，保持既有用户的 preferences.json 不变。
+   */
+  interfaceLanguage?: InterfaceLanguage;
 }
 
 export type LinkOpenMode = 'system' | 'in-app';
@@ -133,6 +142,7 @@ export function normalizePrefs(input: unknown): Prefs {
   if (isCloseBehavior(o.closeBehavior)) out.closeBehavior = o.closeBehavior;
   if (isLinkOpenMode(o.linkOpenMode)) out.linkOpenMode = o.linkOpenMode;
   if (isAnswerLanguage(o.answerLanguage)) out.answerLanguage = o.answerLanguage;
+  if (isInterfaceLanguage(o.interfaceLanguage)) out.interfaceLanguage = o.interfaceLanguage;
   const g = o.glow as Record<string, unknown> | undefined;
   if (g && typeof g === 'object') {
     const size = isIntIn(g.size, PREFS_LIMITS.glowSize) ? g.size : null;
@@ -248,6 +258,16 @@ export function validatePrefsPatch(input: unknown): PrefsValidation {
           return {
             ok: false,
             error: `answerLanguage 只能是 auto / zh / en，收到 ${JSON.stringify(v)}`,
+          };
+        }
+        break;
+      case 'interfaceLanguage':
+        if (v === null) patch.interfaceLanguage = null;
+        else if (isInterfaceLanguage(v)) patch.interfaceLanguage = v;
+        else {
+          return {
+            ok: false,
+            error: `interfaceLanguage 只能是 system / zh / en，收到 ${JSON.stringify(v)}`,
           };
         }
         break;

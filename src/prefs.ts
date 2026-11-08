@@ -30,6 +30,7 @@ import type { GlowPrefs } from './uiPrefs';
 import type { CloseBehavior } from '../shared/close-behavior';
 import type { LinkOpenMode } from './answer/linkRouter';
 import type { AnswerLanguage } from '../shared/answer-language';
+import type { InterfaceLanguage } from '../shared/interface-language';
 
 /** 与 `server/preferences.ts` 的 `Prefs` 一一对应（那边是事实来源） */
 export interface Prefs {
@@ -46,6 +47,11 @@ export interface Prefs {
   linkOpenMode?: LinkOpenMode;
   /** 回答语言（A209）：auto / zh / en。缺键 = auto，不注入任何指令 */
   answerLanguage?: AnswerLanguage;
+  /**
+   * 界面语言：system / zh / en。缺键 = `system`（跟随系统 locale）。
+   * 解析与回落规则见 `shared/interface-language.ts`。
+   */
+  interfaceLanguage?: InterfaceLanguage;
 }
 
 export type PrefsPatch = { [K in keyof Prefs]?: Prefs[K] | null };

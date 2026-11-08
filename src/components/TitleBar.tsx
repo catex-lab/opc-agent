@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AppLogo } from './AppLogo';
+import { useTranslation } from '../i18n';
 
 /**
  * 自绘标题栏 —— 窗口最顶上那 40px，**连同三个窗口按钮**。
@@ -111,6 +112,7 @@ function CaptionButton({
 }
 
 export function TitleBar({ compact = false }: { compact?: boolean }) {
+  const { t } = useTranslation();
   // 左侧第一格与导航条**同宽**，应用标记在这一格里居中 ——
   // 于是「标题栏标记 / 导航图标」落在同一条竖轴上。
   // 早先直接 px-4 起排：18px 的标记左边缘落在 16px，中心在 25px，
@@ -149,7 +151,7 @@ export function TitleBar({ compact = false }: { compact?: boolean }) {
       role="banner"
       data-titlebar
       data-maximized={maximized ? '1' : undefined}
-      aria-label="标题栏"
+      aria-label={t('titleBar.label')}
       className="tc-drag flex shrink-0 items-center"
       style={{
         height: 'var(--tc-titlebar-height)',
@@ -199,10 +201,10 @@ export function TitleBar({ compact = false }: { compact?: boolean }) {
           落点一致（用户不必重新学一个位置）。`ml-auto` 把它们推到最右，
           标题文字再长也不会把按钮挤走。 */}
       <div className="ml-auto flex h-full shrink-0 items-stretch" data-caption-group>
-        <CaptionButton action="minimize" label="最小化">
+        <CaptionButton action="minimize" label={t('window.minimize')}>
           <Glyph d="M0 5h10" />
         </CaptionButton>
-        <CaptionButton action="maximize" label={maximized ? '向下还原' : '最大化'}>
+        <CaptionButton action="maximize" label={maximized ? t('window.restore') : t('window.maximize')}>
           {maximized ? (
             // 还原：前面一个实心框 + 后面一个只露左上两笔的框
             <Glyph d="M2.5 2.5H9.5V9.5H2.5V2.5ZM0.5 6.5V0.5H6.5V2.5" />
@@ -210,7 +212,7 @@ export function TitleBar({ compact = false }: { compact?: boolean }) {
             <Glyph rect />
           )}
         </CaptionButton>
-        <CaptionButton action="close" label="关闭" danger>
+        <CaptionButton action="close" label={t('window.close')} danger>
           <Glyph d="M0.5 0.5L9.5 9.5M9.5 0.5L0.5 9.5" />
         </CaptionButton>
       </div>

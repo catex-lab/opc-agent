@@ -20,6 +20,7 @@ import { useModels } from './hooks/useModels';
 import { useChat } from './hooks/useChat';
 import { useAgentRegistry } from './hooks/useAgentRegistry';
 import { useExtensions, useExtensionDetail } from './hooks/useExtensions';
+import { isAutoSessionTitle } from '../shared/session-title';
 import { getScenario } from './scenarios';
 import { exportSessionToMarkdown } from './utils/exportSession';
 import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project, type AgentModelSource, type ExtensionKind } from './types';
@@ -1190,7 +1191,7 @@ function AppContent() {
       const prevAgent = target.agentId ? registry.getAgent(target.agentId) : undefined;
       // 标题还是「新对话」或上一个 Agent 的名字时，跟着换成新 Agent 的名字；
       // 用户自己起过名就一个字都别动。
-      const autoTitle = !target.title || target.title === '新对话' || target.title === prevAgent?.name;
+      const autoTitle = isAutoSessionTitle(target.title) || target.title === prevAgent?.name;
 
       updateSession(currentSessionId, {
         agentId,

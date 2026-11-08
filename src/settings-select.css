@@ -84,6 +84,13 @@
   color: var(--td-text-color-primary);
 }
 
+/* 英文标签更长（`When closing the window` / `Interface transparency`），
+   单行 + ellipsis 会把关键词吞成 `When closing the…`。英文下允许折行，
+   由行高与 `min-height` 自适应撑开；中文仍保持单行不换行。 */
+:lang(en) .opc-enum-setting__label {
+  white-space: normal;
+}
+
 .opc-enum-setting__hint {
   /* 两行高固定预留：切换选项时说明文字长短不一，不预留会让下面的
      透明度/光斑设置整体上下跳。
@@ -96,17 +103,29 @@
   color: var(--td-text-color-secondary);
 }
 
+/* 英文说明普遍比中文长三到五成（「Always reply in Simplified Chinese…」）。
+   两行预留是中文口径；英文下放行第三行，避免下一行设置项被说明挤得上下跳。
+   只加在 `:lang(en)` 上，中文布局一个像素都不动。 */
+:lang(en) .opc-enum-setting__hint {
+  min-height: calc(18px * 3);
+}
+
 /* 控件：高 36（参考图三处控件实测均 54 原始像素 → 36）。
    宽度按内容自适应（参考图里「工作区内修改」≈143、「中文」≈100，
    不是固定宽），min-width 只兜住最短选项，右边缘靠 margin-left:auto
-   与内容右边界对齐。 */
+   与内容右边界对齐。
+
+   i18n pilot：140px 是按中文最短选项（「中文」≈100px）量出的兜底值；
+   英文 `Follow system` / `System browser` / `Minimize to tray` 加上左右
+   12px 内边距与箭头后约 150–165px，140 会触发 ellipsis（显示成
+   `Minimize to…`）。放宽到 168px，仍远小于内容区宽度，不改布局结构。 */
 .opc-select {
   position: relative;
   display: flex;
   align-items: stretch;
   flex: 0 1 auto;
   width: auto;
-  min-width: 140px;
+  min-width: 168px;
   height: 36px;
   margin-left: auto;
   /* 填充式（参考图亮/暗两张都是浅灰底、看不到描边，圆角 6px）：
@@ -246,9 +265,10 @@
   white-space: nowrap;
 }
 
-/* 窄窗规则：容器可用宽度 ≤ 360px 时，一行放不下「标题（约 106px）+ 140px
-   下拉」，整体改成上下堆叠 —— 标题一行、下拉占满下一行，标题不再被压成
-   竖排，也不允许控件溢出。360px 是容器宽度，不是视口宽度。 */
+/* 窄窗规则：容器可用宽度 ≤ 360px 时，一行放不下「标题（约 106px）+ 168px
+   下拉（英文标签最长约 150px）」，整体改成上下堆叠 —— 标题一行、下拉占满
+   下一行，标题不再被压成竖排，也不允许控件溢出。360px 是容器宽度，不是
+   视口宽度；阈值维持不变，避免中文界面在 361–420px 区间被提前堆叠。 */
 @container (max-width: 360px) {
   .opc-enum-setting__row {
     flex-wrap: wrap;

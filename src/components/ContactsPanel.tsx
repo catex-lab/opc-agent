@@ -29,7 +29,8 @@ import { NewGroupDialog } from './NewGroupDialog';
 import { GroupAvatar } from './UserAvatar';
 import { useGroupAvatar } from '../sessionFlags';
 import { MENU_ITEM_CLASS } from './menuItem';
-import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
+import { agentStatusViewOf, type RegisteredAgent, type Session } from '../types';
+import { useTranslation, type MessageKey } from '../i18n';
 
 interface ContactsPanelProps {
   agents: RegisteredAgent[];
@@ -125,6 +126,7 @@ export function ContactsPanel({
   onOpenCredential,
   onAddProvider,
 }: ContactsPanelProps) {
+  const { t } = useTranslation();
   const [keyword, setKeyword] = useState('');
   /** Tab：AGENT（Agent 通讯录）/ 群聊目录 */
   const [tab, setTab] = useState<Tab>('agents');
@@ -276,7 +278,7 @@ export function ContactsPanel({
             <input
               value={keyword}
               onChange={e => setKeyword(e.target.value)}
-              placeholder="搜索 AGENT、群聊"
+              placeholder={t('contacts.search')}
               className="w-full bg-transparent text-body outline-none"
               style={{ color: 'var(--td-text-color-primary)' }}
             />
@@ -291,8 +293,8 @@ export function ContactsPanel({
             <button
               type="button"
               onClick={() => setAddMenuOpen(v => !v)}
-              title="添加"
-              aria-label="添加"
+              title={t('contacts.add')}
+              aria-label={t('contacts.add')}
               aria-expanded={addMenuOpen}
               className={`relative z-30 ${ROUND_ADD_CLASS}`}
               style={{ color: 'var(--td-text-color-secondary)' }}
@@ -310,7 +312,12 @@ export function ContactsPanel({
                     `.tc-glass`（底色 = `--tc-overlay-alpha`，下限 0.9）。
                     ⚠️ 不能再写内联背景色：内联优先级高于 class，会把玻璃底盖掉。 */}
                 <div
-                  className="tc-glass tc-pop-in absolute right-0 top-full z-30 mt-1 w-[168px] overflow-hidden rounded-xl py-1 shadow-popup"
+                  /* 宽度按英文最长项「Add model provider」量：中文「添加模型厂商」
+                     只需 96px，168px 够用；英文加图标与内边距后约 180px，
+                     固定 168 会把文字压成两行或截断，故放宽到 196px。
+                     仍然固定宽（不跟内容自适应）：浮层宽度一跳，右侧按钮会跟着抖，
+                     与 ModelSelectPopup 的 PANEL_WIDTH 同一条教训。 */
+                  className="tc-glass tc-pop-in absolute right-0 top-full z-30 mt-1 w-[196px] overflow-hidden rounded-xl py-1 shadow-popup"
                   data-contacts-add-menu
                 >
                   {onCreateGroup && (
@@ -324,7 +331,7 @@ export function ContactsPanel({
                       style={{ color: 'var(--td-text-color-primary)' }}
                     >
                       <Users size={14} />
-                      发起群聊
+                      {t('contacts.newGroup')}
                     </button>
                   )}
                   {/* A129：自定义厂商收进设置页。这里只做跳转 —— 添加流程
@@ -340,7 +347,7 @@ export function ContactsPanel({
                     data-contacts-add-provider
                   >
                     <Plug size={14} />
-                    添加模型厂商
+                    {t('contacts.addProvider')}
                   </button>
                   {/* A71：获取入口。放在「重新探测」上面 —— 探测是运维动作，
                       获取是新用户第一次打开就要做的事，位置要更靠上。 */}
@@ -355,7 +362,7 @@ export function ContactsPanel({
                     data-contacts-get-agents
                   >
                     <Download size={14} />
-                    获取 Agent
+                    {t('contacts.getAgents')}
                   </button>
                   <button
                     type="button"
@@ -371,7 +378,7 @@ export function ContactsPanel({
                     }}
                   >
                     {probing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                    重新探测
+                    {t('contacts.reprobe')}
                   </button>
                 </div>
               </>
@@ -392,8 +399,8 @@ export function ContactsPanel({
         <div className="mt-1.5 grid grid-cols-2 px-4" role="tablist">
           {(
             [
-              ['agents', 'AGENT'],
-              ['groups', '群聊'],
+              ['agents', t('contacts.tabAgents')],
+              ['groups', t('contacts.tabGroups')],
             ] as Array<[Tab, string]>
           ).map(([key, label]) => (
             <button
@@ -424,7 +431,7 @@ export function ContactsPanel({
           className="mx-3 mt-2 rounded-lg px-2.5 py-1.5 text-secondary"
           style={{ backgroundColor: 'var(--td-error-color-1)', color: 'var(--td-error-color-6)' }}
         >
-          加载失败：{error}
+          {t('contacts.loadFailed', { error })}
         </div>
       )}
 
@@ -433,7 +440,7 @@ export function ContactsPanel({
           className="mx-3 mt-2 rounded-lg px-2.5 py-1.5 text-secondary"
           style={{ backgroundColor: 'var(--td-brand-color-light)', color: 'var(--td-brand-color)' }}
         >
-          正在逐个探测本机 Agent，约需 20 秒…
+          {t('contacts.probing')}
         </div>
       )}
 
@@ -456,9 +463,16 @@ export function ContactsPanel({
             data-get-agents-banner
           >
             <Download size={14} />
-            <span className="min-w-0 flex-1 truncate text-caption">
-              {installableCount > 0 ? `${installableCount} 个 Agent 还没就绪` : 'Agent 都还没就绪'}
-              · 查看怎么获取
+            {/* 不 truncate：英文「11 agents are not ready yet · See how to get them」
+                在 264px 栏宽下会被截掉后半句（恰好是入口文案）。允许折行，
+                中文仍是单行，英文最多两行；这是自适应而不是固定高度。 */}
+            <span className="min-w-0 flex-1 text-caption">
+              {installableCount > 0
+                ? t(installableCount === 1 ? 'contacts.notReadyOne' : 'contacts.notReadyMany', {
+                    n: installableCount,
+                  })
+                : t('contacts.noneReady')}
+              {t('contacts.howToGet')}
             </span>
           </button>
         )}
@@ -467,7 +481,7 @@ export function ContactsPanel({
             className="px-3 py-10 text-center text-body"
             style={{ color: 'var(--td-text-color-placeholder)' }}
           >
-            正在读取 Agent 名册…
+            {t('contacts.loading')}
           </div>
         ) : tab === 'agents' ? (
           /* ── AGENT Tab：一条平铺名单，在线的排最上 ── */
@@ -477,7 +491,9 @@ export function ContactsPanel({
                 className="px-3 py-10 text-center"
                 style={{ color: 'var(--td-text-color-placeholder)' }}
               >
-                <span className="tc-hint">{keyword ? '没有匹配的 AGENT' : '还没有探测到 Agent'}</span>
+                <span className="tc-hint">
+                  {keyword ? t('contacts.noMatchAgents') : t('contacts.noAgents')}
+                </span>
               </div>
             ) : (
             <div className="flex flex-col gap-0.5">
@@ -498,7 +514,11 @@ export function ContactsPanel({
                       aria-expanded={!collapsed[s.key]}
                       className="flex w-full items-center gap-1 rounded-md px-2.5 py-1 text-left"
                       style={{ color: 'var(--td-text-color-placeholder)' }}
-                      title={`${s.label}（同族 ${s.members.length} 个，点此${collapsed[s.key] ? '展开' : '收起'}）`}
+                      title={t('contacts.family', {
+                        label: s.label,
+                        n: s.members.length,
+                        action: collapsed[s.key] ? t('contacts.expand') : t('contacts.collapse'),
+                      })}
                     >
                       {collapsed[s.key] ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
                       <span className="truncate text-caption">{s.label}</span>
@@ -531,7 +551,7 @@ export function ContactsPanel({
                 style={{ color: 'var(--td-text-color-placeholder)' }}
               >
                 <span className="tc-hint">
-                  {keyword ? '没有匹配的群聊' : '还没有群聊，点右上角 + 发起'}
+                  {keyword ? t('contacts.noMatchGroups') : t('contacts.noGroups')}
                 </span>
               </div>
             ) : (
@@ -611,6 +631,7 @@ interface ContactRowProps {
  * 属于「解释一个已经说清楚的事」。可点性靠 hover 态和 `title` 承担。
  */
 function ContactRow({ agent, onViewDetail }: ContactRowProps) {
+  const { t } = useTranslation();
   const remarks = useAgentRemarks();
   const remark = remarks[agent.id] ?? '';
   /** 显示名：备注优先（与消息列表、聊天头部同一套规则） */
@@ -647,7 +668,7 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
             title={agent.status.lastError}
             data-agent-last-error={agent.id}
           >
-            上次失败：{agent.status.lastError.replace(/\s+/g, ' ')}
+            {t('contacts.lastFailure', { message: agent.status.lastError.replace(/\s+/g, ' ') })}
           </div>
         )}
       </div>
@@ -662,7 +683,7 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
         style={{ color: agentStatusViewOf(agent).color }}
         data-agent-status={agentStatusViewOf(agent).key}
       >
-        {availabilityLabelOf(agent)}
+        {t(`status.${agentStatusViewOf(agent).key}` as MessageKey)}
       </span>
     </>
   );
@@ -683,7 +704,7 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
           e.preventDefault();
           setMenu({ x: e.clientX, y: e.clientY });
         }}
-        title={`查看 ${displayName} 的资料`}
+        title={t('contacts.viewProfile', { name: displayName })}
         className={rowClass}
       >
         {body}
@@ -697,13 +718,13 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
           items={[
             {
               key: 'remark',
-              label: '修改备注',
+              label: t('contacts.editRemark'),
               icon: <PencilLine size={14} />,
               onSelect: () => setEditing(true),
             },
             {
               key: 'detail',
-              label: '查看资料',
+              label: t('contacts.viewDetail'),
               icon: <IdCard size={14} />,
               onSelect: onViewDetail,
             },
@@ -739,13 +760,18 @@ interface GroupRowProps {
  * 成员名拼接，与消息栏的兜底逻辑一致。右侧显示人数。
  */
 function GroupRow({ session, getAgent, onOpen }: GroupRowProps) {
+  const { t } = useTranslation();
   const memberNames = (session.agentIds ?? [])
     .map(id => getAgent?.(id)?.name)
     .filter(Boolean) as string[];
+  // 未命名群的兜底标题：中文用顿号连接，英文用逗号 + 空格。连接符也是文案，
+  // 不能把一个中文顿号硬塞进英文界面。
+  const separator = t('contacts.memberSeparator');
+  const fallback = t('contacts.groupFallback');
   const title =
     session.title ||
-    (memberNames.length > 0 ? memberNames.join('、') : '群聊') ||
-    '群聊';
+    (memberNames.length > 0 ? memberNames.join(separator) : fallback) ||
+    fallback;
   // A115：订阅这个群的头像（Hook 必须放在组件顶层，不能写在 JSX 里）
   const groupAvatar = useGroupAvatar(session.id);
 
@@ -753,7 +779,7 @@ function GroupRow({ session, getAgent, onOpen }: GroupRowProps) {
     <button
       type="button"
       onClick={onOpen}
-      title={`打开群聊：${title}`}
+      title={t('contacts.openGroup', { title })}
       className="tc-list-item flex w-full items-center gap-2.5 px-2.5 py-2.5 text-left"
     >
       {/* A115：群头像。与会话列表、群聊头部共用同一个 GroupAvatar ——
@@ -766,7 +792,12 @@ function GroupRow({ session, getAgent, onOpen }: GroupRowProps) {
       >
         {title}
       </span>
-      <span className="tc-hint shrink-0">{session.agentIds?.length ?? 0} 人</span>
+      <span className="tc-hint shrink-0">
+        {t(
+          (session.agentIds?.length ?? 0) === 1 ? 'contacts.memberOne' : 'contacts.memberMany',
+          { n: session.agentIds?.length ?? 0 }
+        )}
+      </span>
     </button>
   );
 }

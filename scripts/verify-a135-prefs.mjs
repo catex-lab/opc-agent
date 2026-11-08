@@ -259,7 +259,9 @@ try {
       r.headers.get('cache-control') || '(空)'
     );
 
-    const m = html.match(/window\.__OPC_PREFS__=(\{.*?\});<\/script>/s);
+    // i18n pilot：与偏好同一个内联脚本多了一句系统 locale。断言拆开：
+    // 偏好对象仍是「从 `{` 到外层 `};`」的完整 JSON，locale 单独交给下一条。
+    const m = html.match(/window\.__OPC_PREFS__=(\{.*?\});window\.__OPC_SYSTEM_LOCALE__=/s);
     let parsed = null;
     try {
       parsed = m ? JSON.parse(m[1].replace(/\\u003c/g, '<')) : null;
@@ -268,6 +270,12 @@ try {
     }
     ok(parsed?.transparency === 64, '注入值与磁盘一致', `transparency=${parsed?.transparency}`);
     ok(parsed?.glow?.size === 520, '嵌套对象（glow）也完整注入');
+    const locale = html.match(/window\.__OPC_SYSTEM_LOCALE__=("(?:\\.|[^"\\])*");/)?.[1];
+    ok(
+      !!locale && locale.length > 2,
+      '★ 系统 locale 与偏好同脚本内联（i18n 首帧解析用）',
+      locale || '(缺)'
+    );
 
     // 深链/子路由也要拿到注入值：SPA 兜底若走 sendFile 就漏了
     const deep = await fetch(`${base}/chat/whatever`, { headers: { Accept: 'text/html' } });

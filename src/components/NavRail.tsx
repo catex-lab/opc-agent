@@ -1,4 +1,5 @@
 import { MessageCircle, Users, Menu, FolderKanban, Boxes, Database } from 'lucide-react';
+import { useTranslation } from '../i18n';
 
 export type NavKey = 'chats' | 'projects' | 'contacts' | 'extensions';
 
@@ -53,6 +54,7 @@ export function NavRail({
   knowledgeDisabled = false,
   compact = false,
 }: NavRailProps) {
+  const { t } = useTranslation();
   /**
    * 导航项**不带角标**。
    *
@@ -68,13 +70,13 @@ export function NavRail({
     icon: typeof MessageCircle;
     label: string;
   }> = [
-    { key: 'chats', icon: MessageCircle, label: '聊天' },
+    { key: 'chats', icon: MessageCircle, label: t('nav.chats') },
     /* A117：「项目」夹在聊天与通讯录之间，不是排在最后。
        它和「聊天」是同族的 —— 项目是「按目录把会话归堆」，点进去看到的
        还是会话；通讯录是 Agent 名录，属于另一类东西。把项目放到通讯录之后
        会让人以为它是「又一个通讯录」，而它其实更接近「聊天的另一种组织方式」。 */
-    { key: 'projects', icon: FolderKanban, label: '项目' },
-    { key: 'contacts', icon: Users, label: '通讯录' },
+    { key: 'projects', icon: FolderKanban, label: t('nav.projects') },
+    { key: 'contacts', icon: Users, label: t('nav.contacts') },
     /* A164：「扩展」排在通讯录之后。
        前三项都是「去哪干活」——聊天是会话、项目是会话的归堆、通讯录是找哪个
        Agent 干。扩展不是干活的地方，是「给 Agent 装了哪些能力」的清单，属于
@@ -83,7 +85,7 @@ export function NavRail({
        名字定为「扩展」而不是「工具集」：仓里「工具」已有 86 处，全指 Agent 的
        工具调用（AgentTrace / toolPolicy），再叫工具集会让人以为是看调用日志的；
        「技能」也有 24 处（MemoryPanel 的 L3 技能记忆）。详见 PLAN-EXTENSIONS.md §4.2。 */
-    { key: 'extensions', icon: Boxes, label: '扩展' },
+    { key: 'extensions', icon: Boxes, label: t('nav.extensions') },
   ];
 
   const isActive = (key: string) => active === key;
@@ -171,8 +173,8 @@ export function NavRail({
           type="button"
           onClick={onOpenKnowledge}
           disabled={knowledgeDisabled}
-          title={knowledgeDisabled ? '先打开一条会话，再检索知识库' : '知识库'}
-          aria-label="知识库"
+          title={knowledgeDisabled ? t('nav.knowledgeDisabled') : t('nav.knowledge')}
+          aria-label={t('nav.knowledge')}
           data-nav-knowledge
           className={`
             relative flex items-center justify-center rounded-lg
@@ -198,8 +200,8 @@ export function NavRail({
         <button
           type="button"
           onClick={onOpenSettings}
-          title="设置"
-          aria-label="设置"
+          title={t('nav.settings')}
+          aria-label={t('nav.settings')}
           aria-current={isActive('settings') ? 'page' : undefined}
           className={`
             relative flex items-center justify-center rounded-lg

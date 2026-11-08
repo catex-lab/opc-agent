@@ -34,6 +34,7 @@
 import fs from 'fs';
 import path from 'path';
 import { dataDirPath } from '../paths.js';
+import { modelTagKind } from '../../shared/model-tag.js';
 import { expandPath, findExecutable, resolveAnyLaunchTarget, runCapture } from './probe.js';
 import { OPENCODE_CATALOG_SNAPSHOT } from './opencodeCatalogSnapshot.js';
 
@@ -835,7 +836,8 @@ export function buildModelOptions(
     if (a.provider !== b.provider) {
       return String(a.provider).localeCompare(String(b.provider));
     }
-    if (a.tag !== b.tag) return a.tag === '免费' ? -1 : 1;
+    // 与旧行为逐字等价：只有「免费」排前面，其余保持原顺序比较。
+    if (a.tag !== b.tag) return modelTagKind(a.tag) === 'free' ? -1 : 1;
     return a.name.localeCompare(b.name, 'zh-Hans-CN');
   });
 }
