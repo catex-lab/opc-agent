@@ -4,9 +4,11 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: '0.0.0.0',
+    // 只监听回环：开发态下 Vite 会把 /api 原样代理进后端，绑 0.0.0.0 等于
+    // 把整张未鉴权的 API（/api/chat、/api/fs、/api/verify/run）开放给局域网。
+    // allowedHosts 也不再全放行，避免 Host 头校验被绕过（DNS rebinding）。
+    host: '127.0.0.1',
     port: 5173,
-    allowedHosts: true,
     proxy: {
       '/api': {
         // 用 127.0.0.1 而不是 localhost：后端现在只绑回环地址（见 server/index.ts
