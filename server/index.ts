@@ -158,7 +158,7 @@ import {
   SDK_DEFAULT_MODEL,
   SDK_MODEL_FALLBACK,
 } from "./model-routing.js";
-import { ensureCatalogLoaded, getCatalogSummary, getDefaultModelForAgent, invalidateCatalog, isCatalogModel, loadCatalog } from "./agents/modelCatalog.js";
+import { ensureCatalogLoaded, getCatalogSummary, getDefaultModelForAgent, isCatalogModel, loadCatalog } from "./agents/modelCatalog.js";
 import { readAgentConfigModels } from "./agents/agentConfigModels.js";
 import { probeAccount } from "./agents/accountProbe.js";
 import { makeProvenance, type Provenance } from "../shared/provenance.js";
@@ -242,23 +242,30 @@ const PORT = process.env.PORT !== undefined ? Number(process.env.PORT) : 3000;
 app.use("/api/avatars", express.json({ limit: "4mb" }));
 app.use(express.json());
 
-// 缓存可用模型列表（含 description / 免费付费角标，见 agents/sdk-models.ts）
-let cachedModels: ModelOption[] = [];
-/** SDK 自己声明的默认模型（`isDefault`），拿到之后优先于平台常量 */
-let sdkDefaultModel: string | undefined;
-/**
- * P0：SDK 清单**真正被取过**的时刻。
- *
- * 不是「上次有人来 GET /api/models 的时间」：命中缓存时清单还是旧的，
- * 把 probedAt 刷成现在，等于每分钟都对用户说「这是刚拉的实时清单」。
- * 只在 `loadSdkModels()` 真的建了 SDK 会话时才更新。
- */
-let sdkModelsProbedAt = 0;
+// SDK 模型缓存状态 + 统一失效入口抽在 server/model-cache.ts，
+// 让闸门能 import 到函数本体（内联在这里时单测拿不到）。
+import {
+  cachedModels as _sdkCache,
+  sdkDefaultModel as _sdkDefault,
+  sdkModelsProbedAt as _sdkProbedAt,
+  _setSdkCache,
+  _setSdkProbedAt,
+  invalidateAllModelCaches,
+} from "./model-cache.js";
+
+// cachedModels / sdkDefaultModel / sdkModelsProbedAt 现在是 model-cache.ts 导出的
+// `let` 变量。index.ts 里仍需要「读写同一份可变引用」—— 用 getter 转发，
+// 避免 `import { cachedModels }` 拿到的是冻结快照（ESM live binding 在 `let`
+// reassignment 下不可靠：有的 bundler 会优成 const 引用）。
+const cachedModelsGetter = () => _sdkCache;
+const sdkDefaultGetter = () => _sdkDefault;
+const sdkProbedGetter = () => _sdkProbedAt;
+
 // SDK 未加载时的默认值：用 SDK 自己的默认别名，不用已下线的具体型号。
 // 模型路由规则见 model-routing.ts
 const defaultModel = SDK_DEFAULT_MODEL;
 /** 让「旧会话失效模型」判定拿到当前 SDK 清单（清单未就绪时返回 null） */
-setPlatformModelLookup(() => (cachedModels.length > 0 ? cachedModels.map(m => m.modelId) : null));
+setPlatformModelLookup(() => (cachedModelsGetter().length > 0 ? cachedModelsGetter().map(m => m.modelId) : null));
 
 // 健康检查
 app.get("/api/health", (req, res) => {
@@ -408,9 +415,8 @@ app.post("/api/save-env-config", (req, res) => {
     configuredVars.push('CODEBUDDY_BASE_URL');
   }
   
-  // 清除模型缓存，以便重新获取
-  cachedModels = [];
-  sdkDefaultModel = undefined;
+  // 凭据/环境变更后两套缓存都要作废，否则用户看到的清单还是旧的
+  invalidateAllModelCaches('POST /api/env 环境变量变更');
   
   res.json({ 
     success: true, 
@@ -433,12 +439,12 @@ async function loadSdkModels(force = false): Promise<{
   models: ModelOption[];
   defaultModel?: string;
 }> {
-  if (!force && cachedModels.length > 0) {
-    return { models: cachedModels, defaultModel: sdkDefaultModel ?? defaultModel };
+  if (!force && cachedModelsGetter().length > 0) {
+    return { models: cachedModelsGetter(), defaultModel: sdkDefaultGetter() ?? defaultModel };
   }
 
   // 真的要问 SDK 了才记时间；命中上面那条缓存分支时保留原始取数时刻
-  sdkModelsProbedAt = Date.now();
+  _setSdkProbedAt(Date.now());
   console.log("[Models] Creating session to fetch available models...");
   const session = await unstable_v2_createSession({
     // A155：取模型清单也必须连到 WorkBuddy 国内版，否则拿回的是
@@ -495,13 +501,10 @@ async function loadSdkModels(force = false): Promise<{
   }
 
   if (mapped.models.length > 0) {
-    cachedModels = mapped.models;
-    // SDK 自己声明了默认模型（isDefault，本机是 `default-model` / Auto）。
-    // 不用平台常量 `claude-sonnet-4` 冒充 —— 那个名字已经不在清单里了。
-    if (mapped.defaultModel) sdkDefaultModel = mapped.defaultModel;
+    _setSdkCache(mapped.models, mapped.defaultModel);
   }
 
-  return { models: cachedModels, defaultModel: sdkDefaultModel ?? defaultModel };
+  return { models: cachedModelsGetter(), defaultModel: sdkDefaultGetter() ?? defaultModel };
 }
 
 /**
@@ -513,12 +516,12 @@ async function loadSdkModels(force = false): Promise<{
  * 还没取过就返回 null —— 前端会显示「数据来源与时间未知」，不编一个时间。
  */
 function sdkModelsProvenance(): Provenance | null {
-  if (!sdkModelsProbedAt) return null;
+  if (!sdkProbedGetter()) return null;
   return makeProvenance("WorkBuddy SDK getAvailableModelsRaw() + 官方产品配置补齐", {
-    probedAt: sdkModelsProbedAt,
+    probedAt: sdkProbedGetter(),
     verified: false,
     note:
-      cachedModels.length > 0
+      cachedModelsGetter().length > 0
         ? "清单来自 SDK 会话，未校验当前账号的积分 / 体验套餐是否可用"
         : "这次没取到清单，界面显示的是内置兜底项，不代表当前账号可用",
   });
@@ -537,14 +540,14 @@ app.get("/api/models", async (req, res) => {
       // 兜底只给 SDK 自己的默认别名，不硬编码具体型号 ——
       // 否则 SDK 加载失败时界面会冒出已下线的假选项。
       models: models.length > 0 ? models : [...SDK_MODEL_FALLBACK],
-      defaultModel: sdkDefaultModel ?? defaultModel,
+      defaultModel: sdkDefaultGetter() ?? defaultModel,
       provenance: sdkModelsProvenance()
     });
   } catch (error: any) {
     console.error("[Models] Error:", error);
     res.json({
       models: [...SDK_MODEL_FALLBACK],
-      defaultModel: sdkDefaultModel ?? defaultModel,
+      defaultModel: sdkDefaultGetter() ?? defaultModel,
       provenance: sdkModelsProvenance(),
       error: error?.message || String(error)
     });
@@ -1175,7 +1178,7 @@ app.get("/api/model-catalog", async (req, res) => {
     res.json({
       ...getCatalogSummary(),
       // WorkBuddy 走 SDK，不在 catalog 里。0 表示「还没取过」，不是「没有模型」
-      workbuddyCount: cachedModels.length,
+      workbuddyCount: cachedModelsGetter().length,
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "读取模型清单失败" });
@@ -1195,9 +1198,7 @@ app.get("/api/model-catalog", async (req, res) => {
 app.post("/api/model-catalog/refresh", async (req, res) => {
   const startedAt = Date.now();
   try {
-    invalidateCatalog();
-    cachedModels = [];
-    sdkDefaultModel = undefined;
+    invalidateAllModelCaches('POST /api/model-catalog/refresh 用户手动刷新');
 
     await loadCatalog(true);
 
@@ -1267,7 +1268,9 @@ app.post("/api/agent-credentials", async (req, res) => {
     const credential = saveCredential(agentId, { key, baseUrl });
     // 新 Key 可能让 `opencode models` 多出若干个 provider 的模型：
     // 目录缓存必须跟着作废，否则用户填完 Key 还要等 24 小时才看见新模型。
-    invalidateCatalog();
+    // SDK 缓存也一起清：虽然 SDK 走 OAuth 不经这条路径，但从「凭据变更后
+    // 所有模型缓存都应该是干净的」这个不变量来看，统一失效更安全。
+    invalidateAllModelCaches(`saveCredential(${agentId})`);
     const agent = await registry.probeOne(agentId, true);
     res.json({ credential, agent });
   } catch (error: any) {
@@ -1282,7 +1285,7 @@ app.delete("/api/agent-credentials/:agentId", async (req, res) => {
     const credential = clearCredential(req.params.agentId);
     if (!credential) return res.status(404).json({ error: "该 Agent 不支持应用内凭据" });
     // 清掉 Key 后对应 provider 的模型会从 CLI 清单里消失，目录同样要重算
-    invalidateCatalog();
+    invalidateAllModelCaches(`clearCredential(${req.params.agentId})`);
     const agent = await registry.probeOne(req.params.agentId, true);
     res.json({ credential, agent });
   } catch (error: any) {
