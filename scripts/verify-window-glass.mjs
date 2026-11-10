@@ -17,7 +17,7 @@
  *   [3] body 透明（否则上面所有半透明表面都白调）
  *   [3b] 设置页滑动条：一个数字同时驱动框架面、内容面与标题条，0–100 真线性
  *   [4] 阅读面（--tc-surface-raised）也参与透明度，但仍是最实的一档（A25）
- *   [5] 切深色后：框架面变 rgba(27,27,27,.72)，标题条走 rail rgba(35,35,35,.72)（A94）
+ *   [5] 切深色后：框架面变 rgba(27,27,28,.72)，标题条走 rail rgba(27,27,28,.72)（rail 现 #1b1b1c）
  *   [6] 三个窗口按钮由页面画（A24）：数量、尺寸、与标题条同属一个 DOM
  *
  * ## A24：标题条不再有例外
@@ -37,7 +37,7 @@
  * ⚠️ 本机不能同时开着另一个 OPC Agent 实例（单实例锁会让新进程直接退出）。
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, existsSync, statSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
@@ -97,6 +97,35 @@ function parseColor(s) {
   const nums = (t.match(/[\d.]+/g) || []).map(Number);
   return nums.length >= 4 ? nums : [...nums, 1];
 }
+
+/**
+ * 2026-11-10：把闸门里硬编码的 rail 色与 src/index.css 的 `--tc-surface-rail`
+ * 令牌绑在一起。window-glass 只测打包版，设计令牌一变而闸门没同步改，就会出现
+ * 「钉旧值还绿」的假象（A92/A94 时代 rail 是 #ececec/#232323，现统一为
+ * #f9fafb/#1b1b1c，旧字面量已修）。令牌再变，这两条先红，逼你同步改字面量。
+ */
+(function assertRailLiteralMatchesSource() {
+  const css = readFileSync(path.join(process.cwd(), 'src', 'index.css'), 'utf8');
+  const hexToRgb = hex => {
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+    return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null;
+  };
+  const hexes = [...css.matchAll(/--tc-surface-rail:\s*(#[0-9a-f]{6})/gi)].map(m => m[1]);
+  const LIGHT = [249, 250, 251];
+  const DARK = [27, 27, 28];
+  const light = hexToRgb(hexes[0] ?? '');
+  const dark = hexToRgb(hexes[hexes.length - 1] ?? '');
+  ok(
+    light && light[0] === LIGHT[0] && light[1] === LIGHT[1] && light[2] === LIGHT[2],
+    '闸门字面量 = 源令牌亮色 rail #f9fafb',
+    hexes[0] ?? '无'
+  );
+  ok(
+    dark && dark[0] === DARK[0] && dark[1] === DARK[1] && dark[2] === DARK[2],
+    '闸门字面量 = 源令牌暗色 rail #1b1b1c',
+    hexes[hexes.length - 1] ?? '无'
+  );
+})();
 
 let buf = '';
 
@@ -203,11 +232,14 @@ try {
     '标题条也参与透明度（不再有实色例外）',
     vars.titlebarBg
   );
-  // A94：标题条改走 rail，底色从 #f5f5f5(245) 变成 #ececec(236)。
-  // 顺带修掉一处**一直是红的关系**：下面那条「标题条与导航条计算值同源」
-  // 在 A92 之后其实已经不自洽了（导航条 rail 236 / 标题条 chrome 245），
-  // 只是 window-glass 只测打包版、那之后没重跑过，所以没人发现。
-  ok(bar[0] === 236 && bar[1] === 236 && bar[2] === 236, '标题条底色 = 导航条 rail #ececec', vars.titlebarBg);
+  // 2026-11-10：rail 已统一到 chrome 档 #f9fafb(249,250,251)（A92/A94 时代的
+  // #ececec(236) 已废，见 src/index.css `--tc-surface-rail`）。window-glass 只测
+  // 打包版、之后没重跑过，所以「钉旧值还绿」的假象一直没暴露 —— 改为钉当前令牌值。
+  ok(
+    bar[0] === 249 && bar[1] === 250 && bar[2] === 251,
+    '标题条底色 = 导航条 rail #f9fafb',
+    vars.titlebarBg
+  );
   // ⚠️ 这里**不能**断言令牌的字面原文是 `var(--tc-surface-chrome)`：
   //    getPropertyValue 在 Chrome 里会把自定义属性的值解析后再返回
   //    （实测拿到 `rgb(245 245 245 / 0.720)`，不是 var(...) 原文）。
@@ -276,10 +308,10 @@ const TRANSPARENCY_RANGE = 'input[aria-label="界面透明度"]';
   ok(maxed.value === '100', '滑动条推到 100%', String(maxed.value));
   ok(Number(maxed.chromeAlpha) === 0, '框架面 alpha 真的归零（0 到 100 是直线）', maxed.chromeAlpha);
   ok(Number(maxed.contentAlpha) === 0, '内容面 alpha 一起归零（不留余量）', maxed.contentAlpha);
-  // A94：框架面与标题条都走 rail，100% 下计算值是 rgba(236,236,236,0)。
-  ok(/rgba\(236, 236, 236, 0\)/.test(maxed.navBg), '导航条实际计算值全透', maxed.navBg);
+  // 2026-11-10：rail 现为 #f9fafb，100% 下计算值是 rgba(249,250,251,0)。
+  ok(/rgba\(249, 250, 251, 0\)/.test(maxed.navBg), '导航条实际计算值全透', maxed.navBg);
   ok(
-    /rgba\(236, 236, 236, 0\)/.test(maxed.titlebarBg),
+    /rgba\(249, 250, 251, 0\)/.test(maxed.titlebarBg),
     '标题条也归零（A24：不再有「标题条恒实色」的例外）',
     maxed.titlebarBg
   );
@@ -312,12 +344,12 @@ const TRANSPARENCY_RANGE = 'input[aria-label="界面透明度"]';
   ok(Math.abs(darkNav[3] - 0.72) < 0.02, '深色下框架面同样半透明', dark.navBg);
   ok(darkNav[0] < 60, '深色下框架面确实是深色（不是把浅色值留在那儿）', dark.navBg);
   const darkBar = parseColor(dark.titlebarBg);
-  // A94：标题条从 chrome 改走 rail，深色下计算值是 rgba(35,35,35,.72)
-  // （rail #232323），不再是 chrome 的 rgba(27,27,27,.72)。
-  // 这里仍要守住「与导航条同值同 alpha」—— 那正是 A94 的目的。
+  // 2026-11-10：rail 深色现为 #1b1b1c(27,27,28)，不再是 A94 时代 #232323(35)。
+  // 守住「与导航条同值同 alpha」仍是本断言的目的。
   ok(
-    darkBar[3] < 1 && Math.abs(darkBar[3] - 0.72) < 0.02 && darkBar[0] === 35,
-    '深色标题条 = rgba(35,35,35,.72)（与导航条 rail 同值同 alpha）',
+    darkBar[3] < 1 && Math.abs(darkBar[3] - 0.72) < 0.02
+      && darkBar[0] === 27 && darkBar[1] === 27 && darkBar[2] === 28,
+    '深色标题条 = rgba(27,27,28,.72)（与导航条 rail 同值同 alpha）',
     dark.titlebarBg
   );
 
