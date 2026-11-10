@@ -204,10 +204,17 @@ hoverSamples['会话行'] = await bgNth('.tc-list-item', 1);
 await park();
 
 // 3b 导航图标
+// A84 起当前项的标识从 `span.scale-y-100`（左侧色条）换成
+// `aria-current="page"`（见 NavRail.tsx 的注释：色条已删，可断言标识是
+// aria-current + 胶囊底色）。旧标记不存在时 findIndex 永远返回 0 ——
+// 于是「hover 非当前项」实际 hover 了当前项，量到 selected 档 0.08，
+// 同时「找当前项」返回 null。三条红同源，都是选择器过时而非产品回归。
+const navActiveCount = await page.evaluate(() =>
+  document.querySelectorAll('nav button[aria-current="page"]').length);
+ok(navActiveCount === 1, '★ 导航当前项有可断言标识 aria-current="page"', `实测 ${navActiveCount} 个`);
 const navHoverIdx = await page.evaluate(() => {
   const btns = [...document.querySelectorAll('nav button')];
-  const i = btns.findIndex(b => !b.querySelector('span.scale-y-100'));
-  return i;
+  return btns.findIndex(b => b.getAttribute('aria-current') !== 'page');
 });
 if (navHoverIdx >= 0) {
   await page.locator('nav button').nth(navHoverIdx).hover();
@@ -281,7 +288,7 @@ const selSamples = {
   '模型弹窗(选中)': modelSelBg,
 };
 const navActive = await page.evaluate(() => {
-  const b = [...document.querySelectorAll('nav button')].find(x => x.querySelector('span.scale-y-100'));
+  const b = document.querySelector('nav button[aria-current="page"]');
   return b ? getComputedStyle(b).backgroundColor : null;
 });
 selSamples['导航(当前)'] = navActive;

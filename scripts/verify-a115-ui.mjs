@@ -28,6 +28,7 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { isNearNeutral, NEUTRAL_TOLERANCE } from './lib/neutral-color.mjs';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
@@ -291,12 +292,17 @@ console.log('\n[2] 权限模式图标：四档中性色，深色下不消失');
   });
   ok(icons.length === 4, '四档权限模式都在下拉里', `实测 ${icons.length} 项`);
 
-  const neutral = icons.filter(c => {
-    const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map(Number);
-    return r === g && g === b;
-  });
-  ok(neutral.length === icons.length, '四档图标全是中性色（r=g=b，黑白化）',
+  // 近中性判据：设计系统的石墨灰/冷白 R/G/B 各差 1~2，严格相等会把它们
+  // 误判成彩色（与 verify-a84 同一条假红）。详见 lib/neutral-color.mjs。
+  const neutral = icons.filter(c => isNearNeutral(c));
+  ok(neutral.length === icons.length, '四档图标全是近中性色（无明显色相，黑白化）',
     icons.map(c => c.replace(/\s/g, '')).join(' '));
+  // 反向探针：放宽后仍要抓得住真彩色，不能靠放水换绿。
+  ok(
+    ['rgb(14, 200, 169)', 'rgb(217, 119, 87)', 'rgb(15, 21, 40)'].every(c => !isNearNeutral(c)) &&
+    isNearNeutral('rgb(15, 17, 21)') && isNearNeutral('rgb(249, 250, 251)'),
+    `★ 反向探针：近中性判据仍拒真彩色（阈值 ${NEUTRAL_TOLERANCE}）`
+  );
 
   // 深色模式专项：用户原话「红框位置的锁图标仍是黑色导致看不清」。
   // 中性色只是必要条件 —— 全黑也是中性色。还要明度够高，压在深色底上才看得见。

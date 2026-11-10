@@ -23,6 +23,7 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { isNearNeutral, NEUTRAL_TOLERANCE } from './lib/neutral-color.mjs';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
@@ -136,16 +137,14 @@ const alphaOf = s => {
   return m.length >= 4 ? Number(m[3]) : 1;
 };
 
-/** A115：是不是中性色（R/G/B 三通道相等）——「黑白图标」的字面判据 */
-const isNeutral = s => {
-  if (!s) return false;
-  if (s === 'transparent') return false;
-  const m = s.match(/[\d.]+/g);
-  if (!m || m.length < 3) return false;
-  const [r, g, b] = m.map(Number);
-  return r === g && g === b;
-};
-
+/**
+ * A115 起「权限图标黑白化」用的是共享的近中性判据（见 lib/neutral-color.mjs）。
+ *
+ * 原本这里要求 R===G===B 严格相等，把设计系统有意选的石墨灰
+ * `rgb(15,17,21)` / 冷白 `rgb(249,250,251)` 判成彩色 —— 产品其实是对的，
+ * 是判据过严造成长期假红。判据换成「色度 ≤ 8」后，下面必须配反向探针，
+ * 证明真彩色仍然会被抓住（不许借修假红之名放水）。
+ */
 /** 取某个元素的「自身底色」——不看祖先，只认它自己画的这一层 */
 const bgOf = (sel, nth = 0) =>
   page.evaluate(
@@ -291,11 +290,22 @@ ok(
  * verify-a116-ui [3] 组比对 --td-text-color-primary 的解析值）。
  * 档位从 4 → 3 → 1 都是有意的，不是回归。 */
 const permColors = new Set(permOptions.map(o => o.color));
-const neutralCount = permOptions.filter(o => isNeutral(o.color)).length;
+const neutralCount = permOptions.filter(o => isNearNeutral(o.color)).length;
 ok(
   neutralCount === permOptions.length && permOptions.length > 0,
   `四档图标全是中性色（${neutralCount}/${permOptions.length}）`,
   `${permColors.size} 档：${[...permColors].join(' / ')}`
+);
+// 反向探针：判据放宽后仍必须抓得住真彩色，否则这条绿就是放水放出来的。
+ok(
+  [
+    'rgb(14, 200, 169)',   // 品牌绿 #0EC8A9
+    'rgb(217, 119, 87)',   // Claude 橙 #D97757
+    'rgb(255, 0, 0)',      // 纯红
+    'rgb(15, 21, 40)',     // 色度 25：带明显蓝调的「伪灰」
+  ].every(c => !isNearNeutral(c)) &&
+  isNearNeutral('rgb(15, 17, 21)') && isNearNeutral('rgb(249, 250, 251)'),
+  `★ 反向探针：近中性判据仍拒真彩色（阈值 ${NEUTRAL_TOLERANCE}）`
 );
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
