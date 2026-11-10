@@ -156,6 +156,44 @@ function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
+/**
+ * A209（5a1488a，11-08）把提示词装配又包了一层 `withAnswerLanguage(...)`：
+ * 旧闸门钉 `systemPrompt: withExtensionsContext(` / `extraPrompt = withExtensionsContext(`
+ * 必然量到 0 —— 三条红全是过时正则，产品接线其实没断。
+ *
+ * 这里改成「按赋值锚点取**整条括号配平的调用表达式**，再在表达式内部找注入层」：
+ * 包装层数随便加都不断，但**不许**用 `[\s\S]*?withExtensionsContext\(`
+ * 去整块源码里搜 —— 注入被摘掉时它会一路跨到下一个属性/下一条赋值，
+ * 照样变绿（TRAPS §4：正则别跑在整块文本上）。
+ */
+function assignedCallExprs(src: string, declaration: RegExp): string[] {
+  const flags = declaration.flags.includes('g') ? declaration.flags : `${declaration.flags}g`;
+  const re = new RegExp(declaration.source, flags);
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src)) !== null) {
+    const start = m.index + m[0].length;
+    let depth = 0;
+    let opened = false;
+    let end = -1;
+    for (let i = start; i < src.length; i += 1) {
+      const ch = src[i];
+      if (ch === '(') { depth += 1; opened = true; }
+      else if (ch === ')') {
+        depth -= 1;
+        if (opened && depth === 0) { end = i + 1; break; }
+      }
+    }
+    out.push(end > start ? src.slice(start, end) : '');
+  }
+  return out;
+}
+
+/** 注入层 + agentId 缺一不可：技能清单是按 Agent 归属算的 */
+function injectWiredIn(expr: string): boolean {
+  return /withExtensionsContext\s*\(/.test(expr) && /this\.descriptor\.id/.test(expr);
+}
+
 const ADAPTERS = ['sdk', 'claude-sdk', 'http'] as const;
 const adapterSrc: Record<string, string> = {};
 for (const a of ADAPTERS) {
@@ -172,18 +210,53 @@ for (const a of ADAPTERS) {
     `${a} 适配器引入了注入层`
   );
 }
+const sdkPrompts = assignedCallExprs(adapterSrc.sdk, /systemPrompt:\s*/);
 ok(
-  (adapterSrc.sdk.match(/systemPrompt:\s*withExtensionsContext\(/g) ?? []).length === 2,
+  sdkPrompts.length === 2 && sdkPrompts.every(injectWiredIn),
   'sdk 的两条 systemPrompt 路径（池化 + 回退）都过了注入',
-  (adapterSrc.sdk.match(/systemPrompt:\s*withExtensionsContext\(/g) ?? []).length
+  `${sdkPrompts.filter(injectWiredIn).length}/${sdkPrompts.length}`
 );
 ok(/export function configKeyOf\(ctx: SendContext, agentId\?: string\)/.test(adapterSrc.sdk), 'configKeyOf 收 agentId（技能变了要重建会话）');
 ok(
   (adapterSrc.sdk.match(/configKeyOf\(ctx, this\.descriptor\.id\)/g) ?? []).length === 2,
   'configKeyOf 的两个调用点都传了 agentId'
 );
-ok(/extraPrompt = withExtensionsContext\(/.test(adapterSrc['claude-sdk']), 'claude-sdk 的 extraPrompt 过了注入');
-ok(/const systemPrompt = withExtensionsContext\(/.test(adapterSrc.http), 'http 的 systemPrompt 过了注入');
+const claudePrompts = assignedCallExprs(adapterSrc['claude-sdk'], /const extraPrompt = /);
+ok(
+  claudePrompts.length === 2 && claudePrompts.every(injectWiredIn),
+  'claude-sdk 的两条 extraPrompt 路径（预热 + 回退）都过了注入',
+  `${claudePrompts.filter(injectWiredIn).length}/${claudePrompts.length}`
+);
+const httpPrompts = assignedCallExprs(adapterSrc.http, /const systemPrompt = /);
+ok(
+  httpPrompts.length === 1 && injectWiredIn(httpPrompts[0]),
+  'http 的 systemPrompt 过了注入',
+  `${httpPrompts.filter(injectWiredIn).length}/${httpPrompts.length}`
+);
+
+/* ★ 反向探针：好版要绿，三种「看着像接了」的坏样本必须全否。
+   尤其 BAD_NEXT_PROPERTY —— 若判据是整块文本搜，注入被摘掉也能靠邻属性变绿。 */
+const PROBE_GOOD = `systemPrompt: withAnswerLanguage(
+  withExtensionsContext(withMemoryContext(x, y), this.descriptor.id),
+  ctx.answerLanguage
+);`;
+const PROBE_NO_INJECT = `systemPrompt: withAnswerLanguage(
+  withMemoryContext(x, y), ctx.answerLanguage
+);`;
+const PROBE_NEXT_PROPERTY = `systemPrompt: withAnswerLanguage(withMemoryContext(x), y),
+  other: withExtensionsContext(z, this.descriptor.id)`;
+const PROBE_COMMENT_ONLY = `// systemPrompt: withExtensionsContext(x, this.descriptor.id)
+systemPrompt: withAnswerLanguage(withMemoryContext(x), y);`;
+ok(
+  assignedCallExprs(PROBE_GOOD, /systemPrompt:\s*/).length === 1 &&
+  injectWiredIn(assignedCallExprs(PROBE_GOOD, /systemPrompt:\s*/)[0]) &&
+  [PROBE_NO_INJECT, PROBE_NEXT_PROPERTY].every(s => {
+    const exprs = assignedCallExprs(s, /systemPrompt:\s*/);
+    return exprs.length === 1 && !injectWiredIn(exprs[0]);
+  }) &&
+  !injectWiredIn(assignedCallExprs(stripComments(PROBE_COMMENT_ONLY), /systemPrompt:\s*/)[0]),
+  '★ 反向探针：包装层/注释/邻属性里的注入都骗不过判据'
+);
 /* 注入层不许碰用户目录：写调用只认镜像根 */
 ok(/MIRROR_ROOT/.test(injectSrc) && !/homeDir\(/.test(injectSrc), '注入层不引用 homeDir（不往用户目录走）');
 ok(

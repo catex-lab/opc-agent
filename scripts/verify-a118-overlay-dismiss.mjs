@@ -26,6 +26,14 @@
  *   [4] 会话头部「⋯」菜单：点输入框必须关
  *   [5] 输入框右键菜单：点输入框另一处必须关
  *
+ * ## 已知环境噪声（2026-11-10 逐段体检，别改断言去「修」它）
+ *
+ * 并行跑整条 verify:ui 时，[5] 的「无控制台错误」偶发
+ * `Failed to load resource: net::ERR_NO_BUFFER_SPACE`：那是并发把本机
+ * socket/缓冲区打满，不是浮层缺陷 —— 19 条功能断言当时全绿。
+ * 单独复跑 20/20 PASS。**不要**把这个错误加进白名单（会放掉真的资源错误），
+ * 遇到它先串行单独重跑一次，仍红再查。
+ *
  * 运行：node scripts/verify-a118-overlay-dismiss.mjs（需先 npm run build）
  */
 import { createServer } from 'node:http';
