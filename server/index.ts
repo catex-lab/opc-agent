@@ -2410,6 +2410,11 @@ app.post("/api/chat", async (req, res) => {
     messageId: assistantMessageId,
     agentId,
     model: selectedModel,
+    /* P1：把「真正生效的模型」显式盖章给前端回显。`selectedModel` 就是
+       `resolveStoredModelForAgent()` 的结果，可能是被白名单换掉的默认值、
+       也可能是空串（不传 --model，由 Agent 自己决定）。前端只认这个字段，
+       不拿 `model` 元信息反推 —— 老夹具仍带 `model`，但不会触发回显。 */
+    modelEffective: selectedModel ?? '',
     // A100：事件来源。纯文本解析出来的工具事件与 SDK 原生事件在界面上
     // 长得一样，必须让用户能分辨。
     source: registry.eventSourceOf(agentId),

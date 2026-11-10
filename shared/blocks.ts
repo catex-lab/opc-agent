@@ -302,6 +302,20 @@ export type RunEvent = Seq &
         agentId: string;
         model?: string;
         /**
+         * P1：这一轮**真正交给 Agent 的模型名**（服务端 resolve 之后的值）。
+         *
+         * 与 `model` 的区别不是值，而是契约：`model` 是这一轮的元信息，历史
+         * 夹具 / 老服务端都可能随手填；`modelEffective` 由 `/api/chat` 显式
+         * 从 `resolveStoredModelForAgent()` 的结果写入，前端**只认它**来回显。
+         * 这样老夹具（不带这个字段）不会被新回显逻辑误伤。
+         *
+         * 空串 = 解析结果是 `undefined`，即不传 `--model`、由 Agent 自己决定；
+         * 界面要据此说「由 Agent 决定」，而不是继续挂着一个不生效的名字。
+         * `requested` 与它不同时说明发生了静默替换 —— 用户第三问的原话
+         * 「输入框里展示的不一定是真实实时的模型」就是这一条。
+         */
+        modelEffective?: string;
+        /**
          * 这一轮的过程能力档（P2）：key + declared（+ probed，标定过才有）。
          * `observed` 此刻还不知道 —— 它要等这一轮真跑完，见 `run_end`。
          */

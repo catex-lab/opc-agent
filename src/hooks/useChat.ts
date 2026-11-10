@@ -15,6 +15,7 @@ import {
   type Block,
   type RunEvent,
 } from '../../shared/blocks';
+import { decideModelEcho } from '../../shared/model-effective';
 
 const STORAGE_KEYS = {
   draftInput: 'draftInput',
@@ -39,6 +40,21 @@ interface UseChatOptions {
   updateSessionModel: (sessionId: string, modelId: string) => void;
   setCurrentSessionId: (id: string | null) => void;
   setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
+  /**
+   * P1：服务端把「这一轮真正生效的模型」盖章回来时通知上层回显。
+   *
+   * 为什么不让 `useChat` 自己改 `selectedModel`：这个 hook 拿不到那个 state
+   * （它只从 options 里读一份快照），而回显必须同时更新会话里存的那份，
+   * 否则切换会话时 effect 会按旧值把界面拉回去。
+   *
+   * `effective` 为空串 = 不传 `--model`、由 Agent 自己决定；此时**不要**
+   * 把输入框清成空，只要给用户一句说明（空的下拉是个更糟的假状态）。
+   */
+  onModelResolved?: (info: {
+    sessionId: string;
+    effective: string;
+    requested: string;
+  }) => void;
 }
 
 interface NewChatOptions {
@@ -217,7 +233,17 @@ export function useChat(options: UseChatOptions) {
     updateSessionModel,
     setCurrentSessionId,
     setSessions,
+    onModelResolved,
   } = options;
+
+  /**
+   * P1 / A142：回显生效模型前的「这一轮属于谁」判定要用**最新**的当前会话，
+   * 不能用渲染时的 `currentSessionId` 快照。会话 A 还在流、用户切到 B 时，
+   * A 迟到的 run_start 若按旧快照判定就会把 B 的输入框改成 A 的模型。
+   * 每次渲染同步一次，是这份 hook 里读「此刻在看哪个会话」的唯一出处。
+   */
+  const currentSessionIdRef = useRef(currentSessionId);
+  currentSessionIdRef.current = currentSessionId;
 
   /**
    * A142：**每个会话一轮**，不是「全应用一轮」。
@@ -463,6 +489,8 @@ export function useChat(options: UseChatOptions) {
     let realSessionId: string = sessionId!;
     let realAssistantMessageId = tempAssistantMessageId;
     let usedModel = selectedModel;
+    /** P1：一局只回显一次。断线重连会重放 run_start，不能每条都弹提示 */
+    let modelResolvedDone = false;
     let errorText = '';
     /**
      * 本轮的块序列（E3）。
@@ -644,10 +672,45 @@ export function useChat(options: UseChatOptions) {
       const decoder = new TextDecoder();
 
       /** init / run_start 共用：把临时会话与气泡 id 换成后端的真值 */
-      const applyInit = (sid: string, mid: string, modelId?: string) => {
+      const applyInit = (sid: string, mid: string, modelId?: string, modelEffective?: string) => {
         if (sid) realSessionId = sid;
         if (mid) realAssistantMessageId = mid;
         if (modelId) usedModel = modelId;
+
+        /* P1：把服务端盖章的生效模型回显到输入框。
+         *
+         * 只认 `modelEffective`（`/api/chat` 从 resolveStoredModelForAgent 的结果
+         * 写入），不拿 `model` 元信息反推 —— 历史夹具都带 `model: 'stub-model'`，
+         * 拿它回显会凭空改掉夹具里的选中值，那是一次静默的产品行为变更。
+         *
+         * 三道闸：① 一局只做一次（重连会重放）；② 这一轮必须属于用户此刻
+         * 正在看的会话（A142 并发，别的会话不许改我的输入框）；③ 生效值
+         * 与请求值真的不同才动 —— 相同还回显纯属多余渲染。 */
+        if (modelEffective !== undefined && !modelResolvedDone) {
+          modelResolvedDone = true;
+          const decision = decideModelEcho({
+            declared: modelEffective,
+            alreadyDone: false,
+            watching: currentSessionIdRef.current,
+            turnSessionId: sessionId,
+            realSessionId,
+            requested: selectedModel,
+          });
+          if (decision.echo) {
+            usedModel = decision.effective;
+            onModelResolved?.({
+              sessionId: realSessionId,
+              effective: decision.effective,
+              requested: decision.requested,
+            });
+            if (decision.effective) {
+              MessagePlugin.info(`模型已按 Agent 的实际配置生效：${decision.effective}`);
+            } else {
+              MessagePlugin.info('这个 Agent 本轮由自己决定模型，输入框里的名称不生效');
+            }
+          }
+        }
+
         // 停止要落在这条气泡上，而它的 id 在这里才从临时值换成后端真值
         if (turn.sessionId !== realSessionId) {
           // A142：key 跟着搬。不搬的话 `turnsRef` 里留着一条按旧 id 索引的
@@ -716,7 +779,7 @@ export function useChat(options: UseChatOptions) {
               fetch(`/api/runs/${turn.runId}/stop`, { method: 'POST' }).catch(() => {});
             }
             if (typeof data.seq === 'number') lastSeq = data.seq;
-            applyInit(data.sessionId, data.messageId, data.model);
+            applyInit(data.sessionId, data.messageId, data.model, data.modelEffective);
             break;
 
           case 'kb_refs':
@@ -864,7 +927,7 @@ export function useChat(options: UseChatOptions) {
       turnsRef.current.delete(turn.sessionId);
       setRunningIds(prev => prev.filter(id => id !== turn.sessionId));
     }
-  }, [currentSession, currentSessionId, selectedModel, getAgent, updateSessionModel, setCurrentSessionId, setSessions, resumePrompt]);
+  }, [currentSession, currentSessionId, selectedModel, getAgent, updateSessionModel, setCurrentSessionId, setSessions, onModelResolved, resumePrompt]);
 
   /**
    * A33 重新生成：用这条 assistant 回复**之前**的最近一条 user 消息重跑一轮。

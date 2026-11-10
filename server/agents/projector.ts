@@ -69,6 +69,12 @@ export interface RunMeta {
   agentId: string;
   model?: string;
   /**
+   * P1：这一轮真正交给 Agent 的模型名（空串 = 由 Agent 自行决定）。
+   * 只有 `/api/chat` 会填；夹具 / 群聊 turn-runner 不填，前端就不回显。
+   * 详见 `shared/blocks.ts` 里 `run_start.modelEffective` 的契约说明。
+   */
+  modelEffective?: string;
+  /**
    * 这个 Agent 的事件来源（A100）。由调用方从注册表取，投影器只负责盖章。
    *
    * 为什么由调用方传而不是投影器自己去查注册表：投影器是纯逻辑，
@@ -281,6 +287,9 @@ export class RunProjector {
             messageId: this.meta.messageId,
             agentId: this.meta.agentId,
             model: this.meta.model,
+            ...(this.meta.modelEffective !== undefined
+              ? { modelEffective: this.meta.modelEffective }
+              : {}),
             // observed 此刻还空着：这一轮才刚开始，不能提前把 declared 抄过去
             // 冒充事实（那正是「清单在撒谎」的复现方式）。
             ...(caps ? { capabilities: caps } : {}),

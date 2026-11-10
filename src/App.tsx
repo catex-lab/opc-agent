@@ -374,6 +374,23 @@ function AppContent() {
     [legacyAgents]
   );
 
+  /**
+   * P1：服务端把「这一轮真正生效的模型」盖章回来时回显。
+   *
+   * `effective` 为空 = 解析结果是「不传 --model、由 Agent 自己决定」，
+   * 此时**不**清成空：一个空的下拉比一个不生效的名字更难解释，提示由
+   * `useChat` 给出。会话里存的那份也要一起改，否则切换会话时恢复 effect
+   * 会按旧值把界面拉回去。
+   */
+  const handleModelResolved = useCallback(
+    ({ sessionId, effective }: { sessionId: string; effective: string }) => {
+      if (!effective) return;
+      setSelectedModel(effective);
+      updateSessionModel(sessionId, effective);
+    },
+    [setSelectedModel, updateSessionModel]
+  );
+
   const {
     isLoading,
     inputValue,
@@ -394,6 +411,7 @@ function AppContent() {
     updateSessionModel,
     setCurrentSessionId,
     setSessions,
+    onModelResolved: handleModelResolved,
   });
 
   // 当前会话绑定的 Agent
