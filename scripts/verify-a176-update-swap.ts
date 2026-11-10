@@ -174,6 +174,29 @@ function patchJob(sb: Sandbox, patch: Record<string, unknown>): void {
   writeFileSync(sb.jobPath, JSON.stringify({ ...job, ...patch }, null, 2));
 }
 
+/**
+ * A/G/H 三段偶发假红的根因（2026-11-10 复现后定位）：
+ * helper 放好新包后、启动新版本前会先 `rm(healthPath)` 清一次陈旧健康文件。
+ * 旧夹具在看到 target 变成 NEW 的那一瞬间只写一次 health，恰好抢在清理之前
+ * 就会被删掉 ⇒ helper 等不到健康文件 ⇒ 回滚 ⇒ 留下 apply-state.json / .bak，
+ * G 段「成功后仍不留状态文件与 .bak」偶发 1 红（同一份代码有时 150/151，
+ * 有时 151/151）。这是**夹具抢跑**，不是交接逻辑的边界 bug。
+ *
+ * 做法：先放一个「陈旧健康文件」当哨兵，等 helper 真的把它清掉（这就证明
+ * 它已经走到「启动新版本、等健康」阶段），再写真正的健康文件。
+ * 顺带把「陈旧健康文件不算确认」这件事钉成一条肯定式断言。
+ */
+function armHealthSentinel(sb: Sandbox): void {
+  writeFileSync(sb.health, JSON.stringify({ version: '0.0.0-stale-sentinel' }));
+}
+
+async function writeHealthWhenReady(sb: Sandbox, timeoutMs = 8_000): Promise<boolean> {
+  const cleared = await waitFor(() => !existsSync(sb.health), timeoutMs, 25);
+  if (!cleared) return false;
+  writeFileSync(sb.health, JSON.stringify({ version: '1.0.9' }));
+  return true;
+}
+
 /** 交换过程中 target 会短暂不存在（先改名成 .bak），轮询时读不到属正常现象 */
 function readText(file: string): string {
   try {
@@ -217,10 +240,11 @@ async function scenarioA(): Promise<void> {
   const locker = startLocker(sb.target, 2_500, sentinel);
   await waitFor(() => existsSync(sentinel), 8_000);
 
+  armHealthSentinel(sb);
   const { child } = startHelper(sb);
   const swapped = await waitFor(() => readText(sb.target) === NEW, 10_000);
   ok(swapped, '占用释放后完成交换（遇到 EBUSY 自动重试）', readText(sb.target));
-  writeFileSync(sb.health, JSON.stringify({ version: '1.0.9' }));
+  ok(await writeHealthWhenReady(sb), '陈旧健康文件被清掉后才补写新的（helper 已进等健康阶段）');
   await waitExit(child, 10_000);
   try {
     locker.kill();
@@ -291,19 +315,29 @@ async function scenarioG(): Promise<void> {
   await waitFor(() => existsSync(sentinel), 8_000);
 
   const t0 = Date.now();
+  armHealthSentinel(sb);
   const { child } = startHelper(sb);
   const swapped = await waitFor(() => readText(sb.target) === NEW, 30_000);
   const elapsed = Date.now() - t0;
   ok(swapped, '20 秒后仍被占用，但在 60 秒预算内等到锁释放并完成交换', readText(sb.target));
   ok(elapsed > 20_000, '确认真的等了 20 秒以上（不是侥幸提前成功）', `${elapsed}ms`);
-  writeFileSync(sb.health, JSON.stringify({ version: '1.0.9' }));
+  ok(await writeHealthWhenReady(sb), '陈旧健康文件被清掉后才补写新的（不与 helper 抢跑）');
   await waitExit(child, 10_000);
   try {
     locker.kill();
   } catch {
     /* 已退出 */
   }
-  ok(!existsSync(sb.marker) && !existsSync(sb.backup), '成功后仍不留状态文件与 .bak');
+  ok(
+    !existsSync(sb.marker) && !existsSync(sb.backup),
+    '成功后仍不留状态文件与 .bak',
+    JSON.stringify({
+      marker: readMarker(sb),
+      backup: existsSync(sb.backup),
+      health: existsSync(sb.health),
+      staged: existsSync(sb.staged),
+    })
+  );
   cleanup(sb);
 }
 
@@ -323,13 +357,14 @@ async function scenarioH(): Promise<void> {
   });
 
   const t0 = Date.now();
+  armHealthSentinel(sb);
   const { child } = startHelper(sb);
   const swapped = await waitFor(() => readText(sb.target) === NEW, 15_000);
   const elapsed = Date.now() - t0;
   ok(swapped, '残留进程被结束、锁释放后完成交换', readText(sb.target));
   ok(elapsed >= 1_500, '先等一段时间再动手，不是发现就杀', `${elapsed}ms`);
   ok(await waitDead(stub, 2_000), '安装目录内的残留进程被定向结束', `exit=${stub.exitCode}`);
-  writeFileSync(sb.health, JSON.stringify({ version: '1.0.9' }));
+  ok(await writeHealthWhenReady(sb), '陈旧健康文件被清掉后才补写新的（不与 helper 抢跑）');
   await waitExit(child, 10_000);
   ok(!existsSync(sb.marker), '成功确认后状态文件不常驻');
   cleanup(sb);

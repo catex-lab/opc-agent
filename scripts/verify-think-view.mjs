@@ -126,7 +126,12 @@ const MESSAGES = [
       },
     ],
   },
-];
+].map(m => ({ content: '', ...m }));
+/* 真实服务端的 messages.content 是 `TEXT NOT NULL`，块模型消息也只是留空串，
+ * 不是「没有这个字段」。旧夹具把 content 整个省略 ⇒ A206 空泡判定里的
+ * `message.content.trim()` 抛 TypeError ⇒ ErrorBoundary 顶掉整页 ⇒
+ * [1] 量到 0 条 .tc-think、[4b] 直接 querySelector on null 崩掉。
+ * 夹具补齐空串，和真实库对齐；产品侧同时补一层防呆（见 ChatMessages.tsx）。 */
 
 /* ── 真流式夹具（[9]）────────────────────────────────────────────────
  * 静态夹具造不出「正在增长」的正文（加载器逐字段映射，服务端不发
@@ -239,6 +244,20 @@ page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
 
 await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
 await page.waitForTimeout(1200);
+
+// 诊断前置：先证明「页面真的打开了、消息真的渲染了」。否则 [1] 量到 0 条
+// .tc-think 时，无法区分「思考展示退化」与「整个页面根本没起来」——
+// 后者会让后面每一条断言一起红，还会把 [4b] 的 querySelector 直接打崩。
+const BOOT = await page.evaluate(() => ({
+  url: location.href,
+  msgList: document.querySelectorAll('[data-msg-list]').length,
+  msgRows: document.querySelectorAll('[data-msg-list] > *').length,
+  think: document.querySelectorAll('.tc-think').length,
+  bodyText: (document.body.innerText || '').slice(0, 200),
+}));
+console.log('\n[0] 页面前置');
+ok(BOOT.msgRows >= 6, '页面真的打开了：6 条消息都渲染出来（不是 ErrorBoundary 兜底页）', `msgRows=${BOOT.msgRows} text=${BOOT.bodyText.slice(0, 40)}`);
+ok(!errors.some(e => e.includes('ErrorBoundary')), '首屏没有渲染崩溃', errors.slice(0, 1).join(' | '));
 
 // ── [1] 三种能力状态 ─────────────────────────────────────────────────
 console.log('\n[1] 三种能力状态');
@@ -392,6 +411,8 @@ ok(headStyle.badgeBg === headStyle.token.brandBg, '摘要角标底色 = 10% 品�
 console.log('\n[4b] 几何对齐');
 const geo = await page.evaluate(() => {
   const node = document.querySelector('.tc-think[open]');
+  // 没有展开块时让后面的断言逐条红，而不是在 evaluate 里抛异常把整条闸门打断。
+  if (!node) return { missing: true, iconLeft: null, bodyLeft: 0, bodyWidth: 0, containerWidth: 0 };
   const icon = node.querySelector('summary > svg');
   const body = node.querySelector('.tc-think-body');
   const box = body.getBoundingClientRect();
@@ -402,6 +423,7 @@ const geo = await page.evaluate(() => {
     containerWidth: Math.round(node.getBoundingClientRect().width),
   };
 });
+ok(!geo.missing, '量几何前确实存在一条展开的思考块（m6 还没出正文）', JSON.stringify(geo));
 ok(
   geo.bodyWidth === geo.containerWidth,
   '灰卡宽度撑满思考块（不是缩进去的小盒子）',
@@ -550,9 +572,12 @@ const dark = await page.evaluate(() => {
   const body = document.querySelector('.tc-think[open] .tc-think-body');
   const note = document.querySelector('.tc-think-note-body');
   const probe = document.createElement('span');
-  probe.style.backgroundColor = 'var(--td-bg-color-secondarycontainer)';
   document.body.appendChild(probe);
+  probe.style.backgroundColor = 'var(--td-bg-color-secondarycontainer)';
   const cardToken = getComputedStyle(probe).backgroundColor;
+  // 正文色也读令牌，不写死 rgb：#a3a3a3 → #adb2b8 这类令牌调档不该把闸门打红。
+  probe.style.backgroundColor = 'var(--td-text-color-secondary)';
+  const textToken = getComputedStyle(probe).backgroundColor;
   probe.remove();
   // 角标在 summary 里，折叠态的 details 也看得见 —— 别再加 `[open]` 前缀，
   // 唯一带角标的那条恰好是折叠的（m4），加了就永远读不到。
@@ -562,12 +587,17 @@ const dark = await page.evaluate(() => {
     color: body ? getComputedStyle(body).color : null,
     noteBg: note ? getComputedStyle(note).backgroundColor : null,
     cardToken,
+    textToken,
     badge: badge ? getComputedStyle(badge).backgroundColor : null,
   };
 });
 ok(dark.bg === dark.cardToken, '深色下灰卡底色跟随 secondarycontainer 令牌', `${dark.bg} vs ${dark.cardToken}`);
 ok(dark.bg !== 'rgba(0, 0, 0, 0)' && dark.bg !== 'transparent', '深色下灰卡不是透明（卡片在）', dark.bg);
-ok(dark.color === 'rgb(163, 163, 163)', '深色下正文跟随 secondary 提亮', dark.color);
+ok(
+  dark.color === dark.textToken && dark.textToken !== 'rgba(0, 0, 0, 0)',
+  '深色下正文跟随 secondary 字色令牌（读令牌，不写死 rgb）',
+  `${dark.color} vs ${dark.textToken}`
+);
 ok(dark.noteBg === dark.cardToken, '深色下轨迹内思考的灰卡同步', dark.noteBg);
 ok(dark.badge.includes('0.1'), '深色下角标底色仍是有色透明底（不是纯黑块）', dark.badge);
 

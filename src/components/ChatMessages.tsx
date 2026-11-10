@@ -1159,7 +1159,9 @@ const MessageRow = memo(function MessageRow({
    */
   if (message.role === 'assistant' && !message.isStreaming && !msgIsImage) {
     const visible = !!message.error
-      || message.content.trim().length > 0
+      // content 在库里是 NOT NULL，但夹具 / 内存中的消息可能只给 blocks。
+      // 这里少一个兜底就是整页 ErrorBoundary（A206 引入后 think-view 曾整段假红）。
+      || (message.content ?? '').trim().length > 0
       || toBlocks(message).some(b =>
         b.type === 'text' ? b.text.trim().length > 0 : b.type !== 'raw'
       );
