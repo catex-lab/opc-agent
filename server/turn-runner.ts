@@ -216,7 +216,8 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
            · 因为 sessionId 是 undefined，前端 `?exclude=` 永远排除不掉它，
              切到任何会话都会看到「1 个后台任务运行中」。
          补一条 run_end 让它立刻收尾。群里有未安装的成员时这条路径真的会走到。 */
-      emit([projector.finish('error').end]);
+      const early = projector.finish('error');
+      emit([...early.closes, early.end]);
     } else {
       // run_start 额外带上 phase/round：前端据此把「路由/执行/汇总」区分开
       emit(

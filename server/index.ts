@@ -2414,7 +2414,12 @@ app.post("/api/chat", async (req, res) => {
        带着 sessionId 挂在 activeRuns 里；这里直接 return 会让它 finishedAt
        永远是 null —— 后台任务胶囊会一直显示「1 个运行中」，要等 MAX_AGE_MS
        （30 分钟）sweep 才消失。客户端多收一条 run_end 是正确行为：这一轮确实结束了。 */
-    writeEvent(projector.finish('error').end);
+    /* closes 也必须发：finish() 会把开着的块置为终态并生成 block_close，
+       只发 .end 会让客户端的 thinking 块永远停在 streaming（永久转圈）。
+       这个早退分支此刻通常还没有开着的块，但收尾契约不该在这里分岔。 */
+    const early = projector.finish('error');
+    writeEvents(early.closes);
+    writeEvent(early.end);
     return res.end();
   }
 

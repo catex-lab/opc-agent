@@ -449,6 +449,45 @@ export function applyRunEvent(blocks: Block[], ev: RunEvent): boolean {
   }
 }
 
+/**
+ * A122 第四段绳：把本轮还开着的块就地收口（客户端兜底）。
+ *
+ * 服务端 `RunProjector.finish()` 会给所有开着的块补发 `block_close`，但用户按
+ * 「停止」时前端已经 `controller.abort()` 掐断了 SSE，而 `stopped` 分支明确**不**
+ * 走断线重连 —— 这些收尾事件永远到不了客户端。于是 thinking 块的 `state` 永远
+ * 停在 `'streaming'`：`ThinkingView` 的 spinner 与 `useElapsed` 秒表一直挂着
+ * （实测「已用 144s」还在涨），按钮却早已恢复成发送键 —— 看着就是「假停止」。
+ * 报错 / 断流 / 早退这几条路径同理：只要没收到 closes，本地就没人收尾。
+ *
+ * 只动仍在跑的块，已经 closed 的一律不碰 —— 正常 `run_end` 路径不该被改写。
+ * 终态用 `interrupted`（结果未回传）而非 `done` / `error`：前者会假装跑完了，
+ * 后者会凭空指控一次失败。与 `RunProjector.finish()` 的口径保持一致。
+ *
+ * @returns 是否真的改了块（供调用方决定要不要立刻 flush 进 React 状态）
+ */
+export function sealOpenBlocks(blocks: Block[]): boolean {
+  const now = Date.now();
+  let changed = false;
+  for (const b of blocks) {
+    if (b.type === 'text' || b.type === 'thinking') {
+      if (b.state !== 'streaming') continue;
+      b.state = 'interrupted';
+      if (b.type === 'thinking') b.endedAt = b.endedAt ?? now;
+      changed = true;
+    } else if (b.type === 'tool') {
+      if (b.status !== 'running' && b.status !== 'pending') continue;
+      b.status = 'interrupted';
+      b.endedAt = b.endedAt ?? now;
+      changed = true;
+    } else if (b.type === 'raw') {
+      if (b.endedAt) continue;
+      b.endedAt = now;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 /** 当前块序列的「进行中」摘要，供 UI 显示「思考中…」「执行中…」 */
 export function runActivity(blocks: readonly Block[]): 'thinking' | 'tool' | 'writing' | 'idle' {
   // 找「最后一个有意义的主流程块」：note 是提示、raw 是旁路通道，两者都不代表

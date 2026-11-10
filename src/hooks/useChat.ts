@@ -8,6 +8,7 @@ import { push as pushPermission, markSessionEnded } from '../permissions/permiss
 import { notifyRunsChanged } from './useBackgroundTasks';
 import {
   applyRunEvent,
+  sealOpenBlocks,
   textOfBlocks,
   thinkingOfBlocks,
   toolCallsOfBlocks,
@@ -199,6 +200,12 @@ interface Turn {
   /** 流式气泡的落点；run_start 之后要换成后端返回的真 id */
   sessionId: string;
   messageId: string;
+  /**
+   * A122 第四段绳：把本轮仍开着的块就地收口并立刻刷进 React。
+   * `handleStop` 掐断 SSE 之后服务端的 `block_close` 就再也送不到了，
+   * 不补这一下，thinking 块的 spinner 与秒表会一直挂着（假停止观感）。
+   */
+  seal?: () => void;
 }
 
 export function useChat(options: UseChatOptions) {
@@ -500,6 +507,16 @@ export function useChat(options: UseChatOptions) {
       // 内容最迟 120ms 后必达 React 状态，不再依赖窗口可见。
       if (rafId == null) rafId = requestAnimationFrame(flushNow);
       if (fallbackTimer == null) fallbackTimer = setTimeout(flushNow, 120);
+    };
+
+    /**
+     * A122 第四段绳的把手。`handleStop` 掐断 SSE 之后，服务端在 finish()
+     * 里补发的 block_close 就再也送不到了（stopped 分支还不许重连），
+     * 所以必须在本地把开着的块收口并**立刻**刷进 React —— 等 finally
+     * 那次读流 reject 中间还会隔一帧，用户先看到的就是没停干净的画面。
+     */
+    turn.seal = () => {
+      if (sealOpenBlocks(blocks)) flushNow();
     };
 
     /** 统一更新助手消息的可变字段，避免每个分支重复写一大段 */
@@ -836,6 +853,9 @@ export function useChat(options: UseChatOptions) {
       // 看门狗：不管 run_end 有没有到、流有没有正常读完，这一轮都必须收尾。
       // isStreaming 停在 true 的代价是气泡永久转圈 —— 宁多关一次，不可漏关。
       // blocks 里可能还闷着没提交的尾帧，先冲掉再关。
+      // 第四段绳兜底：任何没收到服务端 closes 的出口（停止 / 报错 / 断流 /
+      // 早退）都在这里收口；正常 run_end 的块已是终态，seal 不会动它们。
+      sealOpenBlocks(blocks);
       flushNow();
       patchAssistant({ isStreaming: false });
       // A142：只摘掉**这一轮**，别的会话继续跑。
@@ -898,6 +918,9 @@ export function useChat(options: UseChatOptions) {
       fetch(`/api/runs/${turn.runId}/stop`, { method: 'POST' }).catch(() => {});
     }
     turn.controller.abort();
+    // 第四段绳：SSE 一断，服务端 finish() 补发的 block_close 就到不了了。
+    // 不在这里收口，thinking 块的 spinner 和「已用 Ns」会一直挂着。
+    turn.seal?.();
     // 立刻摘掉：不等 finally（abort 到 finally 之间还隔着一次读流 reject，
     // 那段时间按钮仍是「停止」，用户会以为没点上）
     setRunningIds(prev => prev.filter(id => id !== turn.sessionId));
