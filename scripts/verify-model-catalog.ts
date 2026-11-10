@@ -65,6 +65,86 @@ function read(rel: string): string {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8');
 }
 
+/* ── 源码契约工具（2026-11-10，`f6f0194` CI 红灯）────────────────────
+ *
+ * `ed2e8da` 把 SDK 缓存状态 + 失效逻辑从 `server/index.ts` 抽到
+ * `server/model-cache.ts`：`index.ts` 里现在只剩注释提到 `invalidateCatalog()`，
+ * 四条变更路径统一调 `invalidateAllModelCaches()`。旧断言钉
+ * `invalidateCatalog()` / `cachedModels = []` 字面量 ⇒ 4 条假红。
+ *
+ * 判据改为两条不变量：
+ *   ① 四条会改凭据/环境的路径都走统一入口，且没人绕过它半失效；
+ *   ② 统一入口真的清干净三层 SDK 缓存并调用**真** `invalidateCatalog()`。
+ * 只认代码不认注释：注释里的 `// invalidateCatalog()` 不能算接线。
+ */
+function stripComments(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    // `[^:]` 守卫 `http://` 这类字符串里的双斜杠，别把 URL 截断。
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
+/**
+ * 取顶层函数体：从声明到「独占一行的 `}`」。
+ *
+ * 注意 `getCatalogSummary(): { fetchedAt: number; ... } {` 的返回类型块
+ * 也以行首 `}` 收尾（`} {`）——只找 `\n}` 会把函数体截在类型块处，
+ * 于是早返回断言永远看不见。这里只认整行只有一个 `}` 的位置。
+ */
+function topLevelFunctionBody(src: string, declaration: RegExp): string {
+  const m = declaration.exec(src);
+  if (!m) return '';
+  const tail = src.slice(m.index);
+  const close = /^\}[ \t]*$/m.exec(tail);
+  return close ? src.slice(m.index, m.index + close.index) : '';
+}
+
+/** 取一条 Express 路由的处理体：从签名到下一个 `app.<verb>(` 定义为止。 */
+function routeBody(src: string, signature: string): string {
+  const start = src.indexOf(signature);
+  if (start < 0) return '';
+  const rest = src.slice(start + signature.length);
+  const m = /\n\s*app\.(?:get|post|put|delete|patch)\(/.exec(rest);
+  return m ? src.slice(start, start + signature.length + m.index) : src.slice(start);
+}
+
+/** 会改变凭据 / 环境变量 / 缓存的四条路径，少一条就是「填完 Key 要等 24 小时」。 */
+const CACHE_INVALIDATION_ROUTES = [
+  'app.post("/api/save-env-config"',
+  'app.post("/api/model-catalog/refresh"',
+  'app.post("/api/agent-credentials"',
+  'app.delete("/api/agent-credentials/:agentId"',
+] as const;
+
+/** 统一失效入口的完整接线判据（纯函数，反向探针直接复用）。 */
+function cacheInvalidationContract(indexSrc: string, cacheSrc: string): boolean {
+  const idx = stripComments(indexSrc);
+  const cache = stripComments(cacheSrc);
+  const entry = topLevelFunctionBody(cache, /export function invalidateAllModelCaches\(/);
+  const clearsAll =
+    /^\s*cachedModels = \[\];/m.test(entry) &&
+    /^\s*sdkDefaultModel = undefined;/m.test(entry) &&
+    /^\s*sdkModelsProbedAt = 0;/m.test(entry) &&
+    /^\s*invalidateCatalog\(\);/m.test(entry);
+  const realCatalogCall = /import\s*\{[^}]*invalidateCatalog[^}]*\}\s*from\s*["']\.\/agents\/modelCatalog\.js["']/.test(cache);
+  const imported = /import\s*\{[^}]*invalidateAllModelCaches[^}]*\}\s*from\s*["']\.\/model-cache\.js["']/.test(idx);
+  const everyRouteWired = CACHE_INVALIDATION_ROUTES.every(sig => {
+    const body = routeBody(idx, sig);
+    return body.length > 0 && /^\s*invalidateAllModelCaches\(/m.test(body);
+  });
+  // 不许谁绕过统一入口直接调 invalidateCatalog()：那正是「半失效」的原形。
+  const noBypass = !/^\s*invalidateCatalog\(/m.test(idx);
+  return clearsAll && realCatalogCall && imported && everyRouteWired && noBypass;
+}
+
+/** 目录未加载时概况必须如实返回零值，且绝不偷偷触发枚举。 */
+function honestEmptySummary(catalogSrc: string): boolean {
+  const body = topLevelFunctionBody(stripComments(catalogSrc), /export function getCatalogSummary\(/);
+  if (!body) return false;
+  return /if\s*\(!state\)\s*return\s*\{\s*fetchedAt:\s*0,\s*counts:\s*\{\}/.test(body) &&
+    !/\b(?:loadCatalog|refreshCatalog|parseCliModelRefs)\s*\(/.test(body);
+}
+
 // ── 1. CLI 输出解析：宁可少列，不可把报错当模型名 ─────────────────
 {
   const stdout = [
@@ -516,9 +596,66 @@ function read(rel: string): string {
     indexSrc.includes('findDef(agentId)?.defaultModel ?? (await getDefaultModelForAgent(agentId))'),
     '接口：默认模型 = 定义表里的（opencode）优先，其次是 CLI 自己声明的（codex 的 config.toml）'
   );
+  const cacheSrc = read('server/model-cache.ts');
+  const idxCode = stripComments(indexSrc);
+  const cacheEntry = topLevelFunctionBody(stripComments(cacheSrc), /export function invalidateAllModelCaches\(/);
   ok(
-    (indexSrc.match(/invalidateCatalog\(\)/g) ?? []).length >= 2,
-    '接线：保存/清除凭据后必须作废目录（否则填完 Key 要等 24 小时才看见新模型）'
+    cacheInvalidationContract(indexSrc, cacheSrc),
+    '接线：保存/清除凭据后必须作废目录（否则填完 Key 要等 24 小时才看见新模型）',
+    '四条变更路径必须都走统一入口，且入口要清干净 catalog + 三层 SDK 缓存'
+  );
+  // 上面一条红了要能一眼看出断在哪一环，所以把同一判据拆细报出来。
+  ok(/export function invalidateAllModelCaches\(/.test(cacheSrc),
+    '接线：统一失效入口必须导出（ed2e8da 后不再内联在 index.ts）');
+  ok(/^\s*invalidateCatalog\(\);/m.test(cacheEntry),
+    '接线：统一入口必须作废 catalog 磁盘+内存缓存');
+  ok(
+    /^\s*cachedModels = \[\];/m.test(cacheEntry) &&
+      /^\s*sdkDefaultModel = undefined;/m.test(cacheEntry) &&
+      /^\s*sdkModelsProbedAt = 0;/m.test(cacheEntry),
+    '接线：统一入口必须同时清三层 SDK 缓存（清单 / 默认模型 / 取数时刻）'
+  );
+  ok(/import\s*\{[^}]*invalidateAllModelCaches[^}]*\}\s*from\s*["']\.\/model-cache\.js["']/.test(idxCode),
+    '接线：index.ts 必须从 model-cache.js 导入统一入口');
+  for (const sig of CACHE_INVALIDATION_ROUTES) {
+    ok(/^\s*invalidateAllModelCaches\(/m.test(routeBody(idxCode, sig)),
+      `接线：${sig} 走统一失效入口（不是各清一半）`);
+  }
+  ok(!/^\s*invalidateCatalog\(/m.test(idxCode),
+    '接线：index.ts 不许绕过统一入口直接调 invalidateCatalog（会半失效）');
+
+  // ★ 反向探针：把实现逐项改坏，判据必须变红，否则这条绿是放水放出来的。
+  const brokenPairs: Array<[string, string, string]> = [
+    ['统一入口不再作废 catalog', indexSrc,
+      cacheSrc.replace('  invalidateCatalog();', '  // 故意省略：半失效')],
+    ['统一入口不清 SDK 清单', indexSrc,
+      cacheSrc.replace('  cachedModels = [];', '  cachedModels = cachedModels;')],
+    ['统一入口不清 SDK 取数时刻', indexSrc,
+      cacheSrc.replace('  sdkModelsProbedAt = 0;', '  sdkModelsProbedAt = sdkModelsProbedAt;')],
+    ['model-cache 没 import 真 invalidateCatalog', indexSrc,
+      cacheSrc.replace('import { invalidateCatalog } from "./agents/modelCatalog.js";', '')],
+    ['index 没 import 统一入口', indexSrc.replace('  invalidateAllModelCaches,\n', ''), cacheSrc],
+    ['env 路径把调用注释掉（注释不能算接线）',
+      indexSrc.replace(
+        "  invalidateAllModelCaches('POST /api/env 环境变量变更');",
+        "  // invalidateAllModelCaches('POST /api/env 环境变量变更');"
+      ), cacheSrc],
+    ['保存凭据绕过统一入口',
+      indexSrc.replace('invalidateAllModelCaches(`saveCredential(${agentId})`);', 'invalidateCatalog();'), cacheSrc],
+    ['刷新路由被改名（少一条路径）',
+      indexSrc.replace('app.post("/api/model-catalog/refresh"', 'app.post("/api/model-catalog/refresh-disabled"'), cacheSrc],
+  ];
+  // 探针自身也要自证：`String.replace` 找不到目标时会静默返回原文，
+  // 那时「坏样本」其实是好样本，绿得毫无意义。
+  ok(
+    brokenPairs.every(([, i, c]) => i !== indexSrc || c !== cacheSrc),
+    '★ 反向探针有效性：8 份坏样本都真的改动过源码（replace 不许空转）'
+  );
+  const leaks = brokenPairs.filter(([, i, c]) => cacheInvalidationContract(i, c)).map(([label]) => label);
+  ok(
+    cacheInvalidationContract(indexSrc, cacheSrc) && leaks.length === 0,
+    '★ 反向探针：8 种半失效 / 注释冒充 / 绕过统一入口的坏实现都必须判红',
+    `漏判：${leaks.join('、') || '无'}`
   );
 
   const routingSrc = read('server/model-routing.ts');
@@ -605,9 +742,32 @@ function read(rel: string): string {
     /export\s+function\s+getCatalogSummary/.test(catalogSrc),
     '刷新：必须导出 getCatalogSummary（设置页要知道各 Agent 枚举到几条）'
   );
+  // P0 给早返回加了 `provenance: null`，旧断言钉整条字面量 ⇒ 假红。
+  // 判据改成读函数体：零值早返回必须在，且函数体里不许有枚举调用。
   ok(
-    catalogSrc.includes('if (!state) return { fetchedAt: 0, counts: {} }'),
-    '刷新：目录未加载时概况必须如实返回空，不能触发枚举'
+    honestEmptySummary(catalogSrc),
+    '刷新：目录未加载时概况必须如实返回空，不能触发枚举',
+    '读 getCatalogSummary 函数体，不钉会随字段增减而失效的整行字面量'
+  );
+  const summaryBody = topLevelFunctionBody(stripComments(catalogSrc), /export function getCatalogSummary\(/);
+  ok(summaryBody.length > 0, '刷新：getCatalogSummary 函数体可定位（判据不是空跑）');
+  ok(!/\b(?:loadCatalog|refreshCatalog)\s*\(/.test(summaryBody),
+    '刷新：概况只读 state，绝不触发 CLI 枚举');
+  const badSummaries: Array<[string, string]> = [
+    ['早返回偷偷枚举', catalogSrc.replace(
+      'if (!state) return { fetchedAt: 0, counts: {}, provenance: null };',
+      'if (!state) { loadCatalog(false); return { fetchedAt: Date.now(), counts: {}, provenance: null }; }'
+    )],
+    ['早返回谎报时间', catalogSrc.replace('if (!state) return { fetchedAt: 0,', 'if (!state) return { fetchedAt: Date.now(),')],
+    ['函数声明被摘掉', catalogSrc.replace('export function getCatalogSummary', 'function getCatalogSummary')],
+  ];
+  ok(badSummaries.every(([, s]) => s !== catalogSrc),
+    '★ 反向探针有效性：3 份坏样本都真的改动过源码（replace 不许空转）');
+  const summaryLeaks = badSummaries.filter(([, s]) => honestEmptySummary(s)).map(([label]) => label);
+  ok(
+    honestEmptySummary(catalogSrc) && summaryLeaks.length === 0,
+    '★ 反向探针：偷偷枚举 / 谎报时间 / 声明被摘掉都必须判红',
+    `漏判：${summaryLeaks.join('、') || '无'}`
   );
 
   const indexSrc = read('server/index.ts');
@@ -629,8 +789,22 @@ function read(rel: string): string {
     indexSrc.indexOf('app.post("/api/model-catalog/refresh"'),
     indexSrc.indexOf('app.post("/api/model-catalog/refresh"') + 1800
   );
-  ok(refreshBody.includes('invalidateCatalog()'), '刷新：必须作废 catalog 磁盘+内存缓存');
-  ok(refreshBody.includes('cachedModels = []'), '刷新：必须同时作废 SDK 清单缓存（否则 WorkBuddy 不刷新）');
+  // `ed2e8da` 之后两套缓存的清理归统一入口：刷新路由必须调到它，且
+  // `model-cache.ts` 里那个入口必须真清干净（不是只把函数名换掉）。
+  ok(
+    /^\s*invalidateAllModelCaches\(/m.test(refreshBody),
+    '刷新：必须作废 catalog 磁盘+内存缓存（走统一失效入口）'
+  );
+  const refreshCacheEntry = topLevelFunctionBody(
+    stripComments(read('server/model-cache.ts')), /export function invalidateAllModelCaches\(/
+  );
+  ok(
+    /^\s*cachedModels = \[\];/m.test(refreshCacheEntry) &&
+      /^\s*sdkDefaultModel = undefined;/m.test(refreshCacheEntry) &&
+      /^\s*sdkModelsProbedAt = 0;/m.test(refreshCacheEntry) &&
+      /^\s*invalidateCatalog\(\);/m.test(refreshCacheEntry),
+    '刷新：必须同时作废 SDK 清单缓存（否则 WorkBuddy 不刷新）'
+  );
   ok(refreshBody.includes('loadSdkModels(true)'), '刷新：SDK 清单必须以 force 重取');
   ok(refreshBody.includes('loadCatalog(true)'), '刷新：目录必须以 force 重枚举');
   ok(refreshBody.includes('tookMs'), '刷新：必须回报耗时（前端据此判断这是慢操作）');
