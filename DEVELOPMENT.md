@@ -172,7 +172,9 @@ npm run clean:all            # 额外清 dist / dist-electron
 ```
 
 - `scripts/build-installer.mjs` 打包成功后会**自动删除** `win-unpacked`；
-  需要复用中间产物时加 `--keep-unpacked`，分步打包用 `--prepackaged <dir>`（此时中间目录是输入，不删）。
+  需要复用中间产物时加 `--keep-unpacked`；`--dir`（只产 unpacked）与
+  `--prepackaged <dir>`（中间目录是输入）两种模式不删 —— 前者尤其重要：
+  CI 发版紧接着要读 `win-unpacked/resources/app.asar` 签更新清单。
 - 7z 压缩级别固定为 `ELECTRON_BUILDER_COMPRESSION_LEVEL=5`：electron-builder 对 7z 硬编码
   `-mx=9`（`app-builder-lib/out/targets/archive.js`），顶层 `compression` 配置对它无效；
   两者实测耗时相差 3～4 倍，产物体积几乎一样。

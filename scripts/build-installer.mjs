@@ -258,6 +258,8 @@ const hidden = hideDefaultAppAsar();
  * 例外：
  *   --keep-unpacked  → 调用方要复用它（例如分步打包、只跑 NSIS）
  *   --prepackaged    → win-unpacked 是**输入**而不是产物，删了会把用户的源目录干掉
+ *   --dir            → 只产出 unpacked 目录、不产安装包，它本身就是交付物；
+ *                      CI 发版链路紧接着要读里面的 resources/app.asar 签更新清单
  */
 function cleanupUnpacked(code) {
   if (code !== 0) return;
@@ -267,6 +269,10 @@ function cleanupUnpacked(code) {
   }
   if (extraArgs.includes('--prepackaged')) {
     console.log('[build-installer] --prepackaged：win-unpacked 是输入目录，不删除');
+    return;
+  }
+  if (extraArgs.includes('--dir')) {
+    console.log('[build-installer] --dir：unpacked 目录就是本次产物，不删除');
     return;
   }
 
