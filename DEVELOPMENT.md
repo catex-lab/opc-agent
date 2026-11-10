@@ -159,6 +159,28 @@ Windows 上两个必须注意的点：
 
 打包前先关掉正在运行的 `OPC Agent.exe`（单实例锁会挡住文件替换）。
 
+### 构建产物与磁盘清理（每次打包后必做）
+
+一次完整打包产出约 **3.5 GB**：`release-builds/<build>/win-unpacked` 约 2.26 GB（中间产物）
++ `OPC Agent-<版本>-x64-setup.exe` / `-portable.exe` 各约 650 MB（交付物）。
+`win-unpacked` 在安装包生成后就没用了，留着必然把磁盘撑爆。
+
+```bash
+npm run clean -- --dry-run   # 先看清单
+npm run clean                # 清 win-unpacked / *.nsis.7z / .tmp/release-*
+npm run clean:all            # 额外清 dist / dist-electron
+```
+
+- `scripts/build-installer.mjs` 打包成功后会**自动删除** `win-unpacked`；
+  需要复用中间产物时加 `--keep-unpacked`，分步打包用 `--prepackaged <dir>`（此时中间目录是输入，不删）。
+- 7z 压缩级别固定为 `ELECTRON_BUILDER_COMPRESSION_LEVEL=5`：electron-builder 对 7z 硬编码
+  `-mx=9`（`app-builder-lib/out/targets/archive.js`），顶层 `compression` 配置对它无效；
+  两者实测耗时相差 3～4 倍，产物体积几乎一样。
+- 清理必须走 `scripts/clean-builds.mjs`（内部用 `scripts/lib/hard-delete.mjs`）。
+  在本机**工作区内**直接删文件（`Remove-Item` / `fs.rmSync` / .NET Delete）都会被转存回收站，
+  磁盘空间不释放；该工具先同盘 `rename` 到工作区外的 `<盘符>:\_opc-trash` 再永久删除。
+- 若空间滞留在回收站（`$Recycle.Bin`），需要用户手动清空回收站。
+
 ### 更新产物（本地复现 CI）
 
 应用内更新走「只替换 `resources/app.asar`」，资产由同一套脚本生成，本地与

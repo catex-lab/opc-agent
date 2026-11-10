@@ -24,6 +24,8 @@
     "dev:client": "vite",
     "build": "tsc -b && vite build",
     "build:electron": "node scripts/build-electron.mjs",
+    "clean": "node scripts/clean-builds.mjs",
+    "clean:all": "node scripts/clean-builds.mjs --all",
     "screenshots": "node scripts/make-screenshots.mjs",
     "postinstall": "patch-package",
     "electron:dev": "npm run build:electron && concurrently -k \"vite\" \"electron . --dev\"",

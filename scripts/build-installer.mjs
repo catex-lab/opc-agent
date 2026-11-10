@@ -35,8 +35,15 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { hardDeleteAndReport } from './lib/hard-delete.mjs';
 
-const extraArgs = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+
+/** 调试用开关：保留 win-unpacked。默认打包成功后会删掉它，见 cleanupUnpacked()。 */
+const KEEP_UNPACKED = rawArgs.includes('--keep-unpacked');
+
+/** --keep-unpacked 是本脚本自己的开关，不能透传给 electron-builder（它不认识会直接报错）。 */
+const extraArgs = rawArgs.filter(a => a !== '--keep-unpacked');
 
 /**
  * 把 .npmrc 里的镜像配置映射成 electron-builder 认的环境变量。
@@ -104,6 +111,17 @@ for (const [key, value] of Object.entries(mirrorsFromNpmrc())) {
 
 // 没有代码签名证书，跳过自动发现，免得白等
 env.CSC_IDENTITY_AUTO_DISCOVERY ??= 'false';
+
+/**
+ * 固定 7z 压缩级别。
+ *
+ * electron-builder 对 7z（NSIS 安装包用它）**硬编码 -mx=9**（app-builder-lib/out/targets/archive.js），
+ * 顶层 `compression` 配置只影响 zip。而包里最大的是 codex.exe / claude.exe / Electron 主程序，
+ * 全是已压缩二进制，-mx=9 让安装包阶段从几分钟变成几十分钟，体积却只小几 MB
+ * （实测同一份 win-unpacked：-mx=9 跑 40+ 分钟仍未完成，-mx=5 约 12 分钟、产物 649MB）。
+ * 只有显式传了 ELECTRON_BUILDER_COMPRESSION_LEVEL 时才用调用方的值。
+ */
+env.ELECTRON_BUILDER_COMPRESSION_LEVEL ??= '5';
 
 /**
  * 输出目录防锁回退（A63 打包时发现的本机坑）。
@@ -230,6 +248,37 @@ function restoreDefaultAppAsar(hidden) {
 
 const hidden = hideDefaultAppAsar();
 
+/**
+ * 打包成功后删掉 win-unpacked 中间产物。
+ *
+ * 一次完整打包产出约 3.5GB（win-unpacked 2.26GB + 两个安装包各 650MB），
+ * 本机 E 盘只剩个位数 GB，留着中间产物必然把盘撑爆。安装包已生成，
+ * win-unpacked 随时可用同一条命令重建，所以默认清理。
+ *
+ * 例外：
+ *   --keep-unpacked  → 调用方要复用它（例如分步打包、只跑 NSIS）
+ *   --prepackaged    → win-unpacked 是**输入**而不是产物，删了会把用户的源目录干掉
+ */
+function cleanupUnpacked(code) {
+  if (code !== 0) return;
+  if (KEEP_UNPACKED) {
+    console.log('[build-installer] --keep-unpacked：保留 win-unpacked');
+    return;
+  }
+  if (extraArgs.includes('--prepackaged')) {
+    console.log('[build-installer] --prepackaged：win-unpacked 是输入目录，不删除');
+    return;
+  }
+
+  const outArg = extraArgs.find(a => /^(?:--?c|--config)\.directories\.output=/.test(a));
+  const outDir = outArg ? outArg.slice(outArg.indexOf('=') + 1) : DEFAULT_OUT;
+  const dir = path.join(outDir, 'win-unpacked');
+  if (!fs.existsSync(dir)) return;
+
+  console.log('[build-installer] 清理中间产物 win-unpacked（安装包已生成）');
+  hardDeleteAndReport(dir, path.relative(process.cwd(), dir) || dir);
+}
+
 // configArg 必须排在 extraArgs **之后**：两者都可能给 `directories.output`，
 // 后出现的覆盖先出现的，这样「调用方显式指定 > 脚本自动回退」的优先级才成立。
 const child = spawn(process.execPath, [cli, '--win', '--x64', ...extraArgs, ...configArg], {
@@ -241,6 +290,7 @@ let finished = false;
 function finish(code) {
   if (finished) return;
   finished = true;
+  cleanupUnpacked(code);
   restoreDefaultAppAsar(hidden);
   process.exit(code);
 }
