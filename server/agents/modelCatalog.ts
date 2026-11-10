@@ -35,6 +35,7 @@ import fs from 'fs';
 import path from 'path';
 import { dataDirPath } from '../paths.js';
 import { modelTagKind } from '../../shared/model-tag.js';
+import { makeProvenance, type Provenance } from '../../shared/provenance.js';
 import { expandPath, findExecutable, resolveAnyLaunchTarget, runCapture } from './probe.js';
 import { OPENCODE_CATALOG_SNAPSHOT } from './opencodeCatalogSnapshot.js';
 
@@ -1247,13 +1248,29 @@ export function isCatalogModel(agentId: string, modelId: string): boolean {
 export function getCatalogSummary(): {
   fetchedAt: number;
   counts: Record<string, number>;
+  provenance: Provenance | null;
 } {
-  if (!state) return { fetchedAt: 0, counts: {} };
+  if (!state) return { fetchedAt: 0, counts: {}, provenance: null };
   const counts: Record<string, number> = {};
   for (const [agentId, refs] of Object.entries(state.agents)) {
     counts[agentId] = refs.length;
   }
-  return { fetchedAt: state.fetchedAt, counts };
+  /* P0：清单可能是一份 20 小时前（甚至更旧）的磁盘缓存。把它什么时候
+     枚举的、有没有向服务方验过账号权益一并说清，否则输入框里那份模型
+     名单会被当成「此刻实时可用」——正是用户报的第三个问题。 */
+  return {
+    fetchedAt: state.fetchedAt,
+    counts,
+    provenance: makeProvenance(
+      '各 Agent CLI 自报模型（opencode/qoder/codex/cursor）+ models.dev 元数据',
+      {
+        probedAt: state.fetchedAt,
+        verified: false,
+        ttlMs: TTL_MS,
+        note: '只列 CLI 枚举到的模型；未校验账号权益、积分或体验套餐',
+      }
+    ),
+  };
 }
 
 /** 仅测试用：直接注入目录状态 */

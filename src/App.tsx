@@ -21,6 +21,7 @@ import { useChat } from './hooks/useChat';
 import { useAgentRegistry } from './hooks/useAgentRegistry';
 import { useExtensions, useExtensionDetail } from './hooks/useExtensions';
 import { isAutoSessionTitle } from '../shared/session-title';
+import { asProvenance } from '../shared/provenance';
 import { getScenario } from './scenarios';
 import { exportSessionToMarkdown } from './utils/exportSession';
 import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project, type AgentModelSource, type ExtensionKind } from './types';
@@ -288,7 +289,7 @@ function AppContent() {
   const compact = useMediaQuery('(max-width: 899px)');
   // 旧的「自定义 Agent」功能保留在设置页里（本地提示词等）
   const { agents: customAgents, addAgent, updateAgent, deleteAgent } = useAgents();
-  const { models, selectedModel, setSelectedModel, fetchModels } = useModels();
+  const { models, modelProvenance, selectedModel, setSelectedModel, fetchModels } = useModels();
   const registry = useAgentRegistry();
   const probeAgentOne = registry.probeOne;
   /**
@@ -512,6 +513,8 @@ function AppContent() {
               kind === 'agent-config' && typeof data.defaultModel === 'string'
                 ? data.defaultModel
                 : undefined,
+            // P0：这份清单的来源 / 枚举时刻 / 是否校验过（老服务端没有就留空）
+            provenance: asProvenance(data.provenance) ?? undefined,
             // 这份结论属于哪个 Agent —— 切 Agent 时旧结论不能沿用
             forAgent: currentAgentId,
           });
@@ -563,16 +566,16 @@ function AppContent() {
       const noOwnCatalog = agentModelSource.kind === 'unknown' && agentModels.length === 0;
       if (!noOwnCatalog) return agentModelSource;
       if (usesPlatformModels && models.length > 0) {
-        return { kind: 'catalog', selectable: true };
+        return { kind: 'catalog', selectable: true, provenance: modelProvenance ?? undefined };
       }
       return agentModelSource;
     }
     if (agentModels.length > 0) return agentModelSource;
     if (usesPlatformModels && models.length > 0) {
-      return { kind: 'catalog', selectable: true };
+      return { kind: 'catalog', selectable: true, provenance: modelProvenance ?? undefined };
     }
     return { kind: 'unknown', selectable: true };
-  }, [agentModels, agentModelSource, currentAgentId, usesPlatformModels, models]);
+  }, [agentModels, agentModelSource, currentAgentId, usesPlatformModels, models, modelProvenance]);
 
   /**
    * **能真正传下去**的模型（A151）。

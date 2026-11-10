@@ -16,6 +16,7 @@ import type { RiskLevel } from './permission-gate.js';
 import type { EventSource } from '../../shared/blocks.js';
 import type { EventCapability, CapabilityProfile } from '../../shared/capabilities.js';
 import type { PermissionDecision, PermissionOption } from '../../shared/permissions.js';
+import type { Provenance } from '../../shared/provenance.js';
 
 /** 统一事件流。与模板 SSE 契约一一对应。 */
 export type AgentEvent =
@@ -479,6 +480,14 @@ export interface AgentStatus {
   lastError?: string;
   /** 探测时间（ISO） */
   probedAt: string;
+  /**
+   * P0：这份状态说明的溯源（来源 / 探测时刻 / 是否向服务方校验过）。
+   *
+   * 只对**声称读到登录态**的状态给（SDK 适配器）。CLI 的 `--version`
+   * 探测不涉及账号与权益，硬塞一份溯源反而让每个 Agent 都多一行噪音。
+   * `verified` 恒为 false：SDK 的 authenticate 只读 CLI 本地缓存。
+   */
+  provenance?: Provenance;
   /**
    * 探测本身的结果分类（A177）。
    *

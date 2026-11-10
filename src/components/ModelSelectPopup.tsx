@@ -42,6 +42,7 @@ import { Check, Info, Plus } from 'lucide-react';
 import { Tooltip } from 'tdesign-react';
 import type { Model } from '../types';
 import { modelTagKind } from '../../shared/model-tag';
+import { asProvenance, describeProvenance, type Provenance } from '../../shared/provenance';
 
 export interface ModelSelectPopupProps {
   models: Model[];
@@ -64,6 +65,15 @@ export interface ModelSelectPopupProps {
   note?: string;
   /** 只读时高亮「当前用的是哪一条」 */
   currentId?: string;
+  /**
+   * P0：这份清单的来源 / 取数时刻 / 是否真的向服务方校验过。
+   *
+   * 写在底部通栏上方，不是为了好看：用户报的第三个问题是「输入框里展示的
+   * 不一定是真实实时的模型，导致用不了各平台的积分或体验套餐」。一份
+   * 20 小时前枚举出来、从没验过账号权益的名单，必须自报家门，而不是
+   * 顶着「内置模型」的标题装作实时。
+   */
+  provenance?: Provenance;
   /**
    * 「未验证」模型被点击时先标定一次（A151 / P2）。
    *
@@ -138,6 +148,7 @@ export function ModelSelectPopup({
   readonly = false,
   note,
   currentId,
+  provenance,
   onSelectUnverified,
   manual = false,
 }: ModelSelectPopupProps) {
@@ -533,6 +544,17 @@ export function ModelSelectPopup({
             带「未验证」的模型选中前会先跑一次 CLI 确认（花少量 token）。
           </p>
         )}
+        {/* P0：清单自报来源与时间。老服务端没给就明说「未知」，
+            绝不因为拿不到数据就省掉这一行 —— 省掉反而最像「实时」。 */}
+        <p
+          className="mb-1 px-2 text-caption leading-4 break-words"
+          style={{ color: 'var(--td-text-color-placeholder)' }}
+          title={asProvenance(provenance)?.note}
+          data-model-popup-provenance
+          data-provenance-verified={asProvenance(provenance)?.verified ? '1' : '0'}
+        >
+          {describeProvenance(provenance)}
+        </p>
         {readonly || manual ? (
           /* 只读时「添加模型」必须消失：那个按钮指向设置页的刷新枚举，
              而这份清单根本不来自枚举 —— 摆着就是一个点了没用的控件。

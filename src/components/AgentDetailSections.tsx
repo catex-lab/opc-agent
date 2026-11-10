@@ -4,6 +4,7 @@ import { Loader2, RefreshCw } from 'lucide-react';
 import { InstallCard } from './InstallCard';
 import { AgentCredentialEditor } from './AgentCredentialEditor';
 import { describeProbeFeedback, type AgentProbeFeedback } from '../agentProbe';
+import { describeProvenance, asProvenance } from '../../shared/provenance';
 import {
   AVAILABILITY_META,
   CAPABILITY_META,
@@ -460,6 +461,21 @@ export function AgentDetailSections({
             className={`tc-detail-rows overflow-hidden ${CARD}`}
             style={{ backgroundColor: 'var(--td-bg-color-container)' }}
           >
+            {/* P0：账号数据自报来源与时间。老服务端没给就明说「未知」，
+                绝不因为拿不到数据就省掉 —— 省掉反而最像「实时」。 */}
+            <div
+              className={`${ROW_X} ${ROW_Y}`}
+              data-account-provenance
+              data-provenance-verified={asProvenance(account.provenance)?.verified ? '1' : '0'}
+            >
+              <p
+                className="text-secondary leading-relaxed break-words"
+                style={{ color: 'var(--td-text-color-placeholder)' }}
+                title={asProvenance(account.provenance)?.note}
+              >
+                {describeProvenance(account.provenance)}
+              </p>
+            </div>
             {account.identity && (
               <DetailRow
                 label="当前登录"

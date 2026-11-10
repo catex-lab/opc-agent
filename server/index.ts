@@ -161,6 +161,7 @@ import {
 import { ensureCatalogLoaded, getCatalogSummary, getDefaultModelForAgent, invalidateCatalog, isCatalogModel, loadCatalog } from "./agents/modelCatalog.js";
 import { readAgentConfigModels } from "./agents/agentConfigModels.js";
 import { probeAccount } from "./agents/accountProbe.js";
+import { makeProvenance, type Provenance } from "../shared/provenance.js";
 import { getVerdicts, mergeOfficialExtras, probeModels, readOfficialModels } from "./agents/modelAvailability.js";
 // A115：用户资料（昵称 + 头像）。昵称由 registry.stream 注入 systemPrompt，
 // 这里只负责 HTTP 读写。
@@ -245,6 +246,14 @@ app.use(express.json());
 let cachedModels: ModelOption[] = [];
 /** SDK 自己声明的默认模型（`isDefault`），拿到之后优先于平台常量 */
 let sdkDefaultModel: string | undefined;
+/**
+ * P0：SDK 清单**真正被取过**的时刻。
+ *
+ * 不是「上次有人来 GET /api/models 的时间」：命中缓存时清单还是旧的，
+ * 把 probedAt 刷成现在，等于每分钟都对用户说「这是刚拉的实时清单」。
+ * 只在 `loadSdkModels()` 真的建了 SDK 会话时才更新。
+ */
+let sdkModelsProbedAt = 0;
 // SDK 未加载时的默认值：用 SDK 自己的默认别名，不用已下线的具体型号。
 // 模型路由规则见 model-routing.ts
 const defaultModel = SDK_DEFAULT_MODEL;
@@ -428,6 +437,8 @@ async function loadSdkModels(force = false): Promise<{
     return { models: cachedModels, defaultModel: sdkDefaultModel ?? defaultModel };
   }
 
+  // 真的要问 SDK 了才记时间；命中上面那条缓存分支时保留原始取数时刻
+  sdkModelsProbedAt = Date.now();
   console.log("[Models] Creating session to fetch available models...");
   const session = await unstable_v2_createSession({
     // A155：取模型清单也必须连到 WorkBuddy 国内版，否则拿回的是
@@ -493,6 +504,26 @@ async function loadSdkModels(force = false): Promise<{
   return { models: cachedModels, defaultModel: sdkDefaultModel ?? defaultModel };
 }
 
+/**
+ * P0：WorkBuddy（SDK）模型清单的溯源。
+ *
+ * `verified` 恒为 false：SDK 会话是在本机创建的，清单来自它自己的元数据，
+ * 我们**没有**拿当前账号去校验哪些模型真的还有积分 / 在体验套餐内。
+ * 界面把这句话写出来，用户才不会拿输入框里的名字当成实时的权益事实。
+ * 还没取过就返回 null —— 前端会显示「数据来源与时间未知」，不编一个时间。
+ */
+function sdkModelsProvenance(): Provenance | null {
+  if (!sdkModelsProbedAt) return null;
+  return makeProvenance("WorkBuddy SDK getAvailableModelsRaw() + 官方产品配置补齐", {
+    probedAt: sdkModelsProbedAt,
+    verified: false,
+    note:
+      cachedModels.length > 0
+        ? "清单来自 SDK 会话，未校验当前账号的积分 / 体验套餐是否可用"
+        : "这次没取到清单，界面显示的是内置兜底项，不代表当前账号可用",
+  });
+}
+
 // 获取可用模型列表
 //
 // 用 `getAvailableModelsRaw()` 而不是 `getAvailableModels()`：后者只给
@@ -506,13 +537,15 @@ app.get("/api/models", async (req, res) => {
       // 兜底只给 SDK 自己的默认别名，不硬编码具体型号 ——
       // 否则 SDK 加载失败时界面会冒出已下线的假选项。
       models: models.length > 0 ? models : [...SDK_MODEL_FALLBACK],
-      defaultModel: sdkDefaultModel ?? defaultModel
+      defaultModel: sdkDefaultModel ?? defaultModel,
+      provenance: sdkModelsProvenance()
     });
   } catch (error: any) {
     console.error("[Models] Error:", error);
     res.json({
       models: [...SDK_MODEL_FALLBACK],
       defaultModel: sdkDefaultModel ?? defaultModel,
+      provenance: sdkModelsProvenance(),
       error: error?.message || String(error)
     });
   }
@@ -916,6 +949,17 @@ app.get("/api/agents/:agentId", async (req, res) => {
   }
 });
 
+/**
+ * P0：Agent 级模型清单的溯源。
+ *
+ * 配置文件 / 「没有清单」这两类来源没有自己的快照时间，`probedAt` 用本次
+ * 读取时刻；`verified` 恒为 false —— 我们只是读了文件或查了本地目录，
+ * 从没拿当前账号去问过服务方「这些模型现在还能不能用」。
+ */
+function agentModelsProvenance(source: string, note: string): Provenance {
+  return makeProvenance(source, { probedAt: Date.now(), verified: false, note });
+}
+
 // 某个 Agent 上报的可用模型（动态目录：CLI 枚举 + models.dev 元数据）
 app.get("/api/agents/:agentId/models", async (req, res) => {
   try {
@@ -946,6 +990,10 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
           source: "agent-config",
           selectable: false,
           note: fromConfig.note,
+          provenance: agentModelsProvenance(
+            `${agentId} 自己的本地配置（只读）`,
+            "这份清单从配置文件读出，本应用不能切换；未向服务方校验套餐/额度"
+          ),
         });
       }
 
@@ -982,6 +1030,10 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
         selectable: true,
         manual: true,
         note: "这个 Agent 没有列出模型的命令，但它接受 --model：手动填一个模型名即可，填完会先跑一次确认。",
+        provenance: agentModelsProvenance(
+          "本机没有可枚举的模型清单（手动指定）",
+          "名字原样传给 CLI，能否路由取决于当前账号的权益；未向服务方校验"
+        ),
       });
     }
 
@@ -991,6 +1043,14 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
       source: list.length > 0 ? "catalog" : "unknown",
       selectable: list.length > 0,
       unverified,
+      provenance:
+        list.length > 0
+          ? (getCatalogSummary().provenance ??
+              agentModelsProvenance("模型目录尚未加载", "先去「设置 → 模型清单」刷新一次"))
+          : agentModelsProvenance(
+              "本机没有可用的模型清单",
+              "这个 Agent 没有枚举命令，也没有配置文件清单；模型由它自己决定"
+            ),
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "获取模型列表失败" });
@@ -1013,6 +1073,26 @@ app.get("/api/agents/:agentId/account", async (req, res) => {
     res.json({ account: probeAccount(req.params.agentId) });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "读取账号信息失败" });
+  }
+});
+
+/**
+ * P0：显式刷新账号与权益（详情页「重新探测」按钮顺带触发）。
+ *
+ * `probeAccount()` 本来就是每次真读盘，没有内存缓存可失效 —— 这个入口的
+ * 价值是**把「用户主动要求重读」变成一个可观察、可断言的动作**：GET 可能
+ * 被浏览器缓存，也可能只是切会话时顺带拉一次；只有 POST 这条明确表示
+ * 「现在，按当前磁盘上的文件重新给一份」，响应里的 `probedAt` 也因此是
+ * 这次刷新自己的时间。前端不得把它接到自动轮询上。
+ */
+app.post("/api/agents/:agentId/account/refresh", async (req, res) => {
+  try {
+    res.json({
+      account: probeAccount(req.params.agentId),
+      probedAt: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "刷新账号信息失败" });
   }
 });
 

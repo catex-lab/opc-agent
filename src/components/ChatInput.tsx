@@ -1064,6 +1064,7 @@ export function ChatInput({
                     readonly={!canPickModel && !manualModel}
                     manual={manualModel}
                     note={modelSource?.note}
+                    provenance={modelSource?.provenance}
                     currentId={modelSource?.currentModel}
                     onSelectUnverified={onSelectUnverified}
                     onChange={v => {

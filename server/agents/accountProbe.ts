@@ -30,6 +30,7 @@ import fs from 'fs';
 import path from 'path';
 import { agentAcceptsModel } from './definitions.js';
 import { PLAN_REASON_LABEL, PLAN_SNAPSHOT_STALE_MS, PLAN_STATUS_LABEL } from './agentConfigModels.js';
+import { PROVENANCE_TTL_MS, makeProvenance, type Provenance } from '../../shared/provenance.js';
 
 /** 身份：能读到的账号信息。读不到的字段一律不填 */
 export interface AccountIdentity {
@@ -97,6 +98,32 @@ export interface AgentAccountProbe {
   modelNote: string;
   /** 不能在这里切时，「去哪儿切」的原话 */
   switchHint?: string;
+  /**
+   * P0：这份数据的来源 / 观测时刻 / 有没有真的向服务方校验过。
+   * `verified` 恒为 false —— 本模块只读本地文件，从不发业务请求。
+   */
+  provenance?: Provenance;
+}
+
+/**
+ * 本地文件类数据的溯源。
+ *
+ * `probedAt` 取**源文件自己的快照时间**（有就取，没有才取本次读取时刻）：
+ * 用户困惑的正是「我刚打开页面，为什么还是那个旧账号」。写成 `Date.now()`
+ * 会把「刚又读了一遍 45 天前的旧文件」显示成「刚刚」，正好把问题盖住。
+ *
+ * `ttlMs` 按来源给：套餐缓存 24h 就不能当事实；Codex 的 `last_refresh`
+ * 是 OAuth token 的刷新时间，几十天不刷新很正常（有 refresh_token），
+ * 用 30 天，免得把正常的登录态也标成「已过期」。
+ */
+function localProvenance(source: string, snapshotIso?: string, ttlMs = PROVENANCE_TTL_MS): Provenance {
+  const snapshotMs = snapshotIso ? Date.parse(snapshotIso) : NaN;
+  return makeProvenance(source, {
+    probedAt: Number.isFinite(snapshotMs) ? snapshotMs : Date.now(),
+    verified: false,
+    ttlMs,
+    note: '只读本机配置文件，未向服务方校验；账号与套餐状态以服务方为准',
+  });
 }
 
 /* 套餐快照的有效期。**不再各写一份字面量**：`readZcodeModels` 读的是同一份
@@ -319,6 +346,7 @@ function probeZcode(home: string): AgentAccountProbe | null {
         '它们属于 account:* provider，不在上面这张 builtin 表里，授权与额度只能在 ZCode 里看。'
       : '';
 
+  const source = '~/.zcode/v2/{setting,config,coding-plan-cache}.json（ZCode 自己的本地配置）';
   return {
     identity: {
       source: '~/.zcode/v2/credentials.json',
@@ -328,9 +356,10 @@ function probeZcode(home: string): AgentAccountProbe | null {
     },
     currentSelection,
     plans,
-    source: '~/.zcode/v2/{setting,config,coding-plan-cache}.json（ZCode 自己的本地配置）',
+    source,
     checkedAt,
     stale,
+    provenance: localProvenance(source, checkedAt, STALE_MS),
     note: stale
       ? '上面这张表读的是 ZCode 的 builtin 套餐槽位缓存，已经过期 —— 它只说明「上次检查时 builtin 槽位的样子」，' +
         '既不代表你现在的订阅状态，也看不到 account 账号型套餐（刚领的 Weekend Build 就在那边）。'
@@ -370,6 +399,7 @@ function probeCodex(home: string): AgentAccountProbe | null {
     return {
       plans: [],
       source: '~/.codex/auth.json',
+      provenance: localProvenance('~/.codex/auth.json', undefined, 30 * STALE_MS),
       note: '~/.codex/auth.json 里的 id_token 解不开（可能已过期或用了 API Key 模式），读不到账号信息。',
       modelSelectable: agentAcceptsModel('codex'),
       modelNote: '本应用可以把选中的模型传给 codex（--model）。',
@@ -433,6 +463,7 @@ function probeCodex(home: string): AgentAccountProbe | null {
     source: '~/.codex/auth.json',
     checkedAt,
     stale: checkedAt ? Date.now() - (lastRefreshMs as number) > 30 * STALE_MS : undefined,
+    provenance: localProvenance('~/.codex/auth.json', checkedAt, 30 * STALE_MS),
     note: '账号信息读自 codex 自己的登录凭据；套餐额度以 OpenAI 后台为准，本应用只展示。',
     modelSelectable: agentAcceptsModel('codex'),
     modelNote: '本应用可以把选中的模型传给 codex（--model），模型在输入框的模型菜单里选。',

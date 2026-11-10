@@ -20,6 +20,7 @@ import { withMemoryContext } from '../../memory.js';
 import { withAnswerLanguage } from '../../answer-language.js';
 import { withExtensionsContext } from '../../extensions/inject.js';
 import { SDK_PERMISSION_OPTIONS } from '../../../shared/permissions.js';
+import { makeProvenance, type Provenance } from '../../../shared/provenance.js';
 import { createCanUseToolBridge } from './sdkApproval.js';
 import {
   createStreamTextState,
@@ -257,6 +258,29 @@ export class SdkAdapter implements AgentProvider {
 
   // ============= 探测 =============
 
+  /**
+   * P0：SDK 探测结论的溯源。
+   *
+   * 用户报的现象是「一直显示同一个账号，而且是过时的凭据或登录态」。
+   * 根因是 `unstable_v2_authenticate` 只读 CLI 本地缓存的 account，
+   * 不发任何业务请求 —— 桌面端天天活跃，keyblob 却可能几个月没刷新。
+   * 所以这里 `verified` 恒为 false，并把「这次探测是什么时候发生的」显式
+   * 带出去；界面上「探测于 N 天前 · 未校验」才是这句状态说明的可信范围。
+   */
+  private authProvenance(nowIso: string, envOk: boolean): Provenance {
+    const at = Date.parse(nowIso);
+    return makeProvenance(
+      envOk
+        ? '进程环境变量 CODEBUDDY_API_KEY / CODEBUDDY_AUTH_TOKEN'
+        : 'WorkBuddy SDK unstable_v2_authenticate（CLI 本地缓存）+ ~/.workbuddy/keyblob',
+      {
+        probedAt: Number.isFinite(at) ? at : Date.now(),
+        verified: false,
+        note: '只读本地登录态缓存，未发起业务请求校验；账号是否有效以服务方为准',
+      }
+    );
+  }
+
   async probe(): Promise<AgentStatus> {
     const now = new Date().toISOString();
 
@@ -440,6 +464,16 @@ export class SdkAdapter implements AgentProvider {
       }
     }
 
+    /* 统一补溯源。`not-installed`（连 CLI 都没有）与 `timeout`（这次根本没
+       观测到任何账号信息）不是在陈述登录态，不挂这一行，免得名册里每个
+       Agent 都多一句与它无关的话。cliMissing 那条提前 return，也走不到这里。 */
+    if (
+      this.status &&
+      this.status.availability !== 'not-installed' &&
+      this.status.probeState !== 'timeout'
+    ) {
+      this.status = { ...this.status, provenance: this.authProvenance(now, envOk) };
+    }
     return this.status;
   }
 

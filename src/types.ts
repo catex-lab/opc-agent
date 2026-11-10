@@ -7,6 +7,7 @@ import type { PermissionMode, PermissionSupport } from '../shared/types';
 import type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlock, RawBlock, RawEntry } from '../shared/blocks';
 import type { EventCapability, CapabilityProfile } from '../shared/capabilities';
 import type { PermissionOption, PermissionReasonCode } from '../shared/permissions';
+import type { Provenance } from '../shared/provenance';
 export type { PermissionMode, PermissionSupport };
 export type { PermissionOption, PermissionReasonCode };
 export type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlock, RawBlock, RawEntry };
@@ -118,6 +119,8 @@ export interface AgentModelSource {
   note?: string;
   /** 只读时用来高亮「当前用的是哪一条」 */
   currentModel?: string;
+  /** P0：这份模型清单的来源 / 更新时间 / 是否真的从服务方取到 */
+  provenance?: Provenance;
 }
 
 export interface ToolCall {
@@ -499,6 +502,8 @@ export interface AgentStatus {
   /** 最近一次调用失败的原因 */
   lastError?: string;
   probedAt: string;
+  /** P0：SDK 类「本地登录态」结论的溯源；老服务端没有时界面明说未知 */
+  provenance?: Provenance;
   /**
    * 探测动作本身的结果分类（A177）。
    *
@@ -699,6 +704,12 @@ export interface AgentAccount {
   modelNote: string;
   /** 不能在这里切时「去哪儿切」的原话 */
   switchHint?: string;
+  /**
+   * P0：这份数据的来源 / 读取时刻 / 有没有真的向服务方校验过。
+   * 账号卡顶部的溯源行读它；缺省（老服务端）时显示「数据来源与时间未知」，
+   * 绝不把本地文件快照说成「已校验」。
+   */
+  provenance?: Provenance;
 }
 
 /** 产品形态（≠ 接入方式 kind）。`ide` 是保留值：本项目不接 IDE。 */

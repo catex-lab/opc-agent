@@ -60,6 +60,16 @@ console.log('\n[1] 定义表：凭据声明与识别口径一致');
   ok(withCred.length >= 3, '至少声明了 3 个可在应用内配置的 Agent', withCred.map(d => d.descriptor.id).join(','));
   for (const d of withCred) {
     const keyEnv = d.credential!.keyEnv[0];
+    // A178：workbuddy 是 kind:'sdk'，走 SdkAdapter，不读 authEnvs（那是 CLI 探测路径）。
+    // SDK 型有 credential 但没有 authEnvs 是正确的 —— keyEnv 写进 process.env 后
+    // SdkAdapter 直接读，不经过 CLI 的 authEnvs 判定。
+    if (d.descriptor.kind === 'sdk') {
+      ok(
+        !d.authEnvs || d.authEnvs.length === 0,
+        `${d.descriptor.id}（SDK 型）不设 authEnvs（它走 SdkAdapter 直读 process.env，不经过 CLI 探测路径）`
+      );
+      continue;
+    }
     ok(
       !!d.authEnvs?.includes(keyEnv),
       `${d.descriptor.id} 的 credential.keyEnv[0]=${keyEnv} 也在 authEnvs 里（否则填了也不认）`
@@ -83,7 +93,8 @@ console.log('\n[1] 定义表：凭据声明与识别口径一致');
 console.log('\n[2] 列表：只列声明过的，且初始为未配置');
 {
   const list = listCredentials();
-  eq(list.map(c => c.agentId).sort(), ['doubao', 'gemini', 'kimicode'], '列表内容');
+  // A178：workbuddy 也有 credential（CODEBUDDY_API_KEY），列表应包含 4 个
+  eq(list.map(c => c.agentId).sort(), ['doubao', 'gemini', 'kimicode', 'workbuddy'], '列表内容');
   const doubao = list.find(c => c.agentId === 'doubao')!;
   eq(doubao.configured, false, '豆包初始未配置');
   eq(doubao.masked, '', '未配置时不返回掩码');
