@@ -466,6 +466,7 @@ export const zh = {
 
   // ===== 设置页子面板 =====
   'settings.common.cancel': '取消',
+  'settings.about.buildInfo': '构建信息',
   'settings.about.buildLoading': '正在读取构建信息…',
   'settings.about.componentCount': '{n} 个组件',
   'settings.about.feedbackHint': 'Issues · 附上版本号会更快定位',
@@ -478,6 +479,8 @@ export const zh = {
   'settings.about.licenses': '第三方许可',
   'settings.about.links': '官方入口',
   'settings.about.privacy': '隐私',
+  'settings.about.privacyPromise': '你的数据只留在你这台机器上',
+  'settings.about.tagline': '独立第三方 Agent 编排工具',
   'settings.about.privacy1Body': '没有遥测、埋点、崩溃上报，也没有安装 ID；全部数据只存在本机。',
   'settings.about.privacy1Title': '不收集任何信息',
   'settings.about.privacy2Body': '只有你发消息时的对话内容会离开本机，不经过任何中转服务器。',

@@ -38,12 +38,26 @@
  *   · 页脚 = 法务小字 + 两列许可清单。
  * 结构变了，但 `data-about-*` 这几个锚点（privacy / link / star / feedback /
  * licenses）**一个都没动** —— verify:a141 靠它们定位，重构时别顺手删。
+ *
+ * ── 2026-11-10 v3 重设计（一屏一主角 / 三层递减）──────────────────
+ * 用户反馈：「一页文档平铺」不分主次、排版凌乱。参考微信/QQ 的留白 +
+ * 单一焦点、Hermes 的分区 + 状态卡，改成三层递减：
+ *   ① 状态层：居中身份焦点（Logo + 名称 + 版本 + 一句定位句），
+ *      Electron/Node/平台收进「构建信息」details；更新区收成一张状态卡；
+ *   ② 信任层：一句 16px 主承诺 + 三条**纵向**要点（合规三条仍常驻）；
+ *   ③ 附录层：支持 / 官方入口 / 法务 / 第三方许可（默认折叠）。
+ * 硬约束一个没破：隐私三条始终可见、`data-about-*` 锚点全留、
+ * `UpdateCard` 的状态机一行没碰（只加了一层 CSS 外框）。
+ * 眉标文案仍保持「隐私 / 支持 / 官方入口」三条精确值 —— verify:a141
+ * 按这三个文本找带图标的眉标，改字会红。
  */
 import { useEffect, useState } from 'react';
 import {
   Github,
   Star,
   ShieldCheck,
+  Send,
+  Gift,
   MessageSquare,
   ChevronRight,
   ChevronDown,
@@ -82,6 +96,9 @@ function bridge(): AboutBridge | undefined {
  * 不许收进 ⓘ 图标，也不许折叠成可展开区 —— 它们是这一页的合规底线。
  * 标题与正文都保持一句话，避免把「不收集」说成一段需要读完的长文。
  */
+/** 三条要点各配一枚单色图标：与眉标同一套 14px 线性图标，不引入色相。 */
+const PRIVACY_ICONS = [ShieldCheck, Send, Gift] as const;
+
 const PRIVACY: Array<{ titleKey: MessageKey; bodyKey: MessageKey }> = [
   {
     titleKey: 'settings.about.privacy1Title', // secret-scan:ignore
@@ -171,48 +188,66 @@ export default function AboutPanel() {
     : t('settings.about.buildLoading');
 
   return (
-    <div>
-      {/* ── 顶部版本条（单行）────────────────────────────────────
-          用户确认（2026-11-04）：整块压成一行 —— 名称与版本为主色，
-          Electron / Node / 平台走次级字色，图标保留。原来「名称一行、
-          定位句一行、构建信息另起一行靠右」的三行头会把更新区挤下去。 */}
-      <header className="tc-about-topbar" data-about-version-line>
-        <div className="tc-about-tile tc-about-tile--sm">
+    <div className="tc-about-v3">
+      {/* ── ① 身份：首屏唯一焦点 ──────────────────────────────────
+          v3：名称 + 版本 + 一句定位句；Electron / Node / 平台不再是并排的
+          四项技术参数，收进「构建信息」details（报 issue 时展开复制即可）。
+          `data-about-version-line` 与 `data-about-runtime` 锚点原位保留。 */}
+      <header className="tc-about-hero" data-about-version-line>
+        <div className="tc-about-tile">
           <img src={appIcon} alt="" />
         </div>
-        <span className="tc-about-name">{info?.name || 'OPC Agent'}</span>
-        <span className="tc-about-ver">v{info?.version || '—'}</span>
-        <span className="tc-about-build" data-about-runtime>{buildLine}</span>
+        <div className="tc-about-name">
+          {info?.name || 'OPC Agent'}
+          <span className="tc-about-ver">v{info?.version || '—'}</span>
+        </div>
+        <p className="tc-about-tagline">{t('settings.about.tagline')}</p>
+        <details className="tc-about-build-details" data-about-build-details>
+          <summary>
+            {t('settings.about.buildInfo')}
+            <ChevronDown className="tc-about-build-caret" />
+          </summary>
+          <div className="tc-about-build-grid">
+            <span className="tc-about-build" data-about-runtime>{buildLine}</span>
+          </div>
+        </details>
       </header>
 
-      {/* ── 更新 ──────────────────────────────────────────────────
-          放在身份条之后：用户来这一页最常问「我这是不是最新版」。
-          检查/下载/重启的状态机与主进程一致（见 UpdateCard 顶部说明）。 */}
-      <UpdateCard />
+      {/* ── ② 状态卡：唯一主操作 ──────────────────────────────────
+          检查/下载/重启的状态机完全由 UpdateCard 管，这里只加一层外框，
+          不碰它的逻辑与内部 DOM（verify:a171 / a138 靠那些锚点定位）。 */}
+      <div className="tc-about-status-wrap">
+        <UpdateCard />
+      </div>
 
-      {/* ── 隐私：三张常驻条目卡 ──────────────────────────────────
-          用户确认（2026-11-04）：合规文案必须一眼可见，做成三张条目卡
-          （一行标题 + 一句说明），始终展开；不装进 ⓘ、不做页签、不加开关。 */}
-      <div className="tc-about-zone" data-about-privacy>
+      {/* ── ③ 信任层：一句主承诺 + 三条常驻要点 ──────────────────
+          用户确认（2026-11-04）：合规文案必须一眼可见，不装进 ⓘ、
+          不做页签、不加开关。v3 只是把三张并排小卡改成纵向要点列表。 */}
+      <section className="tc-about-zone tc-about-zone--privacy" data-about-privacy>
         <div className="tc-about-eyebrow">
           <ShieldCheck />
           {t('settings.about.privacy')}
         </div>
+        <h2 className="tc-about-promise">{t('settings.about.privacyPromise')}</h2>
         <div className="tc-about-privacy-cards">
-          {PRIVACY.map(item => (
-            <section className="tc-about-privacy-card" data-about-privacy-card key={item.titleKey}>
-              <h4 className="tc-about-privacy-card-title">{t(item.titleKey)}</h4>
-              <p className="tc-about-privacy-card-body">{t(item.bodyKey)}</p>
-            </section>
-          ))}
+          {PRIVACY.map((item, i) => {
+            const PIcon = PRIVACY_ICONS[i];
+            return (
+              <section className="tc-about-privacy-card" data-about-privacy-card key={item.titleKey}>
+                <PIcon className="tc-about-privacy-icon" aria-hidden="true" />
+                <div className="tc-about-privacy-copy">
+                  <h4 className="tc-about-privacy-card-title">{t(item.titleKey)}</h4>
+                  <p className="tc-about-privacy-card-body">{t(item.bodyKey)}</p>
+                </div>
+              </section>
+            );
+          })}
         </div>
-      </div>
+      </section>
 
-      {/* ── 点星引导卡 ──────────────────────────────────────────
-          从 hero 中拆出，作为独立一区。`data-about-star` 挂在这张卡上
-          （verify:a141 按这个锚点读「点个星」+「不收费/不收集」文案，
-          以及内部的 `data-about-star-cta` 按钮）。 */}
-      <div className="tc-about-zone tc-about-star-zone" data-about-star>
+      {/* ── ④ 附录层：支持（点星改次要按钮，不抢主操作） ─────────
+          `data-about-star` 与 `data-about-star-cta` 锚点保留。 */}
+      <section className="tc-about-zone tc-about-star-zone" data-about-star>
         <div className="tc-about-eyebrow">
           <Star aria-hidden="true" />
           {t('settings.about.support')}
@@ -228,17 +263,17 @@ export default function AboutPanel() {
           href={REPO_URL}
           target="_blank"
           rel="noreferrer"
-          className="tc-btn-brand"
+          className="tc-btn-secondary"
           style={{ textDecoration: 'none' }}
           data-about-star-cta
         >
           <Star size={14} />
           {t('settings.about.starCta')}
         </a>
-      </div>
+      </section>
 
-      {/* ── 官方入口：列表行 ───────────────────────────────────── */}
-      <div className="tc-about-zone">
+      {/* ── ④ 附录层：官方入口（列表行） ───────────────────────── */}
+      <section className="tc-about-zone">
         <div className="tc-about-eyebrow">
           <ExternalLink aria-hidden="true" />
           {t('settings.about.links')}
@@ -273,10 +308,12 @@ export default function AboutPanel() {
             <ChevronRight className="tc-about-row-go" />
           </a>
         </div>
-      </div>
+      </section>
 
-      {/* ── 页脚：法务小字 + 许可清单 ──────────────────────────── */}
-      <div className="tc-about-zone">
+      {/* ── ⑤ 附录层：法务 + 许可（默认折叠） ────────────────────
+          verify:a141 用 textContent 读清单（折叠时 innerText 为空），
+          并在截图前显式 `el.open = true` —— 折叠不会让法务断言失灵。 */}
+      <section className="tc-about-zone tc-about-zone--appendix">
         <p className="tc-about-legal">
           {t('settings.about.legalPrefix')}
           <b>MIT</b>
@@ -285,7 +322,7 @@ export default function AboutPanel() {
 
         {/* 用原生 <details>：这里不需要状态，也不需要 TDesign 的折叠面板 ——
             多引一个组件只为了一次展开，成本比收益高。 */}
-        <details className="tc-about-lic" open data-about-licenses>
+        <details className="tc-about-lic" data-about-licenses>
           <summary>
             <Package />
             {t('settings.about.licenses')}
@@ -309,7 +346,8 @@ export default function AboutPanel() {
             {t('settings.about.licenseNote')}
           </p>
         </details>
-      </div>
+        <p className="tc-about-foot">Copyright © 2026 catex-lab · OPC Agent</p>
+      </section>
     </div>
   );
 }

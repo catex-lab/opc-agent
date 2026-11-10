@@ -575,12 +575,28 @@ section('关于页三段式布局（版本条 / 更新区 / 隐私三卡）');
 const aboutSrc = read('src/components/AboutPanel.tsx');
 
 ok(aboutSrc.includes('data-about-version-line'), '版本块有 data-about-version-line 锚点（DOM 高度断言的落点）');
+/* 2026-11-10 v3 重设计：顶部从「单行版本条」换成「居中身份焦点」，
+   构建参数不再与名称版本并排，收进 details。旧的正则是钉「赋值紧邻某元素」
+   的典型过时断言 —— 改判「焦点区里有没有这四样」，并配一条肯定式证明
+   构建信息确实被收纳（否则「整块删掉」也会绿）。 */
 ok(
-  /<span className="tc-about-name">[\s\S]{0,160}?<span className="tc-about-ver">[\s\S]{0,160}?<span className="tc-about-build"/.test(aboutSrc),
-  '名称、版本、运行时在同一个 flex 行内（不再「另起一行靠右」）',
+  /className="tc-about-hero"[\s\S]{0,500}?className="tc-about-name"[\s\S]{0,200}?className="tc-about-ver"[\s\S]{0,400}?className="tc-about-tagline"/.test(aboutSrc),
+  'v3：身份焦点区含名称 + 版本 + 一句定位句',
   '结构不匹配'
 );
-ok(!aboutSrc.includes('tc-about-tagline'), '定位句已移出版本块（保证单行）');
+ok(
+  aboutSrc.includes('tc-about-build-details') && aboutSrc.includes('data-about-build-details') &&
+    aboutSrc.includes('tc-about-build') && aboutSrc.includes('data-about-runtime'),
+  'v3：构建参数收进「构建信息」details，锚点仍在'
+);
+ok(
+  !/<details className="tc-about-lic" open/.test(aboutSrc),
+  'v3：第三方许可默认折叠（a141 用 textContent 读清单，折叠不失灵）'
+);
+ok(
+  !/className="tc-btn-brand"[\s\S]{0,200}?data-about-star-cta/.test(aboutSrc),
+  'v3：点星按钮不再用实心主按钮（主操作留给更新状态卡）'
+);
 ok(
   aboutSrc.includes('Electron ${info.electron}') && aboutSrc.includes('Node ${info.node}') && aboutSrc.includes('${info.platform} ${info.arch}'),
   '运行时信息包含 Electron / Node / 平台与架构'
@@ -591,16 +607,17 @@ const privacyKeys = ['settings.about.privacy1Title', 'settings.about.privacy2Tit
 const privacyTitles = ['不收集任何信息', '只会发给你自己配置的模型服务商', '永久免费且无广告'];
 // i18n 后 PRIVACY 只存 key，正文落在 zh 语言包 —— 结构仍要钉住「三条、同一模板」，
 // 文案仍要逐条命中中文语言包，避免把「组件里找不到字面量」当成文案缺失。
-const privacyStart = aboutSrc.indexOf('const PRIVACY');
-const privacyBody =
-  privacyStart >= 0
-    ? aboutSrc.slice(aboutSrc.indexOf('= [', privacyStart), aboutSrc.indexOf('];', privacyStart))
-    : '';
+/* 2026-11-10 v3：页面新增了同前缀的 `const PRIVACY_ICONS`，且 PRIVACY 带类型标注。
+   旧写法 `indexOf('const PRIVACY')` 会命中 ICONS、从 `= [ShieldCheck...` 起切，
+   把类型标注里的 `titleKey:` 也算进去（数出 4 条）⇒ 假红。
+   改成按行首锚定声明本身、只数数组里真正带引号的 key。 */
+const privacyDecl = aboutSrc.match(/^const PRIVACY(?=\s*[:=])[^\n]*?=\s*\[([\s\S]*?)^\];/m);
+const privacyBody = privacyDecl?.[1] ?? '';
 ok(
-  privacyStart >= 0 &&
+  !!privacyDecl &&
     aboutSrc.includes('{PRIVACY.map(') &&
     (aboutSrc.match(/data-about-privacy-card/g) ?? []).length === 1 &&
-    (privacyBody.match(/titleKey:/g) ?? []).length === 3 &&
+    (privacyBody.match(/titleKey:\s*'/g) ?? []).length === 3 &&
     privacyKeys.every(k => privacyBody.includes(k)) &&
     privacyKeys.every(k => zhSource.includes(`'${k}':`)) &&
     privacyTitles.every(t => zhSource.includes(t)),
@@ -662,9 +679,13 @@ ok(
   !/\.tc-update-notes-scrim\s*\{[^}]*#[0-9a-fA-F]{3,8}/.test(css),
   '遮罩没有硬编码十六进制色值'
 );
+/* v3：三列挤成 ~180px 是「排版凌乱」的直接原因，改成单列纵向要点。
+   这里改成钉「恰好一列」，并配肯定式「三列写法已消失」—— 只留否定式时
+   把整个规则删掉也会绿。 */
 ok(
-  /\.tc-about-privacy-cards\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/.test(css),
-  '隐私三卡在同一行铺开（三列网格）'
+  /\.tc-about-privacy-cards\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(css) &&
+    !/grid-template-columns:\s*repeat\(3/.test(css),
+  'v3：隐私三条纵向排列（单列网格），三列写法已消失'
 );
 ok(
   css.includes('@media (max-width: 760px)') && /\.tc-about-privacy-cards\s*\{[^}]*minmax\(0,\s*1fr\)/.test(css.split('@media (max-width: 760px)')[1] ?? ''),

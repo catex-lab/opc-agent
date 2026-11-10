@@ -470,6 +470,7 @@ export const en: Record<MessageKey, string> = {
 
   // ===== Settings subpanels =====
   'settings.common.cancel': 'Cancel',
+  'settings.about.buildInfo': 'Build details',
   'settings.about.buildLoading': 'Reading build info…',
   'settings.about.componentCount': '{n} components',
   'settings.about.feedbackHint': 'Issues · including the version helps us locate it faster',
@@ -482,6 +483,8 @@ export const en: Record<MessageKey, string> = {
   'settings.about.licenses': 'Third-party licenses',
   'settings.about.links': 'Official links',
   'settings.about.privacy': 'Privacy',
+  'settings.about.privacyPromise': 'Your data stays on this machine',
+  'settings.about.tagline': 'An independent third-party agent orchestrator',
   'settings.about.privacy1Body': 'No telemetry, analytics, crash reporting, or install ID; all data stays on this machine.',
   'settings.about.privacy1Title': 'Collects nothing',
   'settings.about.privacy2Body': 'Only the conversation content you send leaves this machine, straight to your own provider with no relay server.',

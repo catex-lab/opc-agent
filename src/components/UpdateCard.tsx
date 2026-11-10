@@ -288,7 +288,7 @@ export function UpdateCard() {
             ) : (
               <button
                 type="button"
-                className="tc-btn-secondary"
+                className="tc-btn-brand"
                 onClick={check}
                 disabled={checking || downloading}
                 data-update-check

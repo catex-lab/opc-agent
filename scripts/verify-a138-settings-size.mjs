@@ -408,7 +408,37 @@ console.log('\n[4] 关于页三段式：版本条单行、说明进弹层、隐�
   await page.locator('[data-settings-section="about"]').first().click();
   await page.waitForTimeout(500);
 
-  /* ── 版本条：一行 + 运行时信息 ── */
+  /* ── v3 身份焦点：先量「默认收起」的样子，再展开构建信息读运行时 ──
+     旧断言钉「版本条高度 ≤40 且单行里就有 Electron/Node」；v3 把构建参数
+     收进 details，直接沿用会假红。改成两步：① 收起态证明它是唯一焦点
+     （居中 + 默认折叠 + 高度区间）；② 展开后逐字核对运行时信息没丢。
+     两步都不能省 —— 只测展开态会漏掉「默认又铺开了」这个退化。 */
+  const heroClosed = await page.evaluate(() => {
+    const el = document.querySelector('[data-about-version-line]');
+    const d = document.querySelector('[data-about-build-details]');
+    return {
+      exists: !!el,
+      height: el ? Math.round(el.getBoundingClientRect().height) : null,
+      centered: el ? getComputedStyle(el).textAlign === 'center' : false,
+      detailsExists: !!d,
+      detailsOpen: d ? d.open : null,
+    };
+  });
+  ok(heroClosed.exists, '身份区有 data-about-version-line 锚点');
+  ok(heroClosed.centered, 'v3：身份区居中（一屏一个主角）');
+  ok(heroClosed.detailsExists && heroClosed.detailsOpen === false, 'v3：构建信息默认折叠',
+    `存在=${heroClosed.detailsExists} / open=${heroClosed.detailsOpen}`);
+  ok(
+    heroClosed.height !== null && heroClosed.height >= 100 && heroClosed.height <= 240,
+    'v3：身份焦点区高度 100–240px（不再是一行细条）',
+    `实测 ${heroClosed.height}px`
+  );
+
+  await page.evaluate(() => {
+    const d = document.querySelector('[data-about-build-details]');
+    if (d) d.open = true;
+  });
+  await page.waitForTimeout(120);
   const version = await page.evaluate(() => {
     const el = document.querySelector('[data-about-version-line]');
     if (!el) return null;
@@ -424,11 +454,10 @@ console.log('\n[4] 关于页三段式：版本条单行、说明进弹层、隐�
       nameColor: name ? getComputedStyle(name).color : null,
     };
   });
-  ok(version !== null, '版本块有 data-about-version-line 锚点');
-  ok(version && version.height <= 40, '版本块压成一行（高度 ≤ 40px）', `实测 ${version?.height}px`);
+  ok(version !== null, '展开后身份区仍可量');
   ok(
     version && /Electron 44\.7\.2/.test(version.text) && /Node 22\.20\.0/.test(version.text) && /win32 x64/.test(version.text),
-    '单行里包含 Electron / Node / 平台架构',
+    '展开构建信息后仍能看到 Electron / Node / 平台架构',
     version?.text
   );
   ok(

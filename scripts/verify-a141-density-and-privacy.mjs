@@ -521,6 +521,43 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
     labelled.map(item => `${item.text}:${item.icons}`).join(' / ')
   );
 
+  /* ── v3 层级（2026-11-10）：一屏一主角 / 三层递减 ──────────────────
+     旧版「8 块同级平铺」不报错、也不会有什么功能症状，只有用户说「不分主次」
+     才暴露。所以必须把「焦点 / 承诺 / 折叠」这些**观测量**钉成断言，
+     不然下一次重构会把层级又抹平，而所有功能断言照旧全绿。 */
+  const v3 = await page.evaluate(() => {
+    const hero = document.querySelector('.tc-about-hero');
+    const promise = document.querySelector('.tc-about-promise');
+    const cards = document.querySelector('.tc-about-privacy-cards');
+    const body = document.querySelector('.tc-about-privacy-card-body');
+    const lic = document.querySelector('[data-about-licenses]');
+    const build = document.querySelector('[data-about-build-details]');
+    const cta = document.querySelector('[data-about-star-cta]');
+    const size = el => (el ? parseFloat(getComputedStyle(el).fontSize) : null);
+    return {
+      heroFirst: !!hero && hero.parentElement?.firstElementChild === hero,
+      heroCentered: hero ? getComputedStyle(hero).textAlign === 'center' : false,
+      promiseText: promise?.textContent?.trim() ?? '',
+      promiseSize: size(promise),
+      bodySize: size(body),
+      columns: cards ? getComputedStyle(cards).gridTemplateColumns.trim().split(/\s+/).length : null,
+      buildOpen: build ? build.open : null,
+      licOpen: lic ? lic.open : null,
+      ctaClass: cta ? String(cta.className) : '',
+    };
+  });
+  ok(v3.heroFirst && v3.heroCentered, 'v3：身份焦点是第一个区块且居中（一屏一主角）',
+    `first=${v3.heroFirst} / centered=${v3.heroCentered}`);
+  ok(/你的数据只留在你这台机器上|Your data stays on this machine/.test(v3.promiseText),
+    'v3：隐私区有一句主承诺', v3.promiseText.slice(0, 30));
+  ok(v3.promiseSize !== null && v3.bodySize !== null && v3.promiseSize > v3.bodySize,
+    'v3：主承诺字号高于要点正文（层级靠字号，不靠加框）',
+    `承诺 ${v3.promiseSize}px / 要点 ${v3.bodySize}px`);
+  ok(v3.columns === 1, 'v3：三条隐私要点纵向单列（不再三列挤）', `实测 ${v3.columns} 列`);
+  ok(v3.buildOpen === false, 'v3：构建信息默认折叠', `open=${v3.buildOpen}`);
+  ok(v3.licOpen === false, 'v3：第三方许可默认折叠', `open=${v3.licOpen}`);
+  ok(/tc-btn-secondary/.test(v3.ctaClass), 'v3：点星是次要按钮（实心主按钮留给更新）', v3.ctaClass);
+
   // 入口：href 必须是真地址，不能是占位
   const links = await page.locator('[data-about-link]').evaluateAll(els => els.map(el => ({
     key: el.getAttribute('data-about-link'),
@@ -613,6 +650,11 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
   // 拿它判会得到「断言通过」而实际什么都没读到（假绿）。
   const licText = licCount ? await lic.evaluate(el => el.textContent || '') : '';
   ok(/第三方许可/.test(licText), '标题写明「第三方许可」');
+  /* v3 把许可默认折叠了：这里额外钉一条「折叠态下正文仍能读到」。
+     若哪天有人把清单改成 innerText 读，这条会先红 —— 折叠本身不是问题，
+     读不到才是问题（法务署名义务不能因为一次视觉改版静默落空）。 */
+  ok(/Electron/.test(licText) && /THIRD-PARTY-LICENSES\.txt/.test(licText),
+    'v3：折叠状态下清单正文仍可读');
   ok(/不在本项目的 MIT 范围内/.test(licText), '说明这些组件不在本项目 MIT 范围内');
 
   /* 两类都要点名（A149）：
