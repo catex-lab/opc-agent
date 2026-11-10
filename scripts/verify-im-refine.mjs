@@ -212,17 +212,25 @@ console.log('\n[2] 最左侧导航条：收窄、无角标');
       const r = el.getBoundingClientRect();
       return Math.round(r.left + r.width / 2);
     };
+    /* 2026-11-09：logo 格「合二为一」—— 整格是开关，格子内只许有一个图形。
+       旧版在 logo 旁边另挂一枚折叠箭头，用户反馈「两个元素各占位」。 */
+    const tileCell = tile?.parentElement ?? null;
     const btns = [...(nav?.querySelectorAll('button') ?? [])];
     return {
       navW: nav ? Math.round(nav.getBoundingClientRect().width) : 0,
       navBtnCx: navBtn ? mid(navBtn) : 0,
       tileCx: tile ? mid(tile) : 0,
+      tileChildren: tileCell ? tileCell.children.length : -1,
+      tileSvg: tileCell ? tileCell.querySelectorAll('svg').length : -1,
       // 角标是导航按钮里唯一的文本节点，去掉后按钮 innerText 应为空
       btnTexts: btns.map(b => b.innerText.trim()),
     };
   });
   ok(rail.navW === 56, '导航条宽 56px（原 64）', `${rail.navW}px`);
   ok(Math.abs(rail.tileCx - rail.navBtnCx) <= 1, '标题栏应用标记与导航图标同一竖轴', `${rail.tileCx} / ${rail.navBtnCx}`);
+  ok(rail.tileChildren === 1 && rail.tileSvg === 0,
+    'logo 格内恰有 1 个图形（logo 即开关，没有第二枚图标）',
+    `children=${rail.tileChildren} svg=${rail.tileSvg}`);
   ok(
     rail.btnTexts.every(t => t === ''),
     '导航图标上没有任何数字角标',

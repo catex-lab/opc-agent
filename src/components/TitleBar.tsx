@@ -118,7 +118,7 @@ export function TitleBar({
   onToggleSidebar,
 }: {
   compact?: boolean;
-  /** 二级栏当前是否收起（收起时 logo 右下角的箭头翻到「展开」方向） */
+  /** 二级栏当前是否收起（开关的 aria-expanded 与底片「亮着」状态取它） */
   sidebarCollapsed?: boolean;
   /** 当前页是否允许收起：没有选中项的页面点了也不收起（见 App 的守卫） */
   canCollapseSidebar?: boolean;
@@ -134,6 +134,40 @@ export function TitleBar({
   // ⚠️ 这两个数字必须等于 NavRail 的 `w-[56px]` / `w-[48px]`，
   //    改一处不改另一处，标记就会歪到图标左边去。
   const railWidth = compact ? 48 : 56;
+
+  /**
+   * logo 格的开关契约（紧凑模式整块不挂）。
+   *
+   * 不用原生 <button>：外面这层 span 同时承担「logo 定位格」和打靶脚本里
+   * `[data-titlebar] > span > span` 闸门的既有结构，换标签会连带改一串脚本；
+   * role=button + 手动键盘处理与原生的语义等价。
+   */
+  const switchProps: React.HTMLAttributes<HTMLSpanElement> = compact
+    ? {}
+    : {
+        role: 'button',
+        tabIndex: 0,
+        'aria-label': sidebarCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar'),
+        // 辅助技术据此知道二级栏现在是展开还是收起
+        'aria-expanded': !sidebarCollapsed,
+        // 当前页没有可看内容时不收起，但保留可聚焦与可读的状态
+        'aria-disabled': canCollapseSidebar ? undefined : true,
+        title: canCollapseSidebar
+          ? sidebarCollapsed
+            ? t('nav.expandSidebar')
+            : t('nav.collapseSidebar')
+          : t('nav.collapseUnavailable'),
+        onClick: () => {
+          if (canCollapseSidebar) onToggleSidebar?.();
+        },
+        onKeyDown: e => {
+          // role=button 的原生键盘契约：Enter / 空格都要触发，空格要拦掉滚动
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (canCollapseSidebar) onToggleSidebar?.();
+          }
+        },
+      };
 
   const [maximized, setMaximized] = useState(false);
 
@@ -175,41 +209,21 @@ export function TitleBar({
         borderBottom: '1px solid var(--tc-divider)',
       }}
     >
-      {/* 应用标记兼二级栏开关（方案 A）。
-          整格 56×39 都是点击区。标题栏本身是 `-webkit-app-region: drag`，
+      {/* 应用标记兼二级栏开关（方案 A 的「合二为一」版）。
+          整格 56×39 就是开关本尊：格子内只有一个图形 —— logo，没有第二枚
+          图标、没有箭头占位。标题栏本身是 `-webkit-app-region: drag`，
           index.css 里的 `.tc-drag [role='button']` 会把这一格翻成 no-drag，
           所以点击不会被拖拽层吞掉；代价是这一小段的窗口拖动与双击最大化
           失效 —— 方案 A 已知且接受，其余拖拽区不受影响。
-          视觉上仍是 logo：hover 只在比整格小一圈的底片上淡淡提亮，右下角
-          一枚小箭头交代「现在点一下是收起还是展开」，不铺边框、不做成按钮。 */}
+          状态不靠附加图标表达：
+            · 展开时 logo 底下那圈 36×32 底片带一档极淡底色（开关「亮着」）；
+            · 收起时底片透明，hover 才浮现；
+            · hover 在两种状态下都再加深一档，focus-visible 走品牌色 ring；
+            · 当前页不可收起时 logo 置灰（grayscale + 降透明）且没有 hover。
+          紧凑模式不渲染开关：没有 role / tabIndex / aria，只留一枚静态 logo。 */}
       <span
-        role="button"
-        tabIndex={0}
-        data-app-logo-toggle
-        aria-label={
-          sidebarCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')
-        }
-        // 辅助技术据此知道二级栏现在是展开还是收起
-        aria-expanded={!sidebarCollapsed}
-        // 当前页没有可看内容时不收起，但保留可聚焦与可读的状态
-        aria-disabled={canCollapseSidebar ? undefined : true}
-        title={
-          canCollapseSidebar
-            ? sidebarCollapsed
-              ? t('nav.expandSidebar')
-              : t('nav.collapseSidebar')
-            : t('nav.collapseUnavailable')
-        }
-        onClick={() => {
-          if (canCollapseSidebar) onToggleSidebar?.();
-        }}
-        onKeyDown={e => {
-          // role=button 的原生键盘契约：Enter / 空格都要触发，空格要拦掉滚动
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            if (canCollapseSidebar) onToggleSidebar?.();
-          }
-        }}
+        {...switchProps}
+        data-app-logo-toggle={compact ? undefined : ''}
         className={`
           group relative flex h-full shrink-0 items-center justify-center rounded-md
           transition-colors duration-150
@@ -217,11 +231,15 @@ export function TitleBar({
           focus-visible:ring-[var(--td-brand-color)] focus-visible:ring-offset-1
           before:pointer-events-none before:absolute before:left-1/2 before:top-1/2
           before:h-[32px] before:w-[36px] before:-translate-x-1/2 before:-translate-y-1/2
-          before:rounded-lg before:bg-transparent before:transition-colors before:duration-150
+          before:rounded-lg before:transition-colors before:duration-150
           before:content-['']
-          ${canCollapseSidebar
-            ? 'cursor-pointer hover:before:bg-[var(--tc-hover-chrome)]'
-            : 'cursor-default'}
+          ${compact
+            ? ''
+            : canCollapseSidebar
+              ? `cursor-pointer hover:before:bg-[var(--tc-fill-selected)] ${
+                  sidebarCollapsed ? 'before:bg-transparent' : 'before:bg-[var(--tc-fill-hover)]'
+                }`
+              : 'cursor-default'}
         `}
         // A103：导航条被 6px 内缩之后，应用标记这一格要跟着右移同样的量，
         // 否则「标记 / 导航图标」的中轴会错开 6px。窗口按钮仍在右上角
@@ -242,33 +260,14 @@ export function TitleBar({
             「界面里随主题反转」那套（旧方案黑底白爻 ↔ 白底黑爻）。
             18px 定位格保持不变 —— 标记与导航图标的中轴对齐依赖它；
             图取 16px 居中，这是这套位图还能辨出「蓝环 + 白脸」的下限。 */}
-        <span data-app-logo className="relative flex h-[18px] w-[18px] items-center justify-center">
-          <AppLogo size={16} />
-        </span>
-        {/* 状态箭头：展开时 ‹（点一下收起），收起时 ›（点一下展开）。
-            常态低对比、hover 提亮；不可收起的页面上更淡，避免看起来可用。 */}
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 8 8"
-          fill="none"
-          aria-hidden="true"
-          className={`pointer-events-none absolute right-[4px] top-1/2 -translate-y-1/2 text-[var(--td-text-color-secondary)] transition-opacity duration-150 ${
-            canCollapseSidebar ? 'opacity-60 group-hover:opacity-100' : 'opacity-25'
+        <span
+          data-app-logo
+          className={`relative flex h-[18px] w-[18px] items-center justify-center transition-[filter,opacity] duration-150 ${
+            compact || canCollapseSidebar ? '' : 'opacity-50 grayscale'
           }`}
         >
-          <path
-            d={
-              sidebarCollapsed
-                ? 'M2.4 1.2 5.6 4 2.4 6.8'
-                : 'M5.6 1.2 2.4 4 5.6 6.8'
-            }
-            stroke="currentColor"
-            strokeWidth="1.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+          <AppLogo size={16} />
+        </span>
       </span>
       {/* pl-4 让应用名与左栏标题（PanelHeader 的 px-4）落在同一条竖线上。
           应用名走语义层级第 3 档（14 / 20 / 500）；颜色保持次级 —— 参考图的

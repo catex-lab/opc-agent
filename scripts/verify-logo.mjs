@@ -272,6 +272,10 @@ if (!existsSync(join(DIST, 'index.html'))) {
       const navCx = navBtn
         ? (b => { const q = b.getBoundingClientRect(); return q.left + q.width / 2; })(navBtn)
         : null;
+      // 2026-11-09：logo 格「合二为一」—— 整格就是开关，格子内只许有
+      // 一个图形（[data-app-logo]），不许再挂第二枚图标（旧版的右下角箭头）。
+      const cell = el.parentElement;
+      const cellRect = cell ? cell.getBoundingClientRect() : null;
       return {
         barBg: bar ? getComputedStyle(bar).backgroundColor : '',
         w: r.width,
@@ -284,6 +288,14 @@ if (!existsSync(join(DIST, 'index.html'))) {
         src: img ? img.getAttribute('src') : '',
         // 旧内联 SVG 的残留：还在画几何就说明组件没换干净
         hasSvg: !!el.querySelector('svg'),
+        cellChildren: cell ? cell.children.length : -1,
+        cellSvg: cell ? cell.querySelectorAll('svg').length : -1,
+        cellW: cellRect ? Math.round(cellRect.width) : 0,
+        cellH: cellRect ? Math.round(cellRect.height) : 0,
+        cellRole: cell ? cell.getAttribute('role') : null,
+        cellTab: cell ? cell.getAttribute('tabindex') : null,
+        cellLabel: cell ? cell.getAttribute('aria-label') : null,
+        cellExpanded: cell ? cell.getAttribute('aria-expanded') : null,
       };
     });
 
@@ -297,6 +309,21 @@ if (!existsSync(join(DIST, 'index.html'))) {
     ok(styles.navCx !== null && Math.abs(styles.cx - styles.navCx) <= 1,
       `[${scheme}] 标记中心与导航图标同轴`,
       `cx=${styles.cx.toFixed(1)} nav=${styles.navCx === null ? '未找到' : styles.navCx.toFixed(1)}`);
+
+    /* 2026-11-09「合二为一」契约：logo 格整格是开关，格子内**只有一个图形**。
+       旧实现里 logo 与右下角箭头是两枚独立图形，用户反馈「各占位」；
+       这里把「元素数量」钉死，防止有人再挂第二枚图标回来。 */
+    ok(styles.cellChildren === 1,
+      `[${scheme}] logo 格内恰有 1 个图形（logo 即开关）`, `children=${styles.cellChildren}`);
+    ok(styles.cellSvg === 0, `[${scheme}] logo 格里没有第二枚图标（0 个 svg）`, `svg=${styles.cellSvg}`);
+    ok(styles.cellRole === 'button' && styles.cellTab === '0',
+      `[${scheme}] logo 格是 role=button 且可键盘聚焦`,
+      `role=${styles.cellRole} tabindex=${styles.cellTab}`);
+    ok(!!styles.cellLabel && (styles.cellExpanded === 'true' || styles.cellExpanded === 'false'),
+      `[${scheme}] 开关有无障碍名称与展开状态`,
+      `label=${styles.cellLabel} expanded=${styles.cellExpanded}`);
+    ok(styles.cellW === 56 && styles.cellH === 39,
+      `[${scheme}] logo 格尺寸仍是 56×39`, `${styles.cellW}x${styles.cellH}`);
 
     await page.waitForTimeout(600); // 等主题/首帧涂料落定再截图，否则证据图可能是中间态
     await page.locator('[data-titlebar]').screenshot({ path: join(OUT, `logo-titlebar-${scheme}.png`) });
