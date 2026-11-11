@@ -34,6 +34,22 @@ import path from 'node:path';
 import { createServer, get } from 'node:http';
 import { chromium, type Browser, type Page } from 'playwright-core';
 
+/**
+ * 回环地址绝不能走宿主代理。
+ *
+ * 2026-11-11 本机实测：宿主注入 `HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:56191`
+ * 且没有 `NO_PROXY` 时，Playwright 的 `connectOverCDP()` 去回环端口取
+ * `/json/version` 会被代理接管，拿到 404，整段冒烟假红成 41/42；清掉代理变量后
+ * 同一份代码 48/48。`launchApp()` 只清了**子进程**的代理变量，但 Playwright
+ * 的请求走的是**本进程**，所以必须在这里补一道。
+ *
+ * 只把回环加进 NO_PROXY，其它地址仍按宿主代理走 —— 不改脚本的其它网络行为。
+ */
+for (const key of ['NO_PROXY', 'no_proxy']) {
+  const prev = (process.env[key] ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  process.env[key] = [...new Set([...prev, '127.0.0.1', 'localhost', '::1'])].join(',');
+}
+
 const failures: string[] = [];
 const checks = { total: 0 };
 

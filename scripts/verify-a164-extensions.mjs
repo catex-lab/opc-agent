@@ -614,10 +614,22 @@ try {
       await page.locator('[data-ext-delete]').first().click();
       await page.waitForSelector('[data-confirm-dialog]', { timeout: 10000 });
       await page.locator('[data-confirm-dialog] button', { hasText: '移除副本' }).click();
-      await page.waitForTimeout(600);
+      // 删除后的路由跳转是异步的：固定 600ms 在整链高负载时会早于 navigate，
+      // 2026-11-11 第三次 verify:ui 就在这里仍停在 /extensions/skill/beta，
+      // 单跑却 95/95 绿。改成等 URL 与空态都到位（超时显式判红），不靠 sleep 猜时序。
+      let leftDetail = true;
+      try {
+        await page.waitForURL(/\/extensions$/, { timeout: 15000 });
+        await page.locator('[data-ext-detail-empty]').waitFor({ state: 'visible', timeout: 15000 });
+      } catch {
+        leftDetail = false;
+      }
       const urlAfter = page.url();
+      ok(leftDetail, '删除后确实离开详情页（等待 URL 与空态都到位）', urlAfter.replace(base, ''));
       ok(/\/extensions$/.test(urlAfter), '删除后 URL 回到 /extensions', urlAfter.replace(base, ''));
       ok(await page.locator('[data-ext-detail-empty]').isVisible(), '右侧渲染空态（不停在幽灵详情）');
+      // 肯定式：列表还在。「空态」必须是因为删掉了那一项，而不是整页崩成空白。
+      ok((await page.locator('[data-ext-row]').count()) > 0, '删除后列表仍渲染真实行（空态不是整页崩掉的假象）');
 
       // ── [9] A168 / P4：差异检测（外部新装 / 应用 / 冲突不给一键）──
       console.log('\n[9] 差异检测（P4）');
