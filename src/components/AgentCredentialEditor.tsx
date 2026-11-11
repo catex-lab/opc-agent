@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Input, MessagePlugin, Tag } from 'tdesign-react';
-import { Check, KeyRound, Network, RefreshCw, Trash2 } from 'lucide-react';
+import { Check, KeyRound, Network, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import type { AgentAvailability } from '../types';
 import { useTranslation, type MessageKey } from '../i18n';
+import { describeProvenance, asProvenance } from '../../shared/provenance';
+import { emitCredentialsChanged, subscribeCredentialChanges } from '../lib/credentialEvents';
 
 /**
  * 单个 Agent 的凭据编辑器（取 / 存 / 清 + 连通性 + 模型清单）。
@@ -37,6 +39,14 @@ interface CredentialView {
   masked: string;
   baseUrl: string;
   fromEnv: boolean;
+}
+
+/** #15：账号列表里的每一项都只有掩码，明文 Key 从不进入前端。 */
+interface ProfileItem {
+  name: string;
+  configured: boolean;
+  masked: string;
+  baseUrl?: string;
 }
 
 interface ModelOption {
@@ -86,6 +96,26 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
     note?: string;
   }>({ loading: false, fetched: false, list: [] });
 
+  /** #16：真实只读鉴权校验的结论。与「检测连通性」不是一回事 —— 那条只
+   *  读本地探测状态，这条是唯一可能给出 verified:true 的动作。 */
+  const [verification, setVerification] = useState<{
+    loading: boolean;
+    result?: {
+      verified: boolean;
+      error?: string;
+      models?: string[];
+      provenance?: unknown;
+    };
+  }>({ loading: false });
+
+  /** #15：多账号。老服务端没有 /profiles 端点时 list 为空，整块 UI 不出现。 */
+  const [profiles, setProfiles] = useState<{ active: string; list: ProfileItem[] }>({
+    active: 'default',
+    list: [],
+  });
+  const [newProfileName, setNewProfileName] = useState('');
+  const [profileBusy, setProfileBusy] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -132,6 +162,9 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
       // 保存后探测结果与模型清单都可能变，清掉旧的，让用户重新点
       setProbe({ loading: false });
       setModels({ loading: false, fetched: false, list: [] });
+      setVerification({ loading: false });
+      // #16：服务端已清缓存，通知平台模型清单 / 账号卡 / 各 Agent 模型清单重拉
+      emitCredentialsChanged(agentId);
       await load();
       onSaved?.();
     } catch (err) {
@@ -151,6 +184,8 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
       MessagePlugin.success(t('settings.credential.cleared', { name: item.name }));
       setProbe({ loading: false });
       setModels({ loading: false, fetched: false, list: [] });
+      setVerification({ loading: false });
+      emitCredentialsChanged(agentId);
       await load();
       onSaved?.();
     } catch (err) {
@@ -186,6 +221,145 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
       setModels({ loading: false, fetched: true, list: data.models ?? [], note: data.note });
     } catch (err) {
       setModels({ loading: false, fetched: true, list: [], note: (err as Error).message });
+    }
+  };
+
+  /** #15：老服务端没有这个端点时静默降级 —— 整块多账号 UI 不出现，
+   *  但保存 / 校验 / 清除这些既有能力一点不少。 */
+  const loadProfiles = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/agent-credentials/${encodeURIComponent(agentId)}/profiles`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      setProfiles({
+        active: typeof data.active === 'string' ? data.active : 'default',
+        list: Array.isArray(data.profiles) ? data.profiles : [],
+      });
+    } catch {
+      /* 拿不到就当没有多账号，不弹错误条 */
+    }
+  }, [agentId]);
+
+  useEffect(() => {
+    void loadProfiles();
+  }, [loadProfiles]);
+
+  // 详情页与设置页可能同时开着同一份编辑器；一处改了账号，另一处要跟着变
+  useEffect(() => subscribeCredentialChanges(event => {
+    if (event.agentId && event.agentId !== agentId) return;
+    void loadProfiles();
+  }), [agentId, loadProfiles]);
+
+  /** 用当前表单里的 Key 另存为一个新账号，并立刻激活它。 */
+  const addAccount = async () => {
+    const name = newProfileName.trim();
+    if (!name) {
+      MessagePlugin.warning(t('settings.credential.needAccountName'));
+      return;
+    }
+    if (!draftKey.trim()) {
+      // 新账号没有「沿用旧 Key」的语义 —— 那会造出一个看起来配好、其实是空的账号
+      MessagePlugin.warning(t('settings.credential.needKeyForAccount'));
+      return;
+    }
+    setProfileBusy('add');
+    try {
+      const res = await fetch('/api/agent-credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId,
+          name,
+          key: draftKey.trim(),
+          baseUrl: draftBaseUrl.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      MessagePlugin.success(t('settings.credential.saved', { name: item?.name ?? agentId }));
+      setDraftKey('');
+      setNewProfileName('');
+      setVerification({ loading: false });
+      emitCredentialsChanged(agentId);
+      await Promise.all([load(), loadProfiles()]);
+      onSaved?.();
+    } catch (err) {
+      MessagePlugin.error((err as Error).message || t('settings.credential.saveFailed'));
+    } finally {
+      setProfileBusy(null);
+    }
+  };
+
+  const switchTo = async (name: string) => {
+    if (!name || name === profiles.active || profileBusy) return;
+    setProfileBusy(name);
+    try {
+      const res = await fetch(
+        `/api/agent-credentials/${encodeURIComponent(agentId)}/switch`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      MessagePlugin.success(t('settings.credential.switchedAccount', { name }));
+      setVerification({ loading: false });
+      emitCredentialsChanged(agentId);
+      await Promise.all([load(), loadProfiles()]);
+      onSaved?.();
+    } catch (err) {
+      MessagePlugin.error((err as Error).message || t('settings.credential.saveFailed'));
+    } finally {
+      setProfileBusy(null);
+    }
+  };
+
+  const removeAccount = async () => {
+    const name = profiles.active;
+    if (!name || profileBusy) return;
+    setProfileBusy('delete');
+    try {
+      const res = await fetch(
+        `/api/agent-credentials/${encodeURIComponent(agentId)}/profiles/${encodeURIComponent(name)}`,
+        { method: 'DELETE' }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      MessagePlugin.success(t('settings.credential.deletedAccount', { name }));
+      setVerification({ loading: false });
+      emitCredentialsChanged(agentId);
+      await Promise.all([load(), loadProfiles()]);
+      onSaved?.();
+    } catch (err) {
+      MessagePlugin.error((err as Error).message || t('settings.credential.clearFailed'));
+    } finally {
+      setProfileBusy(null);
+    }
+  };
+
+  /**
+   * #16：拿已保存的 Key 向厂商发一次只读请求。结论无论好坏都要显示 ——
+   * 「这家没有只读端点，验不了」比一个永远不变灰的「未校验」有用得多。
+   */
+  const verifyNow = async () => {
+    setVerification({ loading: true });
+    try {
+      const res = await fetch(
+        `/api/agents/${encodeURIComponent(agentId)}/credential/verify`,
+        { method: 'POST' }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setVerification({ loading: false, result: data.verification });
+    } catch (err) {
+      setVerification({
+        loading: false,
+        result: { verified: false, error: (err as Error).message || t('settings.credential.verifyFailed') },
+      });
     }
   };
 
@@ -303,6 +477,72 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
         )}
       </div>
 
+      {/* #15 多账号：点账号名即切换，不用先开一个下拉再点确认。
+          明文 Key 从不进前端，按钮上只显示掩码。 */}
+      {profiles.list.length > 0 && profiles.list.some(p => p.configured) && (
+        <div
+          className="space-y-2 border-t pt-2"
+          style={{ borderColor: 'var(--tc-edge)' }}
+          data-credential-profiles={agentId}
+          data-profile-count={profiles.list.length}
+        >
+          <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+            {t('settings.credential.currentAccount')}:{' '}
+            <strong data-credential-active-profile>{profiles.active}</strong>
+            {' · '}{t('settings.credential.profileCount', { n: profiles.list.length })}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {profiles.list.map(p => (
+              <Button
+                key={p.name}
+                variant={p.name === profiles.active ? 'base' : 'outline'}
+                theme={p.name === profiles.active ? 'primary' : 'default'}
+                disabled={profileBusy !== null || p.name === profiles.active}
+                data-credential-profile={p.name}
+                data-active={p.name === profiles.active ? 'true' : 'false'}
+                onClick={() => void switchTo(p.name)}
+              >
+                {p.name}{p.masked ? ` · ${p.masked}` : ''}
+              </Button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div style={{ flex: '1 1 160px', minWidth: 140, maxWidth: 240 }}>
+              <Input
+                value={newProfileName}
+                onChange={v => setNewProfileName(v as string)}
+                placeholder={t('settings.credential.accountNamePlaceholder')}
+                data-credential-profile-name={agentId}
+              />
+            </div>
+            <Button
+              variant="outline"
+              loading={profileBusy === 'add'}
+              disabled={profileBusy !== null && profileBusy !== 'add'}
+              onClick={() => void addAccount()}
+            >
+              <Plus size={14} />
+              {t('settings.credential.addAccount')}
+            </Button>
+            {profiles.list.length > 1 && (
+              <Button
+                variant="text"
+                theme="danger"
+                loading={profileBusy === 'delete'}
+                disabled={profileBusy !== null && profileBusy !== 'delete'}
+                onClick={() => void removeAccount()}
+              >
+                <Trash2 size={14} />
+                {t('settings.credential.deleteAccount')}
+              </Button>
+            )}
+          </div>
+          <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+            {t('settings.credential.accountHint')}
+          </div>
+        </div>
+      )}
+
       {/* 已配置后才出现：检测连通性 / 获取模型 */}
       {canProbe && (
         <div className="flex flex-wrap items-center gap-2 border-t pt-2" style={{ borderColor: 'var(--tc-edge)' }}>
@@ -313,6 +553,10 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
           <Button variant="outline" loading={models.loading} onClick={() => void fetchModels()}>
             <RefreshCw size={14} />
             {t('settings.credential.fetchModels')}
+          </Button>
+          <Button variant="outline" loading={verification.loading} onClick={() => void verifyNow()}>
+            <ShieldCheck size={14} />
+            {t('settings.credential.verify')}
           </Button>
         </div>
       )}
@@ -342,6 +586,48 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
               {probe.message}
             </span>
           )}
+        </div>
+      )}
+
+      {/* #16 真实鉴权校验结论：verified 只可能来自一次真实只读请求；
+          验不了也要把「为什么验不了」说清楚，绝不静默显示「未校验」。 */}
+      {verification.result && !verification.loading && (
+        <div
+          className="rounded-md px-2.5 py-2 text-xs leading-relaxed"
+          style={{ backgroundColor: 'var(--td-bg-color-component)' }}
+          data-credential-verify-result
+          data-verified={verification.result.verified ? 'true' : 'false'}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <Tag
+              size="small"
+              variant="light"
+              theme={verification.result.verified ? 'success' : 'warning'}
+              icon={verification.result.verified ? <Check size={11} /> : undefined}
+            >
+              {verification.result.verified
+                ? t('settings.credential.verified')
+                : t('settings.credential.notVerified')}
+            </Tag>
+            {verification.result.verified ? (
+              <span style={{ color: 'var(--td-text-color-secondary)' }}>
+                {t('settings.credential.verifiedModels', {
+                  n: verification.result.models?.length ?? 0,
+                })}
+              </span>
+            ) : (
+              <span style={{ color: 'var(--td-text-color-secondary)' }}>
+                {verification.result.error || t('settings.credential.verifyFailed')}
+              </span>
+            )}
+          </div>
+          <div
+            className="mt-1"
+            style={{ color: 'var(--td-text-color-placeholder)' }}
+            data-credential-verify-provenance
+          >
+            {describeProvenance(asProvenance(verification.result.provenance))}
+          </div>
         </div>
       )}
 

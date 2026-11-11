@@ -67,6 +67,22 @@ function skipCheck(name, reason) {
   console.log(`  ⊘ ${name} —— 跳过（${reason}，非断言）`);
 }
 
+/**
+ * 冷启动抖动只认「产品侧明确的版本探测超时降级」这一种状态。
+ *
+ * 整条 verify:ui 跑到这一段时，前面 46 段刚起过大量 Electron / Playwright
+ * 子进程，磁盘与 CPU 都在忙；zcode 的 node 引擎 `--version` 偶发超过产品侧
+ * `PROBE_VERSION_TIMEOUT_MS`(3s) 的快失败阈值，产品如实降级为 `unknown`
+ * （见 server/agents/adapters/cli.ts probe()），这不是代码回归。
+ * 其他任何状态都不许重探 —— 否则重探就成了把真回归洗成绿的通道。
+ */
+function isVersionTimeoutUnknown(status) {
+  return (
+    status?.availability === 'unknown' &&
+    /版本探测超过\s*\d+\s*秒未返回/.test(status?.message ?? '')
+  );
+}
+
 /** 文件存在（不猜、不递归） */
 function isFile(p) {
   try {
@@ -256,6 +272,22 @@ console.log('\n[5] definitions 契约');
 // ---------- [6] 真探测 ----------
 console.log('\n[6] 真探测（起子进程，几秒内完成）');
 {
+  // 反向探针：冷启动重探闸门不许把真失败态洗成绿。三条一起守住「只认超时」。
+  check(
+    '重探闸门只认超时降级：not-installed 不放行',
+    !isVersionTimeoutUnknown({ availability: 'not-installed', message: '找不到可执行文件' })
+  );
+  check(
+    '重探闸门只认超时降级：同为 unknown 但别的原因也不放行',
+    !isVersionTimeoutUnknown({ availability: 'unknown', message: '后端不可达' })
+  );
+  check(
+    '重探闸门正向：产品侧超时文案能被识别',
+    isVersionTimeoutUnknown({ availability: 'unknown', message: '命令版本探测超过 3 秒未返回，状态未知。' })
+  );
+}
+
+{
   // 探测只读 PATH / 文件系统，不写库；仍按约定把数据目录指向临时位置，
   // 避免任何情况下碰真实 data/chat.db
   const dataDir = mkdtempSync(path.join(tmpdir(), 'a105-data-'));
@@ -289,7 +321,18 @@ console.log('\n[6] 真探测（起子进程，几秒内完成）');
     AGENT_DEFS.some(d => d.descriptor.id === 'trae')
   );
 
-  const zcode = await reg.probeOne('zcode', true);
+  let zcode = await reg.probeOne('zcode', true);
+  if (zcodeInstalled && isVersionTimeoutUnknown(zcode?.status)) {
+    // 先用宽松超时把引擎冷启动预热一次（和 [3] 里 trae 实跑用 20s 同理），
+    // 再按产品侧 3s 的严格阈值重探同一个真实 probeOne。
+    // 断言仍是下面两条，一条不减；status 由真探测产生，不伪造。
+    if (zcode?.status.binaryPath) {
+      const warmTarget = resolveAnyLaunchTarget(zcode.status.binaryPath);
+      if (!warmTarget.problem) await runCapture(warmTarget, ['--version'], { timeoutMs: 20000 });
+    }
+    console.log('  … zcode 版本探测冷启动超过 3s：预热后按原阈值重探一次（断言不减）');
+    zcode = await reg.probeOne('zcode', true);
+  }
   if (zcodeInstalled) {
     check('zcode 探测为 ready（修复前是 not-installed）', zcode?.status.availability === 'ready', zcode?.status.message);
     check('zcode 拿到真实版本号', /\d+\.\d+/.test(zcode?.status.version ?? ''), zcode?.status.version);

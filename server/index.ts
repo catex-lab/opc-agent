@@ -78,7 +78,12 @@ import {
   saveCredential,
   clearCredential,
   getRawCredentialKey,
+  switchProfile,
+  listProfiles,
+  deleteProfile,
 } from "./agent-credentials.js";
+// #16：唯一能把 verified 升成 true 的动作 —— 真实只读鉴权校验
+import { verifyCredential } from "./credential-verify.js";
 import { runOrchestration, isInternalPhase, type TurnPhase } from "./orchestrator.js";
 import { createTurnRunner } from "./turn-runner.js";
 import { runWorkflow, WORKFLOW_TEMPLATE } from "./workflow.js";
@@ -1103,6 +1108,29 @@ app.post("/api/agents/:agentId/account/refresh", async (req, res) => {
 });
 
 /**
+ * #16：真实鉴权校验（显式动作，绝不挂自动轮询）。
+ *
+ * 与上面 `/account/refresh` 分工不同：那条只是**重读本地文件**（verified 仍是
+ * false），这条会拿已保存的 Key 向厂商发一次只读请求。两者都带溯源，
+ * 但只有这里可能给出 `verified:true`。
+ *
+ * 失败一律用 200 + `verified:false` 返回：这是「测试结论」而非服务端故障，
+ * 与 `/api/agents/custom/test` 同口径。URL 只能由服务端从定义表 / 已保存的
+ * 接入地址推导，接口不接受前端传地址。
+ */
+app.post("/api/agents/:agentId/credential/verify", async (req, res) => {
+  try {
+    const agentId = req.params.agentId;
+    if (!findDef(agentId)) return res.status(404).json({ error: "未知 Agent" });
+    const verification = await verifyCredential(agentId);
+    res.json({ verification });
+  } catch (error: any) {
+    console.error("[CredentialVerify] error:", error);
+    res.status(500).json({ error: error?.message || "校验凭据失败" });
+  }
+});
+
+/**
  * 模型可用性标定（A151 / P2）——**显式动作**。
  *
  * 每一条都要真起一次 CLI、真花 token，所以不挂在任何自动路径上。
@@ -1257,7 +1285,7 @@ app.get("/api/agent-credentials", (req, res) => {
  */
 app.post("/api/agent-credentials", async (req, res) => {
   try {
-    const { agentId, key, baseUrl } = req.body ?? {};
+    const { agentId, key, baseUrl, name } = req.body ?? {};
     if (typeof agentId !== 'string' || !agentId) {
       return res.status(400).json({ error: "缺少 agentId" });
     }
@@ -1267,8 +1295,12 @@ app.post("/api/agent-credentials", async (req, res) => {
     if (baseUrl !== undefined && typeof baseUrl !== 'string') {
       return res.status(400).json({ error: "baseUrl 必须是字符串" });
     }
+    // #15：name 给了就是「另存为一个账号」。不传 = 改当前账号（老前端零改动）
+    if (name !== undefined && typeof name !== 'string') {
+      return res.status(400).json({ error: "name 必须是字符串" });
+    }
 
-    const credential = saveCredential(agentId, { key, baseUrl });
+    const credential = saveCredential(agentId, { key, baseUrl, name });
     // 新 Key 可能让 `opencode models` 多出若干个 provider 的模型：
     // 目录缓存必须跟着作废，否则用户填完 Key 还要等 24 小时才看见新模型。
     // SDK 缓存也一起清：虽然 SDK 走 OAuth 不经这条路径，但从「凭据变更后
@@ -1294,6 +1326,49 @@ app.delete("/api/agent-credentials/:agentId", async (req, res) => {
   } catch (error: any) {
     console.error("[Credentials] clear error:", error);
     res.status(500).json({ error: error?.message || "清除凭据失败" });
+  }
+});
+
+/* #15：多账号 profile。三个端点都只回掩码视图，明文 Key 绝不出现在响应里。 */
+
+app.get("/api/agent-credentials/:agentId/profiles", (req, res) => {
+  try {
+    const agentId = req.params.agentId;
+    if (!findDef(agentId)) return res.status(404).json({ error: "未知 Agent" });
+    res.json(listProfiles(agentId));
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "读取账号列表失败" });
+  }
+});
+
+app.post("/api/agent-credentials/:agentId/switch", async (req, res) => {
+  try {
+    const agentId = req.params.agentId;
+    const name = req.body?.name;
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: "缺少 name" });
+    }
+    const credential = switchProfile(agentId, name);
+    // 换账号 = 换了可见的 provider / 模型，缓存必须一起作废（P1 统一失效入口）
+    invalidateAllModelCaches(`switchProfile(${agentId})`);
+    const agent = await registry.probeOne(agentId, true);
+    res.json({ credential, agent });
+  } catch (error: any) {
+    console.error("[Credentials] switch error:", error);
+    res.status(400).json({ error: error?.message || "切换账号失败" });
+  }
+});
+
+app.delete("/api/agent-credentials/:agentId/profiles/:name", async (req, res) => {
+  try {
+    const { agentId, name } = req.params;
+    const profiles = deleteProfile(agentId, name);
+    invalidateAllModelCaches(`deleteProfile(${agentId})`);
+    const agent = await registry.probeOne(agentId, true);
+    res.json({ profiles, agent });
+  } catch (error: any) {
+    console.error("[Credentials] delete profile error:", error);
+    res.status(400).json({ error: error?.message || "删除账号失败" });
   }
 });
 

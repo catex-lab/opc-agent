@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, type CSSProperties } from 'react';
 import { useOverflowY } from '../hooks/useOverflowY';
+import { emitEnvChanged } from '../lib/credentialEvents';
 import { 
   Form, 
   Input, 
@@ -369,6 +370,9 @@ export function SettingsPage({
         setEnvConfig({ apiKey: '', authToken: '', internetEnv: '', baseUrl: '' });
         // 重新检查登录状态
         checkLoginStatus();
+        // #16：服务端已 invalidateAllModelCaches，前端清单/账号卡也要跟着重拉，
+        // 否则界面还挂着旧环境变量推出来的模型清单。
+        emitEnvChanged();
       } else {
         MessagePlugin.error(data.error || t('settings.login.saveFailed'));
       }

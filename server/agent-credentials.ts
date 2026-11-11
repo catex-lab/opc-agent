@@ -32,13 +32,80 @@ import path from 'path';
 import { allAgentDefs, findDef } from './agents/definitions.js';
 import { dataDirPath } from './paths.js';
 
-/** 落盘结构：agentId → { key, baseUrl } */
-interface StoredCredential {
+/**
+ * 落盘结构（#15 多账号 profile，向后兼容）。
+ *
+ * 旧形状 `{ key, baseUrl }` 依然合法，且**单账号时仍然按旧形状写盘**：
+ * 老版本读不懂 `{active, profiles}`，而新版本两种都认。这样升级 / 降级
+ * 都不会把用户已经填好的 Key 弄丢，也不用做一次破坏性的数据迁移。
+ *
+ * 只有当出现第二个账号（或账号名不是 default）时才落成新形状。
+ */
+interface ProfileEntry {
   key?: string;
   baseUrl?: string;
 }
 
+interface ProfileStore {
+  active: string;
+  profiles: Record<string, ProfileEntry>;
+}
+
+type StoredCredential = ProfileEntry | ProfileStore;
 type Store = Record<string, StoredCredential>;
+
+const DEFAULT_PROFILE = 'default';
+
+/** 任意落盘形状 → 统一的内存视图。坏的 active 回落到第一个账号，绝不丢 Key。 */
+function normalizeEntry(raw: StoredCredential | undefined): ProfileStore {
+  const fallback = { active: DEFAULT_PROFILE, profiles: {} as Record<string, ProfileEntry> };
+  if (!raw || typeof raw !== 'object') return fallback;
+  const maybe = raw as Partial<ProfileStore> & ProfileEntry;
+  if (maybe.profiles && typeof maybe.profiles === 'object' && !Array.isArray(maybe.profiles)) {
+    const profiles: Record<string, ProfileEntry> = {};
+    for (const [name, entry] of Object.entries(maybe.profiles)) {
+      if (!entry || typeof entry !== 'object') continue;
+      profiles[name] = {
+        key: typeof entry.key === 'string' ? entry.key : '',
+        baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl : '',
+      };
+    }
+    const names = Object.keys(profiles);
+    const active = typeof maybe.active === 'string' && names.includes(maybe.active)
+      ? maybe.active
+      : (names[0] ?? DEFAULT_PROFILE);
+    return { active, profiles };
+  }
+  // 旧形状：整条当作名为 default 的唯一账号
+  return {
+    active: DEFAULT_PROFILE,
+    profiles: {
+      [DEFAULT_PROFILE]: {
+        key: typeof maybe.key === 'string' ? maybe.key : '',
+        baseUrl: typeof maybe.baseUrl === 'string' ? maybe.baseUrl : '',
+      },
+    },
+  };
+}
+
+/** 单账号写旧形状（向后兼容），多账号才写新形状。 */
+function denormalizeEntry(store: ProfileStore): StoredCredential {
+  const names = Object.keys(store.profiles);
+  if (names.length === 1 && names[0] === DEFAULT_PROFILE) {
+    const only = store.profiles[DEFAULT_PROFILE];
+    return { key: (only.key ?? '').trim(), baseUrl: (only.baseUrl ?? '').trim() };
+  }
+  return { active: store.active, profiles: store.profiles };
+}
+
+function entryOf(store: Store, agentId: string): ProfileStore {
+  return normalizeEntry(store[agentId]);
+}
+
+function activeEntryOf(store: Store, agentId: string): ProfileEntry {
+  const norm = entryOf(store, agentId);
+  return norm.profiles[norm.active] ?? {};
+}
 
 const STORE_PATH = path.join(dataDirPath, 'agent-credentials.json');
 
@@ -84,7 +151,7 @@ export function credentialSpecOf(agentId: string) {
  * 空串视为「没填」—— 写一个空的环境变量会让 `authEnvs` 的
  * `trim().length > 0` 判断失效，还会让 CLI 以为「Key 存在但为空」。
  */
-function applyToEnv(agentId: string, entry: StoredCredential): void {
+function applyToEnv(agentId: string, entry: ProfileEntry): void {
   const spec = credentialSpecOf(agentId);
   if (!spec) return;
 
@@ -110,9 +177,19 @@ function applyToEnv(agentId: string, entry: StoredCredential): void {
  */
 export function loadAgentCredentials(): void {
   const store = readStore();
-  for (const [agentId, entry] of Object.entries(store)) {
-    applyToEnv(agentId, entry);
+  for (const agentId of Object.keys(store)) {
+    // #15：每个 Agent 只注入它当前激活的那个账号，不是把所有账号的 Key 依次
+    // 覆盖进同一组环境变量（那样最后一个 profile 会意外生效）。
+    applyToEnv(agentId, activeEntryOf(store, agentId));
   }
+}
+
+/** 切换 / 删除账号前先把这组变量清干净，避免上个账号的网关地址残留。 */
+function resetEnvFor(agentId: string): void {
+  const spec = credentialSpecOf(agentId);
+  if (!spec) return;
+  for (const n of spec.keyEnv) delete process.env[n];
+  if (spec.baseUrlEnv) delete process.env[spec.baseUrlEnv];
 }
 
 /** 掩码：只露头尾，够用户确认「填的是哪一把」而不泄露全文 */
@@ -142,6 +219,10 @@ export interface CredentialView {
    * 界面据此说明「已通过环境变量配置」，避免用户以为必须再填一遍。
    */
   fromEnv: boolean;
+  /** #15：当前激活的账号名（老数据恒为 default） */
+  activeProfile: string;
+  /** #15：已保存的账号数 */
+  profileCount: number;
 }
 
 function viewOf(agentId: string): CredentialView | null {
@@ -149,7 +230,8 @@ function viewOf(agentId: string): CredentialView | null {
   const spec = def?.credential;
   if (!def || !spec) return null;
 
-  const entry = readStore()[agentId] ?? {};
+  const norm = entryOf(readStore(), agentId);
+  const entry = norm.profiles[norm.active] ?? {};
   const envHit = spec.keyEnv.find(n => (process.env[n] ?? '').trim().length > 0);
   const key = (entry.key ?? '').trim();
 
@@ -164,6 +246,8 @@ function viewOf(agentId: string): CredentialView | null {
     masked: mask(key),
     baseUrl: (entry.baseUrl ?? '').trim(),
     fromEnv: !key && !!envHit,
+    activeProfile: norm.active,
+    profileCount: Object.keys(norm.profiles).length,
   };
 }
 
@@ -190,43 +274,161 @@ export function getCredential(agentId: string): CredentialView | null {
  * 「通」不成立。
  */
 export function getRawCredentialKey(agentId: string): string {
-  return (readStore()[agentId]?.key ?? '').trim();
+  return getRawCredential(agentId).key;
+}
+
+/**
+ * 取原始 Key + 接入地址，只给服务端内部用（真实鉴权校验要拿两者各发一次请求）。
+ *
+ * 与 `getRawCredentialKey()` 同样的红线：**绝不能出现在任何 API 响应里**。
+ * 单独留一个「成对」的出口，是因为校验既要 Key 也要网关地址，分两次读会
+ * 在「刚保存完」的窗口里读到不一致的两半。
+ */
+export function getRawCredential(agentId: string): { key: string; baseUrl: string } {
+  // #15：只读当前激活的账号。多账号时若还按旧形状的 `entry.key` 取，
+  // 校验 / 连通性测试会拿着一个根本不存在的字段永远拿到空串。
+  const entry = activeEntryOf(readStore(), agentId);
+  return {
+    key: (entry.key ?? '').trim(),
+    baseUrl: (entry.baseUrl ?? '').trim(),
+  };
+}
+
+/** 账号名只做最小校验：能显示、不超长、不含控制字符。 */
+function normalizeProfileName(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const name = String(raw).trim();
+  if (!name) return DEFAULT_PROFILE;
+  if (name.length > 32 || /[\u0000-\u001f]/.test(name)) {
+    throw new Error('账号名称不合法（不超过 32 个字符，且不能含控制字符）');
+  }
+  return name;
 }
 
 /**
  * 保存凭据。
  *
- * `key` 传空串 = 删除该 Agent 的 Key（界面上的「清除」走这条）。
- * `baseUrl` 同理。
+ * `key` 传空串 = 删除该账号的 Key（界面上的「清除」走 `clearCredential`）。
+ * `name` 给了就是「另存为一个账号」，并立刻激活它 —— 用户刚填完新 Key，
+ * 下一步就是要用这把 Key，不该再点一次切换。
  */
 export function saveCredential(
   agentId: string,
-  input: { key?: string; baseUrl?: string }
+  input: { key?: string; baseUrl?: string; name?: string }
 ): CredentialView {
   const spec = credentialSpecOf(agentId);
   if (!spec) throw new Error(`该 Agent 不支持在应用内配置凭据：${agentId}`);
 
   const store = { ...readStore() };
-  const prev = store[agentId] ?? {};
-  const next: StoredCredential = {
+  const norm = entryOf(store, agentId);
+  const target = normalizeProfileName(input.name) ?? norm.active;
+  const prev = norm.profiles[target] ?? {};
+  const entry: ProfileEntry = {
     key: (input.key ?? prev.key ?? '').trim(),
     baseUrl: (input.baseUrl ?? prev.baseUrl ?? '').trim(),
   };
 
-  if (!next.key && !next.baseUrl) delete store[agentId];
-  else store[agentId] = next;
+  if (!entry.key && !entry.baseUrl) {
+    delete norm.profiles[target];
+    const rest = Object.keys(norm.profiles);
+    if (rest.length === 0) delete store[agentId];
+    else {
+      norm.active = rest.includes(DEFAULT_PROFILE) ? DEFAULT_PROFILE : rest[0];
+      store[agentId] = denormalizeEntry(norm);
+    }
+  } else {
+    norm.profiles[target] = entry;
+    norm.active = target;
+    store[agentId] = denormalizeEntry(norm);
+  }
 
   writeStore(store);
 
   // 清除时要把之前注入的变量删掉，否则「清除」后状态仍然是已配置
-  if (!next.key) {
-    for (const n of spec.keyEnv) {
-      if (process.env[n] && !next.key) delete process.env[n];
-    }
-  }
-  applyToEnv(agentId, next);
+  const active = store[agentId] ? activeEntryOf(store, agentId) : {};
+  if (!active.key) for (const n of spec.keyEnv) if (process.env[n]) delete process.env[n];
+  applyToEnv(agentId, active);
 
   return viewOf(agentId)!;
+}
+
+export interface ProfileView {
+  name: string;
+  configured: boolean;
+  /** 掩码，不回传明文 */
+  masked: string;
+  baseUrl: string;
+}
+
+export interface ProfileListView {
+  agentId: string;
+  active: string;
+  profiles: ProfileView[];
+}
+
+/** 列出该 Agent 的所有账号（对外只有掩码，没有明文 Key）。 */
+export function listProfiles(agentId: string): ProfileListView {
+  const norm = entryOf(readStore(), agentId);
+  return {
+    agentId,
+    active: norm.active,
+    profiles: Object.entries(norm.profiles).map(([name, e]) => {
+      const key = (e.key ?? '').trim();
+      return {
+        name,
+        configured: key.length > 0,
+        masked: mask(key),
+        baseUrl: (e.baseUrl ?? '').trim(),
+      };
+    }),
+  };
+}
+
+/** 切换当前生效的账号。不存在的名字直接抛错，由路由转成 404，不静默纠正。 */
+export function switchProfile(agentId: string, name: string): CredentialView {
+  if (!credentialSpecOf(agentId)) {
+    throw new Error(`该 Agent 不支持在应用内配置凭据：${agentId}`);
+  }
+  const store = { ...readStore() };
+  const norm = entryOf(store, agentId);
+  const target = String(name ?? '').trim();
+  if (!norm.profiles[target]) throw new Error(`账号不存在：${target}`);
+
+  norm.active = target;
+  store[agentId] = denormalizeEntry(norm);
+  writeStore(store);
+
+  // 关键是「先清后写」：不清的话新账号没填网关地址时，旧账号的
+  // baseUrl 会残留，请求打到上一个账号的网关上。
+  resetEnvFor(agentId);
+  applyToEnv(agentId, norm.profiles[target]);
+  return viewOf(agentId)!;
+}
+
+/** 删一个账号。至少留一个 —— 全清走 `clearCredential()`，语义不同。 */
+export function deleteProfile(agentId: string, name: string): ProfileListView {
+  if (!credentialSpecOf(agentId)) {
+    throw new Error(`该 Agent 不支持在应用内配置凭据：${agentId}`);
+  }
+  const store = { ...readStore() };
+  const norm = entryOf(store, agentId);
+  const target = String(name ?? '').trim();
+  if (!norm.profiles[target]) throw new Error(`账号不存在：${target}`);
+  if (Object.keys(norm.profiles).length <= 1) {
+    throw new Error('至少保留一个账号；要全部清除请用「清除」');
+  }
+
+  delete norm.profiles[target];
+  const rest = Object.keys(norm.profiles);
+  if (norm.active === target) {
+    norm.active = rest.includes(DEFAULT_PROFILE) ? DEFAULT_PROFILE : rest[0];
+  }
+  store[agentId] = denormalizeEntry(norm);
+  writeStore(store);
+
+  resetEnvFor(agentId);
+  applyToEnv(agentId, norm.profiles[norm.active]);
+  return listProfiles(agentId);
 }
 
 export function clearCredential(agentId: string): CredentialView | null {
@@ -235,8 +437,7 @@ export function clearCredential(agentId: string): CredentialView | null {
   const store = { ...readStore() };
   delete store[agentId];
   writeStore(store);
-  for (const n of spec.keyEnv) delete process.env[n];
-  if (spec.baseUrlEnv) delete process.env[spec.baseUrlEnv];
+  resetEnvFor(agentId);
   return viewOf(agentId);
 }
 

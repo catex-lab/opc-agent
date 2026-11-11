@@ -133,14 +133,32 @@ try {
     (await d.page.locator('[data-agent-install] [data-install-open-settings]').count()) === 0,
     '[2] 不再有「填写 API Key」跳转按钮'
   );
-  ok(
-    (await d.page.locator('[data-credential-key="doubao"]').count()) === 1,
-    '[2] 有 API Key 输入框'
-  );
+  // 外层 [data-agent-credential-inline] 出现 ≠ 输入框已挂载：编辑器首帧走的是
+  // 「加载中」占位分支（AgentCredentialEditor 的 loading），Input 要等 /account
+  // 回来才有。2026-11-11 整条 verify:ui 跑到第 90 段时，瞬时 count() 正好撞上
+  // 这个窗口取到 0，单跑却 14/14 绿 —— 是断言早于挂载，不是产品回归。
+  // 修法：先等编辑器本体 + 输入框挂载（超时显式判红），再钉死「恰好 1 个」。
+  const keyInput = d.page.locator('[data-credential-key="doubao"]');
+  let editorReady = true;
+  try {
+    await d.page.waitForSelector('[data-credential-editor="doubao"]', { timeout: 15000 });
+    await keyInput.first().waitFor({ state: 'attached', timeout: 15000 });
+  } catch {
+    editorReady = false;
+  }
+  ok(editorReady, '[2] 凭据编辑器完成加载（不是停在「加载中」占位）');
+  ok((await keyInput.count()) === 1, '[2] 有 API Key 输入框');
   // 未配置时：连通性 / 获取模型按钮不应出现
   const actionBtnsBefore = await d.page
     .locator('[data-agent-credential-inline] button')
     .allInnerTexts();
+  // 否定式断言的前提：面板真的渲染出按钮了。停在 loading 占位时按钮列表为空，
+  // 「没有检测连通性」会假绿 —— 必须配肯定式自证。
+  ok(
+    actionBtnsBefore.some(t => t.includes('保存')),
+    '[2] 未配置时保存按钮在（否定式断言的前提：面板真渲染了）',
+    actionBtnsBefore.join('|')
+  );
   ok(
     !actionBtnsBefore.some(t => t.includes('检测连通性') || t.includes('获取模型')),
     '[2] 未配置时不出现「检测连通性 / 获取模型」按钮',

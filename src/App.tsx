@@ -17,6 +17,7 @@ import { useTheme } from './hooks/useTheme';
 import { useMediaQuery } from './hooks/useMediaQuery';
 import { useSessions } from './hooks/useSessions';
 import { useModels } from './hooks/useModels';
+import { emitCredentialsChanged, subscribeCredentialChanges } from './lib/credentialEvents';
 import { useChat } from './hooks/useChat';
 import { useAgentRegistry } from './hooks/useAgentRegistry';
 import { useExtensions, useExtensionDetail } from './hooks/useExtensions';
@@ -460,6 +461,16 @@ function AppContent() {
    * 白点了。改一个计数器当依赖，就能在不换 Agent 的情况下强制重取。
    */
   const [modelsEpoch, setModelsEpoch] = useState(0);
+
+  /**
+   * #16：任何一处保存 / 清除 / 切换凭据后，服务端都会让模型缓存失效；
+   * 这里把同一件事通知给「当前 Agent 的模型清单」那条 effect。
+   * 平台清单由 `useModels` 自己订阅同一个事件重拉，两条线互不重复。
+   * 事件总线已做同 tick 合并，一次保存只重取一轮。
+   */
+  useEffect(() => subscribeCredentialChanges(() => {
+    setModelsEpoch(v => v + 1);
+  }), []);
 
   /**
    * 上一个 Agent 的 id（A162）。
@@ -2078,7 +2089,13 @@ function AppContent() {
                 onDelete={deleteAgent}
                 themePreference={preference}
                 onThemePreferenceChange={setPreference}
-                onCredentialsSaved={registry.load}
+                onCredentialsSaved={() => {
+                  void registry.load();
+                  // #16：别只刷名册 —— 平台模型清单与当前 Agent 清单都要重拉。
+                  // 统一走事件总线（useModels 与上面的 modelsEpoch effect 各订阅一次），
+                  // 不再直接调 onModelsRefreshed，避免同一动作打两轮 /api/models。
+                  emitCredentialsChanged();
+                }}
                 onModelsRefreshed={() => {
                   // 两条来源都要重取：SDK 类走 useModels 那份，其余走下面那个 effect
                   setModelsEpoch(v => v + 1);

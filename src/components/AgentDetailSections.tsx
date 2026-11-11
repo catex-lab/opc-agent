@@ -5,6 +5,7 @@ import { InstallCard } from './InstallCard';
 import { AgentCredentialEditor } from './AgentCredentialEditor';
 import { describeProbeFeedback, type AgentProbeFeedback } from '../agentProbe';
 import { describeProvenance, asProvenance } from '../../shared/provenance';
+import { subscribeCredentialChanges } from '../lib/credentialEvents';
 import {
   AVAILABILITY_META,
   CAPABILITY_META,
@@ -887,9 +888,21 @@ function formatAgo(iso: string): string {
  * 用户看到的仍是完整的资料页。
  *
  * `agentId` 变了（同族跳转）要重新拉：两套账号数据完全不同。
+ *
+ * #16：凭据 / 环境变量变更后也要重拉。以前只依赖 `agentId`，用户在同页
+ * 就地保存了新 Key，账号卡却还挂着上一把 Key 读出来的旧账号 —— 服务端
+ * 明明已经重探过，界面就是不动。事件按 agentId 过滤，避免别的 Agent 保存
+ * 凭据时把这一页也闪一下。
  */
 function useAgentAccount(agentId: string): AgentAccount | null {
   const [account, setAccount] = useState<AgentAccount | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => subscribeCredentialChanges(event => {
+    if (event.agentId && event.agentId !== agentId) return;
+    setRefreshKey(v => v + 1);
+  }), [agentId]);
+
   useEffect(() => {
     let alive = true;
     setAccount(null);
@@ -905,7 +918,7 @@ function useAgentAccount(agentId: string): AgentAccount | null {
     return () => {
       alive = false;
     };
-  }, [agentId]);
+  }, [agentId, refreshKey]);
   return account;
 }
 
