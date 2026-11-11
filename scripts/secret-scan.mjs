@@ -136,6 +136,37 @@ const RULES = [
   },
 ];
 
+/**
+ * `.env` 专用规则：普通代码里「变量名得像 KEY/SECRET」这条判据是为了压假阳性，
+ * 但 `.env` 里每一行赋值本身就是凭据候选，`DB_HOST_PASSWORD` 和 `FOO` 都得扫。
+ * 这类文件本该被 .gitignore 挡在库外；这条规则是防 `git add -f .env` 的兜底。
+ */
+const ENV_RULE = {
+  id: 'env-assigned-secret',
+  label: '.env 里的凭据赋值',
+  re: /^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.+?)\s*$/,
+  group: 1,
+  accept: (m, line) => {
+    const value = String(m[1] ?? '').replace(/^["']|["']$/g, '').trim();
+    if (value.length < 8 || PLACEHOLDER.test(value)) return false;
+    // 布尔 / 端口 / 环境名 / 本地地址这类是配置，不是密钥
+    if (/^(?:true|false|null|none|undefined|\d{1,6}|localhost|127\.0\.0\.1|utf-?8|development|production|test|debug|info)$/i.test(value)) return false;
+    // 值来自另一个变量或模板插值，不是硬编码真值
+    if (/\$\{|\$[A-Za-z_]|process\.env|import\.meta\.env|os\.environ/i.test(line)) return false;
+    // 服务地址 / 连接串是配置不是密钥；带密码的连接串由上面的 conn-string 规则拦
+    if (/^(?:https?|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp):\/\//i.test(value)) return false;
+    // 纯小写加分隔符的是键名 / 夹具，沿用结构规则里同一条排除
+    if (/^[a-z0-9]+(?:[._-][a-z0-9]+)+$/.test(value)) return false;
+    return true;
+  },
+};
+
+/** 示例文件是给人照着填的，不算凭据载体。 */
+function isScannableEnvFile(relPath) {
+  return /(^|\/)\.env(\.[A-Za-z0-9_-]+)?$/.test(relPath)
+    && !/\.(?:example|sample|template)$/i.test(relPath);
+}
+
 function mask(s) {
   if (s.length <= 10) return '*'.repeat(s.length);
   return `${s.slice(0, 6)}…${s.slice(-4)}`;
@@ -149,11 +180,12 @@ function looksBinary(buf) {
 
 function scanText(text, relPath) {
   const hits = [];
+  const rules = isScannableEnvFile(relPath) ? [...RULES, ENV_RULE] : RULES;
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.includes(IGNORE_MARK)) continue;
-    for (const rule of RULES) {
+    for (const rule of rules) {
       const m = rule.re.exec(line);
       if (!m) continue;
       if (rule.accept && !rule.accept(m, line)) continue;
@@ -186,6 +218,8 @@ function main() {
   const files = all ? trackedFiles() : stagedFiles();
 
   const findings = [];
+  // 读不到的文件不能当成「扫过了且干净」：攒起来，在结论里显式交代。
+  const unscanned = [];
   for (const rel of files) {
     if (SKIP_FILES.some(re => re.test(rel))) continue;
 
@@ -195,7 +229,8 @@ function main() {
       // 而真正要提交的是索引。
       buf = all ? readFileSync(rel) : git(['show', `:${rel}`]);
     } catch {
-      continue; // 新加但读不到（已删除 / 权限问题）就跳过，不阻断提交
+      unscanned.push(rel);
+      continue;
     }
 
     if (looksBinary(buf)) continue;
@@ -205,8 +240,19 @@ function main() {
   }
 
   if (!findings.length) {
+    // CI / 排查用的 --all 是硬闸门：有文件读不到就不能报「通过」。
+    // 钩子模式仍不阻断提交（钩子环境坏了把人锁死更糟），但必须把话说出来。
+    if (unscanned.length) {
+      console.error(`\n⚠️  有 ${unscanned.length} 个文件没能读到，本次扫描不完整：`);
+      for (const rel of unscanned) console.error(`  - ${rel}`);
+      if (all) {
+        console.error('✗ 全量扫描不允许带着未扫描文件判通过（退出码 2）\n');
+        return 2;
+      }
+      console.error('  钩子模式不阻断提交，但请确认这些文件确实不含密钥。\n');
+    }
     const scope = all ? '全部受跟踪文件' : '暂存区';
-    console.log(`✓ 密钥扫描通过（${scope}，${files.length} 个文件）`);
+    console.log(`✓ 密钥扫描通过（${scope}，${files.length} 个文件${unscanned.length ? `，其中 ${unscanned.length} 个未扫到` : ''}）`);
     return 0;
   }
 
@@ -230,8 +276,13 @@ try {
   process.exit(main());
 } catch (err) {
   console.error(`✗ 密钥扫描自身出错：${err?.message || err}`);
-  // 出错时**不**阻断提交：钩子自身坏了不该让人提交不了代码。
-  // 但要把话说清楚，不能静默放过。
+  // 钩子模式：出错不阻断提交（钩子自身坏了不该让人提交不了代码），
+  // 但必须说清楚这次没扫过。全量模式（CI 的 secret-scan --all）必须判红 ——
+  // 那边没有「先提交再说」的余地，静默 exit 0 就是一条永久的假绿通道。
+  if (process.argv.includes('--all')) {
+    console.error('  全量扫描环境出错，判红（退出码 2）；CI 不允许「没扫过」算通过。');
+    process.exit(2);
+  }
   console.error('  这次提交没有经过扫描，请检查上面这条错误。');
   process.exit(0);
 }

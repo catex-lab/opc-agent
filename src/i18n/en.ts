@@ -8,6 +8,12 @@
 import type { MessageKey } from './zh';
 
 export const en: Record<MessageKey, string> = {
+  // Global error fallback (ErrorBoundary is a class component; uses module-level t())
+  'errorBoundary.title': 'Something went wrong',
+  'errorBoundary.description': 'The app hit a problem while rendering and stopped displaying. Your conversations are safe (stored in the local database) — reloading usually fixes it.',
+  'errorBoundary.reload': 'Reload',
+  'errorBoundary.details': 'Error details (please include when reporting)',
+
   'nav.chats': 'Chats',
   'nav.projects': 'Projects',
   'nav.contacts': 'Contacts',
@@ -499,6 +505,7 @@ export const en: Record<MessageKey, string> = {
   'settings.about.starSuffix': ' is the most practical way to support it.',
   'settings.about.support': 'Support',
   'settings.agents.create': 'Create agent',
+  'settings.agents.createFromScratch': 'Create agent from scratch',
   'settings.agents.created': 'Agent created',
   'settings.agents.createTitle': 'Create a new agent',
   'settings.agents.deleteConfirm': 'Delete this agent?',
@@ -506,6 +513,7 @@ export const en: Record<MessageKey, string> = {
   'settings.agents.deleteTooltip': 'Delete',
   'settings.agents.descLabel': 'Description',
   'settings.agents.descPlaceholder': 'Briefly describe what this agent is for',
+  'settings.agents.dialogTitle': 'Agent configuration',
   'settings.agents.editTitle': 'Edit agent',
   'settings.agents.editTooltip': 'Edit',
   'settings.agents.iconColorLabel': 'Icon and color',

@@ -205,7 +205,7 @@ export default function AboutPanel() {
         <details className="tc-about-build-details" data-about-build-details>
           <summary>
             {t('settings.about.buildInfo')}
-            <ChevronDown className="tc-about-build-caret" />
+            <ChevronDown size={14} className="tc-about-build-caret" />
           </summary>
           <div className="tc-about-build-grid">
             <span className="tc-about-build" data-about-runtime>{buildLine}</span>
@@ -324,11 +324,11 @@ export default function AboutPanel() {
             多引一个组件只为了一次展开，成本比收益高。 */}
         <details className="tc-about-lic" data-about-licenses>
           <summary>
-            <Package />
+            <Package size={14} />
             {t('settings.about.licenses')}
             <span className="tc-about-count">{t('settings.about.componentCount', { n: THIRD_PARTY.length })}</span>
             <span className="tc-about-caret">
-              <ChevronDown />
+              <ChevronDown size={14} />
             </span>
           </summary>
 

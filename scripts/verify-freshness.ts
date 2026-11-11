@@ -14,6 +14,9 @@
  *
  * 运行：npx tsx scripts/verify-freshness.ts
  */
+// 必须先于所有 server/** 动态 import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
+import './lib/temp-data-dir.js';
+
 const { makeProvenance, asProvenance, describeProvenance, isStale, PROVENANCE_TTL_MS } =
   await import('../shared/provenance.js');
 

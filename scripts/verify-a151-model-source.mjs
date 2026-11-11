@@ -12,7 +12,14 @@
  *
  * 所以本脚本钉三件事：
  *   [2] 接口层：cursor 真的被枚举进目录；zcode 真的从配置读出来了，
- *       并且 `selectable: false` 必须原样透出（否则就是「点了不生效」的假控件）；
+ *       并且 `selectable: false` 必须原样透出（否则就是「点了不生效」的假控件）。
+ *       ⚠️ 这两处原先直接打主服务端，于是**绿不绿取决于本机装没装 CLI / 有没有
+ *       `~/.zcode` 配置**（本机恰好枚举出 276 条时全绿，缓存被清成 0 条时就 5 条红，
+ *       换台机器连 zcode 那 13 条都读不到）。现在改为另起一个专用服务端：
+ *       `OPC_DATA_DIR` 指向固定目录快照、`USERPROFILE` 指向固定 ZCode HOME，
+ *       两份夹具都在 `scripts/fixtures/`；[3] 的 UI 用这个服务端返回的**真实响应**
+ *       做 route 夹具。本机真实状态只嗅探、只打印、不参与判红。
+ *       夹具与服务端解析器之间另有契约自检（同 [4] 的 qoder 夹具），不许悄悄失效。
  *   [3] UI 层：只读清单打开后**行不可点**、底部是解释而不是「添加模型」、
  *       并且标出「当前」用的是哪一条；
  *   [4][5] 可用性标定（P2）：判 invalid 的模型必须从菜单里消失、判 routed 的
@@ -36,6 +43,12 @@ const TMP = path.join(ROOT, '.tmp', `a151-model-${Date.now()}`);
 const DATA = path.join(TMP, 'data');
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
+// [2] 的固定夹具：目录快照 + ZCode HOME 文件树，都不读本机外部数据。
+const CATALOG_FIXTURE = path.join(ROOT, 'scripts', 'fixtures', 'a151-cursor-catalog.json');
+const ZCODE_FIXTURE = path.join(ROOT, 'scripts', 'fixtures', 'a151-zcode-home.json');
+const FIXTURE_DATA = path.join(TMP, 'agent-fixture-data');
+const FIXTURE_HOME = path.join(TMP, 'agent-fixture-home');
+
 /* [4] 要调用**真实**解析函数做契约自检。import 链会打开 SQLite（definitions /
    probe 侧效应），所以先把自己的数据目录指到临时目录，绝不碰仓库里的真实
    `data/chat.db`；服务端子进程仍然用 spawn env 里的 OPC_DATA_DIR。 */
@@ -43,6 +56,10 @@ fs.mkdirSync(DATA, { recursive: true });
 process.env.OPC_DATA_DIR = DATA;
 const { mergeOfficialExtras, readOfficialModels } = await import(
   '../server/agents/modelAvailability.ts'
+);
+// [2] 的 cursor 夹具要用真实解析器反算一遍，形状变了必须红。
+const { parseCursorModels, parseCursorDefaultModel } = await import(
+  '../server/agents/modelCatalog.ts'
 );
 
 let pass = 0;
@@ -109,6 +126,40 @@ async function waitReady(base, child, timeoutMs = 90000) {
   return { ready: false, log };
 }
 
+// ============= [2] 固定夹具准备：目录快照 + ZCode HOME =============
+// 这两份数据完全来自仓库内 fixtures，服务端不会去碰本机 cursor-agent 或 ~/.zcode。
+const catalogFixture = JSON.parse(fs.readFileSync(CATALOG_FIXTURE, 'utf8'));
+const zcodeFixtureFiles = JSON.parse(fs.readFileSync(ZCODE_FIXTURE, 'utf8'));
+
+/** 把夹具里的相对文件树写进临时 HOME（json 项序列化，text 项原样写）。 */
+function writeZcodeFixtureHome(home, spec) {
+  for (const f of spec.files ?? []) {
+    const target = path.join(home, ...String(f.path).split('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const content = Object.prototype.hasOwnProperty.call(f, 'text')
+      ? f.text
+      : JSON.stringify(f.json, null, 2);
+    fs.writeFileSync(target, content, 'utf8');
+  }
+}
+
+/** 写一份 TTL 内的目录快照：fetchedAt 必须现算，写死会过期 → 触发本机 CLI 枚举。 */
+function writeCatalogFixture(dataDir, spec) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  const snapshot = {
+    version: spec.version,
+    fetchedAt: Date.now(),
+    agents: spec.agents,
+    providers: spec.providers,
+    details: spec.details,
+    defaults: spec.defaults,
+  };
+  fs.writeFileSync(path.join(dataDir, 'model-catalog.json'), JSON.stringify(snapshot), 'utf8');
+}
+
+writeCatalogFixture(FIXTURE_DATA, catalogFixture);
+writeZcodeFixtureHome(FIXTURE_HOME, zcodeFixtureFiles);
+
 const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
 console.log(`\n[1] 起服务端 :${port}`);
@@ -128,22 +179,105 @@ if (!ready) {
   process.exit(1);
 }
 
+/* ---- [2] 专用夹具服务端 ----
+   只把数据目录与 HOME 换成仓库内固定夹具，主服务端环境一个字都不动：
+   [7] 的平台清单 /api/models 仍走真实 SDK 缓存，别为了修 [2] 把 [7] 带红。
+   PATH 里剔掉本机 Agent CLI 目录，目录快照在 24h TTL 内也不会触发后台刷新。 */
+console.log('\n[1f] 起固定夹具服务端（cursor 目录快照 + ZCode HOME 夹具）');
+const fixturePort = await freePort();
+const fixtureBase = `http://127.0.0.1:${fixturePort}`;
+const cleanPath = (process.env.PATH || '')
+  .split(path.delimiter)
+  .filter(p => !/cursor-agent|qoder|zcode/i.test(p))
+  .join(path.delimiter);
+const fixtureChild = spawn('npx tsx server/index.ts', {
+  cwd: ROOT,
+  shell: true,
+  windowsHide: true,
+  env: {
+    ...process.env,
+    PORT: String(fixturePort),
+    OPC_DATA_DIR: FIXTURE_DATA,
+    USERPROFILE: FIXTURE_HOME,
+    HOME: FIXTURE_HOME,
+    PATH: cleanPath,
+    NODE_OPTIONS: '',
+  },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+const fixtureReady = await waitReady(fixtureBase, fixtureChild);
+ok(fixtureReady.ready, '[1f] 夹具服务端起来了（[2] 的数据不来自本机）');
+if (!fixtureReady.ready) {
+  console.log(fixtureReady.log.slice(-1500));
+  killTree(child);
+  killTree(fixtureChild);
+  console.log(`\n=== ${pass}/${pass + fail} 通过 ===`);
+  process.exit(1);
+}
+
 let browser;
 try {
   // ============= [2] 接口层 =============
-  console.log('\n[2] 接口层：来源与可切换性');
-  const cursor = await json(await fetch(`${base}/api/agents/cursor/models`));
-  ok(Array.isArray(cursor.models) && cursor.models.length > 50, '[2] cursor 枚举出真模型（不再是空）',
-    `${cursor.models?.length ?? 0} 条`);
+  console.log('\n[2] 接口层：来源与可切换性（固定夹具，不读本机）');
+
+  /* ---- 夹具契约自检 ----
+     与 [4] 的 qoder 夹具同一套纪律：夹具必须能被**真实**解析器读出来，
+     结构版本必须与服务端一致。否则夹具会变成「改了解析器也不知道」的摆设。 */
+  const mcSrc = fs.readFileSync(path.join(ROOT, 'server/agents/modelCatalog.ts'), 'utf8');
+  const cacheVersion = Number(/const CACHE_VERSION = (\d+);/.exec(mcSrc)?.[1]);
+  ok(cacheVersion === catalogFixture.version,
+    '[夹具] catalog 快照版本与服务端 CACHE_VERSION 对齐',
+    `${catalogFixture.version} vs ${cacheVersion}`);
+  const parsedCursor = parseCursorModels(catalogFixture.cursorStdout);
+  const parsedDefault = parseCursorDefaultModel(catalogFixture.cursorStdout);
+  ok(parsedCursor.map(m => m.id).join('|') === catalogFixture.agents.cursor.join('|'),
+    '[夹具] cursorStdout 经真实解析器反算 = 快照 id 列表（顺序与脏行过滤都对得上）',
+    `${parsedCursor.length} vs ${catalogFixture.agents.cursor.length} 条`);
+  ok(parsedCursor.every(m => catalogFixture.details.cursor[m.id]?.name === m.name),
+    '[夹具] 每条显示名与解析结果一致（行尾 (current, default) 剥掉、(NO ZDR) 保留）');
+  ok(parsedDefault === catalogFixture.defaults.cursor,
+    '[夹具] CLI 自己声明的默认模型 = 快照 defaults', String(parsedDefault));
+  const fixtureIds = catalogFixture.agents.cursor;
+  ok(fixtureIds.length >= 3 && new Set(fixtureIds).size === fixtureIds.length &&
+     fixtureIds.every(id => catalogFixture.details.cursor[id]?.name &&
+       catalogFixture.details.cursor[id].name !== id),
+    '[夹具] id 唯一且每条都有与 id 不同的显示名（否则下面「显示名不同」会假绿）');
+  ok(fixtureIds.includes(catalogFixture.defaults.cursor), '[夹具] 默认模型在清单里');
+  ok(zcodeFixtureFiles.files.length === 4 &&
+     new Set(zcodeFixtureFiles.files.map(f => f.path)).size === 4,
+    '[夹具] ZCode HOME 文件树齐 4 份（config / provider_config / plan-cache / rollout）');
+
+  // ★ 反向探针：把夹具改坏，上面的自检必须能发现 —— 否则自检本身是摆设。
+  const brokenStdout = catalogFixture.cursorStdout.replace(' - Fixture GPT 5.2', '');
+  ok(parseCursorModels(brokenStdout).map(m => m.id).join('|') !== fixtureIds.join('|'),
+    '[夹具] 反向探针：stdout 少一行 → 解析器反算对不上');
+  const brokenNames = {
+    ...catalogFixture.details.cursor,
+    'fixture-cursor-01': { name: 'fixture-cursor-01' },
+  };
+  ok(!parsedCursor.every(m => brokenNames[m.id]?.name === m.name),
+    '[夹具] 反向探针：某条显示名被改成 id 复制 → 名称自检会红');
+  ok(parseCursorDefaultModel(catalogFixture.cursorStdout.replace('(current, default)', '(current)')) === undefined,
+    '[夹具] 反向探针：去掉 default 标记 → 默认模型自检会红');
+
+  // 全部打夹具服务端：`>50 条` 那种判据是本机实测值，不是产品契约。
+  // 现在钉的是「快照被完整、按序、带显示名地透出来」，任何机器结果一致。
+  const cursor = await json(await fetch(`${fixtureBase}/api/agents/cursor/models`));
+  ok(Array.isArray(cursor.models) && cursor.models.length === fixtureIds.length,
+    '[2] cursor 把目录快照完整列了出来（不再是空）', `${cursor.models?.length ?? 0} 条`);
+  ok(cursor.models?.map(m => m.modelId).join('|') === fixtureIds.join('|'),
+    '[2] cursor 的条目与顺序 = 快照（不增不减不重排）');
   ok(cursor.source === 'catalog', '[2] cursor 的来源是 catalog', String(cursor.source));
   ok(cursor.selectable === true, '[2] cursor 可选（能真的传下去）');
-  ok(typeof cursor.defaultModel === 'string' && cursor.defaultModel.length > 0,
-    '[2] cursor 给出 CLI 自己声明的默认模型', String(cursor.defaultModel));
+  ok(cursor.defaultModel === catalogFixture.defaults.cursor,
+    '[2] cursor 给出 CLI 自己声明的默认模型（来自夹具，不是本机）', String(cursor.defaultModel));
   // 肯定式配套：名字不能只是 id 的复制，否则解析器把 `id - 显示名` 只吃了一半
   ok((cursor.models ?? []).some(m => m.name && m.name !== m.modelId),
     '[2] cursor 的显示名与 id 不同（说明 `id - 显示名` 真被拆开了）');
+  ok((cursor.models ?? []).every(m => m.name === catalogFixture.details.cursor[m.modelId]?.name),
+    '[2] 每条显示名都取自 details（不是 id 的复制）');
 
-  const zcode = await json(await fetch(`${base}/api/agents/zcode/models`));
+  const zcode = await json(await fetch(`${fixtureBase}/api/agents/zcode/models`));
   ok(Array.isArray(zcode.models) && zcode.models.length > 0, '[2] zcode 从自己的配置里读出了清单',
     `${zcode.models?.length ?? 0} 条`);
   ok(zcode.source === 'agent-config', '[2] zcode 的来源是 agent-config', String(zcode.source));
@@ -197,10 +331,19 @@ try {
   // 只是没有枚举命令），这条就红了 —— 红的是**断言的前提**，不是代码：
   // 该断言要守的是「不许编一份清单出来」，所以换一个真的既不接受 model
   // 也没有 cli 通道的 Agent（doubao）来对照，判据仍是「列表为空 + 不假装有来源」。
-  const doubao = await json(await fetch(`${base}/api/agents/doubao/models`));
+  const doubao = await json(await fetch(`${fixtureBase}/api/agents/doubao/models`));
   ok(doubao.source === 'unknown' && (doubao.models ?? []).length === 0,
     '[2] 既无目录也无配置的 Agent 维持 unknown（不编清单）',
     `${doubao.source}/${doubao.models?.length ?? 0}`);
+
+  /* 本机真实状态只嗅探、只打印（同 [4] 的 live 文件嗅探）：
+     明确这轮绿的是**代码契约**，不是「这台机器恰好装了 cursor-agent / 有 ~/.zcode」。 */
+  const liveCursor = await json(await fetch(`${base}/api/agents/cursor/models`));
+  const liveZcode = await json(await fetch(`${base}/api/agents/zcode/models`));
+  console.log(
+    `[嗅探] 本机 cursor=${liveCursor.source}/${liveCursor.models?.length ?? 0} 条，` +
+    `zcode=${liveZcode.source}/${liveZcode.models?.length ?? 0} 条（非断言，闸门用固定夹具）`
+  );
 
   // ============= [4] 产品行为（固定夹具）：qoder「未验证」与标定过滤 =============
   //
@@ -505,6 +648,14 @@ try {
   const pageErrors = [];
   page.on('pageerror', e => pageErrors.push(e.message));
 
+  /* [3] 的只读清单走 [2] 夹具服务端返回的**真实响应**（不是手编 JSON）：
+     前端渲染与点击仍然是真的，但不再依赖本机 ~/.zcode 恰好有 13 条配置。 */
+  const zcodeRouteHits = [];
+  await page.route('**/api/agents/zcode/models', route => {
+    zcodeRouteHits.push(route.request().url());
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(zcode) });
+  });
+
   await page.goto(`${base}/chat/${sessionId}`, { waitUntil: 'domcontentloaded' });
 
   const trigger = page.locator('[data-model-trigger]');
@@ -524,6 +675,12 @@ try {
   const rows = page.locator('[data-model-row]');
   const rowCount = await rows.count();
   ok(rowCount >= 10, '[3] 清单真的渲染出来了', `${rowCount} 行`);
+  /* 肯定式：上面「行渲染出来了」在 route 没生效、UI 仍吃本机数据时也会绿。
+     必须自证清单确实来自夹具响应，否则 [3] 整段可能仍在依赖本机 ~/.zcode。 */
+  ok(zcodeRouteHits.length > 0, '[3] 清单确实来自夹具响应（route 命中过）',
+    `${zcodeRouteHits.length} 次`);
+  ok(rowCount === zcode.models.length, '[3] 渲染行数 = 夹具清单条数（不是本机那份）',
+    `${rowCount} vs ${zcode.models.length}`);
 
   const readonlyRows = await page.locator('[data-model-row][data-model-readonly="1"]').count();
   ok(readonlyRows === rowCount, '[3] 每一行都标了只读', `${readonlyRows}/${rowCount}`);
@@ -774,9 +931,9 @@ try {
       `[6] ${id} 没有 cli 通道 ⇒ 不给手动输入框`, `${r.source}/${r.models?.length ?? 0} 条`);
   }
   // 反面对照②：能枚举 / 能读配置的不许退化成手动
-  const cursor2 = await json(await fetch(`${base}/api/agents/cursor/models`));
+  const cursor2 = await json(await fetch(`${fixtureBase}/api/agents/cursor/models`));
   ok(cursor2.source === 'catalog' && !cursor2.manual, '[6] 能枚举的 Agent 不走手动模式', cursor2.source);
-  const zcode2 = await json(await fetch(`${base}/api/agents/zcode/models`));
+  const zcode2 = await json(await fetch(`${fixtureBase}/api/agents/zcode/models`));
   ok(zcode2.source === 'agent-config' && !zcode2.manual, '[6] 能读配置的 Agent 不走手动模式', zcode2.source);
 
   const gCreated = await json(
@@ -948,6 +1105,12 @@ try {
 } finally {
   if (browser) await browser.close().catch(() => {});
   killTree(child);
+  killTree(fixtureChild);
+  // 等两个服务端真退出再结束，避免占着随机端口影响下一段闸门
+  const dead = Date.now() + 8000;
+  while ((child.exitCode == null || fixtureChild.exitCode == null) && Date.now() < dead) {
+    await new Promise(r => setTimeout(r, 100));
+  }
 }
 
 console.log(`\n=== ${pass}/${pass + fail} 通过 ===`);

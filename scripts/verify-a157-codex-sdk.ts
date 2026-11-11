@@ -18,6 +18,8 @@
  * 运行：npm run verify:a157-codex-sdk
  * 实跑：OPC_LIVE=1 npm run verify:a157-codex-sdk（需 codex login / OPENAI_API_KEY）
  */
+// 必须先于所有 server/** import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
+import './lib/temp-data-dir.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { findDef } from '../server/agents/definitions.js';

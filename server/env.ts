@@ -2,8 +2,8 @@
  * 子进程环境净化。
  *
  * 本服务通常被 WorkBuddy 桌面应用以子进程方式启动，因此会继承一批
- * 「应用内部专用」的环境变量。这些变量会被 SDK 再次透传给它启动的
- * Agent CLI 子进程，导致端口抢占、工具链异常等问题。
+ * 「应用内部专用」或「宿主全局开关」环境变量。这些变量会被 SDK 再次透传给它启动的
+ * Agent CLI 子进程，导致端口抢占、工具链异常，甚至全局关闭 TLS 证书校验等问题。
  *
  * 原理：SDK 在 process-transport.js 中以
  *   const env = { ...process.env, ...this.options.env }
@@ -27,6 +27,12 @@ const STRIP_VARS: Array<{ key: string; reason: string }> = [
   {
     key: 'NODE_OPTIONS',
     reason: '注入了 node-language-shim，会 hook fs.rm 等 API，破坏子进程工具链',
+  },
+  {
+    key: 'NODE_TLS_REJECT_UNAUTHORIZED',
+    reason:
+      '宿主为兼容自签证书注入的 0 会全局关闭 TLS 证书校验；本服务与 SDK 拉起的 Agent CLI '
+      + '都不该继承它。确需自签证书时改为只对单个请求配置 agent，不要全局关校验',
   },
 ];
 

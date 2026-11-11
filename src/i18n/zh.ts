@@ -5,6 +5,12 @@
  * 键名按「区域.用途」组织；带 `{name}` 的占位符由 `t()` 统一插值。
  */
 export const zh = {
+  // 全局错误兜底：ErrorBoundary 是 class 组件，用模块级 t() 取当前语言
+  'errorBoundary.title': '界面出错了',
+  'errorBoundary.description': '应用在渲染时遇到问题，已停止显示。你的会话数据不会因此丢失（都存在本地数据库里）——重新加载通常就能恢复。',
+  'errorBoundary.reload': '重新加载',
+  'errorBoundary.details': '错误详情（反馈问题时请附上）',
+
   'nav.chats': '聊天',
   'nav.projects': '项目',
   'nav.contacts': '通讯录',
@@ -495,6 +501,7 @@ export const zh = {
   'settings.about.starSuffix': '就是最实际的支持。',
   'settings.about.support': '支持',
   'settings.agents.create': '创建 Agent',
+  'settings.agents.createFromScratch': '从头创建 Agent',
   'settings.agents.created': 'Agent 已创建',
   'settings.agents.createTitle': '创建新 Agent',
   'settings.agents.deleteConfirm': '确定删除这个 Agent 吗？',
@@ -502,6 +509,7 @@ export const zh = {
   'settings.agents.deleteTooltip': '删除',
   'settings.agents.descLabel': '描述',
   'settings.agents.descPlaceholder': '简短描述这个 Agent 的用途',
+  'settings.agents.dialogTitle': 'Agent 配置',
   'settings.agents.editTitle': '编辑 Agent',
   'settings.agents.editTooltip': '编辑',
   'settings.agents.iconColorLabel': '图标和颜色',

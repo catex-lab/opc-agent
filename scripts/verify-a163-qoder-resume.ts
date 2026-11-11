@@ -24,6 +24,8 @@
  *   npx tsx scripts/verify-a163-qoder-resume.ts
  *   A163_REQUIRE_LIVE=1 npx tsx scripts/verify-a163-qoder-resume.ts   # 没装/没登录 qoder 也算红
  */
+// 必须先于所有 server/** import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
+import './lib/temp-data-dir.js';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';

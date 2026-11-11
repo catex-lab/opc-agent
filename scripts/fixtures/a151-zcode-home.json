@@ -1,0 +1,65 @@
+{
+  "_readme": "A151 [2]/[3]/[6] 用的固定 ZCode HOME 文件树，形状对齐 server/agents/agentConfigModels.ts 的 readZcodeModels()。闸门把它写进临时 HOME 再起一个专用服务端，避免读入本机 ~/.zcode 的真实配置（换机器 / 用户没装 ZCode 时结果必须一致）。刻意让 rollout 里的当前模型不在配置清单里，这样「补一行 runtime 且明说不在清单」这条分支也会被跑到。",
+  "files": [
+    {
+      "path": ".zcode/v2/config.json",
+      "json": {
+        "provider": {
+          "builtin:zai-coding-plan": { "name": "Z.ai - Coding Plan" },
+          "builtin:zai-start-plan": { "name": "Z.ai - Coding Plan" },
+          "builtin:bigmodel-coding-plan": { "name": "BigModel- Coding Plan" },
+          "builtin:bigmodel-start-plan": { "name": "BigModel - Start Plan" },
+          "builtin:zai": { "name": "Z.ai" },
+          "builtin:bigmodel": { "name": "BigModel" }
+        }
+      }
+    },
+    {
+      "path": ".zcode/v2/provider_config.json",
+      "json": {
+        "config": {
+          "providerConfigRules": {
+            "providerRules": [
+              {
+                "providerId": "fixture-provider-a",
+                "providerName": "Fixture Provider A",
+                "config": {
+                  "personalModelIds": [
+                    "fixture-custom-01",
+                    "fixture-custom-02",
+                    "fixture-custom-03",
+                    "fixture-custom-04",
+                    "fixture-custom-05"
+                  ]
+                }
+              },
+              {
+                "providerId": "fixture-provider-b",
+                "providerName": "Fixture Provider B",
+                "config": {
+                  "personalModelIds": ["fixture-custom-06"]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "path": ".zcode/v2/coding-plan-cache.json",
+      "json": {
+        "entryStatus": {
+          "updatedAt": 1750000000000,
+          "items": {
+            "builtin:zai-coding-plan": { "status": "available", "reason": "" },
+            "builtin:bigmodel-start-plan": { "status": "unavailable", "reason": "coding_plan_not_entitled" }
+          }
+        }
+      }
+    },
+    {
+      "path": ".zcode/cli/rollout/model-io-fixture.jsonl",
+      "text": "{\"model\":{\"modelId\":\"fixture-runtime-current\"}}\n"
+    }
+  ]
+}

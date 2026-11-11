@@ -401,10 +401,38 @@ async function main() {
     const inst = new ErrorBoundary({ children: null });
     inst.state = { error: new Error('render blew up') };
     const html = renderToStaticMarkup(inst.render());
-    ok(html.includes('界面出错了'), '错误态渲染兜底标题（而不是白屏）', html.slice(0, 80));
-    ok(html.includes('重新加载'), '兜底 UI 有可点的重载按钮');
+
+    /* 错误兜底在 1.0.16 中英双语改造后仍全是硬编码中文（P1-5）。现在文案走
+       `t('errorBoundary.*')`，断言就别再钉中文字面量：改钉「渲染结果 = 当前语言
+       字典值」，并用源码契约 + 反向探针守住「没退回硬编码」。
+       SSR 环境下 i18n 按默认回落中文，所以渲染断言读的是 zh 字典。 */
+    const { zh } = await import('../src/i18n/zh.js');
+    const { en } = await import('../src/i18n/en.js');
+    const zhMap = zh as Record<string, string>;
+    const enMap = en as Record<string, string>;
+    const ebSrc = fs.readFileSync(path.join(ROOT, 'src/components/ErrorBoundary.tsx'), 'utf8');
+    const strippedEb = ebSrc
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    const EB_KEYS = ['title', 'description', 'reload', 'details'];
+    const ebContract = (src: string) =>
+      EB_KEYS.every(k => src.includes(`t('errorBoundary.${k}')`)) &&
+      !/界面出错了|重新加载|错误详情|不会因此丢失/.test(src);
+
+    ok(ebContract(strippedEb), '★ 错误兜底四段文案全部来自 i18n 键（不是硬编码中文）');
+    ok(!ebContract(strippedEb.replace("t('errorBoundary.title')", "'界面出错了'")),
+      '★ 反向探针：把标题退回硬编码中文 → 契约判红');
+    ok(EB_KEYS.every(k => {
+      const key = `errorBoundary.${k}`;
+      return typeof enMap[key] === 'string' && enMap[key].length > 0 && enMap[key] !== zhMap[key];
+    }), '★ 英文资源四键齐备且与中文不同（切语言有东西可切）');
+
+    ok(html.includes(zhMap['errorBoundary.title']),
+      '错误态渲染兜底标题（而不是白屏）', html.slice(0, 80));
+    ok(html.includes(zhMap['errorBoundary.reload']), '兜底 UI 有可点的重载按钮');
+    ok(html.includes(zhMap['errorBoundary.details']), '兜底 UI 有可展开的错误详情');
     ok(html.includes('render blew up'), '兜底 UI 展示错误详情（报问题用得上）');
-    ok(html.includes('不会因此丢失'), '兜底 UI 安抚「数据丢了」的担忧');
+    ok(html.includes(zhMap['errorBoundary.description']), '兜底 UI 安抚「数据丢了」的担忧');
     ok(!html.includes('undefined'), '兜底 UI 没有渲染出 undefined（字段拼写检查）');
 
     // 正常态必须原样透传 children，不能被边界破坏

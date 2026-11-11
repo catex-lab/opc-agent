@@ -8,6 +8,8 @@
  *
  * 运行：npx tsx scripts/verify-a179-sdk-model-default.ts
  */
+// 必须先于所有 server/** import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
+import './lib/temp-data-dir.js';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {

@@ -128,12 +128,15 @@ npm run screenshots    # 重新生成 README 里的截图（离线夹具，不�
 仓库里有一套自建的验证链，不是单元测试，而是**在真实界面里断言可观测行为**：用 Playwright 驱动本机 Chrome 打开真实页面，必要时用真实鼠标坐标点击并自证命中。
 
 ```bash
-npm run verify:ui      # 主链，70+ 段串行
+npm run verify:ui      # 主链，当前 107 段串行（段数以 package.json 为准）
 npm run verify:logo    # 图标资产与界面标记的一致性
 npm run verify:package # 打包产物逐字节核对
 ```
 
-共 100+ 条 `verify:*` 脚本，覆盖并发、主题、密度、深链、停止链路等易回归点。改动前先看 `package.json` 里的实际条数。
+当前 **142 条** `verify:*` 脚本（不含 `verify:ui` 自身），其中 106 段挂在 `verify:ui`、
+4 条进 CI；其余按 `scripts/gate-registry.json` 逐条登记链外原因，由
+`verify:gate-registry` 守着「新增脚本不许漏挂」。覆盖并发、主题、密度、深链、停止链路等
+易回归点。条数与段数会随版本变化，改动前先看 `package.json` 的实际值。
 
 ## 数据与隐私
 
@@ -179,4 +182,4 @@ npm run verify:package # 打包产物逐字节核对
 
 ## 状态
 
-版本 `1.0.17`。
+版本 `1.0.18`（`v1.0.18` 已发版；此后累积的变化记在 `CHANGELOG.md` 的「未发布」段）。

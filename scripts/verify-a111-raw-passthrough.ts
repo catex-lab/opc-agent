@@ -12,6 +12,8 @@
  *
  * 跑法：npx tsx scripts/verify-a111-raw-passthrough.ts
  */
+// 必须先于所有 server/** import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
+import './lib/temp-data-dir.js';
 import { RunProjector } from '../server/agents/projector.js';
 import { mapSdkMessage, type TurnState } from '../server/agents/adapters/sdk.js';
 import { mapUpdate } from '../server/agents/adapters/acp.js';

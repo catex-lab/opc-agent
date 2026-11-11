@@ -1,0 +1,37 @@
+{
+  "_readme": "A151 [2]/[6] 用的固定模型目录快照。形状 = server/agents/modelCatalog.ts 的 CatalogState（不含 fetchedAt，由闸门运行时注入当前时刻，保证 24h TTL 内不触发本机 CLI 刷新）。cursorStdout 是 `cursor-agent models` 的原始输出样本，闸门用真实 parseCursorModels/parseCursorDefaultModel 反算一遍，夹具与解析器对不上就判红 —— 不许夹具悄悄失效。",
+  "version": 4,
+  "cursorStdout": "fixture-cursor-default - Fixture Cursor Auto (current, default)\nfixture-cursor-01 - Fixture GPT 5.2\nfixture-cursor-02 - Fixture Claude 4.5 Sonnet\nfixture-cursor-03 - Fixture Gemini 3 Pro\nfixture-cursor-04 - Fixture o3 (NO ZDR)\nfixture-cursor-05 - Fixture Grok 4\nfixture-cursor-06 - Fixture DeepSeek V3\nfixture-cursor-07 - Fixture Qwen 3\nnot a model line\nERROR: something went wrong\n",
+  "agents": {
+    "opencode": [],
+    "qoder": [],
+    "qoder-cn": [],
+    "codex": [],
+    "cursor": [
+      "fixture-cursor-default",
+      "fixture-cursor-01",
+      "fixture-cursor-02",
+      "fixture-cursor-03",
+      "fixture-cursor-04",
+      "fixture-cursor-05",
+      "fixture-cursor-06",
+      "fixture-cursor-07"
+    ]
+  },
+  "providers": {},
+  "details": {
+    "cursor": {
+      "fixture-cursor-default": { "name": "Fixture Cursor Auto" },
+      "fixture-cursor-01": { "name": "Fixture GPT 5.2" },
+      "fixture-cursor-02": { "name": "Fixture Claude 4.5 Sonnet" },
+      "fixture-cursor-03": { "name": "Fixture Gemini 3 Pro" },
+      "fixture-cursor-04": { "name": "Fixture o3 (NO ZDR)" },
+      "fixture-cursor-05": { "name": "Fixture Grok 4" },
+      "fixture-cursor-06": { "name": "Fixture DeepSeek V3" },
+      "fixture-cursor-07": { "name": "Fixture Qwen 3" }
+    }
+  },
+  "defaults": {
+    "cursor": "fixture-cursor-default"
+  }
+}

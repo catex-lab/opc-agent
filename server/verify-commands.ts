@@ -27,6 +27,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+// P2：script 名来自目标项目的 package.json，先过字符白名单再拼进命令行。
+import { isSafeScriptName, unsafeReason } from './shell-safety.js';
 
 export type VerifyKind = 'test' | 'build' | 'lint' | 'typecheck';
 
@@ -141,6 +143,12 @@ function detectNode(cwd: string, out: DetectResult): void {
   const found: VerifyCommand[] = [];
 
   for (const name of names) {
+    // 名字来自外部文件，可能含 `; | & $()` 之类会被 shell:true 解释的字符。
+    // 不安全的直接跳过并留一条 note —— 少给一条检查，好过把任意命令拼进 shell。
+    if (!isSafeScriptName(name)) {
+      out.notes.push(`已忽略不安全的 script 名：${unsafeReason('script', name)}`);
+      continue;
+    }
     const rule = SCRIPT_RULES.find(r => r.re.test(name));
     if (!rule) continue;
     // 跳过 watch / dev 这类常驻脚本 —— 它们不会自己退出，跑起来就是卡死

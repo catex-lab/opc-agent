@@ -21,6 +21,13 @@ release-builds/
 # 而 `package.json` 的 `main` 指向 `dist-electron/bootstrap.cjs` —— 根级这份是
 # 用错误 cwd 跑构建留下的 stray 产物，不是源码。
 /main.cjs
+# 本机凭据文件：绝不能进版本库。`scripts/secret-scan.mjs` 另有 .env 专用规则，
+# 万一被 `git add -f` 强加进来仍会被拦下。示例文件是模板，允许入库。
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
 *.log
 .DS_Store
 Thumbs.db
@@ -57,10 +64,13 @@ data/
 # 施工记录类文档（需求原话、本机绝对路径、内部决策与踩坑记录）不是产品的一部分 ——
 # 推到远端既泄露上下文，也让仓库读起来像草稿堆。**文件保留在本地，只是不被跟踪。**
 #
-# 留在库里的三份是「产品的一部分」：
+# 被跟踪的 Markdown 共 24 份（`git ls-files '*.md'`），都是「产品的一部分」：
 #   README.md          对外说明
 #   DEVELOPMENT.md     怎么构建/跑测试
+#   CHANGELOG.md / CONTRIBUTING.md / SECURITY.md / THIRD-PARTY.md / TRADEMARKS.md
 #   DESIGN-SYSTEM.md   设计规范（4 表面 / 8 档字号 / 8pt 网格 / 15 控件类）
+#   release-notes/*.md 各版本发布说明、.github/PULL_REQUEST_TEMPLATE.md
+# 下面排除的是**内部施工记录**；别把上面这几份公开文档也一起 ignore 了。
 /AGENTS.md
 /TASKS.md
 /HANDOFF.md

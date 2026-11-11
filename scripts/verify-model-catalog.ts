@@ -14,6 +14,8 @@
  * 全离线：不打网络、不起 CLI 子进程、不碰真实数据库。
  * 运行：npx tsx scripts/verify-model-catalog.ts
  */
+// 必须先于所有 server/** import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
+import './lib/temp-data-dir.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

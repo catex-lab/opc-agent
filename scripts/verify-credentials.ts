@@ -1,7 +1,7 @@
 /**
  * 应用内 Agent 凭据（A30）断言。
  *
- * 守的是三件容易「看起来对、其实没用」的事：
+ * 守的是四件容易「看起来对、其实没用」的事：
  *
  *   1. **声明与识别必须一致** —— `credential.keyEnv` 里写的变量名，必须
  *      同时出现在 `authEnvs` 里。否则用户在设置页填了 Key，探测仍然说
@@ -10,6 +10,8 @@
  *      文件。写完不注入，等于写了个没人读的 JSON。
  *   3. **清除真的把变量删掉** —— 只删文件不删环境变量，界面会回到「未配置」
  *      但调用仍然带着旧 Key，是最难查的一类状态不一致。
+ *   4. **宿主继承的全局开关必须净化** —— `NODE_TLS_REJECT_UNAUTHORIZED=0`
+ *      会被 SDK 透传给所有 Agent CLI，等于全局关闭 TLS 证书校验（见 [8] 段）。
  *
  * 用临时目录（`OPC_DATA_DIR`），**不碰真实 data/**。
  * 运行：npx tsx scripts/verify-credentials.ts
@@ -53,6 +55,15 @@ const {
 const { resolveCodexCredential } = await import('../server/agents/adapters/codex-sdk.js');
 const { resolveKimiCodeCredential } = await import('../server/agents/adapters/cli.js');
 const { recoveryHintFor } = await import('../server/agents/recovery.js');
+
+/* [8] 宿主注入的全局 TLS 开关必须在**模块加载时**就被剔除。
+   env.ts 是副作用模块（底部 `const removed = sanitizeEnv()`），所以先模拟宿主
+   注入再 import：加载完这个变量就该从 process.env 里消失。
+   全仓只有 server/index.ts 引用 env.js，本脚本不 import index.ts，
+   因此这里拿到的是首次加载，不会被 ESM 缓存跳过。 */
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+const { describeStrippedVars, sanitizeEnv } = await import('../server/env.js');
+const tlsStrippedOnLoad = process.env.NODE_TLS_REJECT_UNAUTHORIZED === undefined;
 
 console.log('\n[1] 定义表：凭据声明与识别口径一致');
 {
@@ -245,6 +256,62 @@ console.log('\n[7] 凭据有效期：过期可预知；有 refresh_token 不判�
     const hint = recoveryHintFor(id);
     ok(hint.trim().length > 0, `${id} 有恢复指引`, hint);
   }
+}
+
+// ============= [8] 子进程环境净化：全局 TLS 校验开关不许继承 =============
+//
+// 宿主（WorkBuddy 桌面端）会注入 NODE_TLS_REJECT_UNAUTHORIZED=0。SDK 构造子进程
+// 环境时是 `{ ...process.env, ...options.env }`，不剔除就会一路透传给所有 Agent CLI，
+// 等于全局关闭 TLS 证书校验（modelCatalog 的联网抓取也受影响）。
+// 静态契约钉清单与「加载即生效」，动态断言钉真的 delete，三种反向探针防止契约变摆设。
+console.log('\n[8] 子进程环境净化：全局 TLS 校验开关不许继承');
+{
+  const envSrc = fs.readFileSync(path.join(process.cwd(), 'server/env.ts'), 'utf8');
+
+  /** 剥注释后按行首锚定取 STRIP_VARS 的 key 列表：注释里写一句 key 不许算接线。 */
+  function envSanitizeContract(src: string): boolean {
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    const block = /const STRIP_VARS[^\n]*=\s*\[([\s\S]*?)\n\];/.exec(code)?.[1] ?? '';
+    if (!block) return false;
+    const keys = [...block.matchAll(/^\s*key:\s*'([^']+)'/gm)].map(m => m[1]);
+    if (!['SERVER__PORT', 'SERVER__HOST', 'NODE_OPTIONS', 'NODE_TLS_REJECT_UNAUTHORIZED']
+      .every(k => keys.includes(k))) return false;
+    if (!/const removed = sanitizeEnv\(\);/.test(code)) return false;
+    if (!/delete process\.env\[key\]/.test(code)) return false;
+    return true;
+  }
+
+  ok(envSanitizeContract(envSrc),
+    '[8] 净化清单含 TLS 变量、原有三条未被挤掉；模块加载即执行且真的 delete');
+
+  // 反向探针：把实现退回坏版本，上面的契约必须变红，否则它自己就是摆设。
+  const noTls = envSrc.replace("key: 'NODE_TLS_REJECT_UNAUTHORIZED'", "key: 'NOT_THE_TLS_ONE'");
+  ok(!envSanitizeContract(noTls), '[8] 反向探针：清单里删掉 TLS 变量 → 契约判红');
+  const noAutoRun = envSrc.replace('const removed = sanitizeEnv();', '// const removed = sanitizeEnv();');
+  ok(!envSanitizeContract(noAutoRun), '[8] 反向探针：去掉「加载即净化」→ 契约判红');
+  const commentedKey = envSrc.replace(
+    "key: 'NODE_TLS_REJECT_UNAUTHORIZED',",
+    "// key: 'NODE_TLS_REJECT_UNAUTHORIZED',\n    key: 'NOT_THE_TLS_ONE',"
+  );
+  ok(!envSanitizeContract(commentedKey), '[8] 反向探针：只在注释里写这个 key → 不算接线');
+
+  const listed = describeStrippedVars();
+  ok(listed.some(v => v.key === 'NODE_TLS_REJECT_UNAUTHORIZED'),
+    '[8] 净化清单导出里真的有 TLS 变量（读值，不是读源码文本）');
+  const tlsReason = listed.find(v => v.key === 'NODE_TLS_REJECT_UNAUTHORIZED')?.reason ?? '';
+  ok(/TLS|证书/.test(tlsReason) && /agent|单个请求/.test(tlsReason),
+    '[8] 理由写明全局关校验的风险与自签证书的正确做法', tlsReason.slice(0, 40));
+  ok(tlsStrippedOnLoad,
+    '[8] ★ 宿主注入 NODE_TLS_REJECT_UNAUTHORIZED=0 后，import 即被剔除（SDK 无从透传）');
+
+  // 再设一次直接调 sanitizeEnv()：确认删除动作本身有效，不只是 import 时碰巧没带上。
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  const removed = sanitizeEnv();
+  ok(removed.includes('NODE_TLS_REJECT_UNAUTHORIZED') &&
+     process.env.NODE_TLS_REJECT_UNAUTHORIZED === undefined,
+    '[8] sanitizeEnv() 真的把它从 process.env 删掉', removed.join(','));
 }
 
 

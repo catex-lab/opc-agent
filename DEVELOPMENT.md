@@ -134,7 +134,7 @@ run_start → block_* (多次) → [permission_request → 用户答复] → run
 不是单元测试，是**在真实界面里断言可观测行为**：Playwright 驱动本机 Chrome 打开真实页面，用真实鼠标坐标点击并用 `elementFromPoint` 自证命中。
 
 ```bash
-npm run verify:ui      # 主链，串行跑 98 段
+npm run verify:ui      # 主链，当前串行跑 107 段（段数以 package.json 为准）
 npm run verify:logo    # 图标资产一致性
 npm run verify:package # 打包产物逐字节核对
 ```

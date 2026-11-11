@@ -12,6 +12,8 @@
  *
  * 运行：npx tsx scripts/verify-a97-verify.ts
  */
+// 必须先于所有 server/** import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
+import './lib/temp-data-dir.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -47,11 +49,14 @@ function fixture(name: string, files: Record<string, string> = {}): string {
 
 const kinds = (r: ReturnType<typeof detectVerifyCommands>) => r.commands.map(c => c.kind).join(',');
 
-const NODE = `"${process.execPath}"`;
+// runner 只接受不含 shell 元字符的命令（见 server/shell-safety.ts）——真实调用方
+// 传的是探测层生成的 `npm run test:unit` 这种短命令。夹具脚本就写在 cwd 里，
+// 所以直接用 `node pass.js`，别再拼 process.execPath 的绝对路径和引号：
+// 那条命令在 Windows 上既带反斜杠又带引号，本来就不符合现在的输入契约。
+const NODE = 'node';
 function js(name: string, code: string): string {
-  const p = path.join(ROOT, name);
-  fs.writeFileSync(p, code, 'utf8');
-  return p;
+  fs.writeFileSync(path.join(ROOT, name), code, 'utf8');
+  return name;
 }
 
 async function main() {
@@ -211,9 +216,10 @@ async function main() {
   );
   const bigJs = js('big.js', "process.stdout.write('H'.repeat(1000) + 'x'.repeat(70000) + 'TAILMARK')");
   const sleepJs = js('sleep.js', 'setTimeout(() => {}, 10000)');
+  const cmd = (script: string) => `${NODE} ${script}`;
 
   {
-    const r = await runVerifyCommand({ commandId: 'p', command: `${NODE} "${passJs}"`, cwd: ROOT });
+    const r = await runVerifyCommand({ commandId: 'p', command: cmd(passJs), cwd: ROOT });
     ok(r.status === 'pass', '退出码 0 → pass', r.status);
     ok(r.exitCode === 0, 'exitCode 记录为 0', String(r.exitCode));
     ok(r.commandId === 'p', '结果回带 commandId');
@@ -222,7 +228,7 @@ async function main() {
   }
 
   {
-    const r = await runVerifyCommand({ commandId: 'f', command: `${NODE} "${failJs}"`, cwd: ROOT });
+    const r = await runVerifyCommand({ commandId: 'f', command: cmd(failJs), cwd: ROOT });
     ok(r.status === 'fail', '退出码非 0 → fail', r.status);
     ok(r.exitCode === 3, '真实退出码被保留（不是笼统的 1）', String(r.exitCode));
     ok(r.hint?.includes('退出码 3') === true, 'hint 指明退出码', r.hint);
@@ -230,19 +236,19 @@ async function main() {
   }
 
   {
-    const r = await runVerifyCommand({ commandId: 'e', command: `${NODE} "${errJs}"`, cwd: ROOT });
+    const r = await runVerifyCommand({ commandId: 'e', command: cmd(errJs), cwd: ROOT });
     ok(r.output.includes('err-line'), 'stderr 与 stdout 合并采集', r.output.trim());
   }
 
   {
-    const r = await runVerifyCommand({ commandId: 'v', command: `${NODE} "${envJs}"`, cwd: ROOT });
+    const r = await runVerifyCommand({ commandId: 'v', command: cmd(envJs), cwd: ROOT });
     ok(r.output.includes('NO_COLOR=1'), '注入 NO_COLOR=1（报告里不留 ANSI 码）', r.output);
     ok(r.output.includes('FORCE_COLOR=0'), '注入 FORCE_COLOR=0');
     ok(r.output.includes('CI=1'), '注入 CI=1（避免交互式提问）');
   }
 
   {
-    const r = await runVerifyCommand({ commandId: 'b', command: `${NODE} "${bigJs}"`, cwd: ROOT });
+    const r = await runVerifyCommand({ commandId: 'b', command: cmd(bigJs), cwd: ROOT });
     ok(r.truncated === true, '超长输出标记 truncated', `${r.output.length} 字符`);
     ok(r.output.includes('中间省略'), '截断处有明确说明');
     ok(r.output.startsWith('H'), '头部被保留');
@@ -252,7 +258,7 @@ async function main() {
   }
 
   {
-    const r = await runVerifyCommand({ commandId: 't', command: `${NODE} "${sleepJs}"`, cwd: ROOT, timeoutMs: 1200 });
+    const r = await runVerifyCommand({ commandId: 't', command: cmd(sleepJs), cwd: ROOT, timeoutMs: 1200 });
     ok(r.status === 'timeout', '超时 → timeout', r.status);
     ok(r.exitCode === null, '超时无退出码');
     ok(r.hint?.includes('已终止') === true, 'hint 说明已终止', r.hint);
@@ -262,7 +268,7 @@ async function main() {
   {
     const ac = new AbortController();
     setTimeout(() => ac.abort(), 200);
-    const r = await runVerifyCommand({ commandId: 'a', command: `${NODE} "${sleepJs}"`, cwd: ROOT, signal: ac.signal });
+    const r = await runVerifyCommand({ commandId: 'a', command: cmd(sleepJs), cwd: ROOT, signal: ac.signal });
     ok(r.status === 'error', '用户取消 → error', r.status);
     ok(r.hint === '用户已取消', 'hint 区分「取消」与「失败」', r.hint);
   }
@@ -272,7 +278,7 @@ async function main() {
     // 会让「传进来就已经取消」的情况照跑到底（实测过）。
     const ac = new AbortController();
     ac.abort();
-    const r = await runVerifyCommand({ commandId: 'a2', command: `${NODE} "${passJs}"`, cwd: ROOT, signal: ac.signal });
+    const r = await runVerifyCommand({ commandId: 'a2', command: cmd(passJs), cwd: ROOT, signal: ac.signal });
     ok(r.status === 'error', '已 abort 的 signal 直接取消（不会照跑到底）', r.status);
     ok(r.hint === '用户已取消', '已 abort 时 hint 同样是取消', r.hint);
   }
@@ -281,6 +287,20 @@ async function main() {
     const r = await runVerifyCommand({ commandId: 'x', command: 'definitely-not-a-real-command-xyz', cwd: ROOT });
     ok(r.status === 'fail' || r.status === 'error', '不存在的命令退化为 fail/error，不抛错', r.status);
     ok(typeof r.output === 'string', '无论如何都有字符串 output');
+  }
+
+  // P2 加固：命令来自目标项目的 package.json / Makefile，runner 必须拒绝
+  // 任何带 shell 元字符的拼接。这里用真实子进程证明「没启动」而不是只看源码。
+  {
+    const r = await runVerifyCommand({
+      commandId: 'unsafe',
+      command: `${cmd(passJs)}; echo HACKED_MARKER`,
+      cwd: ROOT,
+    });
+    ok(r.status === 'error', '★ 带 shell 元字符的命令被拒绝执行', r.status);
+    ok(r.exitCode === null, '★ 被拒绝的命令没有产生退出码');
+    ok(!r.output.includes('HACKED_MARKER'), '★ 拼接出来的第二条命令没有真的跑起来');
+    ok(/shell 元字符/.test(r.hint ?? ''), '★ hint 说明拒绝原因', r.hint);
   }
 
   ok(DEFAULT_TIMEOUT_MS === 5 * 60 * 1000, '默认超时 5 分钟', String(DEFAULT_TIMEOUT_MS));

@@ -51,6 +51,8 @@ import {
 } from "./agents/adapters/image.js";
 import { cacheImage, imageFilePath } from "./image-store.js";
 import { avatarFilePath } from "./avatar-file.js";
+// P2：日志侧的令牌 / 认证 URL 统一脱敏，出参侧的掩码在 agent-credentials.ts。
+import { redactSecret, redactUrl } from "./log-redact.js";
 import {
   agentAppearanceSnapshot,
   clearAgentLogo,
@@ -346,7 +348,8 @@ app.get("/api/check-login", async (req, res) => {
       onAuthUrl: async (authState) => {
         // 如果执行到这个回调，说明未登录
         needsLogin = true;
-        console.log('[Check Login] 需要登录，认证 URL:', authState.authUrl);
+        // authUrl 的 query 里带 OAuth state / code，明文入日志等于把一次性凭据写进文件
+        console.log('[Check Login] 需要登录，认证 URL:', redactUrl(authState.authUrl));
         // 将认证 URL 返回给前端（如果需要）
         response.error = '未登录，请先登录 WorkBuddy';
       }
@@ -2279,7 +2282,7 @@ app.post("/api/chat", async (req, res) => {
         : `[Chat] 已清空续接令牌，新建 CLI 会话${freshSummary ? '（附带历史摘要）' : ''}`
     );
   } else if (resumeChoice === 'continue' && resumeToken) {
-    console.log(`[Chat] 用户选择继续原 CLI 会话: ${resumeToken}`);
+    console.log(`[Chat] 用户选择继续原 CLI 会话: ${redactSecret(resumeToken)}`);
   }
 
   /**
@@ -2524,7 +2527,7 @@ app.post("/api/chat", async (req, res) => {
             ? { sdk_thread_permission: effectivePermissionMode }
             : {}),
         });
-        console.log(`[Chat] 已保存续接令牌: ${ev.resumeToken}`);
+        console.log(`[Chat] 已保存续接令牌: ${redactSecret(ev.resumeToken)}`);
       }
 
       if (ev.type === 'done') {

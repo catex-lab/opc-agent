@@ -21,6 +21,8 @@
  *
  * 运行：npm run verify:a158-opencode-sdk
  */
+// 必须先于所有 server/** import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
+import './lib/temp-data-dir.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { findDef } from '../server/agents/definitions.js';

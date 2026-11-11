@@ -19,6 +19,8 @@
  * 全离线、不碰数据库、不需要任何 Agent 在线。
  * 运行：npx tsx scripts/verify-permission.ts
  */
+// 必须先于所有 server/** import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
+import './lib/temp-data-dir.js';
 import { readFileSync } from 'node:fs';
 import { AGENT_DEFS, findDef } from '../server/agents/definitions.js';
 import {
@@ -57,6 +59,114 @@ function section(title: string) {
 }
 
 const MODES: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+
+// ── 静态判据的公共工具 ────────────────────────────────────────────────
+// 旧版 10 条断言钉死「某个文件里的某一行字面量」，实现搬家/i18n 化/新增工具后
+// 一起假红。现在统一改成「不变量 + 反向探针」：判据抽成纯函数，改坏实现必须变红。
+
+/** 只认代码不认注释：注释里写了 `decideToolAccess()` 不算接线（§30 纪律）。 */
+function stripComments(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    // `[^:]` 守卫 `http://` 这类字符串里的双斜杠。
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
+/** 从 i18n 字典读一个 key 的字面值：只认「独占一行的 'key': 'value'」。 */
+function i18nValue(src: string, key: string): string | null {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp(`^\\s*'${escaped}':\\s*'([^']*)'`, 'm').exec(src);
+  return m ? m[1] : null;
+}
+
+/** 审批桥文件由 sdk.ts 的 import 路径决定，不把文件名写死在断言里。 */
+function readSdkApproval(sdkSrc: string): string {
+  const m = /import\s*\{[^}]*createCanUseToolBridge[^}]*\}\s*from\s*['"]\.\/([\w.-]+)\.js['"]/.exec(sdkSrc);
+  if (!m) return '';
+  try {
+    return readFileSync(new URL(`../server/agents/adapters/${m[1]}.ts`, import.meta.url), 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+/** KB MCP 放行名单读自权威常量，不把两个工具名抄进期望值。 */
+function kbAllowedIds(): string[] {
+  const src = readFileSync(new URL('../server/kb/tool.ts', import.meta.url), 'utf8');
+  const m = /export const KB_MCP_ALLOWED_TOOL_IDS\s*=\s*\[([^\]]*)\]/.exec(src);
+  return m ? [...m[1].matchAll(/'([^']+)'/g)].map(x => x[1]) : [];
+}
+
+/**
+ * 「声称支持 permissionMode」的跨文件契约。
+ * 只认三件事，不认实现住在哪个文件、函数叫什么：
+ *   ① SDK 适配器把本轮 ctx 接进审批桥（否则 allowedTools / permissionMode 没人读）；
+ *   ② 审批桥里白名单 gate 真的存在、被拒时真的 deny，且位于 bypass 之前；
+ *   ③ 桥里确有 bypassPermissions 分支。
+ */
+function sdkApprovalContract(sdkSrc: string, approvalSrc: string): boolean {
+  const sdk = stripComments(sdkSrc);
+  const bridge = stripComments(approvalSrc);
+  const imported = /import\s*\{[^}]*createCanUseToolBridge[^}]*\}\s*from\s*['"][^'"]+['"]/.test(sdk);
+  const wired = /createCanUseToolBridge\s*\(\s*\{[\s\S]*?^\s*ctx\s*,/m.test(sdk);
+  const gateAt = bridge.search(/decideToolAccess\s*\(\s*ctx\.allowedTools\s*,/);
+  const denied = /if\s*\(\s*!gate\.allowed\s*\)[\s\S]{0,260}?behavior:\s*['"]deny['"]/.test(bridge);
+  const bypassAt = bridge.search(/ctx\.permissionMode\s*===\s*['"]bypassPermissions['"]/);
+  return imported && wired && gateAt >= 0 && denied && bypassAt >= 0 && gateAt < bypassAt;
+}
+
+/** CLI 双向通道必须遵守同一条顺序（两家适配器分叉 = 换个 Agent 就能绕过白名单）。 */
+function cliApprovalContract(cliSrc: string): boolean {
+  const code = stripComments(cliSrc);
+  const gateAt = code.search(/decideToolAccess\s*\(\s*ctx\.allowedTools\s*,/);
+  const bypassAt = code.search(/ctx\.permissionMode\s*===\s*['"]bypassPermissions['"]/);
+  return gateAt >= 0 && bypassAt >= 0 && gateAt < bypassAt;
+}
+
+/**
+ * claude `--allowedTools` 名单不变量。
+ * 类别口径来自 toolPolicy 的分类表（独立判据），不从 CLAUDE_TOOL_NAMES 读 ——
+ * 后者是实现本身，拿它验证自己等于放水。
+ */
+function claudeWhitelistContract(
+  names: readonly string[],
+  kbIds: readonly string[],
+  expected: readonly string[]
+): boolean {
+  const scene = names.filter(n => !kbIds.includes(n));
+  if (scene.length === 0) return false;
+  if (!scene.every(n => expected.includes(categorizeTool(n) ?? ''))) return false;
+  if (scene.some(n => ['escalation', 'meta'].includes(categorizeTool(n) ?? ''))) return false;
+  if (!expected.every(c => scene.some(n => categorizeTool(n) === c))) return false;
+  const kb = names.filter(n => kbIds.includes(n));
+  return kb.length === kbIds.length && kb.every(n => kbIds.includes(n));
+}
+
+/** 权限选择器与提示文案必须同词；选择器走 i18n key，不许回退硬编码中文。 */
+function permissionLabelContract(
+  chatInputSrc: string,
+  zhSrc: string,
+  labels: Record<PermissionMode, string>
+): boolean {
+  const code = stripComments(chatInputSrc);
+  const block = /const PERMISSION_MODE_CONFIG[^=]*=\s*\{([\s\S]*?)\n\};/.exec(code)?.[1] ?? '';
+  if (!block) return false;
+  if (!/t\(config\.shortKey\)/.test(code)) return false;
+  for (const m of MODES) {
+    const entry = new RegExp(`'${m}'\\s*:\\s*\\{([\\s\\S]*?)\\n\\s*\\},`).exec(block)?.[1] ?? '';
+    const key = /shortKey:\s*'([^']+)'/.exec(entry)?.[1] ?? '';
+    if (!key || i18nValue(zhSrc, key) !== labels[m]) return false;
+  }
+  return true;
+}
+
+// 三份源码只读一次，D / I-4 / J-7 共用
+const SDK_SRC = readFileSync(new URL('../server/agents/adapters/sdk.ts', import.meta.url), 'utf8');
+const APPROVAL_SRC = readSdkApproval(SDK_SRC);
+const CLI_SRC = readFileSync(new URL('../server/agents/adapters/cli.ts', import.meta.url), 'utf8');
+const CHAT_INPUT_SRC = readFileSync(new URL('../src/components/ChatInput.tsx', import.meta.url), 'utf8');
+const ZH_SRC = readFileSync(new URL('../src/i18n/zh.ts', import.meta.url), 'utf8');
+const KB_IDS = kbAllowedIds();
 
 /** 取某个 CLI Agent 的 buildArgs 结果 */
 function argsOf(agentId: string, mode: PermissionMode | undefined, extra: Record<string, unknown> = {}) {
@@ -178,16 +288,18 @@ for (const [mode, expected] of claudeMap) {
 eq(argsOf('claude', undefined)[argsOf('claude', undefined).indexOf('--permission-mode') + 1], 'manual', 'claude 未传模式 → manual');
 ok(argsOf('claude', 'plan', { model: 'sonnet' }).includes('sonnet'), 'claude 带模型时仍有 --model');
 
-// workbuddy 走 SDK，没有命令行参数可查 —— 直接断言源码里确实把 permissionMode 传下去了
+// workbuddy 走 SDK，没有命令行参数可查 —— 断言 permissionMode 真的有人消费。
+// 审批桥已从 sdk.ts 抽出（两家 SDK 共用一份），桥文件由 import 路径解析，
+// 不再假定「bypassPermissions 分支一定写在 sdk.ts 里」。
 {
-  const sdkSrc = readFileSync(new URL('../server/agents/adapters/sdk.ts', import.meta.url), 'utf8');
   ok(
-    /permissionMode:\s*ctx\.permissionMode/.test(sdkSrc),
+    /permissionMode:\s*ctx\.permissionMode/.test(stripComments(SDK_SRC)),
     'workbuddy 声称支持：SDK 源码里确实传了 permissionMode'
   );
+  ok(APPROVAL_SRC.length > 0, 'SDK 适配器 import 的审批桥文件真实存在');
   ok(
-    /ctx\.permissionMode === 'bypassPermissions'/.test(sdkSrc),
-    'workbuddy 声称支持：源码里确有 bypassPermissions 分支'
+    /ctx\.permissionMode\s*===\s*['"]bypassPermissions['"]/.test(stripComments(APPROVAL_SRC)),
+    'workbuddy 声称支持：审批桥里确有 bypassPermissions 分支'
   );
 }
 
@@ -407,27 +519,58 @@ for (const id of ['codex', 'opencode', 'gemini']) {
 // claude 声称工具白名单 → buildArgs 必须真的产出 --allowedTools，
 // 且名单必须来自「工具名逐个在 claude.exe 里 grep 到」的那一张表
 {
+  // A176 之后 --allowedTools 尾部追加了系统级 KB MCP 只读例外。
+  // 旧断言把 9 个工具名抄进期望值、还用 .at(-1) 钉死最后一个名字 ——
+  // 加两个例外就 3 条假红。现在改为判不变量：类别来自 toolPolicy 的独立分类表，
+  // KB 例外来自 server/kb/tool.ts 的权威常量，两边都不抄实现字面量。
+  ok(KB_IDS.length > 0, 'KB MCP 放行常量非空（读自 server/kb/tool.ts 的权威定义）');
+  const ALL_CATEGORIES = ['file', 'shell', 'search'] as const;
+
   const dev = argsOf('claude', 'acceptEdits', { allowedTools: ['file', 'shell', 'search'] });
   const i = dev.indexOf('--allowedTools');
   ok(i >= 0, 'claude 开发场景真的产出 --allowedTools', dev.join(' '));
-  if (i >= 0) {
-    // variadic：从 --allowedTools 之后一路取到参数末尾
-    const names = dev.slice(i + 1);
-    eq(
-      [...names].sort(),
-      ['Bash', 'Edit', 'Glob', 'Grep', 'NotebookEdit', 'Read', 'WebFetch', 'WebSearch', 'Write'],
-      'claude 白名单名单 = file + shell + search 三类映射'
-    );
+  const names = i >= 0 ? dev.slice(i + 1) : [];
+  ok(
+    claudeWhitelistContract(names, KB_IDS, ALL_CATEGORIES),
+    'claude 白名单 = file/shell/search 三类场景工具 + 整组 KB MCP 例外',
+    names.join(' ')
+  );
+  // 拆细报，红了要能一眼看出断在哪一环
+  {
+    const scene = names.filter(n => !KB_IDS.includes(n));
+    ok(scene.length > 0, 'claude 白名单里有场景工具（不是只剩 KB 例外）');
+    for (const c of ALL_CATEGORIES) {
+      ok(scene.some(n => categorizeTool(n) === c), `claude 白名单覆盖 ${c} 类`);
+    }
     ok(!names.includes('Task') && !names.includes('Skill'), 'claude 白名单不含可绕过白名单的工具（Task/Skill）');
+    eq(
+      names.filter(n => KB_IDS.includes(n)).sort(),
+      [...KB_IDS].sort(),
+      'claude 白名单里的 KB MCP 例外 = 权威常量（不多不少）'
+    );
+  }
+
+  // ★ 反向探针：名单被改坏时契约必须变红，否则上面那条绿是放水放出来的。
+  const brokenLists: Array<[string, string[]]> = [
+    ['名单整个清空', []],
+    ['偷偷塞入可绕过白名单的 Task', [...names, 'Task']],
+    ['漏掉 shell 类', names.filter(n => categorizeTool(n) !== 'shell')],
+    ['KB 例外少一个', names.filter(n => n !== KB_IDS[0])],
+    ['KB 例外多一个未登记的', [...names, 'mcp__kb__made.up']],
+  ];
+  for (const [label, broken] of brokenLists) {
+    ok(!claudeWhitelistContract(broken, KB_IDS, ALL_CATEGORIES), `反向探针：${label} → 白名单契约必须变红`);
   }
 
   const codeOnly = argsOf('claude', 'acceptEdits', { allowedTools: ['file'] });
   const j = codeOnly.indexOf('--allowedTools');
-  eq(
-    j >= 0 ? codeOnly.slice(j + 1).sort() : null,
-    ['Edit', 'Glob', 'Grep', 'NotebookEdit', 'Read', 'Write'],
-    "claude ['file'] → 只放行文件类六件套"
+  const codeNames = j >= 0 ? codeOnly.slice(j + 1) : [];
+  ok(
+    claudeWhitelistContract(codeNames, KB_IDS, ['file']),
+    "claude ['file'] → 只有文件类场景工具 + 整组 KB MCP 例外",
+    codeNames.join(' ')
   );
+  ok(!codeNames.some(n => ['shell', 'search'].includes(categorizeTool(n) ?? '')), "claude ['file'] 不含命令/联网类");
 
   // ['tools'] = 不限制（与 SDK includes('tools') 语义一致）→ 不产出 --allowedTools
   ok(!argsOf('claude', 'default', { allowedTools: ['tools'] }).includes('--allowedTools'), "claude ['tools'] 不限制");
@@ -435,19 +578,61 @@ for (const id of ['codex', 'opencode', 'gemini']) {
   ok(!argsOf('claude', 'plan', { allowedTools: [] }).includes('--allowedTools'), 'claude 空白名单不产出 --allowedTools（argv 无法表达）');
   // 未传 → 不产出（历史行为）
   ok(!argsOf('claude', 'plan').includes('--allowedTools'), 'claude 未传白名单不产出 --allowedTools');
-  // variadic 必须在末尾，否则会吃掉后续参数
+  // variadic 必须在末尾，否则会吃掉后续参数。
+  // 旧断言用 .at(-1) === 'NotebookEdit' 间接守这条，实际守不住（追加工具就红）；
+  // 直接断言「--allowedTools 之后全是工具名、没有吃掉任何 flag / 参数值」。
   const withModel = argsOf('claude', 'acceptEdits', { model: 'sonnet', allowedTools: ['file'] });
   ok(withModel.indexOf('--allowedTools') > withModel.indexOf('sonnet'), 'claude --allowedTools 放在 --model 之后（variadic 在末尾）');
-  eq(withModel.at(-1), 'NotebookEdit', 'claude --allowedTools 是最后一个参数组');
+  const tail = withModel.slice(withModel.indexOf('--allowedTools') + 1);
+  ok(tail.length > 0 && tail.every(n => !n.startsWith('--')), 'claude --allowedTools 之后全是工具名（没吃掉后续 flag）');
+  ok(
+    tail.every(n => categorizeTool(n) === 'file' || KB_IDS.includes(n)),
+    'claude --allowedTools 是最后一个参数组（尾部没混入别的东西）'
+  );
 }
 
 {
-  const sdkSrc = readFileSync(new URL('../server/agents/adapters/sdk.ts', import.meta.url), 'utf8');
-  ok(/decideToolAccess\(ctx\.allowedTools/.test(sdkSrc), 'workbuddy 声称与实现一致：canUseTool 里调了判据');
-  // 顺序断言：白名单必须**先于** bypass 判断，否则「问答 + 全放行」会让白名单形同虚设
-  const gateAt = sdkSrc.indexOf('decideToolAccess(ctx.allowedTools');
-  const bypassAt = sdkSrc.indexOf("ctx.permissionMode === 'bypassPermissions'");
+  // 接线契约（跨文件）：sdk.ts 把本轮 ctx 交给审批桥，桥里白名单 gate 先于 bypass。
+  // 旧断言只查 sdk.ts 的两行字面量，实现搬到 sdkApproval.ts 后 2 条一起假红。
+  ok(
+    sdkApprovalContract(SDK_SRC, APPROVAL_SRC),
+    'workbuddy 声称与实现一致：SDK → 审批桥完整接线（白名单 gate 先于 bypass）',
+    '桥的 import / ctx 传入 / gate / deny / bypass / 顺序，任一环断了都要红'
+  );
+  const sdkCode = stripComments(SDK_SRC);
+  const bridgeCode = stripComments(APPROVAL_SRC);
+  ok(/import\s*\{[^}]*createCanUseToolBridge[^}]*\}\s*from/.test(sdkCode), '接线：SDK 适配器 import 了审批桥');
+  ok(/createCanUseToolBridge\s*\(\s*\{[\s\S]*?^\s*ctx\s*,/m.test(sdkCode), '接线：SDK 把本轮 ctx 传进审批桥');
+  ok(/decideToolAccess\s*\(\s*ctx\.allowedTools\s*,/.test(bridgeCode), '接线：审批桥 canUseTool 里调了白名单判据');
+  ok(/if\s*\(\s*!gate\.allowed\s*\)[\s\S]{0,260}?behavior:\s*['"]deny['"]/.test(bridgeCode), '接线：白名单拒绝时真的 deny');
+  const gateAt = bridgeCode.search(/decideToolAccess\s*\(\s*ctx\.allowedTools\s*,/);
+  const bypassAt = bridgeCode.search(/ctx\.permissionMode\s*===\s*['"]bypassPermissions['"]/);
   ok(gateAt >= 0 && bypassAt >= 0 && gateAt < bypassAt, '白名单判断在 bypass 之前（顺序不能反）');
+  ok(cliApprovalContract(CLI_SRC), 'claude CLI 双向通道也遵守「白名单先于 bypass」（两条通道不分叉）');
+
+  // ★ 反向探针：把实现逐项改坏，契约必须变红。
+  // 注释掉不算接线 —— stripComments 会把这些行剥掉，正是要防的「注释里写了就算」。
+  // 「顺序反了」的坏版本：把 bypass 分支整体提前到白名单 gate 之前。
+  // 必须让 bypass 的**第一处**出现早于 decideToolAccess，否则探针自己就是假的。
+  const bypassFirst = APPROVAL_SRC.replace(
+    /const gate = decideToolAccess\(ctx\.allowedTools, toolName\);/,
+    "if (ctx.permissionMode === 'bypassPermissions') { return { behavior: 'allow', updatedInput: input }; }\n    const gate = decideToolAccess(ctx.allowedTools, toolName);"
+  );
+  const brokenPairs: Array<[string, string, string]> = [
+    ['SDK 不 import 审批桥', SDK_SRC.replace(/import \{ createCanUseToolBridge \} from '\.\/sdkApproval\.js';/, ''), APPROVAL_SRC],
+    ['SDK 没把 ctx 传进桥', SDK_SRC.replace(/^\s*ctx,\s*$/m, ''), APPROVAL_SRC],
+    ['桥里删掉白名单 gate', SDK_SRC, APPROVAL_SRC.replace('const gate = decideToolAccess(ctx.allowedTools, toolName);', '// 故意删掉白名单')],
+    ['白名单被拒时不 deny（只打日志）', SDK_SRC, APPROVAL_SRC.replace('if (!gate.allowed) {', 'if (false) {')],
+    ['bypass 分支被改名', SDK_SRC, APPROVAL_SRC.replace("ctx.permissionMode === 'bypassPermissions'", "ctx.permissionMode === 'default'")],
+    ['bypass 被提前到白名单之前（顺序反了）', SDK_SRC, bypassFirst],
+  ];
+  for (const [label, sdk, approval] of brokenPairs) {
+    ok(!sdkApprovalContract(sdk, approval), `反向探针：${label} → SDK 契约必须变红`);
+  }
+  ok(
+    !cliApprovalContract(CLI_SRC.replace('const gate = decideToolAccess(ctx.allowedTools, ask.toolName);', '// 故意删掉')),
+    '反向探针：CLI 双向通道删掉白名单 → CLI 契约必须变红'
+  );
 
   const acpSrc = readFileSync(new URL('../server/agents/adapters/acp.ts', import.meta.url), 'utf8');
   ok(/decideAcpToolAccess\(/.test(acpSrc), 'hermes 声称与实现一致：ACP 授权请求里调了判据');
@@ -519,16 +704,38 @@ for (const id of ['workbuddy', 'gemini', 'codex', 'opencode', 'hermes', 'claude'
 }
 eq(supportLimitation(undefined), '该 Agent 未声明权限强制能力', 'support 缺失时的兜底文案');
 
-// J-7 提示文案引用的模式名，必须与 ChatInput 选择器里显示的是同一个词
+// J-7 提示文案引用的模式名，必须与权限选择器里显示的是同一个词。
+// 选择器已 i18n 化（PERMISSION_MODE_CONFIG.shortKey → zh/en 字典），
+// 旧断言钉死 `label: '中文'` 字面量，翻译抽走后 4 条一起假红。
+// 现在判「同一份语义」：配置覆盖四档 → shortKey → 中文字典 → PERMISSION_MODE_LABEL。
 {
   const labels = PERMISSION_MODE_LABEL;
   ok(!!labels.plan && !!labels.default && !!labels.acceptEdits && !!labels.bypassPermissions, '四种模式都有中文名');
-  const chatInputSrc = readFileSync(new URL('../src/components/ChatInput.tsx', import.meta.url), 'utf8');
+  ok(
+    permissionLabelContract(CHAT_INPUT_SRC, ZH_SRC, labels),
+    'ChatInput 四档短标签与提示文案同词（走 i18n key，不硬编码中文）',
+    '配置块 / shortKey / zh 字典 / 渲染调用，任一环断了都要红'
+  );
+  // 拆细报：红了要能看出是哪一档漂移
+  const configBlock = /const PERMISSION_MODE_CONFIG[^=]*=\s*\{([\s\S]*?)\n\};/.exec(stripComments(CHAT_INPUT_SRC))?.[1] ?? '';
+  ok(configBlock.length > 0, 'ChatInput 里仍有权限模式配置块（防止整块删掉还判绿）');
   for (const m of MODES) {
-    ok(
-      chatInputSrc.includes(`label: '${labels[m]}'`),
-      `ChatInput 选择器显示「${labels[m]}」，与提示文案同词`
-    );
+    const entry = new RegExp(`'${m}'\\s*:\\s*\\{([\\s\\S]*?)\\n\\s*\\},`).exec(configBlock)?.[1] ?? '';
+    const key = /shortKey:\s*'([^']+)'/.exec(entry)?.[1] ?? '';
+    ok(!!key, `ChatInput 的 ${m} 档声明了短标签 i18n key`);
+    eq(key ? i18nValue(ZH_SRC, key) : null, labels[m], `ChatInput 选择器显示「${labels[m]}」，与提示文案同词`);
+  }
+  ok(/t\(config\.shortKey\)/.test(stripComments(CHAT_INPUT_SRC)), 'ChatInput 渲染时用 t(shortKey) 取词');
+
+  // ★ 反向探针：字典改词 / 指错 key / 渲染改回硬编码中文，契约都必须变红。
+  const brokenLabels: Array<[string, string, string]> = [
+    ['zh 字典里「只读」改了词', CHAT_INPUT_SRC, ZH_SRC.replace("'chat.permission.plan': '只读'", "'chat.permission.plan': '只读模式'")],
+    ['plan 档指到 default 的 key', CHAT_INPUT_SRC.replace("shortKey: 'chat.permission.plan',", "shortKey: 'chat.permission.default',"), ZH_SRC],
+    ['渲染改回硬编码中文（字典改了 UI 不动）', CHAT_INPUT_SRC.replace(/t\(config\.shortKey\)/g, "'只读'"), ZH_SRC],
+    ['配置块被整块删掉', CHAT_INPUT_SRC.replace(/const PERMISSION_MODE_CONFIG[\s\S]*?\n\};/, ''), ZH_SRC],
+  ];
+  for (const [label, input, zh] of brokenLabels) {
+    ok(!permissionLabelContract(input, zh, labels), `反向探针：${label} → 文案契约必须变红`);
   }
 }
 

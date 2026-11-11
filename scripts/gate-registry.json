@@ -1,0 +1,156 @@
+{
+  "schema": 1,
+  "_readme": "verify:* 脚本的挂链登记。规则：一个脚本要么出现在 verify:ui / CI 里，要么在这里登记并写明链外原因。新增链外脚本必须登记，否则 verify:gate-registry 判红。分类理由按脚本头部自述与实现形态填写，不是运行结论。",
+  "maxOfflineUnit": 18,
+  "categories": {
+    "offline-unit": "纯离线单测（无浏览器 / 无打包产物 / 无本机 CLI）。链外属历史未接线，已登记待逐条评估挂链；数量受棘轮约束，只许减不许增。",
+    "composite": "组合命令，把多个子脚本串成一条人工入口；可直接单跑子脚本，整条不进主链。",
+    "needs-electron": "需要真跑打包后的 win-unpacked/OPC Agent.exe，依赖本机有可执行的包。",
+    "needs-built-app": "需要 dist / 浏览器 / 图标等构建产物，不能在主链构建之前跑。",
+    "needs-local-cli": "依赖本机 Agent CLI、垫片或真实凭据，换机器结果不同。",
+    "known-red": "刻意不挂链的既有红灯，挂进去会让主链长期断在前段。",
+    "retired": "脚本自述已退役，被测 UI 已不存在，保留仅作历史记录。"
+  },
+  "entries": {
+    "verify:orchestrator": {
+      "category": "offline-unit",
+      "reason": "编排引擎决策逻辑的纯函数验证：先后顺序、prompt 内容、路由解析、失败兜底，不调真实 LLM、不联网。"
+    },
+    "verify:routing": {
+      "category": "offline-unit",
+      "reason": "Agent 路由与可用性判定：模型命名空间跨 Agent 不复用、请求值采用/拦下/回退，全部用夹具断言。"
+    },
+    "verify:a179-sdk-model-default": {
+      "category": "offline-unit",
+      "reason": "WorkBuddy/Tencent SDK 默认模型与失效模型回退的源码与纯函数判据，不需要真实 SDK 在线。"
+    },
+    "verify:wb-config": {
+      "category": "offline-unit",
+      "reason": "官方产品配置读取与补位逻辑，路径解析用注入夹具，不读用户机器上真实配置。"
+    },
+    "verify:workspace": {
+      "category": "offline-unit",
+      "reason": "工作区方案二的 validateDirectory 三态与面板逻辑，纯函数层，无需浏览器或真服务端。"
+    },
+    "verify:a77-fs": {
+      "category": "offline-unit",
+      "reason": "文件面板只读边界与路径 containment：..、绝对路径、盘符相对、符号链接四种逃逸，纯函数断言。"
+    },
+    "verify:session": {
+      "category": "offline-unit",
+      "reason": "会话持久化：先把 OPC_DATA_DIR 指到临时库再动态 import，迁移/写入/查询都在临时库，不碰真实数据。"
+    },
+    "verify:scenarios": {
+      "category": "offline-unit",
+      "reason": "场景模板纯数据校验，脚本自述无需构建、无需浏览器、不碰数据库。"
+    },
+    "verify:family": {
+      "category": "offline-unit",
+      "reason": "产品族元数据判据：同一件事别接两遍、不同事别挤成一条，按定义表静态核对。"
+    },
+    "verify:install-meta": {
+      "category": "offline-unit",
+      "reason": "安装来源元数据的诚实性判据，对照打包产物清单做静态断言，不执行安装。"
+    },
+    "verify:family-hints": {
+      "category": "offline-unit",
+      "reason": "同厂其他版本与上次请求探测，脚本自述全部自己造文件系统夹具，不依赖本机装了什么。"
+    },
+    "verify:image": {
+      "category": "offline-unit",
+      "reason": "生图 provider 注入 fetchImpl，脚本自述全离线不发真实网络请求。"
+    },
+    "verify:usage": {
+      "category": "offline-unit",
+      "reason": "用量统计与会话导出，脚本自述不跑真 Agent、不起真服务，用夹具覆盖失败路径。"
+    },
+    "verify:stream-text": {
+      "category": "offline-unit",
+      "reason": "流式增量 text/thinking 逐块推出与去重、未知 subtype 走 raw 旁路，纯事件映射断言。"
+    },
+    "verify:a132-dock-unit": {
+      "category": "offline-unit",
+      "reason": "权限审批浮层纯函数与源码契约，脚本自述全脱机、不起服务、不碰数据库。"
+    },
+    "verify:a177-agent-probe": {
+      "category": "offline-unit",
+      "reason": "单 Agent 探测的隔离性，走真实 registry 的 probeSingle 代码路径但不联网，夹具驱动。"
+    },
+    "verify:a177-agent-probe-ui": {
+      "category": "offline-unit",
+      "reason": "react-dom/server 直接渲染资料页真实组件，脚本自述不依赖 vite build 与浏览器。"
+    },
+    "verify:a178-workbuddy-auth": {
+      "category": "offline-unit",
+      "reason": "WorkBuddy 鉴权四态文案语义（未登录/凭据无效/超时/探测失败），离线状态机断言。"
+    },
+    "verify:agent-access": {
+      "category": "needs-local-cli",
+      "reason": "L0/L1 Agent 接入，含 cursor-agent 的 .cmd→ps1→node 三层垫片解析，依赖本机确实装了这些 CLI。"
+    },
+    "verify:a106": {
+      "category": "needs-local-cli",
+      "reason": "已接入 CLI 三项升级（会话续接、优雅中止、claude 双向 control），桩 CLI 之外还要本机 CLI 版本配合。"
+    },
+    "verify:a107": {
+      "category": "known-red",
+      "reason": "会话池验证的 3-2 首条消息有回复 是既有红灯（预热后首条丢 block_delta），刻意不挂主链。"
+    },
+    "verify:a78-browser": {
+      "category": "needs-built-app",
+      "reason": "浏览器预览视图 WebContentsView 的安全默认值契约与运行时表现，依赖构建产物与 Electron 宿主。"
+    },
+    "verify:logo": {
+      "category": "needs-built-app",
+      "reason": "Logo 资产三层验证：SVG 母版、ICO 多尺寸容器、PNG 尺寸与几何契约，依赖 build 产物。"
+    },
+    "verify:a80-terminal": {
+      "category": "needs-electron",
+      "reason": "终端标签必须真跑 Electron 验 shell 起没起来、输出是否到达渲染进程、cd 与退出码，脚本自述风险全在运行时。"
+    },
+    "verify:a81-package-panels": {
+      "category": "needs-electron",
+      "reason": "打包态冒烟，验证对象明确是 release win-unpacked/OPC Agent.exe，不是源码态。"
+    },
+    "verify:a82-pty": {
+      "category": "needs-electron",
+      "reason": "PTY 版终端，[B] 组是真 Electron 冒烟，需本机有可执行的打包产物。"
+    },
+    "verify:a82-workspace-panel": {
+      "category": "needs-electron",
+      "reason": "工作区面板拖拽交互，[B] 组用真鼠标事件跑打包后的 Electron 并验 localStorage 持久化。"
+    },
+    "verify:a85": {
+      "category": "retired",
+      "reason": "脚本头部自述 2026-11-10 已退役：测的 .tc-step-head/.tc-diff 可收起过程块 DOM 已被删除。"
+    },
+    "verify:a96": {
+      "category": "composite",
+      "reason": "行级 diff 单元验证 + 浏览器闸门两条命令串成人工入口，子脚本可分别单跑。"
+    },
+    "verify:a97": {
+      "category": "composite",
+      "reason": "验证闭环：纯函数 + 真实子进程 + e2e 三条命令串成人工入口，含探测命令选择判据。"
+    },
+    "verify:a98": {
+      "category": "composite",
+      "reason": "项目键：纯函数、DB、e2e 四条命令串成人工入口，不重复进主链。"
+    },
+    "verify:a99": {
+      "category": "composite",
+      "reason": "文件核对：纯函数 + 临时文件 + e2e 三条命令串成人工入口。"
+    },
+    "verify:a100": {
+      "category": "composite",
+      "reason": "上一轮没有产出回复的真服务端 e2e 与单元断言组合，需独立 OPC_DATA_DIR 与随机端口。"
+    },
+    "verify:a101": {
+      "category": "composite",
+      "reason": "事件来源标注的纯函数与浏览器闸门组合，作为该议题的人工入口单跑。"
+    },
+    "verify:a115": {
+      "category": "composite",
+      "reason": "命令本身就是 npm run verify:a115-identity && npm run verify:a115-ui，两个子闸门各自可查。"
+    }
+  }
+}

@@ -7,6 +7,8 @@
  *
  * 运行：npx tsx scripts/verify-event-model.ts
  */
+// 必须先于所有 server/** import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
+import './lib/temp-data-dir.js';
 import { RunProjector, type RunMeta } from '../server/agents/projector.js';
 import { applyRunEvent, legacyToBlocks, textOfBlocks, toolCallsOfBlocks } from '../shared/blocks.js';
 import type { AgentEvent } from '../server/agents/types.js';

@@ -28,6 +28,8 @@
  * 全离线、不联网、不碰数据库。
  * 运行：npx tsx scripts/verify-install-meta.ts
  */
+// 必须先于所有 server/** import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
+import './lib/temp-data-dir.js';
 import { AGENT_DEFS, INSTALL_HOSTS } from '../server/agents/definitions.js';
 import type { AgentDescriptor, InstallMethod } from '../server/agents/types.js';
 

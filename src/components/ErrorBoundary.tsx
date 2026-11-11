@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { t } from '../i18n';
 
 interface Props {
   children: ReactNode;
@@ -29,6 +30,11 @@ interface State {
  * 错误边界**不捕获**事件回调里的抛错、异步 Promise、以及 SSR 阶段的错。
  * 那些仍会进 console.error（componentDidCatch 也会被调用一次），
  * 所以这个边界不是「让错误消失」，是「让用户有路可走」。
+ *
+ * ## 为什么用模块级 t() 而不是 useTranslation()
+ *
+ * class 组件不能用 hook。这里在渲染时调一次 `t()`，读的就是当前语言；错误页出现后
+ * 用户能做的只有重新加载，不存在「切语言后这张卡还留在屏上」的场景，所以不需要订阅。
  */
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null };
@@ -70,14 +76,13 @@ export class ErrorBoundary extends Component<Props, State> {
             className="text-lg font-semibold mb-2"
             style={{ color: 'var(--td-text-color-primary)' }}
           >
-            界面出错了
+            {t('errorBoundary.title')}
           </h1>
           <p
             className="text-sm mb-4 leading-relaxed"
             style={{ color: 'var(--td-text-color-secondary)' }}
           >
-            应用在渲染时遇到问题，已停止显示。你的会话数据不会因此丢失
-            （都存在本地数据库里）——重新加载通常就能恢复。
+            {t('errorBoundary.description')}
           </p>
 
           <button
@@ -92,7 +97,7 @@ export class ErrorBoundary extends Component<Props, State> {
               cursor: 'pointer',
             }}
           >
-            重新加载
+            {t('errorBoundary.reload')}
           </button>
 
           {/* 错误详情默认折叠：普通用户不需要看，但报问题时这就是全部线索 */}
@@ -101,7 +106,7 @@ export class ErrorBoundary extends Component<Props, State> {
               className="text-xs cursor-pointer select-none"
               style={{ color: 'var(--td-text-color-placeholder)' }}
             >
-              错误详情（反馈问题时请附上）
+              {t('errorBoundary.details')}
             </summary>
             <pre
               className="mt-2 p-3 rounded-lg text-xs overflow-auto max-h-48"

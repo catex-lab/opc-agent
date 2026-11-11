@@ -19,6 +19,8 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
+// P2：执行前对整条命令兜底，挡住探测层未来新增来源带来的 shell 元字符。
+import { isShellSafeCommand, unsafeReason } from './shell-safety.js';
 
 export type VerifyStatus = 'pass' | 'fail' | 'timeout' | 'error';
 
@@ -132,6 +134,14 @@ export function runVerifyCommand(opts: RunOptions): Promise<VerifyRunResult> {
     // 监听器补发事件，只靠 addEventListener 会漏掉这种情况，命令照跑到底。
     if (signal?.aborted) {
       finish('error', null, '用户已取消');
+      return;
+    }
+
+    // shell:true 下，任何元字符都会改变命令语义而不只是变成参数。
+    // 探测层已经过滤过 script 名，这里是第二道（也覆盖 make / cargo / python
+    // 这些不走 script 名的分支）。拒绝执行也要走 finish，保持「永不抛错」。
+    if (!isShellSafeCommand(command)) {
+      finish('error', null, unsafeReason('command', command));
       return;
     }
 
