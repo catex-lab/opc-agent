@@ -178,11 +178,91 @@ export function agentAppearanceSnapshot(): AppearanceMap {
   return { ...appearance() };
 }
 
-/** 这张文件还有没有人在用（用户头像或任意 Agent） */
+// ── 群头像引用登记（2026-11-12）───────────────────────────────────────
+//
+// 群的自定义头像 URL 存在**前端** localStorage（sessionFlags.avatarImage，
+// 与 A115 的预设头像同一存储口径），但图片文件在服务端的共享仓库里。
+// 只记 URL 不登记引用有一个真实后果：同一张图被用户头像 / Agent Logo /
+// 某个群共用时（内容哈希命名 → 同图必同文件），任何一方移除都会触发
+// 「无人引用」回收 —— 没有这份登记，另一个群的头像就 404 了。
+// 所以这里按 sessionId 登记引用，让 deleteAvatarFileIfUnused 看得见群。
+
+const groupAvatarsPath = path.join(dataDirPath, 'group-avatars.json');
+
+type GroupAvatarMap = Record<string, AppearanceEntry>;
+
+let cachedGroupAvatars: GroupAvatarMap | null = null;
+
+function readGroupAvatars(): GroupAvatarMap {
+  try {
+    if (!existsSync(groupAvatarsPath)) return {};
+    const raw = JSON.parse(readFileSync(groupAvatarsPath, 'utf-8')) as unknown;
+    if (!raw || typeof raw !== 'object') return {};
+    const out: GroupAvatarMap = {};
+    for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+      const v = value as Partial<AppearanceEntry> | null;
+      if (v && typeof v.logo === 'string' && isSafeAvatarFile(v.logo)) {
+        out[id] = {
+          logo: v.logo,
+          updatedAt: typeof v.updatedAt === 'string' ? v.updatedAt : new Date(0).toISOString(),
+        };
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveGroupAvatars(next: GroupAvatarMap): void {
+  cachedGroupAvatars = next;
+  try {
+    mkdirSync(dataDirPath, { recursive: true });
+    const tmp = `${groupAvatarsPath}.tmp-${process.pid}-${Date.now()}`;
+    writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf-8');
+    renameSync(tmp, groupAvatarsPath);
+  } catch (err) {
+    console.warn('[AvatarStore] 写入群头像映射失败（本次会话仍生效）:', (err as Error).message);
+  }
+}
+
+function groupAvatars(): GroupAvatarMap {
+  if (!cachedGroupAvatars) cachedGroupAvatars = readGroupAvatars();
+  return cachedGroupAvatars;
+}
+
+/** 供测试/诊断用的只读快照 */
+export function groupAvatarSnapshot(): GroupAvatarMap {
+  return { ...groupAvatars() };
+}
+
+/** 登记一个群的自定义头像，返回可给前端用的 URL */
+export function setGroupAvatarFile(sessionId: string, file: string): string {
+  const id = sessionId.trim();
+  if (!id || id.length > 200) throw new Error('非法的会话 id');
+  if (!isSafeAvatarFile(file)) throw new Error('非法的头像文件');
+  const next = { ...groupAvatars(), [id]: { logo: file, updatedAt: new Date().toISOString() } };
+  saveGroupAvatars(next);
+  return avatarUrlOfFile(file);
+}
+
+/** 解除登记。返回被释放的文件名；真删由调用方在确认无人引用后做 */
+export function clearGroupAvatarFile(sessionId: string): string | undefined {
+  const id = sessionId.trim();
+  const entry = groupAvatars()[id];
+  if (!entry) return undefined;
+  const next = { ...groupAvatars() };
+  delete next[id];
+  saveGroupAvatars(next);
+  return entry.logo;
+}
+
+/** 这张文件还有没有人在用（用户头像、任意 Agent 或任意群） */
 function isFileReferenced(file: string): boolean {
   const userFile = avatarFileOfUrl(loadUserProfile().avatarImage);
   if (userFile === file) return true;
-  return Object.values(appearance()).some(entry => entry.logo === file);
+  if (Object.values(appearance()).some(entry => entry.logo === file)) return true;
+  return Object.values(groupAvatars()).some(entry => entry.logo === file);
 }
 
 /** 只有在没人引用时才删文件。删不掉的失败不影响返回值 */

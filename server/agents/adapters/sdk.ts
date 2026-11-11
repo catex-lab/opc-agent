@@ -520,6 +520,8 @@ export class SdkAdapter implements AgentProvider {
       memory: this.memoryFor(sessionId),
       ctx,
       sessionId,
+      // 持久授权的键之一（2026-11-12）：一个适配器实例只对应一个 Agent
+      agentId: this.descriptor.id,
       options: SDK_PERMISSION_OPTIONS,
       expiresInMs: PERMISSION_TIMEOUT,
     }) as CanUseTool;

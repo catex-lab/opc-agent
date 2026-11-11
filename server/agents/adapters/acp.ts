@@ -25,6 +25,7 @@ import {
   isUnresolvedShim,
   isIdeLauncher,
   expandPath,
+  killProcessTree,
   type LaunchTarget,
 } from '../probe.js';
 import type { AgentDefinition } from '../definitions.js';
@@ -38,6 +39,8 @@ import type {
   SendContext,
 } from '../types.js';
 import { decideAcpToolAccess } from '../toolPolicy.js';
+// 「该 Agent 永久」的落库查询（2026-11-12 变体 A）：命中即在弹卡前自动放行
+import { hasAgentGrant } from '../../permission-grants.js';
 import { appendFailureAdvice, recoveryHintFor } from '../recovery.js';
 import { withAnswerLanguage } from '../../answer-language.js';
 import type { ScenarioTool } from '../../../shared/scenarios.js';
@@ -70,7 +73,60 @@ export function selectAcpOption(
 /** ACP 协议版本，实测 Hermes 接受 1 */
 const PROTOCOL_VERSION = 1;
 const INIT_TIMEOUT = 60_000;
-const REQUEST_TIMEOUT = 10 * 60 * 1000;
+/**
+ * 单个 RPC 请求的默认超时：10 分钟（历史值，保持不变）。
+ *
+ * 可用两种方式覆盖（供闸门注入 ~1.5s 测真超时路径，别让测试等 10 分钟）：
+ *   1. 构造参数 `new AcpAdapter(def, { requestTimeoutMs: 1500 })`（优先）；
+ *   2. 环境变量 `OPC_ACP_REQUEST_TIMEOUT_MS`（闸门 / 诊断用，不用改调用方）。
+ * 非法值（非数字 / ≤0）一律回落默认 —— 配置错了不能把超时变成「永不超时」。
+ */
+const DEFAULT_REQUEST_TIMEOUT = 10 * 60 * 1000;
+const REQUEST_TIMEOUT_ENV = 'OPC_ACP_REQUEST_TIMEOUT_MS';
+
+/**
+ * 超时自愈耗尽后的用户文案。
+ *
+ * 实测事故（3 次）：hermes-acp 骑在用户常驻的 Hermes gateway 上，gateway 在
+ * session.create 路径确定性挂起（10 分钟整）。适配器现在会在第一次超时后
+ * 自动杀树重建并重试一次；第二次仍超时才报错 —— 文案必须短、可执行、不甩锅，
+ * 并且诚实说明「已经自动重启过」，引导用户做唯一剩下的那步动作。
+ */
+const SESSION_TIMEOUT_EXHAUSTED_MESSAGE =
+  'Hermes 会话无响应（其 gateway 可能已挂起）。已自动重启连接并重试仍失败——请重启 Hermes 桌面端后重试。';
+
+export interface AcpAdapterOptions {
+  /**
+   * 单个 RPC 请求的超时毫秒数。缺省读环境变量 `OPC_ACP_REQUEST_TIMEOUT_MS`，
+   * 再缺省 10 分钟。
+   */
+  requestTimeoutMs?: number;
+  /** initialize 握手超时毫秒数。缺省 60s。 */
+  initTimeoutMs?: number;
+}
+
+function resolveTimeoutMs(optionValue: number | undefined, fallback: number): number {
+  if (typeof optionValue === 'number' && Number.isFinite(optionValue) && optionValue > 0) {
+    return optionValue;
+  }
+  const raw = process.env[REQUEST_TIMEOUT_ENV];
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return fallback;
+}
+
+/**
+ * 请求超时专用错误。自愈逻辑靠 `instanceof` 区分「超时」（可自愈）与
+ * 「进程退出 / 协议错误」（走各自的既有路径），不能靠解析错误字符串。
+ */
+export class AcpRequestTimeoutError extends Error {
+  constructor(method: string) {
+    super(`ACP 请求超时：${method}`);
+    this.name = 'AcpRequestTimeoutError';
+  }
+}
 
 type Json = Record<string, unknown>;
 
@@ -144,13 +200,13 @@ class JsonRpcStdio {
     if (msg.method) this.onNotification?.(msg);
   }
 
-  request(method: string, params: Json, timeoutMs = REQUEST_TIMEOUT): Promise<unknown> {
+  request(method: string, params: Json, timeoutMs = DEFAULT_REQUEST_TIMEOUT): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error('ACP 进程未运行'));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`ACP 请求超时：${method}`));
+        reject(new AcpRequestTimeoutError(method));
       }, timeoutMs);
       timer.unref?.();
       this.pending.set(id, { resolve, reject, timer });
@@ -219,9 +275,25 @@ export class AcpAdapter implements AgentProvider {
   /** session/new 返回的模型清单，供前端选择 */
   private models: Array<{ modelId: string; name: string; description?: string }> = [];
 
-  constructor(def: AgentDefinition) {
+  /** 单个 RPC 请求的超时（可注入；默认 10 分钟） */
+  private readonly requestTimeoutMs: number;
+  /** initialize 握手超时（可注入；默认 60s） */
+  private readonly initTimeoutMs: number;
+  /**
+   * 超时自愈的重试预算：硬编码 1 —— 第一次超时杀树重建再试一次，
+   * 第二次仍超时就把诚实文案交给用户。
+   *
+   * 为什么不做成配置项：这个数字一旦可调，「无限重试把用户拖死」就会
+   * 回来（旧实现没有自愈，挂死进程让每次重试都拖满 10 分钟）。预算
+   * 锁死在适配器内部，闸门反向探针会临时改它来验证预算行为。
+   */
+  private retryBudget = 1;
+
+  constructor(def: AgentDefinition, options: AcpAdapterOptions = {}) {
     this.def = def;
     this.descriptor = def.descriptor;
+    this.requestTimeoutMs = resolveTimeoutMs(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT);
+    this.initTimeoutMs = resolveTimeoutMs(options.initTimeoutMs, INIT_TIMEOUT);
   }
 
   get availableModels() {
@@ -237,56 +309,109 @@ export class AcpAdapter implements AgentProvider {
     );
   }
 
-  /** 启动 ACP 进程并完成 initialize（幂等） */
+  /** 启动 ACP 进程并完成 initialize（幂等；initialize 超时自愈：杀树重建后重试一次） */
   private ensureRpc(): Promise<JsonRpcStdio> {
     if (this.rpc && !this.rpc.isClosed) return Promise.resolve(this.rpc);
     if (this.starting) return this.starting;
 
-    this.starting = (async () => {
-      const binPath = this.resolveBin();
-      if (!binPath) throw new Error(`未找到 ${this.def.descriptor.command}`);
+    this.starting = this.startRpcWithRetry();
 
-      this.target = resolveAnyLaunchTarget(binPath);
-      if (isUnresolvedShim(this.target, binPath)) {
-        throw new Error('无法解析 ACP 启动垫片（不退回 shell 执行）');
+    // 失败后允许重试
+    this.starting.catch(() => {
+      this.starting = null;
+      this.rpc = null;
+    });
+
+    return this.starting;
+  }
+
+  /**
+   * 带自愈预算的启动：initialize 超时 → 杀树重建再试一次（预算 1）。
+   *
+   * 实测事故里 gateway 挂起同样会卡死 initialize（hermes-acp 起来后
+   * 第一句握手就骑在 gateway 上），所以自愈必须覆盖这里，而不只是
+   * session/new。第二次仍超时，报 SESSION_TIMEOUT_EXHAUSTED_MESSAGE。
+   * 预算耗尽时的非超时错误（如进程秒退）原样上抛，走「进程退出」文案。
+   */
+  private async startRpcWithRetry(): Promise<JsonRpcStdio> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.startRpcOnce();
+      } catch (err) {
+        if (!(err instanceof AcpRequestTimeoutError)) throw err;
+        if (attempt >= this.retryBudget) {
+          throw attempt > 0
+            ? new Error(SESSION_TIMEOUT_EXHAUSTED_MESSAGE)
+            : err; // 预算为 0：没重建过，诚实报原始超时，不谎称「已重启」
+        }
+        console.error('[ACP] initialize 超时，自动重启连接并重试一次');
       }
-      // A119：IDE 启动器守卫。ACP 是长连接，接错目标不会「报错」而是
-      // 拉起一个 IDE 窗口然后 stdin 永远等不到 initialize 应答 ——
-      // 表现成握手超时，比 CLI 那边更难定位。见 isIdeLauncher()。
-      if (isIdeLauncher(this.target)) {
-        throw new Error(
-          `${binPath} 是 IDE 的命令行入口，不是 ACP agent（它会拉起 IDE 窗口而不是走 stdio 协议）`
-        );
-      }
+    }
+  }
 
-      const child = spawn(this.target.command, this.target.prefixArgs, {
-        cwd: process.cwd(),
-        env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
-        shell: false,
-        windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      this.child = child;
+  /** 单次「spawn + initialize」。失败时回收这次拉起的进程（超时挂死进程不回收 = 每次重试都再拖满超时）。 */
+  private async startRpcOnce(): Promise<JsonRpcStdio> {
+    const binPath = this.resolveBin();
+    if (!binPath) throw new Error(`未找到 ${this.def.descriptor.command}`);
 
-      const rpc = new JsonRpcStdio(child);
-      rpc.onNotification = msg => this.handleNotification(msg);
-      rpc.onRequest = msg => this.handleServerRequest(msg);
-      rpc.onClose = () => {
-        this.rpc = null;
-        this.child = null;
-        this.starting = null;
-        for (const [, q] of this.streams) q.close();
-        this.streams.clear();
-      };
+    this.target = resolveAnyLaunchTarget(binPath);
+    if (isUnresolvedShim(this.target, binPath)) {
+      throw new Error('无法解析 ACP 启动垫片（不退回 shell 执行）');
+    }
+    // A119：IDE 启动器守卫。ACP 是长连接，接错目标不会「报错」而是
+    // 拉起一个 IDE 窗口然后 stdin 永远等不到 initialize 应答 ——
+    // 表现成握手超时，比 CLI 那边更难定位。见 isIdeLauncher()。
+    if (isIdeLauncher(this.target)) {
+      throw new Error(
+        `${binPath} 是 IDE 的命令行入口，不是 ACP agent（它会拉起 IDE 窗口而不是走 stdio 协议）`
+      );
+    }
 
-      // stderr 是 Hermes 的日志通道，仅保留尾部用于报错
-      let errTail = '';
-      child.stderr?.on('data', (d: string) => {
-        errTail += d;
-        if (errTail.length > 4000) errTail = errTail.slice(-4000);
-      });
-      child.on('error', () => { /* 由 onClose 统一处理 */ });
+    const child = spawn(this.target.command, this.target.prefixArgs, {
+      cwd: process.cwd(),
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+      shell: false,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    this.child = child;
 
+    // stderr 是 Hermes 的日志通道，仅保留尾部用于报错。
+    // 必须挂在 onClose 之前声明：onClose 的报错文案要引用它。
+    let errTail = '';
+    child.stderr?.on('data', (d: string) => {
+      errTail += d;
+      if (errTail.length > 4000) errTail = errTail.slice(-4000);
+    });
+    child.on('error', () => { /* 由 onClose 统一处理 */ });
+
+    const rpc = new JsonRpcStdio(child);
+    rpc.onNotification = msg => this.handleNotification(msg);
+    rpc.onRequest = msg => this.handleServerRequest(msg);
+    rpc.onClose = code => {
+      // 只清理「还是当前连接」的进程：超时自愈会杀旧起新，旧进程的
+      // close 事件迟到时绝不能把新连接打掉（否则重建被自己拆掉）。
+      if (this.rpc !== rpc) return;
+      this.rpc = null;
+      this.child = null;
+      this.starting = null;
+      const tail = errTail.trim();
+      // 进程死亡是异常结束，必须 fail 而不是 close：close 会把正在等的
+      // 那轮当成「正常结束的空回复」（channel.ts 的 A108 注释）。
+      // 退出码 + stderr 尾部一起给到，用户看到的不是静默空结束。
+      const err = new Error(
+        `ACP 进程已退出（code=${code}）${tail ? `：${tail.slice(-800)}` : ''}`
+      );
+      for (const [, q] of this.streams) q.fail(err);
+      this.streams.clear();
+      // 进程没了，会话映射与待答复的权限请求全部作废。
+      // 留着它们，下次 send 会拿死 sessionId 去 prompt。
+      this.acpSessions.clear();
+      this.allowlists.clear();
+      this.pendingPerms.clear();
+    };
+
+    try {
       const result = (await rpc.request(
         'initialize',
         {
@@ -297,21 +422,55 @@ export class AcpAdapter implements AgentProvider {
           },
           clientInfo: { name: 'opc-agent', version: '0.1.0' },
         },
-        INIT_TIMEOUT
+        this.initTimeoutMs
       )) as Json;
 
       this.agentInfo = (result.agentInfo as { name?: string; version?: string }) ?? null;
       this.rpc = rpc;
       return rpc;
-    })();
-
-    // 失败后允许重试
-    this.starting.catch(() => {
-      this.starting = null;
+    } catch (err) {
+      // 握手失败：这次拉起的进程必须回收。旧实现只在 onClose 里清理，
+      // 而「活着但挂死」的进程永远不会触发 onClose —— 于是它一直占着
+      // this.child，下一次重试复用它，再拖满一个完整超时。
       this.rpc = null;
-    });
+      this.child = null;
+      killProcessTree(child.pid);
+      throw err;
+    }
+  }
 
-    return this.starting;
+  /**
+   * 超时自愈：杀整棵进程树 → 清空内部映射 → 重建连接。
+   *
+   * 「杀整棵树」用 taskkill /T（probe.ts 的 killProcessTree）：本机
+   * hermes-acp 是 .EXE，它会再拉起 python 子进程 —— 只杀直接子进程会留
+   * 下一棵挂死的进程树，继续占着 gateway 连接。
+   *
+   * 清空映射的口径与 dispose/onClose 一致：进程没了，acpSessions 里的
+   * sessionId、正在消费的 streams、场景工具 allowlists、待答复的权限
+   * 请求全部作废。留着它们，重建后 send 会拿死 sessionId 去 prompt。
+   */
+  private destroyConnection(): void {
+    const child = this.child;
+    this.rpc = null;
+    this.child = null;
+    this.starting = null;
+    killProcessTree(child?.pid);
+    // 其他会话还在这个进程上的在飞轮次：立刻告诉它们连接没了，
+    // 而不是让它们各自等到自己的超时。
+    for (const [, q] of this.streams) {
+      q.fail(new Error('ACP 连接已重置（请求超时后自动重启进程），请重试'));
+    }
+    this.streams.clear();
+    this.acpSessions.clear();
+    this.allowlists.clear();
+    this.pendingPerms.clear();
+  }
+
+  /** 超时后的自动重建：旧连接作废 + 全新进程 + 重新 initialize。 */
+  private async recoverRpc(): Promise<JsonRpcStdio> {
+    this.destroyConnection();
+    return await this.ensureRpc();
   }
 
   // ============= 服务端消息处理 =============
@@ -364,6 +523,30 @@ export class AcpAdapter implements AgentProvider {
             : { outcome: { outcome: 'cancelled' } }
         );
         return;
+      }
+
+      // ---- 2026-11-12 持久授权（「该 Agent 永久」）----
+      // 白名单之后、弹卡之前：命中即按协议的**正常 allow 应答路径**回选
+      // allow 档，不向客户端发 permission_request；轨迹里留一条叙述可审计。
+      // 授权只能省「问用户」，省不掉前面的白名单 —— 上面那道闸没被挪动。
+      // 没有 allow 档可回选时照旧弹卡：授权存在但协议回不去，绝不假装放行。
+      if (hasAgentGrant(this.descriptor.id, title)) {
+        const autoAllow = selectAcpOption(options, { behavior: 'allow' });
+        if (autoAllow) {
+          console.log(`[ACP] 持久授权命中，自动放行: ${this.descriptor.id} · ${title}`);
+          if (queue) {
+            queue.push({
+              type: 'note',
+              text: `权限：已授权范围自动放行（${this.descriptor.id} · ${title}）`,
+              level: 'info',
+            });
+          }
+          this.rpc?.respond(
+            msg.id,
+            { outcome: { outcome: 'selected', optionId: autoAllow.id } }
+          );
+          return;
+        }
       }
 
       const requestId = randomUUID();
@@ -420,7 +603,11 @@ export class AcpAdapter implements AgentProvider {
     }
 
     // 真正跑一次 initialize —— 这是唯一能确证「ACP 进程可用」的方式。
-    // 但 initialize 不验证凭据：所以 ready 的文案必须写「未校验」。
+    // 但 initialize 只证明「进程会说话」，它不验证凭据、也不验证
+    // session/new 能不能建出会话 —— 实测事故里 gateway 挂死时 initialize
+    // 一样能过，于是 probe 报「在线」而第一次发消息挂 10 分钟。
+    // 为什么不在这里真跑一次 session/new 验证：会真的建出 ACP 会话
+    // （泄漏），而 probe 只该问「活着吗」。所以把能力边界写进文案。
     try {
       await this.ensureRpc();
       this.status = {
@@ -429,8 +616,8 @@ export class AcpAdapter implements AgentProvider {
         binaryPath: binPath,
         version: this.agentInfo?.version,
         message: this.agentInfo?.version
-          ? `ACP 握手成功（凭据未校验）：${this.agentInfo.name ?? 'agent'} v${this.agentInfo.version}`
-          : 'ACP 握手成功（凭据未校验）',
+          ? `ACP 握手成功（凭据未校验；会话创建未验证）：${this.agentInfo.name ?? 'agent'} v${this.agentInfo.version}`
+          : 'ACP 握手成功（凭据未校验；会话创建未验证）',
         probedAt: now,
       };
     } catch (err) {
@@ -466,29 +653,62 @@ export class AcpAdapter implements AgentProvider {
     const cwd = ctx.cwd || process.cwd();
 
     if (!acpSessionId) {
-      try {
-        // A176：ACP 的 stdio MCP 配置（env 必须是 [{name,value}] 数组）。
-        // 会话 id 随进程环境注入，工具侧不接受调用方传 sessionId。
-        const kbSpec = kbMcpServerSpec(ctx.sessionId, this.descriptor.id);
-        const mcpServers = [
-          {
-            name: KB_MCP_SERVER_NAME,
-            command: kbSpec.command,
-            args: kbSpec.args,
-            env: Object.entries(kbSpec.env).map(([name, value]) => ({ name, value })),
-          },
-        ];
-        const res = (await rpc.request('session/new', { cwd, mcpServers })) as Json;
-        acpSessionId = res.sessionId as string;
-        this.acpSessions.set(ctx.sessionId, acpSessionId);
+      // A176：ACP 的 stdio MCP 配置（env 必须是 [{name,value}] 数组）。
+      // 会话 id 随进程环境注入，工具侧不接受调用方传 sessionId。
+      const kbSpec = kbMcpServerSpec(ctx.sessionId, this.descriptor.id);
+      const mcpServers = [
+        {
+          name: KB_MCP_SERVER_NAME,
+          command: kbSpec.command,
+          args: kbSpec.args,
+          env: Object.entries(kbSpec.env).map(([name, value]) => ({ name, value })),
+        },
+      ];
 
-        const available = (res.models as { availableModels?: unknown })?.availableModels;
-        if (Array.isArray(available)) {
-          this.models = available as Array<{ modelId: string; name: string; description?: string }>;
+      // 超时自愈循环：第一次超时 → 杀整棵进程树 + 清映射 + 重建连接，再试一次
+      //（预算 retryBudget=1，防死循环）。第二次仍超时才把诚实文案交给用户，
+      // 并把这次重建出来、确认挂死的进程也收掉 —— 不留挂死进程给下次重试复用。
+      // 旧实现超时只是 reject：挂死进程原样留着，下一次重试复用它再拖满
+      // 10 分钟 —— 用户「等十分钟得到一句死板报错」，而且越试越糟。
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const res = (await rpc.request('session/new', { cwd, mcpServers }, this.requestTimeoutMs)) as Json;
+          acpSessionId = res.sessionId as string;
+          this.acpSessions.set(ctx.sessionId, acpSessionId);
+
+          const available = (res.models as { availableModels?: unknown })?.availableModels;
+          if (Array.isArray(available)) {
+            this.models = available as Array<{ modelId: string; name: string; description?: string }>;
+          }
+          break;
+        } catch (err) {
+          const timeout = err instanceof AcpRequestTimeoutError;
+          if (timeout && attempt < this.retryBudget) {
+            console.error('[ACP] session/new 超时，自动重启连接（杀进程树）并重试一次');
+            try {
+              rpc = await this.recoverRpc();
+            } catch (recoverErr) {
+              yield {
+                type: 'error',
+                message: `无法连接 ACP Agent：${(recoverErr as Error).message}`,
+              };
+              return;
+            }
+            continue;
+          }
+          if (timeout && attempt > 0) {
+            // 重试过的那次进程同样挂死：它上面不可能有别的会话（重建时
+            // 映射已清空），收掉它，别把挂死状态留给下一次 send。
+            this.destroyConnection();
+            yield { type: 'error', message: SESSION_TIMEOUT_EXHAUSTED_MESSAGE };
+            return;
+          }
+          yield {
+            type: 'error',
+            message: `创建 ACP 会话失败：${(err as Error).message}`,
+          };
+          return;
         }
-      } catch (err) {
-        yield { type: 'error', message: `创建 ACP 会话失败：${(err as Error).message}` };
-        return;
       }
     }
 
@@ -513,10 +733,14 @@ export class AcpAdapter implements AgentProvider {
 
     // prompt 的返回是「整轮结束」，流式内容走 session/update 通知
     rpc
-      .request('session/prompt', {
-        sessionId: acpSessionId,
-        prompt: [{ type: 'text', text: buildPrompt(ctx) }],
-      })
+      .request(
+        'session/prompt',
+        {
+          sessionId: acpSessionId,
+          prompt: [{ type: 'text', text: buildPrompt(ctx) }],
+        },
+        this.requestTimeoutMs
+      )
       .then(res => {
         const usage = (res as Json)?.usage as Json | undefined;
         queue.push({
@@ -569,11 +793,11 @@ export class AcpAdapter implements AgentProvider {
 
   /** 进程退出时清理，供 registry 在服务关闭时调用 */
   dispose(): void {
-    this.rpc?.notify('session/cancel', {});
-    this.child?.kill();
-    this.rpc = null;
-    this.child = null;
-    this.starting = null;
+    const rpc = this.rpc;
+    if (rpc && !rpc.isClosed) rpc.notify('session/cancel', {});
+    // 复用自愈的清理口：taskkill /T 杀整棵树（hermes-acp 的 python 子进程
+    // 一并回收，不留残留），映射清空口径与自愈 / onClose 一致。
+    this.destroyConnection();
   }
 }
 

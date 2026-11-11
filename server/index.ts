@@ -56,8 +56,11 @@ import { redactSecret, redactUrl } from "./log-redact.js";
 import {
   agentAppearanceSnapshot,
   clearAgentLogo,
+  clearGroupAvatarFile,
   deleteAvatarFileIfUnused,
+  groupAvatarSnapshot,
   setAgentLogo,
+  setGroupAvatarFile,
   storeAvatar,
 } from "./avatar-store.js";
 import { validateDirectory } from "./workspaceDir.js";
@@ -91,6 +94,9 @@ import { RunProjector } from "./agents/projector.js";
 import { runProfileOf } from "./agents/capability.js";
 import { probeCapabilities } from "./agents/capability-probe.js";
 import { publishRunEvent, runHub } from "./run-hub.js";
+// auth 类错误（401/凭据失效）的自动善后：对该 Agent 立刻 re-probe 一次。
+// 与群聊 turn-runner 走同一个模块 —— 单聊、群聊的口径必须一致。
+import { maybeReprobeOnAuthError } from "./agents/auth-recovery.js";
 
 // A38 记忆层（Hermes 式四层记忆）。注入发生在适配器拼 systemPrompt 时
 // （见 server/memory.ts 的 withMemoryContext），这里只暴露读写与检索。
@@ -117,6 +123,11 @@ import {
   loadPermissionRules,
   savePermissionRules,
 } from "./permission-rules.js";
+// 持久授权（2026-11-12 变体 A「该 Agent 永久」）：落库 / 撤销 / 命中查询
+import { listGrants, addGrant, removeGrant } from "./permission-grants.js";
+// 待授权元数据（requestId → agentId + toolName）。落库键必须来自事件流
+// 而不是前端回传 —— 见 POST /api/permission-response 里的取用。
+import { takePendingPermissionMeta } from "./agents/permissionMeta.js";
 import { distillSkill } from "./skill-distill.js";
 // A164 扩展（技能 + MCP 的统一管理）。**只读用户的 Agent 目录**，
 // 不写任何 `~/.<agent>/` 下的东西 —— 见 PLAN-EXTENSIONS.md §2.1。
@@ -650,15 +661,19 @@ app.put("/api/user-profile", (req, res) => {
 });
 
 // ============= 头像图片（A160）=============
-// 用户头像与 Agent Logo 共用一套「内容哈希落盘」的仓库，见 server/avatar-store.ts。
-// 两条写接口都只收 dataUrl（前端裁成 320×320 WebP），服务端嗅探文件头再落盘。
+// 用户头像、Agent Logo 与群自定义头像共用一套「内容哈希落盘」的仓库，
+// 见 server/avatar-store.ts。写接口都只收 dataUrl（前端裁成 320×320 WebP），
+// 服务端嗅探文件头再落盘。
+// 群头像（2026-11-12）：引用关系按 sessionId 登记在 group-avatars.json ——
+// 群的 URL 存前端 localStorage，服务端若不知道「这个群在用这张图」，
+// 用户头像 / Agent Logo 移除同内容图片时会把群头像一起回收掉。
 
 app.post("/api/avatars", (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const kind = body.kind;
-    if (kind !== "user" && kind !== "agent") {
-      return res.status(400).json({ error: "kind 必须是 user 或 agent" });
+    if (kind !== "user" && kind !== "agent" && kind !== "group") {
+      return res.status(400).json({ error: "kind 必须是 user、agent 或 group" });
     }
     const { url, file } = storeAvatar(body.dataUrl);
     if (kind === "user") {
@@ -666,6 +681,16 @@ app.post("/api/avatars", (req, res) => {
       saveUserProfile({ avatarImage: url });
       if (prev && prev !== url) deleteAvatarFileIfUnused(prev.slice("/api/avatars/".length));
       return res.json({ url, profile: loadUserProfile() });
+    }
+    if (kind === "group") {
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+      if (!sessionId) return res.status(400).json({ error: "缺少 sessionId" });
+      // 换图时把上一张按「无人引用」清掉（别的群 / 用户头像可能正用着同一张图，
+      // deleteAvatarFileIfUnused 自会判）。旧映射必须在 setGroupAvatarFile 之前读。
+      const prevFile = groupAvatarSnapshot()[sessionId]?.logo;
+      const groupUrl = setGroupAvatarFile(sessionId, file);
+      if (prevFile && prevFile !== file) deleteAvatarFileIfUnused(prevFile);
+      return res.json({ url: groupUrl, sessionId });
     }
     const agentId = typeof body.agentId === "string" ? body.agentId.trim() : "";
     if (!agentId) return res.status(400).json({ error: "缺少 agentId" });
@@ -691,6 +716,19 @@ app.delete("/api/avatars", (_req, res) => {
     res.json({ ok: true, profile: next });
   } catch (error: any) {
     console.error("[Avatars] Delete user error:", error);
+    res.status(500).json({ error: error?.message || "移除头像失败" });
+  }
+});
+
+// 移除群自定义头像：解除引用登记，文件本体按「无人引用」回收。
+// 前端在移除 / 恢复默认 / 换回预设时调用；渲染层的 URL 由 sessionFlags 清空。
+app.delete("/api/avatars/group/:sessionId", (req, res) => {
+  try {
+    const released = clearGroupAvatarFile(req.params.sessionId);
+    if (released) deleteAvatarFileIfUnused(released);
+    res.json({ ok: true, sessionId: req.params.sessionId });
+  } catch (error: any) {
+    console.error("[Avatars] Delete group error:", error);
     res.status(500).json({ error: error?.message || "移除头像失败" });
   }
 });
@@ -2068,6 +2106,24 @@ app.post("/api/permission-response", (req, res) => {
     + (decision.reasonCode ? `, reason=${decision.reasonCode}` : '')
   );
 
+  // 「该 Agent 永久」（2026-11-12 变体 A）：与 allow 答复**同一个请求**里落库，
+  // 避免前端分两次调用造成竞态（先答后存之间工具可能已经再次触发）。
+  // 落库键取自服务端待答复元数据（permission_request 事件经过投影器时记下），
+  // **不信前端传来的任何 agentId / toolName** —— 授权键的来源只能是事件流。
+  let persisted = false;
+  if (decision.behavior === 'allow' && parsed.persistAgent) {
+    const meta = takePendingPermissionMeta(requestId.trim());
+    if (meta) {
+      persisted = addGrant(meta.agentId, meta.toolName);
+      console.log(
+        `[Permission] 持久授权落库: ${meta.agentId} · ${meta.toolName}（persisted=${persisted}）`
+      );
+    } else {
+      // 元数据缺失（老事件路径 / 重复答复）：答复照常生效，但诚实说明没存
+      console.warn(`[Permission] persistAgent 请求找不到待答复元数据: ${requestId}（未落库）`);
+    }
+  }
+
   const hit = registry.resolvePermissionAnywhere(requestId.trim(), decision);
 
   if (!hit) {
@@ -2075,7 +2131,38 @@ app.post("/api/permission-response", (req, res) => {
     return res.status(404).json({ error: "权限请求不存在或已超时" });
   }
 
-  res.json({ success: true, agentId: hit });
+  // 无论是否持久化，待答复元数据都已消费完毕，顺手清掉防泄漏
+  takePendingPermissionMeta(requestId.trim());
+
+  res.json({ success: true, agentId: hit, ...(persisted ? { persisted: true } : {}) });
+});
+
+// 持久授权管理（2026-11-12 变体 A）：设置→权限管理 的数据源。
+// 只列 agentId+toolName 粒度的持久档；会话级授权在适配器内存里，
+// 重启即失效，不在此列（设置页如实说明，不假装能列出）。
+app.get("/api/permission-grants", (_req, res) => {
+  res.json({ grants: listGrants() });
+});
+
+app.delete("/api/permission-grants", (req, res) => {
+  // agentId + toolName：query 优先（撤销链接可收藏），JSON body 兜底
+  const q = req.query as Record<string, unknown>;
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const agentId = typeof q.agentId === 'string' && q.agentId.trim()
+    ? q.agentId
+    : typeof b.agentId === 'string' ? b.agentId : '';
+  const toolName = typeof q.toolName === 'string' && q.toolName.trim()
+    ? q.toolName
+    : typeof b.toolName === 'string' ? b.toolName : '';
+  if (!agentId.trim() || !toolName.trim()) {
+    return res.status(400).json({ error: 'agentId 与 toolName 都不能为空' });
+  }
+  const removed = removeGrant(agentId, toolName);
+  if (!removed) {
+    return res.status(404).json({ error: '授权不存在（可能已撤销）' });
+  }
+  console.log(`[Permission] 持久授权已撤销: ${agentId.trim()} · ${toolName.trim()}`);
+  res.json({ success: true });
 });
 
 /**
@@ -2613,6 +2700,8 @@ app.post("/api/chat", async (req, res) => {
         hadError = true;
         console.error(`[Chat] ${agentId} 报错: ${ev.message}`);
         registry.recordError(agentId, ev.message);
+        // 401/凭据失效 → 名册不该继续挂「在线」：立刻 force re-probe 一次
+        maybeReprobeOnAuthError(agentId, ev.message);
       }
 
       writeEvents(projector.push(ev));
@@ -2624,6 +2713,8 @@ app.post("/api/chat", async (req, res) => {
     console.error(`[Chat] Error Message:`, error?.message);
     console.error(`[Chat] Error Stack:`, error?.stack);
     registry.recordError(agentId, error?.message || String(error));
+    // 抛出型失败同样可能是鉴权错误（SDK 在握手期直接 throw 401）
+    maybeReprobeOnAuthError(agentId, error?.message || String(error));
     writeEvents(
       projector.push({ type: 'error', message: error?.message || "处理请求时发生错误" })
     );

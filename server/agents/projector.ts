@@ -27,6 +27,10 @@
 
 import { randomUUID } from 'crypto';
 import type { AgentEvent } from './types.js';
+// 待授权元数据登记（零依赖纯模块，见该文件头部的说明）。
+// permission_request 事件经过投影器的唯一收口点在这里记下 agentId+toolName，
+// 供 POST /api/permission-response 落「该 Agent 永久」授权时取用。
+import { recordPendingPermissionMeta } from './permissionMeta.js';
 import type {
   Block,
   BlockState,
@@ -41,6 +45,7 @@ import type {
   RawBlock,
   RawEntry,
   ErrorBlock,
+  NoteBlock,
 } from '../../shared/blocks.js';
 import { withCliShellQuoteHint } from '../../shared/blocks.js';
 import type {
@@ -49,6 +54,10 @@ import type {
 } from '../../shared/capabilities.js';
 import { sortCapabilities } from '../../shared/capabilities.js';
 import { MAX_ARTIFACT_DATA_BYTES } from './types.js';
+// 失败分类与恢复话术的唯一口径在 recovery.ts（AUTH_RE 在那里）。
+// 这里**只复用、不抄正则**：单聊 / 群聊 / 工作流三条路径的错误都从这过，
+// 在这一层盖章意味着任何适配器（包括不让本会话改的 cli.ts）都被覆盖。
+import { classifyFailure, appendFailureAdvice } from './recovery.js';
 
 /**
  * 一个 run 内最多保留多少条原生事件（A111）。
@@ -406,6 +415,25 @@ export class RunProjector {
         // 网络类错误通常可重试；认证/配置类不行
         const retryable = /timeout|network|ECONN|socket|502|503|504/i.test(ev.message);
         /**
+         * WorkBuddy 401 的产品级恢复（两条腿，缺一不可）：
+         *
+         * 1. **文本腿**：auth 类错误的 message 追加「怎么恢复」话术
+         *    （`appendFailureAdvice`，幂等）。旧客户端不认识 errorKind，
+         *    但文本跟着事件/块走 —— 它们照样能看到下一步做什么。
+         * 2. **结构腿**：按 `classifyFailure` 盖 `errorKind`（'unknown' 不盖），
+         *    前端错误卡据此渲染「去登录 / 重新探测」。
+         *
+         * 分类复用 recovery.ts 的口径而不是在这里抄第二份 401 正则 ——
+         * 名册 lastError、探测失败、聊天错误三处必须是**同一个判定**，
+         * 否则「聊天里说是登录问题、名册说是网络问题」这种自相矛盾迟早出现。
+         */
+        const failureKind = classifyFailure(ev.message);
+        const message =
+          failureKind === 'auth'
+            ? appendFailureAdvice(this.meta.agentId, ev.message)
+            : ev.message;
+        const errorKind = failureKind === 'unknown' ? undefined : failureKind;
+        /**
          * 失败原因落成块（不只是发一条实时事件）。
          *
          * 同一轮只留**一块**：后来的错误（例如先 quota 失败、再重试时的
@@ -415,23 +443,27 @@ export class RunProjector {
         const existing = this.blocks.find(b => b.type === 'error') as ErrorBlock | undefined;
         const out: RunEvent[] = [];
         if (existing) {
-          existing.message = ev.message;
+          existing.message = message;
           existing.retryable = retryable;
           existing.at = this.now();
+          // 后到的错误决定块的分类（覆盖语义与 message 一致）
+          if (errorKind) existing.errorKind = errorKind;
+          else delete existing.errorKind;
           out.push(
             this.make({
               type: 'block_patch',
               blockId: existing.id,
-              patch: { message: existing.message, retryable, at: existing.at },
+              patch: { message: existing.message, retryable, at: existing.at, ...(errorKind ? { errorKind } : {}) },
             })
           );
         } else {
           const block: ErrorBlock = {
             id: this.nextId(),
             type: 'error',
-            message: ev.message,
+            message,
             retryable,
             at: this.now(),
+            ...(errorKind ? { errorKind } : {}),
           };
           this.blocks.push(block);
           out.push(this.make({ type: 'block_open', block: { ...block } }));
@@ -440,8 +472,9 @@ export class RunProjector {
           this.make({
             type: 'error',
             scope: 'run',
-            message: ev.message,
+            message,
             retryable,
+            ...(errorKind ? { errorKind } : {}),
           })
         );
         return out;
@@ -449,6 +482,16 @@ export class RunProjector {
 
       case 'permission_request':
         this.observed.add('permission');
+        // 「该 Agent 永久」的落库元数据：requestId → agentId + toolName。
+        // agentId 用 meta 里那一份（投影器构造时由调用方按注册表填），
+        // 不信任何前端回传 —— 这是授权键，来源必须是事件流本身。
+        recordPendingPermissionMeta({
+          requestId: ev.requestId,
+          agentId: this.meta.agentId,
+          toolName: ev.toolName,
+          sessionId: this.meta.sessionId,
+          at: Date.now(),
+        });
         return [
           this.make({
             type: 'permission_request',
@@ -532,6 +575,28 @@ export class RunProjector {
             patch: { count: existing.count, append: entry },
           }),
         ];
+      }
+
+      /**
+       * 服务端叙述（持久授权审计等）。落成 NoteBlock —— 与群聊编排叙述
+       * 同一块型、同一条渲染路。与 raw 同理**不能成为续写目标**（否则
+       * 接下来的 text 会被续到 note 上），所以这里也不动 openId；
+       * 但要先关掉打开的文本块：note 是按到达时刻排进块的序列的，
+       * 不关的话「note 之后到达的正文」会续进 note **之前**那个文本块，
+       * 视觉顺序就倒错了。
+       */
+      case 'note': {
+        const text = typeof ev.text === 'string' ? ev.text.trim() : '';
+        if (!text) return [];
+        const closing = this.closeOpen('done');
+        const block: NoteBlock = {
+          id: this.nextId(),
+          type: 'note',
+          text,
+          level: ev.level === 'warn' ? 'warn' : 'info',
+        };
+        this.blocks.push(block);
+        return [...closing, this.make({ type: 'block_open', block: { ...block } })];
       }
 
       case 'done':

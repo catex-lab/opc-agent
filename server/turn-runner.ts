@@ -29,6 +29,9 @@ import { distillSkill } from './skill-distill.js';
 import { buildKbInjection, type KbInjection } from './kb/inject.js';
 import { getScenario } from '../shared/scenarios.js';
 import { errorTextOfBlocks, textOfBlocks, toolCallsOfBlocks, type RunEvent } from '../shared/blocks.js';
+// auth 类错误（401/凭据失效）的自动善后：对该 Agent 立刻 re-probe 一次，
+// 让名册尽快反映「需要登录」而不是继续挂「在线」。单聊走 /api/chat 的同款调用。
+import { maybeReprobeOnAuthError } from './agents/auth-recovery.js';
 
 export interface TurnRunnerDeps {
   /** 所属会话（只需要三个字段，但整个 session 对象传进来也行） */
@@ -236,12 +239,18 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
             errorMsg = ev.message;
             console.error(`[Turn] ${agentId} 报错: ${ev.message}`);
             registry.recordError(agentId, ev.message);
+            // 401/凭据失效 → 名册不该继续挂「在线」：立刻对该成员 force re-probe
+            maybeReprobeOnAuthError(agentId, ev.message);
           }
           emit(projector.push(ev));
         }
       } catch (err: any) {
         errorMsg = err?.message || String(err);
         console.error(`[Turn] ${agentId} 异常:`, errorMsg);
+        // 抛出型失败同样可能是鉴权错误（SDK 在握手期直接 throw 401），
+        // 善后逻辑与事件型错误保持同一路径
+        registry.recordError(agentId, errorMsg ?? '未知错误');
+        maybeReprobeOnAuthError(agentId, errorMsg ?? '');
         emit(projector.push({ type: 'error', message: errorMsg ?? '未知错误' }));
       }
     }

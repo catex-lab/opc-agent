@@ -1070,6 +1070,104 @@ function renderNoteRow(message: Message): React.ReactNode {
   );
 }
 
+/**
+ * auth 类错误的恢复动作行（WorkBuddy 401 这一类）。
+ *
+ * 为什么是独立组件而不是 errorBlock 里的一段 JSX：它有两份**自己的**瞬时状态
+ * （探测中 / 探测结果提示），而 errorBlock 处在 renderAssistantContent 这个
+ * 无 hooks 的渲染函数里 —— 塞进去就只能把状态提升到整条消息列表，一次点击
+ * 让几十条历史消息跟着重算。
+ *
+ * 两个按钮、两条硬边界：
+ *   · 「去登录」**只在 authUrl 真的拿得到时渲染**（A141：不许给永远无效的
+ *     控件）。authUrl 来自 /api/agents 的状态（探测以结构化字段下发），
+ *     拿不到 = 这个 Agent 没有可用的登录入口，按钮画了也点不开 ——
+ *     那就只给「重新探测」，让探测去拿最新状态。
+ *   · 「重新探测」只在知道 agentId 时渲染；探测结果**原样**展示（可能是
+ *     needs-auth，也可能是「本地登录态未校验」）—— 不替探测下结论，
+ *     不谎报「已修复」。
+ *
+ * 尺寸走 32 档 `.tc-btn-brand` / `.tc-btn-secondary`（A124 定档）而不是
+ * 24 档：这一行是**卡片级的主恢复动作**（本修复的产品核心就是让用户
+ * 一键脱困），与资料页「去登录」主按钮同一形态；A137 棘轮也明说新控件
+ * 要走 `.tc-btn-*` 或默认尺寸，不开第三套 24 档。
+ */
+function AuthErrorActions({ agentId, authUrl }: { agentId?: string; authUrl?: string }) {
+  const { t } = useTranslation();
+  const [probing, setProbing] = useState(false);
+  /** 探测后的反馈。null = 还没探过；字符串原样展示（成功与失败同一行） */
+  const [hint, setHint] = useState<string | null>(null);
+
+  const reprobe = async () => {
+    if (!agentId || probing) return;
+    setProbing(true);
+    setHint(null);
+    try {
+      // 与通讯录「重新探测」同一个端点（POST /api/agents/:id/probe），
+      // 但这里自己 fetch：结果只需要喂给这张卡，不动名册的协调器状态
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/probe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const data: any = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setHint(data?.error || `HTTP ${res.status}`);
+        return;
+      }
+      const msg = data?.status?.message;
+      setHint(
+        msg
+          ? t('chat.error.statusRefreshed', { message: String(msg) })
+          : t('chat.error.reprobed')
+      );
+    } catch (err) {
+      setHint((err as Error)?.message || String(err));
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  return (
+    <div className="mt-2.5 flex flex-col gap-1.5" data-auth-error-actions={agentId ?? ''}>
+      <div className="flex flex-wrap items-center gap-2">
+        {agentId && authUrl && (
+          <button
+            type="button"
+            className="tc-btn-brand"
+            data-auth-login-btn
+            onClick={() => window.open(authUrl, '_blank', 'noopener')}
+          >
+            {t('chat.error.goLogin')}
+          </button>
+        )}
+        {agentId && (
+          <button
+            type="button"
+            className="tc-btn-secondary"
+            data-auth-reprobe-btn
+            onClick={reprobe}
+            disabled={probing}
+            aria-busy={probing}
+          >
+            {probing ? <Loading size="small" /> : <RefreshCw size={14} style={{ flexShrink: 0 }} />}
+            {probing ? t('chat.error.reprobing') : t('chat.error.reprobe')}
+          </button>
+        )}
+      </div>
+      {hint && (
+        <div
+          className="whitespace-pre-wrap break-words text-caption"
+          data-auth-reprobe-hint
+          style={{ color: 'var(--td-text-color-secondary)' }}
+        >
+          {hint}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface MessageRowProps {
   message: Message;
   /** 最新一条助手消息：只有它的思考块默认展开 */
@@ -1843,7 +1941,17 @@ export function ChatMessages({
       (acc, b) => (b.type === 'error' ? b.message : acc),
       ''
     );
+    /**
+     * 失败分类：实时路径挂在 message.errorKind（useChat / useGroupChat 从
+     * SSE error 事件取），刷新后随 error 块落库回来。两处取其一 ——
+     * 刷新前看消息字段，刷新后看块字段，按钮在两条路径下都不消失。
+     */
+    const persistedErrorKind = allBlocks.reduce<string | undefined>(
+      (acc, b) => (b.type === 'error' ? (b.errorKind ?? acc) : acc),
+      undefined
+    );
     const errorMessage = message.error || persistedError;
+    const errorKind = message.errorKind ?? persistedErrorKind;
     // 这里原样展示，不用「发生错误请重试」这种无信息量的文案盖掉它。
     const errorBlock = errorMessage ? (
       <div
@@ -1855,6 +1963,12 @@ export function ChatMessages({
       >
         <div className="mb-1 font-medium">{t('chat.error.callFailed')}</div>
         {errorMessage}
+        {/* auth 类错误给恢复动作行（WorkBuddy 401 这一类）：
+            按钮在 AuthErrorActions 内部按 authUrl / agentId 是否真的可得
+            决定渲不渲染 —— 拿不到就不画，不许出现点了没反应的控件。 */}
+        {errorKind === 'auth' && (
+          <AuthErrorActions agentId={message.agentId} authUrl={resolveAgent(message.agentId)?.status?.authUrl} />
+        )}
       </div>
     ) : null;
 

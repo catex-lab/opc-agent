@@ -8,7 +8,12 @@
 
 import { loadUserProfile } from './userProfile';
 
-async function postAvatar(body: { kind: 'user' | 'agent'; agentId?: string; dataUrl: string }) {
+async function postAvatar(body: {
+  kind: 'user' | 'agent' | 'group';
+  agentId?: string;
+  sessionId?: string;
+  dataUrl: string;
+}) {
   const res = await fetch('/api/avatars', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -39,6 +44,24 @@ export async function removeUserAvatar(): Promise<void> {
 export async function uploadAgentLogo(agentId: string, dataUrl: string): Promise<string> {
   const { url } = await postAvatar({ kind: 'agent', agentId, dataUrl });
   return url ?? '';
+}
+
+/**
+ * 上传群自定义头像（2026-11-12）。与用户头像 / Agent Logo 走同一套
+ * 内容哈希仓库；服务端按 sessionId 登记引用，移除 / 更换时自动回收
+ * 无人引用的文件。返回的 URL 由调用方写进 sessionFlags.avatarImage。
+ */
+export async function uploadGroupAvatar(sessionId: string, dataUrl: string): Promise<string> {
+  const { url } = await postAvatar({ kind: 'group', sessionId, dataUrl });
+  return url ?? '';
+}
+
+/** 移除群自定义头像：服务端解除引用登记并回收无人引用的文件 */
+export async function removeGroupAvatar(sessionId: string): Promise<void> {
+  const res = await fetch(`/api/avatars/group/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`移除头像失败（HTTP ${res.status}）`);
 }
 
 /** 恢复默认 Logo（只删映射，不动定义表） */

@@ -691,8 +691,15 @@ export function SettingsPage({
 
         {/* ── 权限门禁（A40）────────────────────────────────────
             紧挨着「记忆」：两者都是「跨会话的行为配置」，区别是
-            记忆喂给模型，门禁管着模型**能不能动手**。 */}
-        {section === 'permission' && <PermissionRulesPanel />}
+            记忆喂给模型，门禁管着模型**能不能动手**。
+            2026-11-12 变体 A 追加「权限管理」：持久授权可查可撤销 ——
+            「永久允许」一旦落库，必须有开关，否则就是一个没有开关的放大器。 */}
+        {section === 'permission' && (
+          <>
+            <PermissionRulesPanel />
+            <PermissionGrantsSection />
+          </>
+        )}
 
         {/* ── 外观 ────────────────────────────────────────────────
             放在最前面：它是唯一一个「一进来就该看到」的设置，
@@ -2067,5 +2074,197 @@ function GlowRange({
         </div>
       )}
     </div>
+  );
+}
+
+// ============= 权限管理（2026-11-12 变体 A）=============
+//
+// 「该 Agent 永久」授权的清单与撤销。数据只有两个来源口：
+// GET /api/permission-grants 列表、DELETE 撤销（服务端同时清缓存）。
+//
+// 如实呈现的边界：会话级授权（现有 allow_always 的语义）存在适配器内存里，
+// 应用重启后失效 —— 这里**列不了也不装能列**，分区底部一句话说明。
+// 「永久允许」一旦落库就必须有开关，否则就是一个没有开关的放大器。
+
+interface PermissionGrant {
+  id: number;
+  agent_id: string;
+  tool_name: string;
+  created_at: string;
+}
+
+/** 授权时间：服务端 ISO 串取到分钟，不做时区戏法 */
+function grantTimeOf(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function PermissionGrantsSection() {
+  const { t } = useTranslation();
+  const [grants, setGrants] = useState<PermissionGrant[]>([]);
+  /** agentId → 显示名（通讯录名册）；查不到就退回 id 本身，不编名字 */
+  const [agentNames, setAgentNames] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [revoking, setRevoking] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [gr, ar] = await Promise.all([
+        fetch('/api/permission-grants').then(r => r.json()).catch(() => null),
+        fetch('/api/agents').then(r => r.json()).catch(() => null),
+      ]);
+      setGrants(Array.isArray(gr?.grants) ? gr.grants : []);
+      const list = Array.isArray(ar?.agents) ? ar.agents : [];
+      const names: Record<string, string> = {};
+      for (const a of list) {
+        if (a && typeof a.id === 'string') names[a.id] = (a.name as string) || a.id;
+      }
+      setAgentNames(names);
+    } catch {
+      MessagePlugin.error(t('settings.permissionMgr.loadFailed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const revoke = async (grant: PermissionGrant) => {
+    const key = `${grant.agent_id}\u0000${grant.tool_name}`;
+    setRevoking(key);
+    try {
+      const r = await fetch('/api/permission-grants', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agentId: grant.agent_id, toolName: grant.tool_name }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || t('settings.permissionMgr.revokeFailed'));
+      MessagePlugin.success(t('settings.permissionMgr.revoked'));
+      await refresh();
+    } catch (e) {
+      MessagePlugin.error((e as Error).message || t('settings.permissionMgr.revokeFailed'));
+    } finally {
+      setRevoking(null);
+    }
+  };
+
+  return (
+    <section data-permission-mgr>
+      <h3 className="tc-section-title">{t('settings.permissionMgr.title')}</h3>
+      <p className="tc-hint" style={{ marginTop: 2 }}>{t('settings.permissionMgr.desc')}</p>
+
+      {loading ? (
+        <div className="flex justify-center py-6"><Loading size="small" /></div>
+      ) : grants.length === 0 ? (
+        <div
+          data-permission-mgr-empty
+          className="rounded-lg px-3 py-4 text-secondary"
+          style={{
+            backgroundColor: 'var(--td-bg-color-component)',
+            color: 'var(--td-text-color-secondary)',
+            marginTop: 8,
+          }}
+        >
+          {t('settings.permissionMgr.empty')}
+        </div>
+      ) : (
+        <table
+          data-permission-mgr-table
+          className="w-full text-secondary"
+          style={{ borderCollapse: 'collapse', marginTop: 8 }}
+        >
+          <thead>
+            <tr>
+              {(['colAgent', 'colTool', 'colScope', 'colTime'] as const).map(col => (
+                <th
+                  key={col}
+                  style={{
+                    textAlign: 'left',
+                    fontWeight: 600,
+                    color: 'var(--td-text-color-secondary)',
+                    padding: '6px 8px',
+                    borderBottom: '1px solid var(--td-component-stroke)',
+                  }}
+                >
+                  {t(`settings.permissionMgr.${col}` as MessageKey)}
+                </th>
+              ))}
+              <th style={{ width: 72 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {grants.map(grant => {
+              const key = `${grant.agent_id}\u0000${grant.tool_name}`;
+              return (
+                <tr key={grant.id} data-permission-grant-row={grant.id}>
+                  <td style={{ padding: 8, borderBottom: '1px solid var(--tc-edge)' }}>
+                    {agentNames[grant.agent_id] ?? grant.agent_id}
+                  </td>
+                  <td style={{ padding: 8, borderBottom: '1px solid var(--tc-edge)' }}>
+                    {grant.tool_name}
+                  </td>
+                  <td style={{ padding: 8, borderBottom: '1px solid var(--tc-edge)' }}>
+                    {/* 范围 pill：目前唯一落库的档是「该 Agent 永久」。
+                        会话级授权不落库，也不画一颗「会话内」的假 pill ——
+                        看不到就是看不到，说明文字在分区底部。 */}
+                    <span
+                      className="inline-flex items-center"
+                      style={{
+                        height: 18,
+                        padding: '0 8px',
+                        borderRadius: 9,
+                        fontSize: 'var(--text-caption)',
+                        fontWeight: 600,
+                        backgroundColor: 'rgba(43, 164, 113, 0.12)',
+                        color: 'var(--td-success-color)',
+                      }}
+                    >
+                      {t('settings.permissionMgr.scopeAgent')}
+                    </span>
+                  </td>
+                  <td
+                    className="tabular-nums"
+                    style={{
+                      padding: 8,
+                      borderBottom: '1px solid var(--tc-edge)',
+                      color: 'var(--td-text-color-secondary)',
+                    }}
+                  >
+                    {grantTimeOf(grant.created_at)}
+                  </td>
+                  <td style={{ padding: 8, borderBottom: '1px solid var(--tc-edge)', textAlign: 'right' }}>
+                    {/* 撤销 = 行内图标动作，与本分区权限规则行的删除按钮同一形态
+                        （circle + danger + text，lucide 14px）—— 不走 size="small"
+                        裸按钮，uiux-tokens 的 [F] 组棘轮管着这件事。 */}
+                    <Button
+                      shape="circle"
+                      theme="danger"
+                      variant="text"
+                      disabled={revoking === key}
+                      onClick={() => void revoke(grant)}
+                      title={t('settings.permissionMgr.revoke')}
+                      data-permission-revoke={grant.id}
+                      data-permission-revoke-agent={grant.agent_id}
+                      data-permission-revoke-tool={grant.tool_name}
+                    >
+                      <Trash2 size={14} />
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      <p className="tc-hint" data-permission-mgr-hint style={{ marginTop: 8 }}>
+        {t('settings.permissionMgr.hint')}
+      </p>
+    </section>
   );
 }

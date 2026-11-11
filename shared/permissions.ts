@@ -56,6 +56,21 @@ export interface PermissionDecision {
   message?: string;
 }
 
+/**
+ * 授权范围（2026-11-12 变体 A）：三档把「始终允许」这颗语义模糊的按钮
+ * 拆成显式的选择。
+ *
+ * - `once`   = allow_once，仅本次；
+ * - `session`= allow_always 的既有语义（本会话 + 本次运行内存记住）；
+ * - `agent`  = allow_always + persistAgent：服务端落库 agentId+toolName，
+ *              跨会话跨重启有效，可在 设置→权限管理 撤销。
+ *
+ * 注意 scope 不是选项 kind：`session` 与 `agent` 回传的都是 allow_always
+ * 那一档，区别只在是否携带 persistAgent。持久授权命中时的自动放行不经过
+ * 这里 —— 那是适配器在弹卡**之前**查表的路径（`server/permission-grants.ts`）。
+ */
+export type PermissionScopeKind = 'once' | 'session' | 'agent';
+
 const DEFAULT_LABELS: Record<PermissionOptionKind, string> = {
   allow_once: '允许',
   allow_always: '始终允许',
@@ -199,7 +214,7 @@ export function buildDenialMessage(code: PermissionReasonCode, detail?: string):
 }
 
 export type ParsedPermissionBody =
-  | { ok: true; decision: PermissionDecision }
+  | { ok: true; decision: PermissionDecision; persistAgent?: true }
   | { ok: false; error: string };
 
 /**
@@ -246,6 +261,25 @@ export function parsePermissionBody(raw: unknown): ParsedPermissionBody {
     message = o.message.trim() || undefined;
   }
 
+  /**
+   * 「该 Agent 永久」的落库请求（2026-11-12 变体 A）。
+   *
+   * 为什么放在 decision **外面**：persistAgent 是给 HTTP 路由层的指令
+   * （服务端从待答复元数据里取 agentId+toolName 落库），适配器认领答复时
+   * 不需要也不该知道它 —— 塞进 decision 就得在三个适配器里各删一遍。
+   * 只认字面 `true`：truthy 的别的值（"1"、1）一律报错，不静默纠正。
+   */
+  let persistAgent: true | undefined;
+  if (o.persistAgent !== undefined) {
+    if (o.persistAgent !== true) {
+      return { ok: false, error: 'persistAgent 只接受 true（不带 = 不持久化）' };
+    }
+    if (o.behavior === 'deny') {
+      return { ok: false, error: '只有允许答复才能请求持久授权' };
+    }
+    persistAgent = true;
+  }
+
   return {
     ok: true,
     decision: {
@@ -254,6 +288,7 @@ export function parsePermissionBody(raw: unknown): ParsedPermissionBody {
       ...(reasonCode ? { reasonCode } : {}),
       ...(message ? { message } : {}),
     },
+    ...(persistAgent ? { persistAgent: true } : {}),
   };
 }
 

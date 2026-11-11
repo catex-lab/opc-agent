@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentHoverCard } from './AgentHoverCard';
-import { GroupAvatar } from './UserAvatar';
+import { GroupAvatar, groupAvatarMembersOf } from './UserAvatar';
 import { ContextMenu } from './ContextMenu';
 import { ConfirmDialog } from './ConfirmDialog';
 import { RemarkDialog } from './RemarkDialog';
@@ -354,9 +354,15 @@ export function ConversationList({
                 {/* 头像悬停出名片：扫列表时想确认「这是谁」不必点进会话。
                     未注册的 Agent（后端已下线）没有资料可看，就不挂名片。 */}
                 {session.kind === 'group' ? (
-                  // 群聊没有单一 Agent。A115：换成 GroupAvatar —— 用户在群设置里
-                  // 选的头像（sessionFlags.avatar）优先，没选过才是这颗「多人群」图标。
-                  <GroupAvatar avatar={flags[session.id]?.avatar} size={42} />
+                  // 群聊没有单一 Agent。A115：换成 GroupAvatar；2026-11-12 起
+                  // 渲染链是 自定义图片 > 预设 > 成员拼贴（前 4 位）> 兜底图标，
+                  // 图片与预设读 sessionFlags，成员按 agentIds 反查注册表。
+                  <GroupAvatar
+                    avatar={flags[session.id]?.avatar}
+                    image={flags[session.id]?.avatarImage}
+                    members={groupAvatarMembersOf(session.agentIds, getAgent)}
+                    size={42}
+                  />
                 ) : agent ? (
                   <AgentHoverCard agent={agent}>
                     <AgentAvatar

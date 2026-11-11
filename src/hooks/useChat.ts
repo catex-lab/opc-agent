@@ -801,7 +801,12 @@ export function useChat(options: UseChatOptions) {
             // 服务端明确报错 = 本轮结束，挂在它上面的待答复项不会再有人兑现
             markSessionEnded(realSessionId);
             errorText = data.message || '未知错误';
-            patchAssistant({ error: errorText });
+            patchAssistant({
+              error: errorText,
+              // auth 类错误（WorkBuddy 401 等）带结构化分类：错误卡据此
+              // 渲染「去登录 / 重新探测」。缺字段 = 普通错误，不加动作行。
+              ...(data.errorKind ? { errorKind: String(data.errorKind) } : {}),
+            });
             break;
 
           case 'permission_request':

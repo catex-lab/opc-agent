@@ -35,7 +35,10 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-console.log(`[DB] 数据库文件: ${dbPath}`);
+// 必须走 stderr：本模块会被 kb 的 stdio MCP 子进程（server/kb/mcp-main.ts）
+// 一并 import，stdout 是纯 JSON-RPC 通道，任何 stdout 日志都会污染协议
+// （Hermes 日志里真实出现过 parse error）。
+console.error(`[DB] 数据库文件: ${dbPath}`);
 
 // 创建数据库连接（Node 22 内置 SQLite，无需原生依赖）
 const db = new DatabaseSync(dbPath);
@@ -283,7 +286,8 @@ function ensureColumn(table: string, column: string, ddl: string): void {
     const info = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!info.some(col => col.name === column)) {
       db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-      console.log(`[DB] 迁移：已为 ${table} 添加列 ${column}`);
+      // stderr（同上：本模块会被 kb stdio MCP 子进程 import，stdout 是协议通道）
+      console.error(`[DB] 迁移：已为 ${table} 添加列 ${column}`);
     }
   } catch (err) {
     console.warn(`[DB] 迁移 ${table}.${column} 失败（已跳过）:`, err);

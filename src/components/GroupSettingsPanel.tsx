@@ -1,21 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { MessagePlugin } from 'tdesign-react';
 import { ChevronDown, Check, Trash2, X, LogOut, UserPlus, UserMinus, Plus } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentHoverCard } from './AgentHoverCard';
 import { ConfirmDialog } from './ConfirmDialog';
+import { AvatarCropDialog } from './AvatarCropDialog';
+import { removeGroupAvatar, uploadGroupAvatar } from '../avatarApi';
 import { useAgentRemarks } from '../agentRemarks';
 import {
   groupNickname,
   groupRemark,
   notifyModeOf,
   setGroupAvatar,
+  setGroupAvatarImage,
   setGroupNickname,
   setGroupRemark,
   setNotifyMode,
   useGroupAvatar,
+  useGroupAvatarImage,
   type NotifyMode,
 } from '../sessionFlags';
-import { GroupAvatar, AvatarPickerGrid } from './UserAvatar';
+import { GroupAvatar, AvatarPickerGrid, groupAvatarMembersOf } from './UserAvatar';
+import { useTranslation } from '../i18n';
 import type { RegisteredAgent } from '../types';
 
 /**
@@ -195,10 +201,33 @@ export function GroupSettingsPanel({
   // A115：群头像。**订阅**而不是 useState 快照 —— 用户在别处（比如会话列表
   // 将来也放一个入口）改完，这个面板要立刻跟上；useState 只会在挂载时读一次。
   const groupAvatar = useGroupAvatar(sessionId);
+  // 2026-11-12：自定义图片头像（覆盖层，优先于预设与拼贴）。同一套订阅口径。
+  const groupAvatarImage = useGroupAvatarImage(sessionId);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [notify, setNotifyState] = useState<NotifyMode>(() =>
     sessionId ? notifyModeOf(sessionId) : 'normal'
   );
+  const { t } = useTranslation();
+  // 上传走 A160 同款「选文件 → 裁剪 → dataUrl」流程
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  /** 服务的图片引用登记也要跟着清： presets/图片/默认三态切换都从这里走 */
+  const releaseImage = (sid: string) => {
+    void removeGroupAvatar(sid).catch(err =>
+      MessagePlugin.error(
+        t('groupAvatar.removeFailed', { error: err instanceof Error ? err.message : String(err) })
+      )
+    );
+    setGroupAvatarImage(sid, '');
+  };
+
+  const currentAvatarLabel = groupAvatarImage
+    ? t('groupAvatar.currentCustom')
+    : groupAvatar
+      ? t('groupAvatar.currentPreset')
+      : t('groupAvatar.currentCollage');
 
   // ── 开 / 关与退场动画 ──
   useEffect(() => {
@@ -390,49 +419,158 @@ export function GroupSettingsPanel({
             `[&>*]:shrink-0` 是必须的 —— flex 列默认会压缩子项来「塞进」
             容器，那样内容就永远不溢出、也就没有滚动条了。 */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto [&>*]:shrink-0">
-          {/* ── 群头像（A115，需求「为群聊增加更换头像的功能」）──
+          {/* ── 群头像（A115；2026-11-12 加自定义图片与成员拼贴）──
               放在最前面：它是这个群的「脸」，比任何一项设置都更该被看见。
-              点一下展开 12 个预设的平铺格子，再点一下收起 —— 不做弹窗，
-              236px 的面板里弹一层模态反而是倒退。
-              「恢复默认」单独一行：没有它，用户选错了只能记住原来那颗
-              「多人群」图标长什么样，却没办法真的回去。 */}
+              72px 预览就是三处共用的 GroupAvatar 实时渲染（图片 > 预设 > 拼贴），
+              hover 出「更换头像」遮罩，点头像或「上传」走 A160 同款的
+              裁剪 → POST /api/avatars 流程。
+              「使用预设」展开 A115 的 12 枚预设；改选预设会顺手放弃自定义图
+              （与「我的资料」同一套覆盖层语义：图片是覆盖层，移除后回到预设）。
+              「恢复默认（成员拼贴）」一次清空图片与预设，回到新默认。 */}
           <Section label="群头像" />
           <div className="px-4 pb-3" data-group-avatar-section>
-            <div className="flex items-center gap-3">
-              <GroupAvatar avatar={groupAvatar} size={44} title={title} />
-              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setAvatarPickerOpen(v => !v)}
-                  aria-expanded={avatarPickerOpen}
-                  data-group-avatar-toggle
-                  className="rounded-lg px-3 py-1.5 text-left text-body transition-colors hover:bg-[var(--tc-hover-chrome)]"
-                  style={{
-                    backgroundColor: 'var(--tc-surface-raised)',
-                    color: 'var(--td-text-color-primary)',
-                  }}
+            <AvatarCropDialog
+              file={cropFile}
+              title={t('groupAvatar.hoverChange')}
+              onCancel={() => setCropFile(null)}
+              onConfirm={dataUrl => {
+                setCropFile(null);
+                if (!sessionId) return;
+                setUploadingImage(true);
+                void uploadGroupAvatar(sessionId, dataUrl)
+                  .then(url => setGroupAvatarImage(sessionId, url))
+                  .catch(err =>
+                    MessagePlugin.error(
+                      t('groupAvatar.uploadFailed', {
+                        error: err instanceof Error ? err.message : String(err),
+                      })
+                    )
+                  )
+                  .finally(() => setUploadingImage(false));
+              }}
+            />
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              data-group-avatar-file
+              onChange={e => {
+                const f = e.target.files?.[0] ?? null;
+                // 清空 value：同一张图再选一次也要能触发 onChange
+                e.target.value = '';
+                if (f) setCropFile(f);
+              }}
+            />
+            <div className="flex items-start gap-3">
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                data-group-avatar-preview
+                title={t('groupAvatar.hoverChange')}
+                aria-label={t('groupAvatar.hoverChange')}
+                className="group/av relative shrink-0 rounded-full"
+                style={{ padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+              >
+                <GroupAvatar
+                  avatar={groupAvatar}
+                  image={groupAvatarImage}
+                  members={members.map(m => ({
+                    id: m.id,
+                    name: m.name,
+                    icon: m.icon,
+                    src: m.logoUrl,
+                    color: m.color,
+                  }))}
+                  size={72}
+                  title={title}
+                />
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-0 flex items-center justify-center rounded-full text-secondary opacity-0 transition-opacity group-hover/av:opacity-100"
+                  style={{ backgroundColor: 'var(--tc-mask-soft)', color: '#fff' }}
                 >
-                  {avatarPickerOpen ? '收起' : '更换头像'}
-                </button>
-                {groupAvatar && (
+                  {t('groupAvatar.hoverChange')}
+                </span>
+              </button>
+              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <div
+                  className="text-body font-medium"
+                  style={{ color: 'var(--td-text-color-primary)' }}
+                >
+                  {currentAvatarLabel}
+                </div>
+                <div className="text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
+                  {t('groupAvatar.uploadHint')}
+                </div>
+                <div className="mt-1 flex flex-col items-stretch gap-1.5">
                   <button
                     type="button"
-                    onClick={() => sessionId && setGroupAvatar(sessionId, '')}
-                    data-group-avatar-reset
-                    className="rounded-lg px-3 py-1.5 text-left text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
-                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={uploadingImage}
+                    data-group-avatar-upload
+                    className="tc-btn-brand"
                   >
-                    恢复默认
+                    {uploadingImage ? t('groupAvatar.uploading') : t('groupAvatar.upload')}
                   </button>
-                )}
+                  <button
+                    type="button"
+                    onClick={() => setAvatarPickerOpen(v => !v)}
+                    aria-expanded={avatarPickerOpen}
+                    data-group-avatar-toggle
+                    className="tc-btn-secondary"
+                  >
+                    {t('groupAvatar.usePreset')}
+                  </button>
+                  {groupAvatarImage && (
+                    <button
+                      type="button"
+                      onClick={() => sessionId && releaseImage(sessionId)}
+                      data-group-avatar-remove-image
+                      className="self-start text-caption underline"
+                      style={{ color: 'var(--td-text-color-placeholder)' }}
+                    >
+                      {t('groupAvatar.remove')}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
             {avatarPickerOpen && (
               <div className="mt-3">
+                <div
+                  className="mb-1.5 text-caption"
+                  style={{ color: 'var(--td-text-color-placeholder)' }}
+                >
+                  {t('groupAvatar.presetSection')}
+                </div>
                 <AvatarPickerGrid
                   value={groupAvatar}
-                  onChange={id => sessionId && setGroupAvatar(sessionId, id)}
+                  onChange={id => {
+                    if (!sessionId) return;
+                    setGroupAvatar(sessionId, id);
+                    // A160 同款覆盖层语义：改选预设 = 放弃自定义图片。
+                    // 只清标记的话，服务端的引用登记会留着一张永远无人显示的图。
+                    if (groupAvatarImage) releaseImage(sessionId);
+                  }}
                 />
+              </div>
+            )}
+            {(groupAvatar || groupAvatarImage) && (
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!sessionId) return;
+                    if (groupAvatarImage) releaseImage(sessionId);
+                    setGroupAvatar(sessionId, '');
+                  }}
+                  data-group-avatar-reset
+                  className="text-caption transition-opacity hover:opacity-80"
+                  style={{ color: 'var(--td-error-color)' }}
+                >
+                  {t('groupAvatar.reset')}
+                </button>
               </div>
             )}
           </div>

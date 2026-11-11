@@ -19,6 +19,9 @@ import { AsyncQueue, PendingReplies, linkAbort } from '../channel.js';
 import { decideToolAccess } from '../toolPolicy.js';
 import { evaluateToolCall } from '../permission-gate.js';
 import { currentPermissionRules } from '../../permission-rules.js';
+// 「该 Agent 永久」的落库查询（2026-11-12 变体 A）。CLI 目录只有 allow/deny
+// 两档、弹不出范围选择器，但授权检查在公共路径上：有授权就自动放行，无授权照旧问。
+import { hasAgentGrant } from '../../permission-grants.js';
 import {
   CLI_PERMISSION_OPTIONS,
   buildDenialMessage,
@@ -1029,6 +1032,24 @@ export class CliAdapter implements AgentProvider {
       }
 
       if (ctx.permissionMode === 'bypassPermissions' || verdict.auto) {
+        respond({ behavior: 'allow', updatedInput: ask.input });
+        return;
+      }
+
+      // ---- 2026-11-12 持久授权（「该 Agent 永久」）----
+      // 与 SDK 桥接同序：白名单 / 门禁 / bypass / auto 之后才查表 —— 授权
+      // 只省「问用户」，门禁的高危拦截在它前面原样生效。命中即按协议的
+      // allow 应答回给 CLI，不发 permission_request；轨迹留一条叙述可审计。
+      // 注意：CLI 的选项目录只有 allow/deny，弹不出范围选择器，所以这里
+      // 正常情况下不会有新授权产生 —— 检查放在公共路径上，是为了历史
+      // 授权（或未来其它入口写入的授权）在同一把尺子下生效。
+      if (hasAgentGrant(this.descriptor.id, ask.toolName)) {
+        console.log(`[CLI:bidi] 持久授权命中，自动放行: ${this.descriptor.id} · ${ask.toolName}`);
+        queue.push({
+          type: 'note',
+          text: `权限：已授权范围自动放行（${this.descriptor.id} · ${ask.toolName}）`,
+          level: 'info',
+        });
         respond({ behavior: 'allow', updatedInput: ask.input });
         return;
       }

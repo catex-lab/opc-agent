@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useVisiblePermissions, answer } from '../permissions/permissionStore';
-import { pickOptionByKind } from '../../shared/permissions';
+import { pickOptionByKind, type PermissionScopeKind } from '../../shared/permissions';
 import { PermissionCard } from './PermissionCard';
 
 interface PermissionDockProps {
@@ -33,6 +33,17 @@ export function PermissionDock({ currentSessionId, titleOf }: PermissionDockProp
   const head = items[0];
   const rest = items.length - 1;
 
+  /**
+   * 授权范围（2026-11-12 变体 A）。状态在 Dock 而不是卡片：Enter 快捷键
+   * 在这里，必须按**当前选中**的范围答复。队首换人即重置为「仅本次」——
+   * 上一条里选过的范围不该悄悄延续到另一条请求上。
+   */
+  const [scope, setScope] = useState<PermissionScopeKind>('once');
+  const headRequestId = head?.request.requestId ?? null;
+  useEffect(() => {
+    setScope('once');
+  }, [headRequestId]);
+
   // 顶层 sessionId 与 request.sessionId 同值，但读顶层这一份 —— 排序、计数、
   // 角标都从这一个字段出发，两处各读一份迟早会漂。
   const headSessionId = head?.sessionId ?? null;
@@ -50,10 +61,17 @@ export function PermissionDock({ currentSessionId, titleOf }: PermissionDockProp
       }
       if (!open || isTyping(e.target)) return;
       if (e.key === 'Enter') {
-        const opt = pickOptionByKind(head.request.options ?? [], 'allow');
+        // ↵ 按**当前选中的范围**答复：仅本次 → 第一个 allow 档；
+        // 本会话 / 该 Agent 永久 → allow_always 档（选择器只在双 allow 档
+        // 都在时出现，所以这里一定找得到；找不到就什么都不发，不替用户决定）。
+        const opts = head.request.options ?? [];
+        const opt =
+          scope === 'once'
+            ? pickOptionByKind(opts, 'allow')
+            : opts.find(o => o.kind === 'allow_always');
         if (opt) {
           e.preventDefault();
-          void answer(head.request.requestId, opt);
+          void answer(head.request.requestId, opt, scope === 'agent' ? { persistAgent: true } : undefined);
         }
         return;
       }
@@ -67,7 +85,7 @@ export function PermissionDock({ currentSessionId, titleOf }: PermissionDockProp
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [head, open]);
+  }, [head, open, scope]);
 
   const label = useMemo(
     () => (headSessionId ? titleOf(headSessionId) : ''),
@@ -110,7 +128,9 @@ export function PermissionDock({ currentSessionId, titleOf }: PermissionDockProp
           item={head}
           sessionLabel={label}
           isCurrentSession={headSessionId === currentSessionId}
-          onResolve={opt => void answer(head.request.requestId, opt)}
+          scope={scope}
+          onScopeChange={setScope}
+          onResolve={(opt, opts) => void answer(head.request.requestId, opt, opts)}
         />
       )}
     </div>,

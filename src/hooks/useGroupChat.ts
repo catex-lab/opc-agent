@@ -50,6 +50,8 @@ interface RunState {
   blocks: Block[];
   streaming: boolean;
   error?: string;
+  /** 失败分类（服务端盖章；'auth' → 错误卡渲染「去登录 / 重新探测」） */
+  errorKind?: string;
   /** A175：首轮知识库引用；undefined = 本轮没注入，UI 不显示 */
   kbRefs?: KbCitationRef[];
 }
@@ -116,6 +118,7 @@ function createEventStreamSession(opts: {
       toolCalls: toolCallsOfBlocks(r.blocks),
       thinking: thinkingOfBlocks(r.blocks) || undefined,
       error: r.error,
+      errorKind: r.errorKind,
       kbRefs: r.kbRefs,
     });
   };
@@ -225,6 +228,8 @@ function createEventStreamSession(opts: {
         const r = data.runId ? runs.get(data.runId) : undefined;
         if (r) {
           r.error = data.message || '未知错误';
+          // auth 类错误带结构化分类（单聊与群聊同一份契约）
+          r.errorKind = data.errorKind ? String(data.errorKind) : undefined;
           schedule(r.messageId);
         } else {
           upsertMessage({

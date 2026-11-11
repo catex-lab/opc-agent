@@ -31,7 +31,7 @@ import { ResumeNotice } from '../components/ResumeNotice';
 import { useGroupChat } from '../hooks/useGroupChat';
 import type { DanglingConfirmInfo } from '../hooks/useChat';
 // A115：群头像（群设置里换的，存在 sessionFlags）
-import { useGroupAvatar } from '../sessionFlags';
+import { useGroupAvatar, useGroupAvatarImage } from '../sessionFlags';
 import { useTranslation, type MessageKey } from '../i18n';
 
 /** 权限模式词在提示里也要跟着界面语言走；判定仍用 `PermissionMode` 原值 */
@@ -738,10 +738,12 @@ export function ChatPage({
   // A115：群头像。用 Hook 而不是直接读 —— 群设置面板就在本组件里，
   // 用户点「换头像」后这里必须立刻跟着变，否则要等一次无关重渲染。
   const groupAvatar = useGroupAvatar(currentSession?.id);
+  // 2026-11-12：自定义图片头像，渲染链 image > 预设 > 拼贴。
+  const groupAvatarImage = useGroupAvatarImage(currentSession?.id);
 
   return (
     <>
-      {/* 群聊头部：成员头像堆叠 + 编排模式切换，替代一对一的单人头部 */}
+      {/* 群聊头部：群头像（图片/预设/成员拼贴）+ 编排模式切换，替代一对一的单人头部 */}
       {isGroup && currentSession && (
         <GroupChatHeader
           title={groupTitle}
@@ -757,6 +759,7 @@ export function ChatPage({
           onOpenWorkflow={openWorkflow}
           // A115：群头像。用户在群设置里换的，头部 leading 据此切成一整颗
           groupAvatar={groupAvatar}
+          groupAvatarImage={groupAvatarImage}
           sessionId={currentSession.id}
         />
       )}

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ChevronDown, Check, Pencil, Menu, Workflow } from 'lucide-react';
+import { ChevronDown, Check, Pencil, Menu, Workflow } from 'lucide-react';
 import { GroupAvatar } from './UserAvatar';
-import { AgentAvatar } from './AgentAvatar';
 import { PanelHeader } from './PanelHeader';
 import { KbScopeChip } from './kb/KbScopeChip';
 import { ORCHESTRATION_META, type OrchestrationMode, type RegisteredAgent } from '../types';
@@ -12,7 +11,7 @@ import { ORCHESTRATION_META, type OrchestrationMode, type RegisteredAgent } from
  * ## 为什么必须复用 PanelHeader
  *
  * 头部规范是全应用统一的（字号 / 内边距 / 底边线高度），全部收敛在
- * PanelHeader 里定义一次。群聊头部的信息量比一对一多（成员头像堆叠 +
+ * PanelHeader 里定义一次。群聊头部的信息量比一对一多（成员头像 +
  * 编排模式 + 人数），但那是**内容**的差异，不是**规格**的差异 ——
  * 所以这里只往 PanelHeader 的 leading / badge / actions
  * 四个槽位里填东西，不自己写 <header>。否则两栏的分隔线立刻对不齐。
@@ -20,13 +19,14 @@ import { ORCHESTRATION_META, type OrchestrationMode, type RegisteredAgent } from
  * ## 与一对一头保持同一规格（compact）
  *
  * 一对一头部已压成 52px 单行（见 ChatHeader 的注释）。群聊头部跟着用同一
- * 规格：头像堆叠与模式选择保留（那是群聊的识别信息与控制），删除收进「⋯」。
+ * 规格：头像与模式选择保留（那是群聊的识别信息与控制），删除收进「⋯」。
  * 副标题（模式说明）移入模式选择器的下拉里 —— 单行头部没有第二行的位置。
  *
- * ## 头像堆叠而不是平铺
+ * ## leading 是三处共用的 GroupAvatar（2026-11-12）
  *
- * 群成员可能很多，平铺会占掉整行。用 IM 通用的负 margin 叠放，
- * 超过 4 个就收成「…+N」；点开成员列表可以看到全部。
+ * 原先这里一份「成员头像负 margin 叠放」、选了预设才换 GroupAvatar；
+ * 批准稿把拼贴定为群的默认脸，成员堆叠的职责整个交给 GroupAvatar 的
+ * 拼贴档（前 4 位、圆形裁切）。成员格保留 P7 的「点头像看详情」手势。
  *
  * ## 「⋯」是群设置面板，不是下拉菜单（P7）
  *
@@ -69,11 +69,15 @@ interface GroupChatHeaderProps {
   onOpenWorkflow: () => void;
   /**
    * A115：群头像（头像预设 id）。用户在群设置里换的。
-   * 有值时就以它作为头部 leading（替代成员堆叠）—— 换头像的目的就是
-   * 「让这个群有个自己的脸」，不显示等于没换。
-   * 空串 = 沿用成员堆叠。
+   * 2026-11-12 起是渲染链的一环（image > 预设 > 拼贴），不再单独决定
+   * 「显示头像还是成员堆叠」。
    */
   groupAvatar?: string;
+  /**
+   * 2026-11-12：自定义图片头像（sessionFlags.avatarImage）。最高优先，
+   * 空串 = 没上传，落到预设 / 拼贴。
+   */
+  groupAvatarImage?: string;
   /** 知识库按会话维度开关，群聊同样适用 */
   sessionId?: string;
 }
@@ -91,6 +95,7 @@ export function GroupChatHeader({
   onBack,
   onOpenWorkflow,
   groupAvatar,
+  groupAvatarImage,
   sessionId,
 }: GroupChatHeaderProps) {
   /** 正在就地改群名 */
@@ -104,8 +109,6 @@ export function GroupChatHeader({
    * Esc 取消同理：取消之后失焦不该又把内容存进去。
    */
   const settledRef = useRef(false);
-  const shown = members.slice(0, 4);
-  const rest = members.length - shown.length;
   const modeMeta = ORCHESTRATION_META[orchestration];
 
   const startRename = () => {
@@ -138,66 +141,26 @@ export function GroupChatHeader({
       surface="chrome"
       onBack={onBack}
       backLabel="返回消息列表"
-      // 头像堆叠作为标题的 leading：一眼看出「这是一群人在说话」。
-      // 每枚头像都是按钮 —— 点它弹出该 Agent 的详情（P7，与消息流里的头像同一手势）
+      // leading 一律是三处共用的 GroupAvatar（2026-11-12 批准稿）：
+      // 自定义图片 > 预设 > 成员拼贴（前 4 位）> Users 兜底，渲染链收在
+      // GroupAvatar 一处。头部这一颗用 28px 小档（效果稿的 mini-gav）；
+      // 成员格仍是按钮，点头像看该成员详情（P7 手势保留，p7 闸门按
+      // data-member-avatar 点）。
       leading={
-        <div className="flex flex-shrink-0 items-center">
-          {/* A115：换过头像就只显示它。成员堆叠是「谁在群里」的答案，
-              而头像已经是「这是哪个群」的答案 —— 两个并排会互相解释，
-              还多占 30px。要看成员可以点右侧成员栏。 */}
-          {groupAvatar ? (
-            <GroupAvatar avatar={groupAvatar} size={36} title={title} />
-          ) : shown.length === 0 ? (
-            <div
-              className="flex h-9 w-9 items-center justify-center rounded-full"
-              style={{ backgroundColor: 'var(--tc-hover-chrome)' }}
-            >
-              <Users size={18} style={{ color: 'var(--td-text-color-placeholder)' }} />
-            </div>
-          ) : (
-            shown.map((m, i) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => onShowAgentDetail(m.id)}
-                data-member-avatar={m.id}
-                title={`${m.name} · 查看详情`}
-                aria-label={`查看 ${m.name} 的详情`}
-                className="rounded-full transition-transform hover:scale-105"
-                style={{
-                  // 负 margin 叠放；越靠后越在上层，形成从左到右的堆叠
-                  marginLeft: i === 0 ? 0 : -10,
-                  zIndex: shown.length - i,
-                  // 描边用容器底色：深色主题下也接得住
-                  boxShadow: '0 0 0 2px var(--tc-surface-content)',
-                }}
-              >
-                <AgentAvatar
-                  id={m.id}
-                  name={m.name}
-                  icon={m.icon}
-                  src={m.logoUrl}
-                  color={m.color}
-                  size={30}
-                  availability={m.status.availability}
-                />
-              </button>
-            ))
-          )}
-          {rest > 0 && (
-            <span
-              className="ml-[-10px] flex h-[30px] w-[30px] items-center justify-center rounded-full text-caption font-medium"
-              style={{
-                zIndex: 0,
-                backgroundColor: 'var(--tc-hover-chrome)',
-                color: 'var(--td-text-color-secondary)',
-                boxShadow: '0 0 0 2px var(--tc-surface-content)',
-              }}
-            >
-              +{rest}
-            </span>
-          )}
-        </div>
+        <GroupAvatar
+          avatar={groupAvatar}
+          image={groupAvatarImage}
+          members={members.map(m => ({
+            id: m.id,
+            name: m.name,
+            icon: m.icon,
+            src: m.logoUrl,
+            color: m.color,
+          }))}
+          size={28}
+          title={title}
+          onMemberClick={onShowAgentDetail}
+        />
       }
       // 群名后面直接带人数（「群名（N）」），比单独一个徽标更容易一眼读到。
       // 群名本身是个按钮：点一下就地改名（见 onRename 的注释）。

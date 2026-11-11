@@ -29,6 +29,9 @@ import type { AsyncQueue, PendingReplies } from '../channel.js';
 import { decideToolAccess } from '../toolPolicy.js';
 import { evaluateToolCall } from '../permission-gate.js';
 import { currentPermissionRules } from '../../permission-rules.js';
+// 「该 Agent 永久」的落库查询（2026-11-12 变体 A）。带失效式缓存，
+// 命中即自动放行 —— 但只能省「问用户」，省不掉它前面的每一道门禁。
+import { hasAgentGrant } from '../../permission-grants.js';
 import {
   buildDenialMessage,
   reasonCodeOfKind,
@@ -54,6 +57,12 @@ export interface ApprovalBridgeDeps {
   memory: ApprovalMemory;
   ctx: SendContext;
   sessionId: string;
+  /**
+   * 发起方的 Agent id（2026-11-12 持久授权）。授权键是 agentId + toolName，
+   * 没有它就查不了表 —— 缺省时跳过持久授权检查，照旧弹卡
+   * （宁可多问，不做查不到键的乐观放行）。
+   */
+  agentId?: string;
   /** 前端可选的答复档位（WorkBuddy 与 Claude 用同一套 SDK 档位） */
   options: readonly PermissionOption[];
   /** 等待上限；与前端倒计时一致 */
@@ -69,7 +78,7 @@ export interface ApprovalBridgeDeps {
 export function createCanUseToolBridge(
   deps: ApprovalBridgeDeps
 ): (toolName: string, input: Record<string, unknown>, options?: { toolUseID?: string }) => Promise<ToolApproval> {
-  const { queue, replies, memory, ctx, sessionId, options, expiresInMs } = deps;
+  const { queue, replies, memory, ctx, sessionId, agentId, options, expiresInMs } = deps;
 
   return async (toolName, input, toolOptions) => {
     // ---- A176 知识库只读例外：先于场景白名单 ----
@@ -140,6 +149,23 @@ export function createCanUseToolBridge(
         message: buildDenialMessage('user_denied_always', toolName),
       };
     }
+
+    // ---- 2026-11-12 持久授权（「该 Agent 永久」）----
+    // 位置在**门禁之后、会话 deny 记忆之后**：授权只能省掉「问用户」这一步，
+    // 高危载荷（rm -rf 类）在它前面已经被门禁拦下；用户本会话里点过
+    // 「始终拒绝」的工具也不被更早的持久授权翻案 —— 最近、最明确的表态优先。
+    // 命中即走与手动允许完全相同的应答路径（allow），并留一条叙述进轨迹
+    // （NoteBlock）：审计可见，但不落成一条假消息。
+    if (agentId && hasAgentGrant(agentId, toolName)) {
+      console.log(`[SDK] 持久授权命中，自动放行: ${agentId} · ${toolName}`);
+      queue.push({
+        type: 'note',
+        text: `权限：已授权范围自动放行（${agentId} · ${toolName}）`,
+        level: 'info',
+      });
+      return { behavior: 'allow', updatedInput: input };
+    }
+
     if (memory.allow.has(toolName)) {
       return { behavior: 'allow', updatedInput: input };
     }

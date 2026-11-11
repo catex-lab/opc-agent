@@ -251,6 +251,15 @@ export interface ErrorBlock {
   retryable?: boolean;
   /** 失败发生时刻（毫秒） */
   at: number;
+  /**
+   * 失败分类（本期只消费 'auth'）。
+   *
+   * 为什么落在块上而不是只挂在实时事件上：错误卡的动作行（「去登录 /
+   * 重新探测」）在**刷新后**也必须还在 —— 块跟着消息落库，事件刷新即丢。
+   * 由投影器按 recovery.ts 的 `classifyFailure` 口径盖章；'unknown' 不盖章
+   * （给每个普通错误都贴一个标签是噪声，缺字段 = 前端不画动作行）。
+   */
+  errorKind?: string;
 }
 
 export type Block =
@@ -346,6 +355,14 @@ export type RunEvent = Seq &
         message: string;
         blockId?: string;
         retryable?: boolean;
+        /**
+         * 失败分类（recovery.ts 的 FailureKind；'unknown' 不带）。
+         *
+         * 结构化字段与 message 里的「怎么恢复」话术是**两条腿**：
+         * 话术让旧客户端也能看到下一步做什么；这个字段让新客户端
+         * 画得出「去登录 / 重新探测」按钮。缺字段 = 按普通错误渲染。
+         */
+        errorKind?: string;
       }
     | {
         type: 'permission_request';

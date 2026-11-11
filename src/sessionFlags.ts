@@ -53,6 +53,15 @@ export interface SessionFlags {
    * 真要多端同步的那天，把它挪进 sessions 表即可，前端只改读写处。
    */
   avatar?: string;
+  /**
+   * 群自定义头像图片（A160 同款覆盖层）：`/api/avatars/<file>` 的 URL，空 = 没上传。
+   *
+   * 渲染优先级：avatarImage > avatar（预设）> 成员拼贴（GroupAvatar 的默认）。
+   * 与 avatar 一样是「我这台机器上这个群长什么样」的本地标记，不落 sessions 表；
+   * 图片文件本体走 A160 的 data/avatars/ 仓库，服务端按 sessionId 登记引用、
+   * 移除时自动回收无人引用的文件。
+   */
+  avatarImage?: string;
   /** 群消息接收方式；缺省等同 'normal' */
   notifyMode?: NotifyMode;
 }
@@ -94,6 +103,8 @@ function patch(sessionId: string, next: SessionFlags): void {
   if (!flags.remark) delete flags.remark;
   // A115：群头像同理 —— 空串不占位
   if (!flags.avatar) delete flags.avatar;
+  // 自定义图片头像同款：空串 = 没上传，不留空壳
+  if (!flags.avatarImage) delete flags.avatarImage;
   // 'normal' 是该字段的缺省值，不必占位
   if (!flags.notifyMode || flags.notifyMode === 'normal') delete flags.notifyMode;
 
@@ -188,6 +199,25 @@ export function useGroupAvatar(sessionId: string | null | undefined): string {
   return useSyncExternalStore(
     subscribeSessionFlags,
     () => (sessionId ? snapshot[sessionId]?.avatar ?? '' : ''),
+    () => ''
+  );
+}
+
+/** 自定义图片头像（URL）。空串 = 没上传；非 Hook，供事件回调里读 */
+export function groupAvatarImage(sessionId: string): string {
+  return snapshot[sessionId]?.avatarImage ?? '';
+}
+
+/** 设置自定义图片头像。空串 = 移除，渲染自动落回下一优先级（预设 / 拼贴） */
+export function setGroupAvatarImage(sessionId: string, url: string): void {
+  patch(sessionId, { avatarImage: url.trim() });
+}
+
+/** 同 useGroupAvatar，但订的是自定义图片这一个键 */
+export function useGroupAvatarImage(sessionId: string | null | undefined): string {
+  return useSyncExternalStore(
+    subscribeSessionFlags,
+    () => (sessionId ? snapshot[sessionId]?.avatarImage ?? '' : ''),
     () => ''
   );
 }

@@ -26,8 +26,8 @@ import {
   ADD_ICON_SIZE,
 } from './columnHeader';
 import { NewGroupDialog } from './NewGroupDialog';
-import { GroupAvatar } from './UserAvatar';
-import { useGroupAvatar } from '../sessionFlags';
+import { GroupAvatar, groupAvatarMembersOf } from './UserAvatar';
+import { useGroupAvatar, useGroupAvatarImage } from '../sessionFlags';
 import { MENU_ITEM_CLASS } from './menuItem';
 import { agentStatusViewOf, type RegisteredAgent, type Session } from '../types';
 import { useTranslation, type MessageKey } from '../i18n';
@@ -774,6 +774,13 @@ function GroupRow({ session, getAgent, onOpen }: GroupRowProps) {
     fallback;
   // A115：订阅这个群的头像（Hook 必须放在组件顶层，不能写在 JSX 里）
   const groupAvatar = useGroupAvatar(session.id);
+  // 2026-11-12：自定义图片与成员拼贴。行本身是 <button>，所以格子不挂
+  // onMemberClick（按钮里不能再嵌按钮）。
+  const groupAvatarImage = useGroupAvatarImage(session.id);
+  const members = useMemo(
+    () => groupAvatarMembersOf(session.agentIds, id => getAgent?.(id)),
+    [session.agentIds, getAgent]
+  );
 
   return (
     <button
@@ -785,7 +792,12 @@ function GroupRow({ session, getAgent, onOpen }: GroupRowProps) {
       {/* A115：群头像。与会话列表、群聊头部共用同一个 GroupAvatar ——
           用户在群设置里换的头像，三个地方必须同时变，否则「换了没换」
           要看运气。 */}
-      <GroupAvatar avatar={groupAvatar} size={42} />
+      <GroupAvatar
+        avatar={groupAvatar}
+        image={groupAvatarImage}
+        members={members}
+        size={42}
+      />
       <span
         className="min-w-0 flex-1 truncate text-body-lg font-medium"
         style={{ color: 'var(--td-text-color-primary)' }}

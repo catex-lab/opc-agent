@@ -165,10 +165,19 @@ export function remove(requestId: string): void {
  * `requestId` 是全局唯一 UUID，服务端 `registry.resolvePermissionAnywhere()` 本来就
  * 遍历所有 provider 认领、不区分来源 —— 所以合并成一个出口不需要动后端。
  *
+ * `opts.persistAgent`：授权范围选了「该 Agent 永久」时随答复一起带上
+ * （2026-11-12 变体 A）。服务端在处理 allow 的同一个请求里落库，agentId 与
+ * toolName 由服务端从待答复元数据里取 —— 前端不传，传了也不算数。
+ * 不带 opts 时请求体与旧版逐字节一致（既有闸门按精确形状断言）。
+ *
  * **答复送达 ≠ 答复生效**：只有 200 才摘卡。404 说明服务端已经没有这条了
  * （超时或被别处兑现），必须让用户看见「这条没生效」而不是静默清掉。
  */
-export async function answer(requestId: string, option: PermissionOption): Promise<void> {
+export async function answer(
+  requestId: string,
+  option: PermissionOption,
+  opts?: { persistAgent?: boolean }
+): Promise<void> {
   const item = items.get(requestId);
   if (!item) return;
 
@@ -186,6 +195,7 @@ export async function answer(requestId: string, option: PermissionOption): Promi
         behavior,
         ...(option.id ? { optionId: option.id } : {}),
         ...(reasonCode ? { reasonCode } : {}),
+        ...(opts?.persistAgent ? { persistAgent: true } : {}),
       }),
     });
     status = res.status;
