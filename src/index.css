@@ -3280,9 +3280,12 @@ html[data-opc-glass='1'].dark .t-button--variant-base.t-button--theme-primary:ho
   z-index: 55;
   width: 360px;
   max-width: calc(100vw - 32px);
+  /* 边框只保留宽度/样式，颜色交给 .tc-glass 的 --tc-glass-border；
+     不写 box-shadow —— Dock 是非模态浮层，不是「整屏唯一的主角」，
+     不吃 .tc-dialog 的双 inset 加厚，直接继承 .tc-glass 三件套
+     （实色描边 + 扁影子的旧 TDesign 覆盖已删，玻璃语言与弹窗一致）。 */
   border-radius: var(--td-radius-large);
-  border: 1px solid var(--td-border-level-2-color);
-  box-shadow: var(--td-shadow-3);
+  border: 1px solid var(--tc-glass-border);
   overflow: hidden;
 }
 
