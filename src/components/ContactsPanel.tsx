@@ -29,11 +29,13 @@ import { NewGroupDialog } from './NewGroupDialog';
 import { GroupAvatar, groupAvatarMembersOf } from './UserAvatar';
 import { useGroupAvatar, useGroupAvatarImage } from '../sessionFlags';
 import { MENU_ITEM_CLASS } from './menuItem';
-import { agentStatusViewOf, type RegisteredAgent, type Session } from '../types';
+import { agentStatusViewOf, type ComingSoonAgent, type RegisteredAgent, type Session } from '../types';
 import { useTranslation, type MessageKey } from '../i18n';
 
 interface ContactsPanelProps {
   agents: RegisteredAgent[];
+  /** A210：只透传给「获取 Agent」弹窗的独立分组，不参与通讯录任何判定 */
+  comingSoon?: ComingSoonAgent[];
   loading: boolean;
   probing: boolean;
   error: string | null;
@@ -113,6 +115,7 @@ type Tab = 'agents' | 'groups';
  */
 export function ContactsPanel({
   agents,
+  comingSoon = [],
   loading,
   probing,
   error,
@@ -597,6 +600,7 @@ export function ContactsPanel({
       <GetAgentsDialog
         open={getAgentsOpen}
         agents={agents}
+        comingSoon={comingSoon}
         onClose={() => setGetAgentsOpen(false)}
         onReprobe={onProbe}
         onOpenCredential={onOpenCredential}

@@ -4,7 +4,15 @@ import { RefreshCw, X } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { InstallCard } from './InstallCard';
 import { useOverflowY } from '../hooks/useOverflowY';
-import { agentStatusViewOf, availabilityLabelOf, type InstallMethod, type RegisteredAgent } from '../types';
+import {
+  agentStatusViewOf,
+  availabilityLabelOf,
+  COMING_SOON_STATUS_LABEL,
+  COMING_SOON_TIER_LABEL,
+  type ComingSoonAgent,
+  type InstallMethod,
+  type RegisteredAgent,
+} from '../types';
 
 /**
  * 「获取 Agent」清单页（A71）。
@@ -33,6 +41,11 @@ import { agentStatusViewOf, availabilityLabelOf, type InstallMethod, type Regist
 interface GetAgentsDialogProps {
   open: boolean;
   agents: RegisteredAgent[];
+  /**
+   * A210「即将接入」占位清单。独立的平级数据，**不是** RegisteredAgent：
+   * 不可点、不参与 groups / readyCount / isInstallable / InstallCard。
+   */
+  comingSoon?: ComingSoonAgent[];
   onClose: () => void;
   onReprobe?: () => void;
   onOpenCredential?: (agentId: string) => void;
@@ -82,6 +95,7 @@ export function isInstallable(agent: RegisteredAgent): boolean {
 export function GetAgentsDialog({
   open,
   agents,
+  comingSoon = [],
   onClose,
   onReprobe,
   onOpenCredential,
@@ -279,6 +293,69 @@ export function GetAgentsDialog({
                 })}
               </section>
             ))
+          )}
+
+          {/* A210「即将接入」独立分组。
+              不进 groups、不进 isInstallable、不渲染 InstallCard、整行没有
+              点击事件 —— 占位条目装不上，画一个安装按钮比不展示更伤。
+              文案不给日期不给版本：这是规划展示，不是交付承诺。 */}
+          {comingSoon.length > 0 && (
+            <section data-coming-soon-group>
+              <div
+                className="sticky top-0 z-10 flex items-baseline gap-2 px-5 py-2 text-secondary"
+                style={{
+                  backgroundColor: 'var(--tc-surface-raised, transparent)',
+                  color: 'var(--td-text-color-placeholder)',
+                  backdropFilter: 'blur(6px)',
+                }}
+              >
+                <span style={{ color: 'var(--td-text-color-secondary)', fontWeight: 500 }}>
+                  即将接入
+                </span>
+                <span>{comingSoon.length} 条</span>
+                <span>· 规划展示，不含交付承诺</span>
+              </div>
+              {comingSoon.map(a => (
+                <div
+                  key={a.id}
+                  className="mx-5 mb-2 overflow-hidden rounded-xl px-4 py-3"
+                  style={{
+                    backgroundColor: 'var(--tc-surface-raised)',
+                    border: '1px solid var(--tc-edge)',
+                    opacity: 0.72,
+                  }}
+                  data-coming-soon-row={a.id}
+                  data-coming-soon-selectable="0"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span
+                      className="min-w-0 flex-1 truncate text-body"
+                      style={{ color: 'var(--td-text-color-secondary)' }}
+                    >
+                      {a.name}
+                    </span>
+                    <span
+                      className="shrink-0 text-caption"
+                      style={{ color: 'var(--td-text-color-placeholder)' }}
+                    >
+                      {COMING_SOON_STATUS_LABEL[a.status]}
+                    </span>
+                  </div>
+                  <div
+                    className="mt-1 text-caption"
+                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                  >
+                    {a.vendor} · {COMING_SOON_TIER_LABEL[a.tier]}
+                  </div>
+                  <div
+                    className="mt-1 text-caption"
+                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                  >
+                    {a.reason}
+                  </div>
+                </div>
+              ))}
+            </section>
           )}
         </div>
 

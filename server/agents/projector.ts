@@ -654,7 +654,16 @@ export class RunProjector {
    * 现在按「谁按的停」分三档：正常结束 → `interrupted`（结果未回传）、
    * 用户中止 → `cancelled`、出错 → `failed`。
    */
-  finish(status: RunStatus, usage?: { durationMs?: number; cost?: number; tokens?: number }): {
+  /**
+   * @param timing A210 首字时间戳（服务端侧）。由调用方在收尾时从旁路取走，
+   *   投影器只负责把它挂到 `run_end` 上 —— 不新增事件、不改 SSE 帧形状。
+   *   一轮没有产生任何正文时 `t2` 为 null，这个「没有」必须原样下发。
+   */
+  finish(
+    status: RunStatus,
+    usage?: { durationMs?: number; cost?: number; tokens?: number },
+    timing?: { t0: number; t1: number; t2: number | null }
+  ): {
     closes: RunEvent[];
     end: RunEvent;
   } {
@@ -705,6 +714,7 @@ export class RunProjector {
       durationMs: usage?.durationMs,
       cost: usage?.cost,
       tokens: usage?.tokens,
+      ...(timing ? { timing } : {}),
       ...(caps ? { capabilities: caps } : {}),
     });
     return { closes, end };

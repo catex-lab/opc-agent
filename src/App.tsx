@@ -25,7 +25,7 @@ import { isAutoSessionTitle } from '../shared/session-title';
 import { asProvenance } from '../shared/provenance';
 import { getScenario } from './scenarios';
 import { exportSessionToMarkdown } from './utils/exportSession';
-import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project, type AgentModelSource, type ExtensionKind } from './types';
+import { type PermissionMode, type CustomAgent, type Session, type Model, type OrchestrationMode, type Project, type AgentModelSource, type ExtensionKind, type CliConfiguredModel } from './types';
 
 import { NavRail, type NavKey } from './components/NavRail';
 import { KnowledgeBasePanel, readSavedKbScope } from './components/kb/KnowledgeBasePanel';
@@ -454,6 +454,17 @@ function AppContent() {
   });
 
   /**
+   * 「本机 CLI 配置里写过的模型名」（自动发现并可选）。
+   *
+   * 与 agentModels 是**两条独立的线**：那份是 CLI 枚举/配置清单（受
+   * source / selectable / readonly 那套闸门约束），这份只是从本机各家
+   * 配置文件 + 通用环境变量里发现的名字，界面单独成一组、标「未验证」。
+   * 服务端随 /api/agents/:id/models 以平级字段 `configured` 下发；
+   * 前端按 agentIds 过滤成「只属于当前 Agent」的那些。
+   */
+  const [configuredModels, setConfiguredModels] = useState<CliConfiguredModel[]>([]);
+
+  /**
    * 模型清单的「代号」。
    *
    * 设置页里点了「刷新模型清单」之后，后端会重新枚举，但下面那个 effect 只
@@ -493,6 +504,7 @@ function AppContent() {
       setAgentModels([]);
       setAgentDefaultModel('');
       setAgentModelSource({ kind: 'unknown', selectable: true });
+      setConfiguredModels([]);
       return;
     }
 
@@ -507,6 +519,7 @@ function AppContent() {
       setAgentDefaultModel('');
       setAgentModelSource({ kind: 'unknown', selectable: true });
       setSelectedModel('');
+      setConfiguredModels([]);
     }
 
     let cancelled = false;
@@ -547,6 +560,15 @@ function AppContent() {
             // 这份结论属于哪个 Agent —— 切 Agent 时旧结论不能沿用
             forAgent: currentAgentId,
           });
+          /* 「本机 CLI 配置模型」是**平级字段**，与 data.source / selectable
+             那套闸门无关：单独读、按 agentIds 过滤成只属于当前 Agent 的，
+             单独成组。老服务端不下发 data.configured 时按空处理。 */
+          const configured: CliConfiguredModel[] = Array.isArray(data.configured)
+            ? (data.configured as CliConfiguredModel[]).filter(
+                (m) => m && Array.isArray(m.agentIds) && m.agentIds.includes(currentAgentId)
+              )
+            : [];
+          setConfiguredModels(configured);
         }
       } catch {
         // 拿不到就当没有：宁可不显示下拉，也不塞一份不属于它的模型列表
@@ -554,6 +576,7 @@ function AppContent() {
           setAgentModels([]);
           setAgentDefaultModel('');
           setAgentModelSource({ kind: 'unknown', selectable: true });
+          setConfiguredModels([]);
         }
       }
     })();
@@ -1798,6 +1821,7 @@ function AppContent() {
             ) : (
               <ContactsPanel
                 agents={registry.agents}
+                comingSoon={registry.comingSoon}
                 loading={registry.loading}
                 probing={registry.probing}
                 error={registry.error}
@@ -1962,6 +1986,7 @@ function AppContent() {
                         messagesLoaded={isMessagesLoaded(currentSession.id)}
                         models={activeModels}
                         modelSource={activeModelSource}
+                        configuredModels={configuredModels}
                         // A151 / P2：「未验证」模型被点中时先标定一次
                         onProbeModel={handleProbeModel}
                         selectedModel={selectedModel}

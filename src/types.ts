@@ -222,6 +222,12 @@ export interface Message {
    * 没值时不要渲染成「0 秒」—— 没有数据和不花钱是两回事。
    */
   durationMs?: number;
+  /**
+   * A210：这一轮的首字分段（服务端 t0/t1/t2 + 前端 t3/揭示延迟）。
+   * 只为「刚跑完的这一轮」存在，不落库、刷新后没有 —— 它是诊断数据，
+   * 不是消息内容。缺字段时消息头照旧只显示耗时。
+   */
+  timing?: import('./utils/runTiming').TimingSummary;
   /** 本轮费用（美元）。SDK 适配器上报平台账单价时才有 */
   cost?: number;
   /** 本轮消耗的 token 数。ACP 只上报这个 */
@@ -1116,4 +1122,47 @@ export const EXT_MOUNT_LABEL: Record<ExtensionMountMode, string> = {
   flag: '启动参数',
   prompt: '提示词注入',
   unsupported: '不支持',
+};
+
+/**
+ * 「本机 CLI 配置里写过的模型名」（自动发现并可选）。
+ *
+ * 与服务端 `server/agents/cliConfiguredModels.ts` 的 CliConfiguredModel 同形：
+ * 这里只发现**名字**，不代表账号真有权益、也不代表 CLI 现在还认它。
+ * 界面必须标「未验证」，选中只是把 id 原样透传给 CLI，由 CLI 用自己的
+ * 配置连网关 —— 本应用不读凭据、不代为验证。
+ */
+export interface CliConfiguredModel {
+  id: string;
+  label: string;
+  source: string;
+  agentIds: string[];
+}
+
+/**
+ * A210「即将接入」占位条目（前端形状，与服务端 comingSoon.ts 同形）。
+ *
+ * 这是**纯展示数据**，不是 RegisteredAgent：没有 status / install / 凭据，
+ * 因此永远不会被 `isInstallable()` 判成「可安装」，也不会进联系人或
+ * 新建会话选择器。真接入时后端用同一个 id 把它从清单里剔除即可转正。
+ */
+export interface ComingSoonAgent {
+  id: string;
+  name: string;
+  vendor: string;
+  tier: 'acp' | 'stream-json' | 'evaluating';
+  status: 'soon' | 'planned';
+  reason: string;
+  color: string;
+}
+
+export const COMING_SOON_TIER_LABEL: Record<ComingSoonAgent['tier'], string> = {
+  acp: '原生 ACP',
+  'stream-json': '流式输出',
+  evaluating: '评估中',
+};
+
+export const COMING_SOON_STATUS_LABEL: Record<ComingSoonAgent['status'], string> = {
+  soon: '即将接入',
+  planned: '规划中',
 };

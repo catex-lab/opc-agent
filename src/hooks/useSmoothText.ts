@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { noteReveal } from '../utils/runTiming';
 
 /* ── 正文的「匀速揭示」（方案 C 配套）────────────────────────────────────
  *
@@ -224,7 +225,25 @@ export function useSmoothText(
   const holdSinceRef = useRef<number | null>(null);
   /** 等待超过 SYNTAX_HOLD_MS 后放行，直到该结构闭合才恢复保护 */
   const bypassSyntaxRef = useRef(false);
+  /**
+   * A210：本轮「目标文本首次非空」的时刻，以及「已揭示首字」是否已上报。
+   * 这里量的是 `t4 − 首字进入 target` 的延迟，即平滑动画本身的代价，
+   * **绝不能并进 TTFT** —— 那是渲染慢，不是 Agent 慢。
+   */
+  const firstTargetAtRef = useRef<number | null>(null);
+  const revealReportedRef = useRef(false);
   targetRef.current = text;
+
+  useEffect(() => {
+    if (!streaming) return;
+    if (text.length === 0) {
+      // 新一轮 / 被清空：重新计一次，不把上一轮的延迟串进来
+      firstTargetAtRef.current = null;
+      revealReportedRef.current = false;
+      return;
+    }
+    if (firstTargetAtRef.current === null) firstTargetAtRef.current = Date.now();
+  }, [text, streaming]);
 
   useEffect(() => {
     const wasStreaming = prevStreamingRef.current;
@@ -324,6 +343,16 @@ export function useSmoothText(
       const text = target.slice(0, next);
       shownRef.current = text;
       setShown(text);
+      // A210：首字真正出现在屏幕上的那一刻上报一次揭示延迟。
+      // 只报一次，由 runTiming 的 takeReveal() 在 run_end 时配对取走。
+      if (
+        !revealReportedRef.current &&
+        firstTargetAtRef.current !== null &&
+        shownRef.current.length > 0
+      ) {
+        revealReportedRef.current = true;
+        noteReveal(Date.now() - firstTargetAtRef.current);
+      }
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);

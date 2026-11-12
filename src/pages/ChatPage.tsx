@@ -14,6 +14,7 @@ import {
   RegisteredAgent,
   OrchestrationMode,
   AgentModelSource,
+  CliConfiguredModel,
 } from '../types';
 import { NewChatView } from '../components/NewChatView';
 import { SCENARIOS, getScenario, enforcementGap, isModeGap, supportLimitation } from '../scenarios';
@@ -75,6 +76,12 @@ interface ChatPageProps {
    * 只有 zcode 那条只读清单会传 `selectable: false`。
    */
   modelSource?: AgentModelSource;
+  /**
+   * 「本机 CLI 配置里写过的模型名」（自动发现并可选）。
+   * 由 App 按 agentIds 过滤后透传，继续交给 ChatInput → ModelSelectPopup
+   * 单独成一组、标「未验证」。不传 = 没有这一组。
+   */
+  configuredModels?: CliConfiguredModel[];
   /**
    * 标定一个「未验证」模型（A151 / P2）。
    *
@@ -189,6 +196,7 @@ export function ChatPage({
   currentSession,
   models,
   modelSource,
+  configuredModels,
   onProbeModel,
   selectedModel,
   agents,
@@ -919,6 +927,7 @@ export function ChatPage({
             selectedModel={selectedModel}
             models={models}
             modelSource={modelSource}
+            configuredModels={configuredModels}
             onSelectUnverified={onProbeModel}
             isLoading={loading}
             permissionMode={permissionMode}

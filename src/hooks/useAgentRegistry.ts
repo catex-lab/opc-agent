@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RegisteredAgent } from '../types';
+import type { ComingSoonAgent, RegisteredAgent } from '../types';
 import {
   createSingleProbeRunner,
   probeFeedbackFromResult,
@@ -25,6 +25,12 @@ export function useAgentRegistry() {
   const [probingIds, setProbingIds] = useState<Set<string>>(new Set());
   /** 每个 Agent 最近一次单探测的反馈（时间戳 / 耗时 / 失败原因） */
   const [probeFeedback, setProbeFeedback] = useState<Record<string, AgentProbeFeedback>>({});
+  /**
+   * A210「即将接入」占位清单。**与 agents 完全隔离的独立 state**：
+   * 它不参与 grouped / readyCount / getAgent / 轮询判定，因此不可能被
+   * 当成可选 Agent，也不可能被画出一个装不上的安装按钮。
+   */
+  const [comingSoon, setComingSoon] = useState<ComingSoonAgent[]>([]);
   /** 避免 StrictMode 下重复请求 */
   const fetchedRef = useRef(false);
 
@@ -36,6 +42,7 @@ export function useAgentRegistry() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAgents(Array.isArray(data.agents) ? data.agents : []);
+      setComingSoon(Array.isArray(data.comingSoon) ? data.comingSoon : []);
     } catch (err) {
       setError((err as Error).message || '获取 Agent 列表失败');
     } finally {
@@ -100,6 +107,7 @@ export function useAgentRegistry() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAgents(Array.isArray(data.agents) ? data.agents : []);
+      setComingSoon(Array.isArray(data.comingSoon) ? data.comingSoon : []);
       setProbeFeedback({});
     } catch (err) {
       setError((err as Error).message || '探测失败');
@@ -173,6 +181,7 @@ export function useAgentRegistry() {
 
   return {
     agents,
+    comingSoon,
     grouped,
     readyCount,
     loading,

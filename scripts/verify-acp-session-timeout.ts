@@ -3,7 +3,7 @@
  *
  * 要防的回归：
  *   1. session/new / initialize 超时后，挂死进程不被杀、rpc 不重置 ——
- *      旧实现每次重试都复用它再拖满 10 分钟，用户「等十分钟得到一句死板报错」；
+ *      旧实现每次重试都复用它再拖满默认超时（现产品默认 90 秒），用户干等一轮超时才得到一句死板报错；
  *   2. 自愈重建后必须真的能建出会话（换新进程要能正常回包）；
  *   3. 重试预算必须锁死在 1：第二次仍超时就收进程 + 报诚实文案，
  *      绝不允许「无限重试把用户拖死」。
@@ -11,7 +11,7 @@
  * 手法：内嵌一个假 ACP 服务端（stdio JSON-RPC，行为由 mode.txt 控制：
  * `ok` / `hang-new`（session/new 永不回复，进程保持存活）/ `hang-init`），
  * 每次启动向 launches.jsonl 登记 pid。适配器超时注入成 ~1.5s（真实默认
- * 10 分钟由 [D] 组钉住），全程不碰网络、不碰真实 data/。
+ * 90 秒由 [D] 组钉住），全程不碰网络、不碰真实 data/。
  *
  * 跑法：
  *   npx tsx scripts/verify-acp-session-timeout.ts
@@ -301,11 +301,11 @@ if (process.argv.includes('--probe')) {
   process.exit(3);
 }
 
-// ============= [D] 超时可注入：默认值不变 + 两种注入口 =============
-console.log('[D] 超时注入面（默认值不变 / options / 环境变量）');
+// ============= [D] 超时可注入：默认 90 秒 + 两种注入口 =============
+console.log('[D] 超时注入面（默认 90 秒 / options / 环境变量）');
 {
   const plain = new AcpAdapter(buildDef()) as unknown as { requestTimeoutMs: number; initTimeoutMs: number };
-  say('D1', '默认 requestTimeoutMs 仍是 10 分钟（产品行为不变）', plain.requestTimeoutMs === 10 * 60 * 1000, `got=${plain.requestTimeoutMs}`);
+  say('D1', '默认 requestTimeoutMs 是 90 秒（产品默认值）', plain.requestTimeoutMs === 90 * 1000, `got=${plain.requestTimeoutMs}`);
   say('D2', '默认 initTimeoutMs 仍是 60s', plain.initTimeoutMs === 60_000, `got=${plain.initTimeoutMs}`);
 
   const injected = new AcpAdapter(buildDef(), { requestTimeoutMs: INJECTED_TIMEOUT, initTimeoutMs: INJECTED_TIMEOUT }) as unknown as { requestTimeoutMs: number; initTimeoutMs: number };
@@ -318,7 +318,7 @@ console.log('[D] 超时注入面（默认值不变 / options / 环境变量）')
 
   process.env.OPC_ACP_REQUEST_TIMEOUT_MS = 'not-a-number';
   const badEnv = new AcpAdapter(buildDef()) as unknown as { requestTimeoutMs: number };
-  say('D5', '非法环境变量回落默认（不能变成永不超时）', badEnv.requestTimeoutMs === 10 * 60 * 1000, `got=${badEnv.requestTimeoutMs}`);
+  say('D5', '非法环境变量回落默认（不能变成永不超时）', badEnv.requestTimeoutMs === 90 * 1000, `got=${badEnv.requestTimeoutMs}`);
   if (prevEnv === undefined) delete process.env.OPC_ACP_REQUEST_TIMEOUT_MS;
   else process.env.OPC_ACP_REQUEST_TIMEOUT_MS = prevEnv;
 }
@@ -359,7 +359,7 @@ let aPids: number[] = [];
     aPids = readLaunches();
 
     say('A1', 'send 在看门狗内结束（没有挂死测试进程）', !timedOut, `elapsed=${elapsedMs}ms`);
-    say('A2', '注入生效：全程两个超时窗口（~3s 量级），不是秒拒也不是 10 分钟',
+    say('A2', '注入生效：全程两个超时窗口（~3s 量级），不是秒拒也不是产品默认 90 秒',
       elapsedMs >= 2 * INJECTED_TIMEOUT && elapsedMs < 15_000, `elapsed=${elapsedMs}ms`);
     say('A3', '收到 error 事件（且没有 init —— 会话没建出来）', types.includes('error') && !types.includes('init'), `types=${types.join(',')}`);
     say('A4', '文案含「已自动重启」（诚实说明做过自愈）', message.includes('已自动重启'), message.slice(0, 90));

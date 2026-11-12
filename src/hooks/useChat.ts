@@ -16,6 +16,14 @@ import {
   type RunEvent,
 } from '../../shared/blocks';
 import { decideModelEcho } from '../../shared/model-effective';
+// A210：首字分段。服务端给 t0/t1/t2，前端只补 t3 与 UI 揭示延迟。
+import {
+  buildTimingSummary,
+  publishTiming,
+  takeReveal,
+  type ServerTimingMarks,
+  type TimingSummary,
+} from '../utils/runTiming';
 
 const STORAGE_KEYS = {
   draftInput: 'draftInput',
@@ -584,6 +592,9 @@ export function useChat(options: UseChatOptions) {
           message: messageContent,
           model: selectedModel,
           systemPrompt,
+          // A210：t0。渲染进程与内嵌 Express 同机同钟，Date.now() 可直接相减；
+          // 生图端点不走投影器，不带这个字段。
+          clientSentAt: Date.now(),
           cwd: currentCwd,
           // A62：档位值。模型没有档位表时前端不发这个键，
           // 后端收到 undefined 就不碰会话里已有的值。
@@ -670,6 +681,12 @@ export function useChat(options: UseChatOptions) {
       }
 
       const decoder = new TextDecoder();
+
+      /** A210：本轮首个正文增量到达前端的时刻（t3）。断线重放也走同一个
+       *  handleEvent，所以这个变量按 send() 一轮一份，不放在 hook 级 state。 */
+      let firstContentAt: number | null = null;
+      /** 重连可能重放 run_end，汇总只允许发布一次 */
+      let timingPublished = false;
 
       /** init / run_start 共用：把临时会话与气泡 id 换成后端的真值 */
       const applyInit = (sid: string, mid: string, modelId?: string, modelEffective?: string) => {
@@ -794,6 +811,16 @@ export function useChat(options: UseChatOptions) {
           case 'block_close':
           case 'snapshot':
             if (typeof data.seq === 'number') lastSeq = data.seq;
+            // A210：t3 与服务端 t2 用同一判据 —— 非 thinking 的
+            // block_delta / text 型 block_open 才算「首字」，工具块不算。
+            // 判据两边写死同一条，否则分段相减会量到不同的东西。
+            if (
+              firstContentAt === null &&
+              ((data.type === 'block_delta' && data.channel !== 'thinking') ||
+                (data.type === 'block_open' && data.block?.type === 'text'))
+            ) {
+              firstContentAt = Date.now();
+            }
             if (applyRunEvent(blocks, data as RunEvent)) schedule();
             break;
 
@@ -837,11 +864,27 @@ export function useChat(options: UseChatOptions) {
             markSessionEnded(realSessionId);
             if (typeof data.seq === 'number') lastSeq = data.seq;
             flushNow();
+            /* A210：汇总这一轮的首字分段。
+               t0/t1/t2 来自 run_end.timing，t3 是本地首个正文增量，
+               UI 揭示延迟由 useSmoothText 采样、经 takeReveal() 配对取走。
+               uiSmoothMs 单独一列，绝不并入 ttftMs —— 那是动画慢，不是 Agent 慢。
+               没有 timing（老服务端 / 本轮无正文）就不落字段，不编 0ms。 */
+            let timingSummary: TimingSummary | null = null;
+            if (!timingPublished) {
+              const marks = data.timing as ServerTimingMarks | undefined;
+              const reveal = takeReveal();
+              timingSummary = buildTimingSummary(marks, firstContentAt, reveal?.delayMs ?? null);
+              if (timingSummary) {
+                publishTiming(timingSummary);
+                timingPublished = true;
+              }
+            }
             patchAssistant({
               isStreaming: false,
               durationMs: typeof data.durationMs === 'number' ? data.durationMs : undefined,
               cost: typeof data.cost === 'number' ? data.cost : undefined,
               tokens: typeof data.tokens === 'number' ? data.tokens : undefined,
+              ...(timingSummary ? { timing: timingSummary } : {}),
             });
             break;
         }

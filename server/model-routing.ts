@@ -73,6 +73,28 @@ export function setCatalogModelLookup(fn: CatalogModelLookup | null): void {
 }
 
 /**
+ * 「这个模型名是不是用户在**本机 CLI 配置里自己写的**」的查表函数（A210）。
+ *
+ * 为什么又是一层注入：跟 `catalogLookup` 同一个理由 —— 扫描配置文件要读
+ * `~/.claude` / `~/.codex` / `~/.config/opencode`，而本文件是纯判定逻辑，
+ * 被 `verify:routing` 这类离线脚本直接调用，不该带上文件系统副作用。
+ * 由 `index.ts` 启动时注册一份带 TTL 缓存的实现。
+ *
+ * 用途：有 `def.models` 白名单的 Agent（opencode 等）会把不在白名单、
+ * 也不在动态目录里的名字静默换成默认模型。用户在 CLI 里配了自定义网关
+ * 的模型名，正是「不在白名单但确实能跑」的一类 —— 不放行就等于菜单能选、
+ * 发出去却被换掉，是典型假控件。
+ */
+export type ConfiguredModelLookup = (agentId: string, modelId: string) => boolean;
+
+let configuredLookup: ConfiguredModelLookup | null = null;
+
+/** 注册/清除本机配置模型查表（传 null 可复位，供测试使用） */
+export function setConfiguredModelLookup(fn: ConfiguredModelLookup | null): void {
+  configuredLookup = fn;
+}
+
+/**
  * 解析要传给某个 Agent 的模型。
  *
  * @param agentId   Agent 标识
@@ -105,6 +127,10 @@ export function resolveModelForAgent(
     // 不认这一条，用户在模型菜单里选了 `opencode/glm-5.3-flash-free`
     // 会被静默换成默认模型 —— 菜单看起来能选，实际没生效。
     if (requested && catalogLookup?.(agentId, requested)) return requested;
+    // A210：本机 CLI 配置里用户自己写的模型名（自定义网关 / 第三方 provider）。
+    // 白名单里没有它是正常的 —— 它本来就不是厂商官方目录的一员。
+    // 不放行就会静默退回默认模型，界面却显示「已选中」。
+    if (requested && configuredLookup?.(agentId, requested)) return requested;
     return def.defaultModel ?? allowed[0];
   }
 

@@ -28,7 +28,7 @@ import {
   PencilLine,
   ListChecks,
 } from 'lucide-react';
-import { Model, PermissionMode, RegisteredAgent, AgentModelSource } from '../types';
+import { Model, PermissionMode, RegisteredAgent, AgentModelSource, CliConfiguredModel } from '../types';
 import { IMAGE_SIZES, IMAGE_MODELS } from '../imageOptions';
 import { PermissionGapNotice } from './PermissionGapNotice';
 import { ModelSelectPopup } from './ModelSelectPopup';
@@ -52,6 +52,12 @@ interface ChatInputProps {
    * 它只认自己设置里的模型）。
    */
   modelSource?: AgentModelSource;
+  /**
+   * 「本机 CLI 配置里写过的模型名」（自动发现并可选）。
+   * 原样继续传给 ModelSelectPopup，由它在列表下方单独成一组；不传 = 无此组。
+   * 与 modelSource / canPickModel / readonly 那套闸门完全独立。
+   */
+  configuredModels?: CliConfiguredModel[];
   /**
    * 标定一个「未验证」模型（A151 / P2）。
    *
@@ -258,6 +264,7 @@ export function ChatInput({
   selectedModel,
   models,
   modelSource,
+  configuredModels,
   onSelectUnverified,
   isLoading,
   permissionMode,
@@ -1061,6 +1068,7 @@ export function ChatInput({
                   <ModelSelectPopup
                     models={models}
                     value={selectedModel}
+                    configuredModels={configuredModels}
                     readonly={!canPickModel && !manualModel}
                     manual={manualModel}
                     note={modelSource?.note}

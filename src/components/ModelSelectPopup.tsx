@@ -40,13 +40,21 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Info, Plus } from 'lucide-react';
 import { Tooltip } from 'tdesign-react';
-import type { Model } from '../types';
+import type { Model, CliConfiguredModel } from '../types';
 import { modelTagKind } from '../../shared/model-tag';
 import { asProvenance, describeProvenance, type Provenance } from '../../shared/provenance';
 
 export interface ModelSelectPopupProps {
   models: Model[];
   value: string;
+  /**
+   * 「本机 CLI 配置里写过的模型名」（自动发现并可选）。
+   *
+   * 只是配置里写过的名字，**不代表账号真有权益、也不代表 CLI 现在还认** ——
+   * 界面单独成一组、标「未验证」，选中只是把 id 原样透传给 CLI。
+   * 与 `models` / `readonly` 那套闸门完全独立；不传 / 空数组 = 不渲染这一组。
+   */
+  configuredModels?: CliConfiguredModel[];
   onChange: (modelId: string) => void;
   onClose: () => void;
   /** 「添加模型」：去设置页刷新模型清单 */
@@ -141,6 +149,7 @@ function tagStyle(tag: NonNullable<Model['tag']>): React.CSSProperties {
 export function ModelSelectPopup({
   models,
   value,
+  configuredModels = [],
   onChange,
   onClose,
   onAddModel,
@@ -518,6 +527,72 @@ export function ModelSelectPopup({
         })}
       </div>
         </>
+      )}
+
+      {/* ── 本机 CLI 配置（独立分组）──
+          这些名字来自本机各家 CLI 配置 / 通用环境变量，只是「写过的名字」，
+          不代表账号真有权益、也不代表 CLI 现在还认 —— 一律标「未验证」，
+          选中只是把 id 原样透传给 CLI。
+          只读清单**不渲染**这个可点分组（最多显示、但行不可点，这里选择不显示）；
+          分组为空时整块不渲染（data-configured-group 不存在）。 */}
+      {!readonly && configuredModels.length > 0 && (
+        <div
+          data-configured-group
+          className="shrink-0"
+          style={{ borderTop: '1px solid var(--tc-divider)' }}
+        >
+          <div className="flex items-center gap-1.5 px-3 pt-2 pb-1">
+            <span
+              className="text-caption font-medium"
+              style={{ color: 'var(--td-text-color-secondary)' }}
+            >
+              本机 CLI 配置
+            </span>
+            <span
+              className="text-caption tabular-nums"
+              style={{ color: 'var(--td-text-color-placeholder)' }}
+            >
+              {configuredModels.length}
+            </span>
+          </div>
+          <div className="max-h-[160px] overflow-y-auto pb-1">
+            {configuredModels.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                data-configured-model
+                data-model-id={m.id}
+                data-configured-selectable="1"
+                onClick={() => onChange(m.id)}
+                className="mx-1 flex w-[calc(100%_-_8px)] items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-[var(--tc-fill-hover)]"
+                style={{ color: 'var(--td-text-color-primary)', cursor: 'pointer' }}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-body leading-5">{m.label || m.id}</span>
+                    <span
+                      className="shrink-0 rounded px-1 text-caption"
+                      style={{
+                        color: 'var(--td-text-color-placeholder)',
+                        backgroundColor: 'var(--td-bg-color-component)',
+                      }}
+                      data-configured-unverified
+                    >
+                      未验证
+                    </span>
+                  </span>
+                  <span
+                    className="block truncate text-caption leading-4"
+                    style={{ color: 'var(--td-text-color-secondary)' }}
+                    title={m.source}
+                  >
+                    {m.source}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* ── 底部通栏 ── */}

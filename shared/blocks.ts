@@ -341,6 +341,13 @@ export type RunEvent = Seq &
         cost?: number;
         tokens?: number;
         /**
+         * A210：首字时间戳（服务端侧，epoch ms）。t0 由前端随请求带来，
+         * t1 是收到请求的时刻，t2 是首个正文事件进入 SSE 的时刻；
+         * 本轮没产生正文时 t2 为 null。前端在 run_end 时补 t3/t4 并算分段，
+         * **t4−t3（UI 平滑延迟）必须单列，不能并进 TTFT**。
+         */
+        timing?: { t0: number; t1: number; t2: number | null };
+        /**
          * 同一份能力档，此刻补上 `observed` —— 这一轮**真的出现过**哪几类事件。
          *
          * 为什么放在 run_end 而不是另发一条事件：客户端收到 run_end 常会立刻

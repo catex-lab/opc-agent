@@ -74,21 +74,26 @@ export function selectAcpOption(
 const PROTOCOL_VERSION = 1;
 const INIT_TIMEOUT = 60_000;
 /**
- * 单个 RPC 请求的默认超时：10 分钟（历史值，保持不变）。
+ * 单个 RPC 请求的默认超时：90 秒（产品默认值）。
  *
- * 可用两种方式覆盖（供闸门注入 ~1.5s 测真超时路径，别让测试等 10 分钟）：
+ * 为什么要短：实测事故里 hermes-acp 骑在用户常驻 gateway 上，session/new
+ * 确定性挂起 —— 更长的默认会让「上百秒级无反馈卡顿」变成干等。90 秒让
+ * 挂死变成可感知的快速失败；已有的超时自愈逻辑（杀树重建、重试一次）原样保留。
+ *
+ * 可用两种方式覆盖（闸门仍通过 options / `OPC_ACP_REQUEST_TIMEOUT_MS`
+ * 注入 ~1.5s 测真超时路径，别让测试真等 90 秒）：
  *   1. 构造参数 `new AcpAdapter(def, { requestTimeoutMs: 1500 })`（优先）；
  *   2. 环境变量 `OPC_ACP_REQUEST_TIMEOUT_MS`（闸门 / 诊断用，不用改调用方）。
  * 非法值（非数字 / ≤0）一律回落默认 —— 配置错了不能把超时变成「永不超时」。
  */
-const DEFAULT_REQUEST_TIMEOUT = 10 * 60 * 1000;
+const DEFAULT_REQUEST_TIMEOUT = 90 * 1000;
 const REQUEST_TIMEOUT_ENV = 'OPC_ACP_REQUEST_TIMEOUT_MS';
 
 /**
  * 超时自愈耗尽后的用户文案。
  *
  * 实测事故（3 次）：hermes-acp 骑在用户常驻的 Hermes gateway 上，gateway 在
- * session.create 路径确定性挂起（10 分钟整）。适配器现在会在第一次超时后
+ * session.create 路径确定性挂起（永不回复；默认 90 秒后超时）。适配器现在会在第一次超时后
  * 自动杀树重建并重试一次；第二次仍超时才报错 —— 文案必须短、可执行、不甩锅，
  * 并且诚实说明「已经自动重启过」，引导用户做唯一剩下的那步动作。
  */
@@ -98,7 +103,7 @@ const SESSION_TIMEOUT_EXHAUSTED_MESSAGE =
 export interface AcpAdapterOptions {
   /**
    * 单个 RPC 请求的超时毫秒数。缺省读环境变量 `OPC_ACP_REQUEST_TIMEOUT_MS`，
-   * 再缺省 10 分钟。
+   * 再缺省 90 秒（产品默认值）。
    */
   requestTimeoutMs?: number;
   /** initialize 握手超时毫秒数。缺省 60s。 */
@@ -275,7 +280,7 @@ export class AcpAdapter implements AgentProvider {
   /** session/new 返回的模型清单，供前端选择 */
   private models: Array<{ modelId: string; name: string; description?: string }> = [];
 
-  /** 单个 RPC 请求的超时（可注入；默认 10 分钟） */
+  /** 单个 RPC 请求的超时（可注入；默认 90 秒 = 产品默认值） */
   private readonly requestTimeoutMs: number;
   /** initialize 握手超时（可注入；默认 60s） */
   private readonly initTimeoutMs: number;
@@ -284,8 +289,9 @@ export class AcpAdapter implements AgentProvider {
    * 第二次仍超时就把诚实文案交给用户。
    *
    * 为什么不做成配置项：这个数字一旦可调，「无限重试把用户拖死」就会
-   * 回来（旧实现没有自愈，挂死进程让每次重试都拖满 10 分钟）。预算
-   * 锁死在适配器内部，闸门反向探针会临时改它来验证预算行为。
+   * 回来（旧实现没有自愈，挂死进程让每次重试都拖满一个默认超时窗口，
+   * 现产品默认 90 秒）。预算锁死在适配器内部，闸门反向探针会临时改它
+   * 来验证预算行为。
    */
   private retryBudget = 1;
 
@@ -605,7 +611,7 @@ export class AcpAdapter implements AgentProvider {
     // 真正跑一次 initialize —— 这是唯一能确证「ACP 进程可用」的方式。
     // 但 initialize 只证明「进程会说话」，它不验证凭据、也不验证
     // session/new 能不能建出会话 —— 实测事故里 gateway 挂死时 initialize
-    // 一样能过，于是 probe 报「在线」而第一次发消息挂 10 分钟。
+    // 一样能过，于是 probe 报「在线」而第一次发消息挂满默认 90 秒超时。
     // 为什么不在这里真跑一次 session/new 验证：会真的建出 ACP 会话
     // （泄漏），而 probe 只该问「活着吗」。所以把能力边界写进文案。
     try {
@@ -669,7 +675,8 @@ export class AcpAdapter implements AgentProvider {
       //（预算 retryBudget=1，防死循环）。第二次仍超时才把诚实文案交给用户，
       // 并把这次重建出来、确认挂死的进程也收掉 —— 不留挂死进程给下次重试复用。
       // 旧实现超时只是 reject：挂死进程原样留着，下一次重试复用它再拖满
-      // 10 分钟 —— 用户「等十分钟得到一句死板报错」，而且越试越糟。
+      // 一个默认超时窗口（现产品默认 90 秒）—— 用户干等一轮超时才得到
+      // 一句死板报错，而且越试越糟。
       for (let attempt = 0; ; attempt++) {
         try {
           const res = (await rpc.request('session/new', { cwd, mcpServers }, this.requestTimeoutMs)) as Json;

@@ -1547,7 +1547,11 @@ const RAW_DEFS: AgentDefinition[] = [
       // diff / 加文件夹，没有 agent 模式），真正的 Agent CLI 叫
       // `cursor-agent`（同目录有别名 `agent`），装在 %LOCALAPPDATA%\cursor-agent。
       // PATH 里两者都有，取错就只是个「能打开 IDE 的按钮」。
-      bin: 'cursor-agent',
+      //
+      // A210：`agent` 是同一份安装里确证存在的别名（本机实测），补进数组
+      // 让「只装了新版 / PATH 里只有别名」的用户也能被探测到。顺序不能反：
+      // `cursor-agent` 优先，别名兜底。
+      bin: ['cursor-agent', 'agent'],
       buildArgs: (prompt, ctx) => {
         // 全部开关来自 2026-10-18 本机 `cursor-agent --help` 实测，
         // 并用一次真实调用验证过 stream-json 的行结构（见 mapLine）。
@@ -1637,6 +1641,15 @@ const RAW_DEFS: AgentDefinition[] = [
       // ~/.qoder/entry/qoder.cmd → qoder-dispatcher.ps1，只负责拉起 GUI），
       // 真正的 Agent CLI 是 `qodercli`，装在 %USERPROFILE%\.qoder\bin\qodercli。
       // 2026-10-19 本机实测：`qodercli -p "..."` 直接返回文本，退出码 0。
+      //
+      // A210 别名决策：2026-11-12 调研说命令名随版本变（国际 `qodercli`→`qoder`，
+      // CN `qoderclicn`→`qodercn`），但**这里刻意不把 `qoder` 加进别名数组**。
+      // 上面那行本机实测写得很清楚：`qoder` 是 IDE 启动器。findExecutable()
+      // 按 PATH 顺序取第一个命中的，加进去就会在「同时装了 IDE 与 CLI」的
+      // 机器上命中 IDE，探测看似通过、发消息却只是打开一个窗口 ——
+      // 正是 A105/A119 已经付出过代价的那类误判。
+      // 解除条件：在**新版 CLI 真机**上确认 `qoder -p` 返回的是 agent 结果
+      // 而不是启动 GUI，且 `qoder --help` 里没有 IDE 子命令，再补进数组。
       bin: 'qodercli',
       // 模型清单：`qodercli --list-models`（只列当前账号可路由的）。
       // ⚠️ 自定义模型那行是 `显示名 (provider-id…)`，**括号里那串不是 -m 的取值**：
@@ -1734,6 +1747,8 @@ const RAW_DEFS: AgentDefinition[] = [
       // CN 版 CLI 的可执行名是 `qoderclicn`（npm 包 @qodercn-ai/qoderclicn
       // 的 bin 名，2026-10-22 查包元数据确认）。参数形态与国际版同构 ——
       // 所以直接复用同一个 buildArgs，不复制一份会漂的代码。
+      // A210：与国际版同理，调研提到的新名 `qodercn` 未加进别名数组 ——
+      // 它同样可能是 CN 版 IDE 启动器，未经真机 `-p` 验证不写死。
       bin: 'qoderclicn',
       buildArgs: makeQoderCliArgs('qoder-cn'),
       // A163：与国际版同步改 jsonl + `-r` 续接。**这一条是推断，不是实测** ——
@@ -1864,6 +1879,18 @@ const RAW_DEFS: AgentDefinition[] = [
         if (ctx.resumeToken) args.push('--resume', ctx.resumeToken);
         return args;
       },
+      // A210：这一档是本项目**唯一**「等进程退出才出第一个字」的通道。
+      //
+      // 2026-11-12 生态调研确证 `zcode` 已有 `--output-format stream-json`，
+      // 但同一份调研也明确：zcode / mimo / mcode / dsh 的 NDJSON 与 Claude Code
+      // **不保证同构**，必须每家单列解析器。手上没有一条真机原始输出样本，
+      // 直接把 parse 切成 'jsonl' + 复用别家 mapLine，等于猜格式 ——
+      // 一旦猜错，zcode 会从「慢」变成「整轮无输出 / 全是 raw 噪音」。
+      //
+      // 所以本轮保持原样，先让 A210 的 t0–t4 埋点把这个阻塞**量化**出来
+      // （这一档的 serverFirstTokenMs 会接近整轮时长，就是证据）。
+      // 解除条件：拿到一条 `zcode --prompt "hi" --output-format stream-json`
+      // 的原始 stdout，据此单写 mapLine，再配版本探测 + 旧版回退。
       parse: 'json-object',
       extractResumeToken: obj => {
         const o = obj as { sessionId?: unknown };

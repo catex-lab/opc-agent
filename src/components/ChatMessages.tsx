@@ -20,6 +20,7 @@ import { useUserProfile } from '../userProfile';
 import { ImageBubble } from './ImageBubble';
 import { AnswerMarkdown } from './AnswerMarkdown';
 import { SMOOTH_SETTLE_MS } from '../hooks/useSmoothText';
+import { formatTimingTitle } from '../utils/runTiming';
 import { TypingText } from './TypingText';
 import { formatUsage } from '../utils/formatUsage';
 import { stripEmoji } from '../utils/plainText';
@@ -1375,6 +1376,22 @@ const MessageRow = memo(function MessageRow({
               它描述的是**这一轮**，不是某一步，放在步骤里反而会被误读成单步耗时。
               流式中不显示：那一刻还没跑完，写死一个不断变大的数会和下面
               状态行的秒数打架。 */}
+          {/* A210：本轮首字分段。只在刚跑完、确实拿到 timing 时显示；
+              hover 给出四段分解，其中 UI 平滑延迟单列、不并入端到端首字。
+              诊断信息暂不进 i18n —— 它不是产品文案，且会随埋点口径调整。 */}
+          {!msgIsImage && !message.isStreaming && message.timing?.ttftMs != null && (
+            <span
+              className="ml-auto shrink-0 text-caption tabular-nums"
+              style={{ color: 'var(--td-text-color-placeholder)' }}
+              title={formatTimingTitle(message.timing)}
+              data-msg-timing
+              data-msg-timing-ttft={message.timing.ttftMs}
+              data-msg-timing-ui={message.timing.uiSmoothMs ?? undefined}
+              data-msg-timing-server={message.timing.serverFirstTokenMs ?? undefined}
+            >
+              首字 {Math.round(message.timing.ttftMs)}ms
+            </span>
+          )}
           {!msgIsImage && !message.isStreaming && formatHandledDuration(message.durationMs) && (
             <span
               className="ml-auto shrink-0 text-caption tabular-nums"

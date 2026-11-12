@@ -172,12 +172,21 @@ import {
   resolveModelForAgent,
   resolveStoredModelForAgent,
   setCatalogModelLookup,
+  setConfiguredModelLookup,
   setPlatformModelLookup,
   SDK_DEFAULT_MODEL,
   SDK_MODEL_FALLBACK,
 } from "./model-routing.js";
 import { ensureCatalogLoaded, getCatalogSummary, getDefaultModelForAgent, isCatalogModel, loadCatalog } from "./agents/modelCatalog.js";
 import { readAgentConfigModels } from "./agents/agentConfigModels.js";
+import { listCliConfiguredModels } from "./agents/cliConfiguredModels.js";
+import { COMING_SOON_AGENTS } from "./agents/comingSoon.js";
+import {
+  beginRunTiming,
+  isFirstContentEvent,
+  noteFirstContent,
+  takeRunTiming,
+} from "./agents/runTimingMeta.js";
 import { probeAccount } from "./agents/accountProbe.js";
 import { makeProvenance, type Provenance } from "../shared/provenance.js";
 import { getVerdicts, mergeOfficialExtras, probeModels, readOfficialModels } from "./agents/modelAvailability.js";
@@ -284,6 +293,40 @@ const sdkProbedGetter = () => _sdkProbedAt;
 const defaultModel = SDK_DEFAULT_MODEL;
 /** 让「旧会话失效模型」判定拿到当前 SDK 清单（清单未就绪时返回 null） */
 setPlatformModelLookup(() => (cachedModelsGetter().length > 0 ? cachedModelsGetter().map(m => m.modelId) : null));
+
+/**
+ * A210：把「用户在本机 CLI 配置里自己写的模型名」注入模型路由。
+ *
+ * 为什么带 10 秒缓存：`resolveModelForAgent()` 每一轮对话都会调一次，
+ * 而扫描要读 `~/.claude` / `~/.codex` / `~/.config/opencode` 三处文件。
+ * 每轮都扫盘既没必要，也会在配置目录位于网络盘时拖慢首字。
+ * 用户改了 CLI 配置后最多 10 秒生效；模型菜单每次打开都会重新扫一遍，
+ * 所以界面上不会因为这份缓存显示过期条目。
+ *
+ * 归属要**二次过滤** `agentAcceptsModel()`：扫描器是零依赖纯模块，
+ * 不知道注册表里谁真的吃 `--model`。给不吃模型参数的 Agent 放行，
+ * 就等于在菜单里放一条点了必然被忽略的选项。
+ */
+const CONFIGURED_CACHE_TTL_MS = 10_000;
+let configuredCache: { at: number; byAgent: Map<string, Set<string>> } | null = null;
+setConfiguredModelLookup((agentId, modelId) => {
+  if (!configuredCache || Date.now() - configuredCache.at > CONFIGURED_CACHE_TTL_MS) {
+    const byAgent = new Map<string, Set<string>>();
+    for (const m of listCliConfiguredModels()) {
+      for (const a of m.agentIds) {
+        if (!agentAcceptsModel(a)) continue;
+        let set = byAgent.get(a);
+        if (!set) {
+          set = new Set<string>();
+          byAgent.set(a, set);
+        }
+        set.add(m.id);
+      }
+    }
+    configuredCache = { at: Date.now(), byAgent };
+  }
+  return configuredCache.byAgent.get(agentId)?.has(modelId) ?? false;
+});
 
 // 健康检查
 app.get("/api/health", (req, res) => {
@@ -594,17 +637,39 @@ function withObservedCapabilities<T extends { id: string }>(agents: T[]): Array<
   });
 }
 
+/**
+ * A210「即将接入」占位清单：以**平级字段**下发，`agents` 数组原样不动。
+ *
+ * 为什么平级：所有 `agents.map/filter` 消费方（联系人、新建会话选择器、
+ * 权限门）都不可能把占位条目当成可选 Agent。塞进 `agents` 数组就等于
+ * 让它被后台探测、被选中发消息，还会被 `isInstallable()` 画出一个装不上的
+ * 安装按钮 —— 比不展示更伤。
+ *
+ * 与已注册 Agent 同 id 的自动剔除：真接入时用同一个 id 进 `AGENT_DEFS`
+ * 即可「转正」，不需要前端再改一行。
+ */
+function comingSoonList(): Array<(typeof COMING_SOON_AGENTS)[number]> {
+  const registered = new Set(registry.list().map(a => a.id));
+  return COMING_SOON_AGENTS.filter(a => !registered.has(a.id));
+}
+
 // 列出全部 Agent（含探测状态）。带 TTL 缓存，不会每次都重探。
 app.get("/api/agents", async (req, res) => {
   try {
     const force = req.query.refresh === '1' || req.query.refresh === 'true';
     if (force) {
-      return res.json({ agents: withObservedCapabilities(await registry.probeAll(true)) });
+      return res.json({
+        agents: withObservedCapabilities(await registry.probeAll(true)),
+        comingSoon: comingSoonList(),
+      });
     }
     // 冷启动时缓存是空的，此时名册里全是 unknown（前端会显示成「未接入」）。
     // 这里把探测在后台启动起来，本次仍按当前缓存如实返回，由前端轮询补齐。
     registry.ensureProbedInBackground();
-    res.json({ agents: withObservedCapabilities(registry.list()) });
+    res.json({
+      agents: withObservedCapabilities(registry.list()),
+      comingSoon: comingSoonList(),
+    });
   } catch (error: any) {
     console.error("[Agents] Error:", error);
     res.status(500).json({ error: error?.message || "获取 Agent 列表失败" });
@@ -615,7 +680,7 @@ app.get("/api/agents", async (req, res) => {
 app.post("/api/agents/probe", async (req, res) => {
   try {
     const agents = await registry.probeAll(true);
-    res.json({ agents: withObservedCapabilities(agents) });
+    res.json({ agents: withObservedCapabilities(agents), comingSoon: comingSoonList() });
   } catch (error: any) {
     console.error("[Agents] Probe error:", error);
     res.status(500).json({ error: error?.message || "探测失败" });
@@ -1013,6 +1078,17 @@ function agentModelsProvenance(source: string, note: string): Provenance {
 app.get("/api/agents/:agentId/models", async (req, res) => {
   try {
     const agentId = req.params.agentId;
+    /**
+     * A210：本机 CLI 配置里发现的自定义模型，以**平级字段**下发。
+     *
+     * 绝不塞进 `models` 数组：那会改变 `list.length > 0` 的判定，把
+     * `unknown` / `manual` 两档挤成 `catalog`，A151 的四档闸门会全线变红。
+     * 归属只认「这个 Agent 真的接受 --model」，不吃模型参数的 Agent
+     * （zcode 的只读档）拿到空数组 —— 给它选项就是点了不生效的假控件。
+     */
+    const configured = agentAcceptsModel(agentId)
+      ? listCliConfiguredModels().filter(m => m.agentIds.includes(agentId))
+      : [];
     const models = await registry.modelsFor(agentId);
     // 一并给出该 Agent 自己的默认模型：列表按 provider 分组后，第一条
     // 不再等于「默认模型」（opencode 的默认是 zai/glm-4.7，而列表第一条
@@ -1035,6 +1111,7 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
       if (fromConfig) {
         return res.json({
           models: fromConfig.models,
+          configured,
           defaultModel: fromConfig.currentModel ?? defaultModel ?? "",
           source: "agent-config",
           selectable: false,
@@ -1074,6 +1151,7 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
     if (list.length === 0 && agentAcceptsModel(agentId)) {
       return res.json({
         models: [],
+        configured,
         defaultModel: defaultModel ?? "",
         source: "manual",
         selectable: true,
@@ -1088,6 +1166,7 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
 
     res.json({
       models: list,
+      configured,
       defaultModel,
       source: list.length > 0 ? "catalog" : "unknown",
       selectable: list.length > 0,
@@ -2213,6 +2292,9 @@ app.post("/api/chat", async (req, res) => {
     // A207：用户对「上一轮指令未完成」确认框的答复。
     // 'continue' = 就在原 CLI 会话上继续；'fresh' = 清掉续接令牌、新建会话。
     resumeChoice: rawResumeChoice,
+    // A210：前端 fetch 发出的时刻（epoch ms）。老客户端不带这个字段时
+    // 服务端把 t0 回落成 t1 —— 宁可少一段「请求在途」，也不编时间基准。
+    clientSentAt,
   } = req.body;
 
   console.log(`\n[Chat] ========== 新请求 ==========`);
@@ -2563,6 +2645,9 @@ app.post("/api/chat", async (req, res) => {
    * 顺序、思考位置、工具配对全部由它一处决定 —— 群聊与刷新还原共用同一套。
    */
   const runId = uuidv4();
+  // A210：t1 = 服务端收到请求的时刻；t0 由前端随 body 带来。
+  // 必须先于 run_start，否则首个正文事件进来时还没有这一轮的旁路记录。
+  beginRunTiming(runId, clientSentAt);
   /** 客户端是否已断开：断开后继续跑（等重连），但不再往死连接里写 */
   let clientGone = false;
   runHub.create(runId);
@@ -2593,6 +2678,9 @@ app.post("/api/chat", async (req, res) => {
 
   /** 写一条 v2 事件：带 SSE id（断线重放按它续传） */
   const writeEvent = (event: RunEvent) => {
+    // A210：t2 = 首个正文事件进入 SSE 的时刻。thinking / 工具块不算首字；
+    // 客户端断线时事件仍会进 runHub 供重连重放，这个时间点同样是事实。
+    if (isFirstContentEvent(event)) noteFirstContent(runId);
     if (!clientGone) {
       try {
         res.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`);
@@ -2670,7 +2758,7 @@ app.post("/api/chat", async (req, res) => {
     /* closes 也必须发：finish() 会把开着的块置为终态并生成 block_close，
        只发 .end 会让客户端的 thinking 块永远停在 streaming（永久转圈）。
        这个早退分支此刻通常还没有开着的块，但收尾契约不该在这里分岔。 */
-    const early = projector.finish('error');
+    const early = projector.finish('error', undefined, takeRunTiming(runId) ?? undefined);
     writeEvents(early.closes);
     writeEvent(early.end);
     return res.end();
@@ -2722,7 +2810,13 @@ app.post("/api/chat", async (req, res) => {
 
   // 收尾：关闭所有打开的块（文本/思考/工具），先于落库
   const runStatus = ac.signal.aborted ? 'aborted' : hadError ? 'error' : 'ok';
-  const { closes, end } = projector.finish(runStatus, donePayload ?? undefined);
+  // A210：取走这一轮的服务端时间戳挂到 run_end 上。取走即清理，
+  // 不留残骸；没有正文时 t2=null，前端据此显示「—」而不是 0ms。
+  const { closes, end } = projector.finish(
+    runStatus,
+    donePayload ?? undefined,
+    takeRunTiming(runId) ?? undefined
+  );
   writeEvents(closes);
 
   // 落库助手消息（E2：整条块序列一次写入，刷新后与流式中同一份数据）
