@@ -41,6 +41,8 @@ import {
   workbuddyCustomModels,
   workbuddyState,
 } from "./agents/wbProductProfile.js";
+// A212：数据根水位线与续接令牌对账（换根后旧 CLI 会话令牌批量作废）。
+import { reconcileWorkbuddyResumeTokens } from "./agents/wbRootEpoch.js";
 import {
   createCustomSpec,
   customSpecToDefinition,
@@ -1251,6 +1253,11 @@ function workbuddyProfileResponse(force = false) {
 }
 
 /**
+ * A212 的对账逻辑与事故复盘见 `server/agents/wbRootEpoch.ts`（水位线 +
+ * 批量作废，方案 A）。这里只挂三个调用点：启动、切换/重扫、发送路径。
+ */
+
+/**
  * 切版本 / 重扫之后必须做的四件事，少一件就是「界面切了、实际没切」。
  *
  * ① 发现层缓存作废 —— SdkAdapter 构造器必须在这次重读之后才执行；
@@ -1262,6 +1269,9 @@ function workbuddyProfileResponse(force = false) {
 async function rebindWorkbuddyRuntime(reason: string, beforeId: string, forceRebuild = false) {
   invalidateWorkbuddyProfile();
   const state = workbuddyProfileResponse(true);
+  // A212：此刻 profile 缓存已刷新，立即对账一次 —— 换根的代价（旧令牌作废）
+  // 在切换动作里当场结清，不等下一条消息才暴露成一次报错。
+  reconcileWorkbuddyResumeTokens();
   const changed = state.activeId !== beforeId;
   // 只在真的换了数据根时重建：dispose 会关掉整个会话池（正在跑的对话会中断），
   // 用户只是把「自动」重新点一下不该付出这个代价。重扫则一律强制重建 ——
@@ -2518,7 +2528,11 @@ app.post("/api/chat", async (req, res) => {
   }
 
   const selectedModel = resolvedModel;
-  let resumeToken = session.sdk_session_id;
+  // A212：先对账再取令牌 —— 换根后旧令牌已被批量作废（含本会话行），本轮
+  // 直接新建 CLI 会话，不把 `No conversation found` 暴露给用户。workbuddy
+  // 之外的对账没有意义（水位线只属于 workbuddy），memo 短路后热路径零开销。
+  const wbEpoch = agentId === 'workbuddy' ? reconcileWorkbuddyResumeTokens() : null;
+  let resumeToken = wbEpoch && wbEpoch.invalidated > 0 ? null : session.sdk_session_id;
 
   // A123：生效顺序与 cwd / 档位一致 —— 请求体 > 会话里存的值 > 'default'。
   // 放在续接判定之前算，因为下面要用它决定「旧线程还能不能续」。
@@ -4758,6 +4772,13 @@ try {
 }
 // A40：权限规则预热。门禁每次工具调用都读内存缓存，这里负责先填上。
 loadPermissionRules();
+// A212：WorkBuddy 续接令牌纪元对账。应用关着时官方也可能换数据根 ——
+// 启动这一次保证「开箱第一条消息」就不会撞上旧纪元令牌。失败不阻断启动。
+try {
+  reconcileWorkbuddyResumeTokens();
+} catch (e) {
+  console.warn('[WB] 续接令牌对账失败（不影响启动）:', (e as Error).message);
+}
 // A57：模型目录。
 //  1) 把「动态目录」注册进模型路由 —— 否则用户从菜单里选的
 //     `opencode/glm-5.3-flash-free` 不在静态白名单里，会被静默换成默认模型；

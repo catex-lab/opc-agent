@@ -436,6 +436,63 @@ export function activeWorkbuddyProfile(): WorkbuddyProfile | undefined {
 }
 
 /**
+ * A212 水位线：记录「现存续接令牌（sessions.sdk_session_id）是哪个数据根
+ * 时代发的」。
+ *
+ * ## 为什么必须有它
+ *
+ * A211 把 WorkBuddy 从「写死 ~/.workbuddy」改成「跟随官方活跃数据根」，
+ * 但 `sdk_session_id` 是**旧根时代**发的：CLI 会话转录与后端登记都挂在旧根
+ * 下。换根之后拿旧令牌去续接，CLI 直接报 `No conversation found with
+ * session ID: …`（实测 0.6s 失败，用户视角是「换根后第一句必炸」）。令牌
+ * 本身不带纪元信息，无法自证出自哪个根，只能由服务端记一份水位线：
+ * 根变了 ⇒ 旧纪元的令牌全部作废（对账逻辑在 index.ts，这里只管存取）。
+ *
+ * 代价（已拍板）：换根后 AI 不再续接上一条的话题，从全新 CLI 会话开始 ——
+ * 聊天记录完整可读，丢的只是 CLI 上下文衔接。
+ */
+const ROOT_WATERMARK_PATH = path.join(dataDirPath, 'workbuddy-root-watermark.json');
+
+export function readWorkbuddyRootWatermark(): string | null {
+  const raw = safeJson(ROOT_WATERMARK_PATH);
+  const root = raw && typeof raw.root === 'string' ? raw.root : '';
+  return root.trim() ? root : null;
+}
+
+export function writeWorkbuddyRootWatermark(root: string): void {
+  try {
+    fs.writeFileSync(ROOT_WATERMARK_PATH, JSON.stringify({ root }, null, 2), 'utf8');
+  } catch {
+    // 写不进（只读盘等）：下轮对账会再写；不该为记账打断会话主链路
+  }
+}
+
+/**
+ * 当前真正会传给 CLI 的数据根：生效 profile 的 root；一个配置快照都
+ * 检测不到时回落定义表（与 applyWorkbuddyProfile 的放行口径一致 ——
+ * 两处必须同源，否则对账盯的根和 CLI 实际拿的根会分叉）。
+ */
+export function effectiveWorkbuddyConfigRoot(): string {
+  const active = activeWorkbuddyProfile();
+  if (active?.detected) return active.root;
+  return expandHome(hardcodedSpec().configDir);
+}
+
+/** 定义表写死的旧根（`~/.workbuddy`）的绝对路径 —— 「旧柜时代」的标志物 */
+export function legacyWorkbuddyRoot(): string {
+  return expandHome(hardcodedSpec().configDir);
+}
+
+/** 旧根目录是否真实存在。存在 ⇒ 这台机器真有过旧根时代，存量令牌可能是旧纪元的 */
+export function legacyWorkbuddyRootExists(): boolean {
+  try {
+    return fs.existsSync(legacyWorkbuddyRoot());
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 把定义表的静态 `SdkSpec` 覆盖成官方声明的运行时值。
  *
  * 只有 workbuddy 走这里；其它 SDK Agent 原样返回，避免把腾讯产品的规则

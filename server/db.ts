@@ -958,6 +958,24 @@ export function updateSession(
   return toNumber(result.changes) > 0;
 }
 
+/**
+ * A212：作废一个 Agent 全部会话的 CLI 续接令牌（`sdk_session_id` 置 null）。
+ *
+ * WorkBuddy 换数据根后，旧根时代发出的令牌指向旧根下的 CLI 会话 —— 在新根
+ * 里读不到转录、后端也没登记，续接只会得到 `No conversation found`。这里
+ * 一次性作废整批，代价是这些会话下轮起从全新 CLI 会话开始（聊天记录不动）。
+ *
+ * 只按 `agent_id` 精确匹配：群聊成员的令牌不落在 sessions 行上，workbuddy
+ * 当前也没有群聊编排场景，故意不引入 `agent_ids LIKE` 模糊匹配去扩大打击面。
+ */
+export function invalidateAgentResumeTokens(agentId: string): number {
+  const stmt = db.prepare(
+    'UPDATE sessions SET sdk_session_id = NULL WHERE agent_id = ? AND sdk_session_id IS NOT NULL'
+  );
+  const result = stmt.run(bind(agentId));
+  return toNumber(result.changes);
+}
+
 // 删除会话
 export function deleteSession(id: string): boolean {
   const stmt = db.prepare('DELETE FROM sessions WHERE id = ?');
