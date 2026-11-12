@@ -967,12 +967,19 @@ const RAW_DEFS: AgentDefinition[] = [
       name: 'WorkBuddy',
       vendor: 'Tencent',
       kind: 'sdk',
-      // 依据：`~/.workbuddy/cache/acc-product-config-v3.json`
+      // 下面这三项（environment / endpoint / configDir）**只是内置兜底快照**：
+      // 抄自 2026-10 的 `~/.workbuddy/cache/acc-product-config-v3.json`
       //   productName="WorkBuddy" / endpoint=https://www.workbuddy.cn /
       //   networkEnvironment="internal" / dataFolderName=".workbuddy"。
-      // 国际版是**另一个产品**（productName="WorkBuddy AI"、endpoint=www.workbuddy.ai、
-      // dataFolderName=".workbuddy-ai"、networkEnvironment="external"），账号体系也不同
-      // （腾讯云国际站，支持 Google/GitHub/X 直登）→ 将来若接入，必须是独立条目（R1）。
+      // A211 起不再当常量用：官方把国内版/国际版安装程序合并后，活跃数据根会
+      // 在 `.workbuddy` 与 `.workbuddy-ai` 之间切换，运行时由
+      // `wbProductProfile.applyWorkbuddyProfile()` 读官方自己的声明覆盖这三项，
+      // 本表退化为「一个客户端都没装」时的兜底 + 漂移告警的对照基准。
+      //
+      // 为什么**不**拆成 qoder / qoder-cn 那样的两条：两个版本共用同一个 SDK
+      // 与同一份 CLI，只是配置根/endpoint 不同；一个子进程同时只能持一份凭据。
+      // 拆两条会出现「两个都显示在线、点开一个必然 401」的幽灵条目。
+      // 所以是「一个 Agent + 多个运行时 profile」，在设置里固定或一键切换。
       family: 'tencent-workbuddy',
       familyName: 'WorkBuddy',
       surface: 'sdk',
@@ -985,7 +992,7 @@ const RAW_DEFS: AgentDefinition[] = [
       description: '全能型主控 Agent，可读写文件、执行命令、联网检索，适合担任群聊的调度中枢',
       icon: 'workbuddy',
       color: '#0EC8A9',
-      installHint: '先在 WorkBuddy 桌面客户端登录（复用 ~/.workbuddy），或在下方凭据配置填 CODEBUDDY_API_KEY',
+      installHint: '先在 WorkBuddy 桌面客户端登录（默认复用 ~/.workbuddy，应用会自动跟随桌面端实际使用的数据目录），或在下方凭据配置填 CODEBUDDY_API_KEY',
     },
     /**
      * A155：真正接到 WorkBuddy 国内产品上。
@@ -2364,7 +2371,7 @@ const INSTALL_INFO: Record<string, AgentInstall> = {
     // 2026-10-31：SDK 自带的 CLI 已随安装包分发（asarUnpack，见
     // electron-builder.yml），bootstrap.cjs 会把它注入 CODEBUDDY_CODE_PATH。
     // 所以打包版不再要求用户另装 CLI，缺的只是登录。
-    note: '走内置 SDK（CLI 已随应用分发）；先在 WorkBuddy 桌面客户端登录，回来点「重新探测」复用 ~/.workbuddy 登录态；也可在下方「凭据配置」填 CODEBUDDY_API_KEY',
+    note: '走内置 SDK（CLI 已随应用分发）；先在 WorkBuddy 桌面客户端登录，回来点「重新探测」复用其登录态（默认 ~/.workbuddy，桌面端换目录时应用自动跟随，见「设置 → 登录配置 → WorkBuddy 产品版本」）；也可在下方「凭据配置」填 CODEBUDDY_API_KEY',
     checkedAt: CHECKED,
     checkedFrom: '官方双版本产品配置（A68 已核：productName / networkEnvironment）',
   },

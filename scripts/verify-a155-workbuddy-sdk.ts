@@ -2,7 +2,10 @@
  * A155：WorkBuddy 真正接到 SDK 通道的验收闸门。
  *
  * 要钉的是一件事：**WorkBuddy 这三处调用（对话 / 模型清单 / 登录检查）必须
- * 用同一套产品参数（internal + www.workbuddy.cn + ~/.workbuddy）**。
+ * 用同一套产品参数**。A211 之后这套参数由官方活跃产品配置在运行时派生，
+ * 定义表里的 `internal + www.workbuddy.cn + ~/.workbuddy` 只是「一个客户端
+ * 都没装」时的兜底快照 —— [1] 仍钉这份快照，[2] 钉三处消费方都走同一条
+ * 派生路径，profile 切换本身的正确性由 `verify:a211-workbuddy-profiles` 负责。
  *
  * ## 为什么不能只测「模型能拉出来」
  *
@@ -98,7 +101,8 @@ console.log('\n[1] resolveSdkRuntime：把定义表的 SdkSpec 展开成 SDK 认
   ok(!('environment' in emptySpec) && !('endpoint' in emptySpec) && Object.keys(emptySpec.env).length === 0,
     '空 spec 与 undefined 等价');
 
-  // WorkBuddy 实配：三项都要在，且配置根指向官方产品目录
+  // 定义表里的 WorkBuddy **兜底快照**：三项都要在，且配置根指向官方产品目录。
+  // 运行时真正生效的值由 applyWorkbuddyProfile 覆盖（见 [2] 与 A211 闸门）。
   const def = findDef('workbuddy');
   const rt = resolveSdkRuntime(def?.sdk);
   ok(rt.environment === 'internal', 'WorkBuddy → environment=internal', String(rt.environment));
@@ -137,8 +141,21 @@ console.log('\n[2] 源码契约：适配器与 HTTP 路由都走同一份 runtim
   const runtimeSpreads = sdk.filter(l => l.includes('...this.runtime')).length;
   ok(runtimeSpreads === 3, '★ 适配器三处（探测 / 池会话 / 回退 query）都注入 runtime',
     `n=${runtimeSpreads}`);
-  ok(sdk.some(l => l.includes('resolveSdkRuntime(def.sdk)')),
-    '适配器构造器从 def.sdk 展开运行参数');
+  /* A211：构造器的 spec 不再直接吃定义表，而是先过
+     `applyWorkbuddyProfile(def.sdk, id)` —— WorkBuddy 的端点 / 环境 / 配置根
+     要跟随官方当前活跃版本，定义表三项退为兜底快照。
+     这里钉**不变量**（构造器确实做了 profile 派生）而不是整行字面量；
+     匹配的是剥过注释的代码行，注释里的示例不会让它假绿。 */
+  const ctorRuntimeLine = sdk.find(l => /this\.runtime\s*=\s*resolveSdkRuntime\(/.test(l)) ?? '';
+  ok(/resolveSdkRuntime\(\s*applyWorkbuddyProfile\(\s*def\.sdk/.test(ctorRuntimeLine),
+    '★ 适配器构造器把 def.sdk 先过 applyWorkbuddyProfile 再展开运行参数');
+  ok(idx.some(l => /resolveSdkRuntime\(applyWorkbuddyProfile\(findDef\(agentId\)\?\.sdk/.test(l)),
+    '★ index.ts 的 sdkRuntimeFor 与构造器共用同一套 profile 派生（不会两处再分叉）');
+  // 反向探针：把实现退回「直接用 def.sdk」的坏版本，新断言必须变红。
+  // 少了这一条，「断言恒绿」比「断言过时」更难发现。
+  const reverted = ctorRuntimeLine.replace('applyWorkbuddyProfile(', 'identity(');
+  ok(!/resolveSdkRuntime\(\s*applyWorkbuddyProfile\(/.test(reverted),
+    '反向探针：退回写死 def.sdk 的坏版本后，这条接线断言会判红');
   ok(sdk.some(l => l.includes('constructor(def: AgentDefinition)')),
     '适配器构造器收的是完整 AgentDefinition（不是只收 descriptor）');
 

@@ -334,6 +334,39 @@ class AgentRegistry {
   }
 
   /**
+   * A211：切换 WorkBuddy 产品 profile 时**重建**适配器。
+   *
+   * 为什么不能只改一个变量：SdkAdapter 在构造时把 runtime（environment /
+   * endpoint / CODEBUDDY_CONFIG_DIR）算进 `this.runtime`，并按会话缓存常驻
+   * CLI 进程（slots）。那些进程启动时就继承了旧配置根与旧 token —— 只改状态
+   * 会留下「界面显示新版本、实际还在用旧凭据」的假切换，正是
+   * definitions.ts:1695 里「切了等于没切」的那类缺陷。
+   *
+   * 先 dispose()（closeEntry 逐个关掉 CLI 进程）再按同一份定义表重建，并清掉
+   * 探测状态与时间戳，让下一轮探测真的用新参数跑一次。
+   */
+  replaceProvider(id: string): boolean {
+    const def = findDef(id);
+    if (!def) return false;
+    try {
+      const old = this.providers.get(id);
+      try {
+        old?.dispose?.();
+      } catch (err) {
+        console.error(`[Registry] 回收 ${id} 旧适配器失败:`, (err as Error).message);
+      }
+      this.providers.set(id, createProvider(def));
+    } catch (err) {
+      console.error(`[Registry] 重建 ${id} 适配器失败:`, (err as Error).message);
+      return false;
+    }
+    this.statuses.delete(id);
+    this.probedAt.delete(id);
+    this.inflight.delete(id);
+    return true;
+  }
+
+  /**
    * 某个 Agent 可用的模型（用于前端模型选择）。
    *
    * 优先级：ACP Agent 运行时上报的模型 > 静态白名单 + 动态目录。

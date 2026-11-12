@@ -32,6 +32,15 @@ import { agentAcceptsModel, findDef, registerCustomDefs } from "./agents/definit
 // A155：SDK 产品参数（environment / endpoint / configDir）的唯一展开点。
 // 适配器与这里的两个路由共用它，避免「一处修好、另一处仍是 external」。
 import { resolveSdkRuntime } from "./agents/sdkRuntime.js";
+// A211：WorkBuddy 官方产品配置的运行时发现（目录/端点/环境/自定义模型）。
+import {
+  applyWorkbuddyProfile,
+  getPinnedProfile,
+  invalidateWorkbuddyProfile,
+  setPinnedWorkbuddyProfile,
+  workbuddyCustomModels,
+  workbuddyState,
+} from "./agents/wbProductProfile.js";
 import {
   createCustomSpec,
   customSpecToDefinition,
@@ -323,6 +332,21 @@ setConfiguredModelLookup((agentId, modelId) => {
         set.add(m.id);
       }
     }
+    /* A211：WorkBuddy 桌面端的自定义模型单独灌进 lookup。
+     *
+     * 它 `agentAcceptsModel()` 为 false（不吃 CLI `--model`），所以上面的
+     * 通用循环会把它滤掉；但 SDK 的 `session.setModel()` 确实认这些 id。
+     * 这里登记只影响 `isStaleSdkModel()` —— 不豁免的话用户刚选的自定义模型
+     * 会在下一轮被当成「已下线的旧 SDK 模型」静默抹掉，表现为「选完能用，
+     * 刷新会话就没了」。它不会让任何 CLI Agent 多拿到一个 --model 参数。 */
+    for (const m of workbuddyCustomModels()) {
+      let set = byAgent.get('workbuddy');
+      if (!set) {
+        set = new Set<string>();
+        byAgent.set('workbuddy', set);
+      }
+      set.add(m.id);
+    }
     configuredCache = { at: Date.now(), byAgent };
   }
   return configuredCache.byAgent.get(agentId)?.has(modelId) ?? false;
@@ -360,7 +384,10 @@ interface LoginStatusResponse {
  * 这样新增 SDK 产品时不会因为「漏配」被悄悄接到别的产品上而看不出来。
  */
 function sdkRuntimeFor(agentId: string) {
-  return resolveSdkRuntime(findDef(agentId)?.sdk);
+  // A211：WorkBuddy 的三项参数不再吃定义表里的静态快照，而是从官方产品配置
+  // 运行时派生（其它 SDK Agent 原样）。与 SdkAdapter 构造器共用同一个函数，
+  // 避免两处各自解析再次分叉。
+  return resolveSdkRuntime(applyWorkbuddyProfile(findDef(agentId)?.sdk, agentId));
 }
 
 // 检查 WorkBuddy（SDK 通道）的登录状态
@@ -509,8 +536,9 @@ async function loadSdkModels(force = false): Promise<{
   _setSdkProbedAt(Date.now());
   console.log("[Models] Creating session to fetch available models...");
   const session = await unstable_v2_createSession({
-    // A155：取模型清单也必须连到 WorkBuddy 国内版，否则拿回的是
-    // CodeBuddy 国际站的清单 —— 用户在菜单里选的模型在 WorkBuddy 上并不存在。
+    // A155 / A211：取模型清单必须和对话、登录检查连到**同一个产品版本**。
+    // sdkRuntimeFor() 现在按生效 profile 派生三项；写死国内版会在官方把活跃
+    // 目录切到 .workbuddy-ai 之后拿回另一套清单，或直接 401。
     ...sdkRuntimeFor('workbuddy'),
     cwd: process.cwd()
   });
@@ -1088,7 +1116,12 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
      */
     const configured = agentAcceptsModel(agentId)
       ? listCliConfiguredModels().filter(m => m.agentIds.includes(agentId))
-      : [];
+      /* A211：WorkBuddy 是唯一「不吃 --model、但能切模型」的例外。
+         SDK 走 `session.setModel()` 热更新，桌面端 `models.json` 里的自定义
+         模型 id 原样传过去就能用（本机实测官方客户端正是这么用的）。
+         所以它不是 A210 注释里警惕的「点了不生效的假控件」；仍放平级字段，
+         不碰 `models` 数组，A151 的四档语义原样保留。 */
+      : agentId === 'workbuddy' ? workbuddyCustomModels() : [];
     const models = await registry.modelsFor(agentId);
     // 一并给出该 Agent 自己的默认模型：列表按 provider 分组后，第一条
     // 不再等于「默认模型」（opencode 的默认是 zai/glm-4.7，而列表第一条
@@ -1182,6 +1215,115 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "获取模型列表失败" });
+  }
+});
+
+/* ══════════════════ A211：WorkBuddy 运行时 profile ══════════════════
+ *
+ * 一个 `workbuddy` Agent id，多个官方数据根（国内版 / 国际版 / 未来的第三个）。
+ * 端点、网络环境、配置根、登录态、自定义模型全部跟随**生效的那个 profile**。
+ * 用户只装一个 → 自动选中；两个都装 → 按活跃度自动选，可固定或一键切换；
+ * 一个都没装 → 用定义表兜底并明确标 `fallback`，绝不假装接上了。
+ *
+ * 与 `qoder` / `qoder-cn` 的区别：那俩是两个独立 CLI、账号与 Credits 全独立，
+ * 所以拆两条；WorkBuddy 是同一个 SDK，一个子进程一次只能持一份凭据，
+ * 拆两条只会得到「两个都在线、点一个必然 401」的幽灵条目。
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/**
+ * 下发给页面的状态。
+ *
+ * `profiles[].root` 是本机的绝对路径，只在服务端用来定位文件；页面只需要
+ * `dataFolderName` / `productName`。这里显式剔除，不把用户目录广播出去。
+ * `drift[].official` 也已经在发现层写成了 `~/目录名` 形态。
+ */
+function workbuddyProfileResponse(force = false) {
+  const state = workbuddyState(force);
+  return {
+    ...state,
+    profiles: state.profiles.map(p => {
+      const { root, ...rest } = p;
+      void root;
+      return rest;
+    }),
+    pinnedId: getPinnedProfile(),
+  };
+}
+
+/**
+ * 切版本 / 重扫之后必须做的四件事，少一件就是「界面切了、实际没切」。
+ *
+ * ① 发现层缓存作废 —— SdkAdapter 构造器必须在这次重读之后才执行；
+ * ② 换 provider —— 常驻 CLI 进程继承的是**启动那一刻**的
+ *    CODEBUDDY_CONFIG_DIR 与 token，只改前端 state 等于什么都没做；
+ * ③ 模型缓存全套作废 —— 平台清单与自定义模型清单都随 profile 变；
+ * ④ 立即重探 —— 名册上的「已登录」不能停留在旧版本的判断。
+ */
+async function rebindWorkbuddyRuntime(reason: string, beforeId: string, forceRebuild = false) {
+  invalidateWorkbuddyProfile();
+  const state = workbuddyProfileResponse(true);
+  const changed = state.activeId !== beforeId;
+  // 只在真的换了数据根时重建：dispose 会关掉整个会话池（正在跑的对话会中断），
+  // 用户只是把「自动」重新点一下不该付出这个代价。重扫则一律强制重建 ——
+  // 用户点「重新检测」通常正是因为刚在桌面端重登、旧进程还揣着旧 token。
+  const replaced = changed || forceRebuild ? registry.replaceProvider('workbuddy') : false;
+  configuredCache = null;
+  invalidateAllModelCaches(reason);
+
+  let agent: unknown;
+  let agentError: string | undefined;
+  try {
+    agent = await registry.probeOne('workbuddy', true);
+  } catch (err) {
+    // 探测失败不该把「切换已生效」变成一次 500；状态已经写盘并重建，
+    // 如实把错误带出去让界面显示「重探失败」即可。
+    agentError = (err as Error)?.message || String(err);
+  }
+  // 与 GET 同形：state 的字段展开在顶层，附加字段平级挂着。前端只用一套类型。
+  return { ...state, changed, replaced, agent, ...(agentError ? { agentError } : {}) };
+}
+
+app.get("/api/workbuddy-profiles", (req, res) => {
+  try {
+    const force = req.query.refresh === '1' || req.query.refresh === 'true';
+    res.json(workbuddyProfileResponse(force));
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || '读取 WorkBuddy 产品版本失败' });
+  }
+});
+
+/** body: `{ id: string | null }`；null = 取消固定，回到按活跃度自动选择 */
+app.post("/api/workbuddy-profiles/switch", async (req, res) => {
+  try {
+    const { id } = req.body ?? {};
+    // 非法值 400，不静默纠正成「自动」（与会话级设置的约定一致）。
+    if (id !== null && (typeof id !== 'string' || !id.trim())) {
+      return res.status(400).json({ error: 'id 必须是已检测到的版本 id，或 null（恢复自动选择）' });
+    }
+    const beforeId = workbuddyState().activeId;
+    const pinned = setPinnedWorkbuddyProfile(id === null ? null : id.trim());
+    if (!pinned.ok) return res.status(400).json({ error: pinned.reason });
+    const out = await rebindWorkbuddyRuntime(
+      `switchWorkbuddyProfile(${id === null ? 'auto' : id})`, beforeId
+    );
+    res.json(out);
+  } catch (error: any) {
+    console.error('[WorkbuddyProfiles] switch error:', error);
+    res.status(500).json({ error: error?.message || '切换 WorkBuddy 产品版本失败' });
+  }
+});
+
+/** 桌面端刚重登 / 刚换了活跃目录时手动重扫，强制重建常驻 CLI 进程 */
+app.post("/api/workbuddy-profiles/refresh", async (req, res) => {
+  try {
+    const beforeId = workbuddyState().activeId;
+    const out = await rebindWorkbuddyRuntime(
+      'POST /api/workbuddy-profiles/refresh', beforeId, true
+    );
+    res.json(out);
+  } catch (error: any) {
+    console.error('[WorkbuddyProfiles] refresh error:', error);
+    res.status(500).json({ error: error?.message || '重新检测 WorkBuddy 产品版本失败' });
   }
 });
 

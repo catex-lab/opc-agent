@@ -40,6 +40,7 @@ import type {
 } from '../types.js';
 import type { AgentDefinition } from '../definitions.js';
 import { resolveSdkRuntime, type SdkRuntime } from '../sdkRuntime.js';
+import { applyWorkbuddyProfile, workbuddyKeyblobDisplay } from '../wbProductProfile.js';
 import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 import { workbuddyKeyblobInfo, formatLocalMinute } from '../credentialStatus.js';
 import { appendFailureAdvice } from '../recovery.js';
@@ -253,7 +254,7 @@ export class SdkAdapter implements AgentProvider {
 
   constructor(def: AgentDefinition) {
     this.descriptor = def.descriptor;
-    this.runtime = resolveSdkRuntime(def.sdk);
+    this.runtime = resolveSdkRuntime(applyWorkbuddyProfile(def.sdk, def.descriptor.id));
   }
 
   // ============= 探测 =============
@@ -272,7 +273,9 @@ export class SdkAdapter implements AgentProvider {
     return makeProvenance(
       envOk
         ? '进程环境变量 CODEBUDDY_API_KEY / CODEBUDDY_AUTH_TOKEN'
-        : 'WorkBuddy SDK unstable_v2_authenticate（CLI 本地缓存）+ ~/.workbuddy/keyblob',
+        // A211：登录态文件名必须跟着生效的产品版本走。写死 ~/.workbuddy 会让
+        // 用户切到国际版后仍去翻一份几个月没更新的旧 keyblob（401 的根因之一）。
+        : `WorkBuddy SDK unstable_v2_authenticate（CLI 本地缓存）+ ${workbuddyKeyblobDisplay()}`,
       {
         probedAt: Number.isFinite(at) ? at : Date.now(),
         verified: false,

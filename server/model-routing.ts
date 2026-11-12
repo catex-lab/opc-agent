@@ -157,7 +157,14 @@ export function isStaleSdkModel(agentId: string, modelId?: string | null): boole
   if (!isTencentSdk) return false;
   const list = platformModelLookup?.();
   if (!list || list.length === 0) return false;
-  return !list.includes(modelId);
+  if (list.includes(modelId)) return false;
+  // A211：WorkBuddy 桌面端「自定义模型」不在 SDK 的平台清单里，但 SDK 的
+  // `setModel()` 确实认它（端点与密钥由官方 SDK 从自己的数据根读取）。
+  // 模型菜单里选了它、当前轮能跑，下一轮 `resolveStoredModelForAgent()`
+  // 却会因为「不在平台清单」把它判成已下线的旧模型并静默抹掉 —— 典型
+  // 「第一次能用、刷新就没了」。这里放行本机配置里登记过的名字。
+  if (configuredLookup?.(agentId, modelId)) return false;
+  return true;
 }
 
 /**

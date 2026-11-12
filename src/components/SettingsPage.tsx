@@ -21,6 +21,7 @@ import '../settings-select.css';
 import { PanelHeader } from './PanelHeader';
 import { InfoHint } from './InfoHint';
 import { AgentCredentialSettings } from './AgentCredentialSettings';
+import { WorkbuddyProfileSettings } from './WorkbuddyProfileSettings';
 import { type CloseBehavior, readCloseBehavior, saveCloseBehavior } from '../closeBehavior';
 import { type LinkOpenMode, readLinkOpenMode, saveLinkOpenMode } from '../answer/linkRouter';
 import { type AnswerLanguage, readAnswerLanguage, saveAnswerLanguage } from '../answerLanguage';
@@ -1015,6 +1016,27 @@ export function SettingsPage({
               走的是各自的 Key，之前**只能靠进程环境变量** —— 打包版用户
               根本没有「设置环境变量」这个动作，于是名册上永远是「未登录」。
               这一节把那条路补上：填完即落盘、即重探。 */}
+          {/* ── WorkBuddy 产品版本（A211）────────────────────────────
+              官方把国内版 / 国际版安装程序合并后，活跃数据根会在
+              .workbuddy 与 .workbuddy-ai 之间换；应用仍读旧目录就是 401，
+              而「在桌面端重新登录」只刷新新目录，构成无效循环。
+              放在「登录配置」最上面：它是排查登录问题的第一站，也是
+              恢复话术指向的落点。挂在已有分区里，不新增分区 ——
+              A138 那套「切分区三维不许变」的几何闸门量的是分区序列。 */}
+          <div className="mt-8" data-workbuddy-profile-section>
+            <h3
+              className="mb-3 flex items-center gap-1.5 text-sm font-medium"
+              style={{ color: 'var(--td-text-color-primary)' }}
+            >
+              {t('settings.wbProfile.title')}
+              <InfoHint
+                label={t('settings.wbProfile.hintLabel')}
+                text={t('settings.wbProfile.hint')}
+              />
+            </h3>
+            <WorkbuddyProfileSettings onChanged={onCredentialsSaved} />
+          </div>
+
           <div className="mt-8" data-agent-credentials-section>
             <h3
               className="mb-3 flex items-center gap-1.5 text-sm font-medium"

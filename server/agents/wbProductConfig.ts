@@ -49,6 +49,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { SdkRawModel } from './sdk-models.js';
+import { officialConfigForActive, WB_SNAPSHOT_FRESH_MS } from './wbProductProfile.js';
 
 /** 官方 cli agent 声明的模型 id（顺序即官方推荐序），以及可从配置取到的元数据 */
 export interface DeclaredModels {
@@ -58,8 +59,26 @@ export interface DeclaredModels {
   byId: Map<string, SdkRawModel>;
 }
 
-/** 从内联环境变量或磁盘读原始 JSON。读不到返回 null */
-function readRawConfig(): Record<string, unknown> | null {
+interface RawConfigResult {
+  cfg: Record<string, unknown>;
+  /**
+   * 磁盘快照的最新 mtime。有值说明来自 A211 的运行时发现，新鲜度按**文件时间**判；
+   * 没值（内联环境变量 / 显式路径 / 旧固定名）沿用配置内嵌 `cfg.date` 的 7 天闸门。
+   */
+  snapshotAt?: number;
+}
+
+/**
+ * 从内联环境变量、显式路径、旧固定名缓存或 A211 运行时发现读原始 JSON。
+ *
+ * A211：官方现在按进程落 `acc-product-config-v3-<pid>-<uuid>.json`，
+ * 只读固定名的旧写法在本机恒返回 null —— 补齐源事实上是空的。
+ * 现在先保留三条老路径（优先级与闸门夹具一致），再退回运行时发现。
+ *
+ * `ACC_PRODUCT_CONFIG_PATH` 是**显式且独占**的：指了就必须读它，读不到
+ * 直接返回 null，不擅自回退到磁盘发现（否则「我指定了文件」会被静默忽略）。
+ */
+function readRawConfig(): RawConfigResult | null {
   const inline =
     process.env.ACC_PRODUCT_CONFIG_V3 ??
     process.env.ACC_PRODUCT_CONFIG_V2 ??
@@ -67,27 +86,41 @@ function readRawConfig(): Record<string, unknown> | null {
   if (inline && inline.trim()) {
     try {
       const parsed = JSON.parse(inline);
-      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? { cfg: parsed as Record<string, unknown> }
+        : null;
     } catch {
       return null;
     }
   }
 
   const explicit = process.env.ACC_PRODUCT_CONFIG_PATH;
-  const candidates = explicit
-    ? [explicit]
-    : [path.join(os.homedir(), '.workbuddy', 'cache', 'acc-product-config-v3.json')];
-
-  for (const file of candidates) {
+  if (explicit) {
     try {
-      if (!fs.existsSync(file)) continue;
-      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-      if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
+      if (!fs.existsSync(explicit)) return null;
+      const parsed = JSON.parse(fs.readFileSync(explicit, 'utf8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? { cfg: parsed as Record<string, unknown> }
+        : null;
     } catch {
-      // 读不懂就试下一个（或整体放弃），不抛
+      return null;
     }
   }
-  return null;
+
+  const legacy = path.join(os.homedir(), '.workbuddy', 'cache', 'acc-product-config-v3.json');
+  try {
+    if (fs.existsSync(legacy)) {
+      const parsed = JSON.parse(fs.readFileSync(legacy, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return { cfg: parsed as Record<string, unknown> };
+      }
+    }
+  } catch {
+    // 读不懂继续试运行时发现，不抛
+  }
+
+  const found = officialConfigForActive();
+  return found ? { cfg: found.cfg, snapshotAt: found.at } : null;
 }
 
 /**
@@ -125,9 +158,20 @@ function isFreshConfig(cfg: Record<string, unknown>): boolean {
  * 也就是用户在对话里真正能选的那些。
  */
 export function readDeclaredModels(): DeclaredModels | null {
-  const cfg = readRawConfig();
-  if (!cfg) return null;
-  if (!isFreshConfig(cfg)) return null;
+  const raw = readRawConfig();
+  if (!raw) return null;
+  /**
+   * A211：官方配置里的 `date` 是**发版日**（本机两份分别是 10-27 / 10-29），
+   * 不是本机最后一次使用时间。拿它当新鲜度判据，会让一份昨天还在被官方
+   * 客户端写入的配置因为「发版超过 7 天」被判死 —— 补齐永远不生效。
+   * 磁盘快照改判文件 mtime；内联/显式路径仍按 `cfg.date` 判（夹具口径不变）。
+   */
+  if (raw.snapshotAt !== undefined) {
+    if (Date.now() - raw.snapshotAt > WB_SNAPSHOT_FRESH_MS) return null;
+  } else if (!isFreshConfig(raw.cfg)) {
+    return null;
+  }
+  const cfg = raw.cfg;
 
   const agents = Array.isArray(cfg.agents) ? cfg.agents : [];
   const cli = agents.find(

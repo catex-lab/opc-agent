@@ -18,6 +18,8 @@
 
 import fs from 'fs';
 import os from 'os';
+import { workbuddyKeyblobPath } from './wbProductProfile.js';
+import { findDef } from './definitions.js';
 import path from 'path';
 
 /** 一次凭据检测的结论。`expiresAt` 一律是 epoch 毫秒。 */
@@ -198,12 +200,23 @@ export function inspectClaudeCredentials(home = os.homedir()): CredentialVerdict
  * 也不证明这张凭据现在还能用。于是「桌面端活跃」与「keyblob 被刷新」是两件事，
  * 必须让用户看见时间差，而不是给一个假绿点。
  */
-export function workbuddyKeyblobInfo(home = os.homedir()): {
+export function workbuddyKeyblobInfo(home?: string): {
   path: string;
   exists: boolean;
   mtime?: string;
 } {
-  const file = path.join(home, '.workbuddy', 'keyblob');
+  /**
+   * A211：运行时（不传 home）必须跟着生效 profile 走。官方客户端把活跃目录
+   * 从 `~/.workbuddy` 换到 `~/.workbuddy-ai` 之后，继续显示旧文件的 mtime，
+   * 「重新登录桌面端」就会变成一条永远刷不到我们读的那份文件的无效指引。
+   *
+   * 显式传 home 的是只读诊断 / 验证夹具：语义是「在指定主目录下按定义表的
+   * 默认数据目录查」，不受运行时 profile 影响（目录名同样从定义表派生，不写死）。
+   */
+  const defaultFolder = path.basename(
+    (findDef('workbuddy')?.sdk?.configDir ?? '~/.workbuddy').replace(/^~[\\/]/, '')
+  );
+  const file = home ? path.join(home, defaultFolder, 'keyblob') : workbuddyKeyblobPath();
   const st = quietStat(file);
   return { path: file, exists: Boolean(st), ...(st ? { mtime: st.mtime.toISOString() } : {}) };
 }

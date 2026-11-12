@@ -164,6 +164,14 @@ export function ModelSelectPopup({
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  /* A211：这个平级分组也装 WorkBuddy 桌面端 `models.json` 里的自定义模型。
+     它们不是任何 CLI 的配置文件，整组都是它时把标题说准；混合时保留旧标题
+     （那组里确实也有 CLI 配置），每条自己的 `source` 本来就写着来源。
+     不改分组结构 / data-configured-group，A210 那套闸门原样有效。 */
+  const wbOnlyGroup =
+    configuredModels.length > 0 &&
+    configuredModels.every(m => m.source.startsWith('WorkBuddy'));
+
   // 键盘游标：进浮层时落在当前选中项上（没有选中就落第一项）。
   // 原来 TDesign Select 自带方向键 + 回车，换成自绘后这部分能力不能丢，
   // 否则「只能用鼠标」是一次静默的可用性回退。
@@ -546,7 +554,7 @@ export function ModelSelectPopup({
               className="text-caption font-medium"
               style={{ color: 'var(--td-text-color-secondary)' }}
             >
-              本机 CLI 配置
+              {wbOnlyGroup ? 'WorkBuddy 自定义模型' : '本机 CLI 配置'}
             </span>
             <span
               className="text-caption tabular-nums"

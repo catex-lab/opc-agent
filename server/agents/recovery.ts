@@ -11,6 +11,7 @@
  *   2. 不编造命令。没核实过的命令宁可写成「在该 Agent 里重新登录」，也不写一个
  *      跑不通的 `xxx login`。
  */
+import { workbuddyKeyblobDisplay, workbuddyState } from './wbProductProfile.js';
 
 /** 每个 Agent 的「怎么恢复」一句话。键与定义表 id 一致。 */
 const RECOVERY_HINTS: Record<string, string> = {
@@ -48,7 +49,39 @@ const FALLBACK_HINT =
   '在终端手动运行一次该 Agent 的命令查看它自己的报错；若是登录失效，请在该 Agent 内重新登录；然后点「重新探测」';
 
 export function recoveryHintFor(id: string): string {
+  if (id === 'workbuddy') return workbuddyRecoveryHint();
   return RECOVERY_HINTS[id] ?? FALLBACK_HINT;
+}
+
+/**
+ * A211：WorkBuddy 的恢复指引必须是**运行时**生成的。
+ *
+ * 旧话术固定让用户「在 WorkBuddy 桌面端重新登录」，但官方把活跃数据目录
+ * 切到另一份之后，桌面端重登只刷新新目录，我们读的旧 keyblob 纹丝不动 ——
+ * 用户照做多少次都是无效循环。现在把当前真正生效的版本、它的数据根、
+ * 是否检测到多个版本、内置值是否已漂移全部说清楚，让指引可执行。
+ */
+function workbuddyRecoveryHint(): string {
+  let state: ReturnType<typeof workbuddyState>;
+  try {
+    state = workbuddyState();
+  } catch {
+    return RECOVERY_HINTS.workbuddy;
+  }
+  const active = state.profiles.find(p => p.id === state.activeId);
+  const parts: string[] = [
+    `当前接入 ${active?.productName ?? 'WorkBuddy'}（${active?.dataFolderName ?? '内置默认值'}）`,
+  ];
+  if (state.drift.length > 0) {
+    parts.push('检测到官方活跃配置与内置默认值不同，应用已自动跟随官方；若仍失败，请到「设置 → 登录配置 → WorkBuddy 产品版本」确认选中的是正在使用的那个版本');
+  }
+  if (state.profiles.length > 1) {
+    parts.push(`本机检测到 ${state.profiles.length} 个版本，可在「设置 → 登录配置 → WorkBuddy 产品版本」一键切换`);
+  }
+  parts.push(
+    `在该版本的桌面端重新登录（登录态写入 ${workbuddyKeyblobDisplay()}），或让桌面端保持运行后点「重新探测」；也可在「设置 → 登录配置 → Agent API Key」填 CODEBUDDY_API_KEY`
+  );
+  return parts.join('；');
 }
 
 export type FailureKind = 'auth' | 'quota' | 'not-installed' | 'network' | 'unknown';

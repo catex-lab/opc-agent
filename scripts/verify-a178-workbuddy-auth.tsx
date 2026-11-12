@@ -227,7 +227,14 @@ async function main() {
   await check('凭据编辑器入口与能力位使用同一份服务端数据', () => {
     const editor = readFileSync(path.join(process.cwd(), 'src/components/AgentCredentialEditor.tsx'), 'utf8');
     assert.match(editor, /fetch\('\/api\/agent-credentials'\)/);
-    assert.match(editor, /该 Agent 不支持应用内填写凭据/, '不支持时的兜底文案应仍在（用于真正不支持的 Agent）');
+    /* 文案已经迁进 i18n（A28 之后设置页统一走 t()），源码里不再有中文字面量。
+       钉「组件真的引用这个键」+「键在中文资源里真的有这句」两件事，而不是
+       钉实现字面量：只钉前者时把整个键删掉也能绿，只钉后者时组件不引用也绿。 */
+    assert.match(editor, /settings\.credential\.noInAppEntry/,
+      '不支持时的兜底文案由组件通过 i18n 键引用（用于真正不支持的 Agent）');
+    const zh = readFileSync(path.join(process.cwd(), 'src/i18n/zh.ts'), 'utf8');
+    assert.match(zh, /'settings\.credential\.noInAppEntry':\s*'该 Agent 不支持应用内填写凭据/,
+      '中文资源里该兜底文案必须仍然存在');
     const sections = readFileSync(path.join(process.cwd(), 'src/components/AgentDetailSections.tsx'), 'utf8');
     assert.match(sections, /data-agent-credential-inline/);
     assert.match(sections, /isKeyOnly/);

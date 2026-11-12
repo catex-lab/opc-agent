@@ -1140,6 +1140,52 @@ export interface CliConfiguredModel {
 }
 
 /**
+ * A211：WorkBuddy 官方产品版本的只读视图。
+ *
+ * 与服务端 `WorkbuddyProfile` 同形，但**没有 `root`** —— 本机绝对路径不进
+ * 页面也不需要进页面，`dataFolderName` 已足够让人认出是哪个版本。
+ */
+export interface WorkbuddyProfileView {
+  id: string;
+  productName: string;
+  applicationName?: string;
+  dataFolderName: string;
+  endpoint: string;
+  environment: 'internal' | 'external';
+  region: 'cn' | 'intl';
+  authType?: string;
+  configDate?: string;
+  configCommit?: string;
+  keyblobAt?: number;
+  modelsAt?: number;
+  configAt?: number;
+  activity: number;
+  /** false = 只看到目录、没读到官方产品声明（或压根是内置兜底） */
+  detected: boolean;
+  complete: boolean;
+}
+
+export interface WorkbuddyProfileDrift {
+  field: 'configDir' | 'endpoint' | 'environment';
+  hardcoded: string;
+  official: string;
+}
+
+/** `GET /api/workbuddy-profiles` 与两个 POST 的 `state` 字段形状 */
+export interface WorkbuddyProfileState {
+  profiles: WorkbuddyProfileView[];
+  activeId: string;
+  pinned: boolean;
+  /** 盘上记录的固定值；`pinned` 为 false 时它指向已失效的旧 id 也不生效 */
+  pinnedId: string | null;
+  /** 生效的是内置兜底值，不是真的检测到官方客户端 */
+  fallback: boolean;
+  drift: WorkbuddyProfileDrift[];
+  reason: string;
+  customModels: CliConfiguredModel[];
+}
+
+/**
  * A210「即将接入」占位条目（前端形状，与服务端 comingSoon.ts 同形）。
  *
  * 这是**纯展示数据**，不是 RegisteredAgent：没有 status / install / 凭据，
