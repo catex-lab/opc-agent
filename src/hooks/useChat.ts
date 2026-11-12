@@ -687,6 +687,8 @@ export function useChat(options: UseChatOptions) {
       let firstContentAt: number | null = null;
       /** 重连可能重放 run_end，汇总只允许发布一次 */
       let timingPublished = false;
+      /** A210 归因：run_start 事件携带的 agentId + modelEffective，run_end 汇总时带上 */
+      let runAttribution: { agentId: string; model: string | null } | null = null;
 
       /** init / run_start 共用：把临时会话与气泡 id 换成后端的真值 */
       const applyInit = (sid: string, mid: string, modelId?: string, modelEffective?: string) => {
@@ -797,6 +799,13 @@ export function useChat(options: UseChatOptions) {
             }
             if (typeof data.seq === 'number') lastSeq = data.seq;
             applyInit(data.sessionId, data.messageId, data.model, data.modelEffective);
+            /* A210 归因：run_start 事件本身带 agentId + modelEffective（服务端真值），
+               run_end 汇总时传给 buildTimingSummary，使 window.__OPC_TIMING_STATS__()
+               能按通道分组算 p50/p95。agentId 缺失时兜底取当前会话的 agentId。 */
+            runAttribution = {
+              agentId: typeof data.agentId === 'string' ? data.agentId : currentAgentId,
+              model: typeof data.modelEffective === 'string' ? data.modelEffective : null,
+            };
             break;
 
           case 'kb_refs':
@@ -873,7 +882,7 @@ export function useChat(options: UseChatOptions) {
             if (!timingPublished) {
               const marks = data.timing as ServerTimingMarks | undefined;
               const reveal = takeReveal();
-              timingSummary = buildTimingSummary(marks, firstContentAt, reveal?.delayMs ?? null);
+              timingSummary = buildTimingSummary(marks, firstContentAt, reveal?.delayMs ?? null, runAttribution);
               if (timingSummary) {
                 publishTiming(timingSummary);
                 timingPublished = true;

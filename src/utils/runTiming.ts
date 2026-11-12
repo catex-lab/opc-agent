@@ -18,6 +18,12 @@ export interface ServerTimingMarks {
   t2: number | null;
 }
 
+/** 归因 meta：从 run_start 事件带过来的服务端真值 */
+export interface TimingAttribution {
+  agentId: string;
+  model: string | null;
+}
+
 export interface TimingSummary {
   t0: number;
   t1: number;
@@ -28,6 +34,9 @@ export interface TimingSummary {
   ttftMs: number | null;
   /** 单列：UI 平滑动画延迟，绝不混进 TTFT */
   uiSmoothMs: number | null;
+  /** 归因：哪条 Agent 通道 + 实际模型；缺失时为 null（旧样本兼容） */
+  agentId: string | null;
+  model: string | null;
 }
 
 interface RevealSample {
@@ -49,7 +58,8 @@ function isFiniteEpoch(v: unknown): v is number {
 export function buildTimingSummary(
   marks: ServerTimingMarks | null | undefined,
   t3: number | null,
-  revealDelayMs: number | null
+  revealDelayMs: number | null,
+  attribution?: TimingAttribution | null
 ): TimingSummary | null {
   if (!marks || !isFiniteEpoch(marks.t0) || !isFiniteEpoch(marks.t1)) return null;
   const t2 = isFiniteEpoch(marks.t2) ? marks.t2 : null;
@@ -66,6 +76,8 @@ export function buildTimingSummary(
       typeof revealDelayMs === 'number' && Number.isFinite(revealDelayMs)
         ? Math.max(0, revealDelayMs)
         : null,
+    agentId: attribution?.agentId ?? null,
+    model: attribution?.model ?? null,
   };
 }
 
@@ -85,7 +97,12 @@ export function publishTiming(summary: TimingSummary): void {
   samples.push(summary);
   if (samples.length > 64) samples.shift();
   try {
-    (window as unknown as { __OPC_TIMING__?: TimingSummary[] }).__OPC_TIMING__ = samples.slice();
+    const w = window as unknown as {
+      __OPC_TIMING__?: TimingSummary[];
+      __OPC_TIMING_STATS__?: () => TimingStatsReport;
+    };
+    w.__OPC_TIMING__ = samples.slice();
+    w.__OPC_TIMING_STATS__ = getTimingStats;
   } catch {
     /* 非浏览器环境（纯单测）不观测 */
   }
@@ -95,10 +112,77 @@ export function publishTiming(summary: TimingSummary): void {
 export function formatTimingTitle(summary: TimingSummary | null | undefined): string | undefined {
   if (!summary) return undefined;
   const ms = (v: number | null) => (v === null ? '—' : `${Math.round(v)}ms`);
+  const agent = summary.agentId ? ` [${summary.agentId}]` : '';
   return [
     `请求在途 ${ms(summary.serverPreMs)}`,
     `服务端首字 ${ms(summary.serverFirstTokenMs)}`,
     `端到端首字 ${ms(summary.ttftMs)}`,
     `UI 平滑 ${ms(summary.uiSmoothMs)}（单列）`,
-  ].join(' · ');
+  ].join(' · ') + agent;
+}
+
+// ── 分组统计出口 ────────────────────────────────────────────────────────
+
+export interface TimingGroupStats {
+  agentId: string;
+  model: string | null;
+  sampleCount: number;
+  noContentCount: number;
+  serverFirstTokenMs: { p50: number | null; p95: number | null };
+  ttftMs: { p50: number | null; p95: number | null };
+  uiSmoothMs: { p50: number | null; p95: number | null };
+}
+
+export interface TimingStatsReport {
+  totalSamples: number;
+  groups: TimingGroupStats[];
+}
+
+function percentile(sorted: number[], p: number): number | null {
+  if (sorted.length === 0) return null;
+  const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  return Math.round(sorted[idx]);
+}
+
+function groupStats(key: string, group: TimingSummary[]): TimingGroupStats {
+  const [agentId, model] = key.split('\0');
+  const sft = group
+    .map(s => s.serverFirstTokenMs)
+    .filter((v): v is number => v !== null)
+    .sort((a, b) => a - b);
+  const ttft = group
+    .map(s => s.ttftMs)
+    .filter((v): v is number => v !== null)
+    .sort((a, b) => a - b);
+  const smooth = group
+    .map(s => s.uiSmoothMs)
+    .filter((v): v is number => v !== null)
+    .sort((a, b) => a - b);
+  return {
+    agentId,
+    model: model || null,
+    sampleCount: group.length,
+    noContentCount: group.filter(s => s.t2 === null).length,
+    serverFirstTokenMs: { p50: percentile(sft, 50), p95: percentile(sft, 95) },
+    ttftMs: { p50: percentile(ttft, 50), p95: percentile(ttft, 95) },
+    uiSmoothMs: { p50: percentile(smooth, 50), p95: percentile(smooth, 95) },
+  };
+}
+
+/** 按 agentId + model 分组统计 p50/p95，供 DevTools 调用 */
+export function getTimingStats(): TimingStatsReport {
+  const byKey = new Map<string, TimingSummary[]>();
+  for (const s of samples) {
+    const key = `${s.agentId ?? 'unknown'}\0${s.model ?? ''}`;
+    let arr = byKey.get(key);
+    if (!arr) {
+      arr = [];
+      byKey.set(key, arr);
+    }
+    arr.push(s);
+  }
+  const groups = Array.from(byKey.entries())
+    .map(([key, arr]) => groupStats(key, arr))
+    .sort((a, b) => b.sampleCount - a.sampleCount);
+  return { totalSamples: samples.length, groups };
 }

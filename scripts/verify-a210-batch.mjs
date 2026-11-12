@@ -19,6 +19,7 @@
  *   node scripts/verify-a210-batch.mjs
  *   node scripts/verify-a210-batch.mjs --probe no-timing
  *   node scripts/verify-a210-batch.mjs --probe mix-ui
+ *   node scripts/verify-a210-batch.mjs --probe no-attribution
  *
  * 脚本会用 node --import tsx 自我拉起一次，以便动态 import .ts 模块。
  */
@@ -32,7 +33,10 @@ const ROOT = process.cwd();
 const SELF = fileURLToPath(import.meta.url);
 const ARGS = process.argv.slice(2);
 const PROBE = ARGS.find(a => a.startsWith('--probe='))?.slice(8)
-  ?? (ARGS.includes('no-timing') ? 'no-timing' : ARGS.includes('mix-ui') ? 'mix-ui' : null);
+  ?? (ARGS.includes('no-timing') ? 'no-timing'
+    : ARGS.includes('mix-ui') ? 'mix-ui'
+    : ARGS.includes('no-attribution') ? 'no-attribution'
+    : null);
 
 if (!process.env.__A210_TSX_CHILD) {
   const r = spawnSync(process.execPath, ['--import', 'tsx', SELF, ...ARGS], {
@@ -158,6 +162,22 @@ eq(summary.serverFirstTokenMs, 240, 'serverFirstTokenMs = t2 - t1');
 eq(summary.ttftMs, 260, 'ttftMs = t3 - t0');
 eq(summary.uiSmoothMs, 40, 'uiSmoothMs 单列 40ms');
 
+// 归因字段：传入 attribution 后 summary 带上 agentId + model
+// 探针 no-attribution：故意不传归因，验证归因断言真会红
+const probeAttr = PROBE === 'no-attribution' ? null : { agentId: 'codex', model: 'gpt-4o' };
+const withAttr = ui.buildTimingSummary(e2e, 1260, 40, probeAttr);
+if (PROBE === 'no-attribution') {
+  // 探针模式下 withAttr.agentId 应为 null，断言「等于 codex」会红
+  eq(withAttr.agentId, 'codex', '归因 agentId 被记下');
+  eq(withAttr.model, 'gpt-4o', '归因 model 被记下');
+} else {
+  eq(withAttr.agentId, 'codex', '归因 agentId 被记下');
+  eq(withAttr.model, 'gpt-4o', '归因 model 被记下');
+}
+const noAttr = ui.buildTimingSummary(e2e, 1260, 40, null);
+eq(noAttr.agentId, null, '不传归因 ⇒ agentId 为 null（兼容旧样本）');
+eq(noAttr.model, null, '不传归因 ⇒ model 为 null');
+
 // 核心不变量：UI 平滑延迟绝不混进 TTFT
 const mixedExpectation = PROBE === 'mix-ui' ? 300 : 260;
 eq(summary.ttftMs, mixedExpectation, 'ttftMs 不含 uiSmoothMs（单列，不并入 TTFT）');
@@ -180,6 +200,20 @@ eq(ui.takeReveal(), null, '取走后清空，不串到下一轮');
 let threw = false;
 try { ui.publishTiming(summary); } catch { threw = true; }
 eq(threw, false, '非浏览器环境 publishTiming 不抛（观测出口有降级）');
+
+// 分组统计出口
+ui.publishTiming(withAttr);
+ui.publishTiming(ui.buildTimingSummary(e2e, 1270, 50, { agentId: 'codex', model: 'gpt-4o' }));
+ui.publishTiming(ui.buildTimingSummary({ t0: 2000, t1: 2010, t2: null }, 2100, 0, { agentId: 'gemini', model: 'gemini-pro' }));
+const stats = ui.getTimingStats();
+ok(stats.totalSamples >= 3, '分组统计：总样本数 ≥ 3');
+ok(stats.groups.length >= 2, '按 agentId+model 分出 ≥ 2 组');
+const codexGroup = stats.groups.find(g => g.agentId === 'codex');
+ok(!!codexGroup && codexGroup.sampleCount >= 2, 'codex 组样本数 ≥ 2');
+ok(codexGroup.serverFirstTokenMs.p50 !== null, 'codex 组 serverFirstTokenMs p50 有值');
+ok(typeof codexGroup.ttftMs.p50 === 'number', 'codex 组 ttftMs p50 有值');
+const geminiGroup = stats.groups.find(g => g.agentId === 'gemini');
+ok(!!geminiGroup && geminiGroup.noContentCount === 1, 'gemini 组有一轮无正文（t2=null）');
 
 // ── 3b. 投影器运行时 ────────────────────────────────────────────────────
 // 源码契约只能证明「写在那儿」，证明不了函数真把字段挂到了事件上。
@@ -244,6 +278,15 @@ ok(hasLine(proj, /\.\.\.\(timing \? \{ timing \} : \{\}\)/), 'timing 只在有�
 ok(hasLine(chat, /clientSentAt: Date\.now\(\)/), '前端 fetch 带 t0');
 ok(hasLine(chat, /firstContentAt = Date\.now\(\)/), '前端记 t3');
 ok(hasLine(chat, /publishTiming\(timingSummary\)/), 'run_end 汇总进观测出口');
+// 归因接线
+ok(hasLine(chat, /runAttribution/), 'useChat 声明了归因变量');
+ok(hasLine(chat, /agentId: typeof data\.agentId === 'string'/), 'run_start 时从事件取 agentId');
+ok(hasLine(chat, /buildTimingSummary\(marks, firstContentAt, reveal\?\.delayMs \?\? null, runAttribution\)/), 'run_end 传归因给 buildTimingSummary');
+ok(hasLine(chat, /__OPC_TIMING_STATS__/) || hasLine(code('src/utils/runTiming.ts'), /__OPC_TIMING_STATS__/), '观测出口注册了分组统计函数');
+ok(hasLine(code('src/utils/runTiming.ts'), /function getTimingStats/), 'getTimingStats 函数已定义');
+ok(hasLine(code('src/utils/runTiming.ts'), /interface TimingGroupStats/), 'TimingGroupStats 类型已定义');
+ok(hasLine(code('src/utils/runTiming.ts'), /noContentCount/), '分组统计含无正文计数');
+ok(hasLine(code('src/utils/runTiming.ts'), /p50: number \| null/), 'p50 字段类型正确');
 ok(hasLine(smooth, /noteReveal\(Date\.now\(\) - firstTargetAtRef\.current\)/), 'useSmoothText 上报揭示延迟');
 ok(hasLine(messages, /data-msg-timing/), '消息头有首字分段出口');
 ok(hasLine(messages, /formatTimingTitle\(message\.timing\)/), 'hover 展示四段分解');
@@ -277,7 +320,9 @@ ok(!/<button|<a\s|onClick=|InstallCard/.test(stripComments(section)), '否定式
 console.log(`\n${'─'.repeat(52)}`);
 console.log(`通过 ${pass} / 失败 ${fail}`);
 if (PROBE) {
-  const expected = PROBE === 'no-timing' ? 2 : 1;
+  // no-timing：t2 为 null ⇒ serverFirstTokenMs 也变 null ⇒ p50 也变 null（串味合理）
+  // no-attribution：归因为 null ⇒ codex 组找不到 ⇒ 样本数断言也红（串味合理）
+  const expected = PROBE === 'no-timing' ? 3 : PROBE === 'mix-ui' ? 1 : PROBE === 'no-attribution' ? 3 : 0;
   const worked = fail === expected && redNames.length === expected;
   console.log(worked
     ? `探针生效：${PROBE} → ${fail} 条断言如期变红`
