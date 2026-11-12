@@ -299,6 +299,17 @@ ok((idx.match(/^\s+configured,$/gm) ?? []).length >= 3, 'models 路由三个返�
 ok(hasLine(idx, /selectable: false,/), '否定式：agent-config 只读档 selectable:false 未被放开');
 ok(hasLine(routing, /configuredLookup\?\.\(agentId, requested\)/), '白名单分支放行本机配置模型');
 ok(hasLine(routing, /setConfiguredModelLookup/), '查表是可注入的纯判定，不带文件系统副作用');
+// A213：App 层的选中归一化 effect 也必须放行 configured —— 否则弹窗层
+// 放行、下一帧又被弹回内置默认，真机表现是「菜单里点不动」（2026-11-13
+// WorkBuddy 自定义模型两条全中）。两处放行必须同源，少一处就是假控件。
+ok(
+  hasLine(app, /if \(configuredModels\.some\(m => m\.id === selectedModel\)\) return;/),
+  'A213：App 归一化 effect 放行 configured 选中'
+);
+ok(
+  /configuredModels,\n  \]\);/.test(stripComments(app)),
+  'A213：effect 依赖数组带上 configuredModels（放行随清单刷新生效）'
+);
 ok(hasLine(registryHook, /data\.comingSoon/), '前端读平级字段');
 ok(hasLine(registryHook, /const \[comingSoon, setComingSoon\]/), '占位清单是独立 state，不并入 agents');
 ok(hasLine(app, /comingSoon=\{registry\.comingSoon\}/), 'App → ContactsPanel 转发');

@@ -44,6 +44,13 @@ import { applyWorkbuddyProfile, workbuddyKeyblobDisplay } from '../wbProductProf
 import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 import { workbuddyKeyblobInfo, formatLocalMinute } from '../credentialStatus.js';
 import { appendFailureAdvice } from '../recovery.js';
+// A214：首字护栏。send() → 首条流事件是 SDK 通道唯一的「无限等」窗口，
+// 2026-11-13 真机实锤（详见 firstTokenGuard.ts 顶部复盘）。
+import {
+  FIRST_TOKEN_TIMEOUT,
+  FirstTokenGuard,
+  firstTokenTimeoutMessage,
+} from './firstTokenGuard.js';
 
 /** 权限请求等待上限，与前端提示一致 */
 const PERMISSION_TIMEOUT = 5 * 60 * 1000;
@@ -811,16 +818,49 @@ export class SdkAdapter implements AgentProvider {
         source: 'native',
       });
 
-      await entry.session.send(ctx.prompt);
+      // ---- A214 首字护栏（池路径）----
+      // 守「send() → 首条流事件」两个等待点；首字之后不守（工具调用的合法
+      // 长间隔，见 firstTokenGuard.ts 顶注）。超时动作：驱逐 + 如实报错。
+      const guard = new FirstTokenGuard();
+      const sendStage = await Promise.race([
+        entry.session.send(ctx.prompt).then(() => null),
+        guard.timeout,
+      ]);
+      if (sendStage === FIRST_TOKEN_TIMEOUT) {
+        // send() 本身挂死：不等一个永远不会 resolve 的 promise，驱逐收口
+        this.dropEntry(slot, entry);
+        queue.push({
+          type: 'error',
+          message: firstTokenTimeoutMessage(guard.ms),
+        });
+        queue.close();
+        return;
+      }
 
       const st: TurnState = { currentToolId: null, openTools: [], started };
       // 本轮是怎么收尾的：'result' 正常结束 / 'error' CLI 报了错 / null 还没
       // 收尾。null 且不是被 abort 打断 = CLI 进程提前结束（崩溃/被杀），
       // 必须当失败处理并驱逐，否则下一条消息会复用死进程而静默无响应。
       let finished: 'result' | 'error' | null = null;
-      for await (const msg of entry.session.stream()) {
+      const iterator = (entry.session.stream() as AsyncIterable<unknown>)[
+        Symbol.asyncIterator
+      ]();
+      let step = await Promise.race([iterator.next(), guard.timeout]);
+      if (step === FIRST_TOKEN_TIMEOUT) {
+        // 今晚实锤的形态：send 已回但模型侧一个事件都不来。同上收口。
+        this.dropEntry(slot, entry);
+        queue.push({
+          type: 'error',
+          message: firstTokenTimeoutMessage(guard.ms),
+        });
+        queue.close();
+        return;
+      }
+      // 首字已到：撤护栏
+      guard.disarm();
+      while (!step.done) {
         if (shouldAbort()) break;
-        const m = msg as Record<string, unknown>;
+        const m = step.value as Record<string, unknown>;
         // CLI 回报的 session id 若与 SDK 侧不一致，以 CLI 为准
         if (m.type === 'system' && m.subtype === 'init' && typeof m.session_id === 'string') {
           entry.cliSessionId = m.session_id;
@@ -828,6 +868,7 @@ export class SdkAdapter implements AgentProvider {
         const outcome = mapSdkMessage(m, ctx, queue, st);
         if (outcome === 'result') { finished = 'result'; break; }
         if (outcome === 'error') { finished = 'error'; break; }
+        step = await iterator.next();
       }
       if (finished === 'error') {
         // error 事件已在 mapSdkMessage 推给前端；进程可能已不可用，驱逐避免
@@ -912,19 +953,39 @@ export class SdkAdapter implements AgentProvider {
 
       queue.push({ type: 'init', sessionId: ctx.sessionId, model: ctx.model, source: 'native' });
 
+      // ---- A214 首字护栏（one-shot 路径）----
+      // query() 起进程后到首条事件之间与池路径同源，是这条回退路上唯一的
+      // 「无限等」窗口。超时动作：尽力关掉 generator（SDK 的清理逻辑会带走
+      // 进程；若它也卡住就交给应用退出兜底）+ 如实报错。
+      const guard = new FirstTokenGuard();
+      const iterator = (stream as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+      let step = await Promise.race([iterator.next(), guard.timeout]);
+      if (step === FIRST_TOKEN_TIMEOUT) {
+        const gen = iterator as AsyncGenerator<unknown>;
+        void gen.return?.(undefined).catch(() => {});
+        queue.push({
+          type: 'error',
+          message: firstTokenTimeoutMessage(guard.ms),
+        });
+        queue.close();
+        return;
+      }
+      guard.disarm();
+
       const st: TurnState = { currentToolId: null, openTools: [], started };
       let failed: Error | null = null;
       let sawResult = false;
-      for await (const msg of stream) {
+      while (!step.done) {
         if (shouldAbort()) break;
-        const outcome = mapSdkMessage(msg as Record<string, unknown>, ctx, queue, st);
+        const outcome = mapSdkMessage(step.value as Record<string, unknown>, ctx, queue, st);
         if (outcome === 'result') { sawResult = true; break; }
         if (outcome === 'error') {
           // 错误事件 mapSdkMessage 已经推给前端了，这里只记一下别再 fail 一遍，
           // 否则消费者会收到两条 error（一条事件 + 一条异常）
-          failed = new Error(String((msg as { error?: unknown }).error ?? 'CLI 返回错误'));
+          failed = new Error(String((step.value as { error?: unknown }).error ?? 'CLI 返回错误'));
           break;
         }
+        step = await iterator.next();
       }
       if (failed) {
         queue.close();

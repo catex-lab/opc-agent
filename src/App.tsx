@@ -730,6 +730,13 @@ function AppContent() {
       return;
     }
     if (pickableModels.some(m => m.modelId === selectedModel)) return;
+    /* A213：configured（本机 CLI 配置 / WorkBuddy 桌面端自定义模型）是平级
+       可选组，不在平台目录里 —— 不放行的话，点选后下一帧就被本 effect
+       按上面的规则弹回内置默认，表现为「菜单里点不动」（2026-11-13 真机
+       实测：WorkBuddy 自定义模型两条全中）。与 model-routing 的
+       configuredLookup 放行（A210）必须同源：弹窗层放行、归一化层不放行
+       等于假控件。 */
+    if (configuredModels.some(m => m.id === selectedModel)) return;
     const preferred = pickableModels.some(m => m.modelId === agentDefaultModel)
       ? agentDefaultModel
       : pickableModels[0].modelId;
@@ -742,6 +749,7 @@ function AppContent() {
     manualModel,
     agentModelSource.forAgent,
     currentAgentId,
+    configuredModels,
   ]);
 
   // 从 URL 同步 sessionId

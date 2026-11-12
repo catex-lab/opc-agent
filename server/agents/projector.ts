@@ -412,8 +412,10 @@ export class RunProjector {
       }
 
       case 'error': {
-        // 网络类错误通常可重试；认证/配置类不行
-        const retryable = /timeout|network|ECONN|socket|502|503|504/i.test(ev.message);
+        // 网络类错误通常可重试；认证/配置类不行。
+        // A214：补中文「超时 / 排队」——SDK 首字护栏等本服务端产的失败文案
+        // 是中文的，旧正则只认英文，会把可重试的超时误判成不可重试。
+        const retryable = /timeout|超时|排队|network|ECONN|socket|502|503|504/i.test(ev.message);
         /**
          * WorkBuddy 401 的产品级恢复（两条腿，缺一不可）：
          *

@@ -651,7 +651,12 @@ export function ChatInput({
     ? selectedModel || t('chat.input.manualModel')
     : !canPickModel
       ? t('chat.input.modelByAgent')
-      : models.find(m => m.modelId === selectedModel)?.name || t('chat.input.chooseModel');
+      : models.find(m => m.modelId === selectedModel)?.name
+        /* A213：configured（本机 CLI 配置 / 桌面端自定义模型）不在内置清单里，
+           不查这组的话芯片会一直显示「选择模型」，用户会以为没选上。 */
+        || configuredModels?.find(m => m.id === selectedModel)?.label
+        || configuredModels?.find(m => m.id === selectedModel)?.id
+        || t('chat.input.chooseModel');
 
   return (
     <div
