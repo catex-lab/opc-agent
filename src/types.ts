@@ -25,7 +25,7 @@ export type SessionKind = 'direct' | 'group';
  * - debate    指定正反方多轮交替，最后收敛
  * - mention   只唤醒被 @ 的 Agent
  */
-export type OrchestrationMode = 'dispatch' | 'broadcast' | 'relay' | 'debate' | 'mention';
+export type OrchestrationMode = 'dispatch' | 'broadcast' | 'relay' | 'debate' | 'mention' | 'leader';
 
 /** 编排模式的中文名与一句话说明，供群聊头部的模式切换器使用 */
 export const ORCHESTRATION_META: Record<
@@ -37,6 +37,7 @@ export const ORCHESTRATION_META: Record<
   relay: { label: '接力', description: '串行流水线，前一个的输出作为后一个的输入' },
   debate: { label: '辩论', description: '正反方多轮交替发言，最后收敛' },
   mention: { label: '指定', description: '只唤醒被 @ 提到的 Agent' },
+  leader: { label: '带队', description: '主控先分工（结构化计划），各成员并行执行，主控汇总' },
 };
 
 export interface Model {
@@ -360,6 +361,8 @@ export interface ProjectTask {
   projectId: string;
   title: string;
   status: ProjectTaskStatus;
+  /** A229：指派的 Agent id。null / undefined = 未指派（票不绑死人，可随时改派） */
+  assigneeAgentId?: string | null;
   createdAt: string;
   updatedAt: string;
 }

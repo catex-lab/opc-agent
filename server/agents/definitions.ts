@@ -152,6 +152,15 @@ export interface CliSpec {
    */
   bidi?: boolean;
   /**
+   * A223：简单 stdin 输入（手动接入的 CLI 用）。
+   *
+   * 与 `bidi` 的区别：bidi 是「双向控制协议」（写完用户消息还要逐个应答
+   * 权限请求），这里只是「prompt 走 stdin」——写完立即 EOF，进程自己走完。
+   * 一些 CLI（以 `-` 读标准输入的那类脚本 Agent）不接受 argv 里的 prompt，
+   * 只能这样喂。两者互斥：声明了 `bidi` 的条目忽略本字段。
+   */
+  stdinPrompt?: boolean;
+  /**
    * stderr 命中该模式即判定为不可恢复，立即终止并报错。
    * 用于把「会一直重试但永远不会成功」的情况快速失败。
    */

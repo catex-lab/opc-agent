@@ -328,13 +328,15 @@ ok((await header.getByText('WorkBuddy', { exact: true }).count()) >= 1, '标题�
 ok((await header.getByText('在线', { exact: false }).count()) >= 1, '状态在位（· 在线）');
 ok((await page.locator('[data-chat-more] summary').count()) === 1, '有「⋯」更多按钮');
 
-// ⋯ 菜单：恰好两项
+// ⋯ 菜单：A224/A226 起是四项（详情 / 定时任务 / 转交给… / 删除）
 await page.locator('[data-chat-more] summary').click();
 await page.waitForTimeout(250);
 const menuItems = page.locator('[data-chat-more] .absolute button');
-ok((await menuItems.count()) === 2, '菜单里恰好两项（详情 / 删除）', `count=${await menuItems.count()}`);
+ok((await menuItems.count()) === 4, '菜单里恰好四项（详情 / 定时任务 / 转交给… / 删除）', `count=${await menuItems.count()}`);
 ok((await menuItems.nth(0).innerText()).includes('详情'), '第一项是详情');
-ok((await menuItems.nth(1).innerText()).includes('删除'), '第二项是删除');
+ok((await menuItems.nth(1).innerText()).includes('定时任务'), '第二项是定时任务（A224）');
+ok((await menuItems.nth(2).innerText()).includes('转交给'), '第三项是转交给…（A226）');
+ok((await menuItems.nth(3).innerText()).includes('删除'), '第四项是删除');
 await shot('verify-header-more');
 
 // 详情 → 弹窗（不再撑高头部），菜单收起
@@ -365,7 +367,7 @@ ok((await header.boundingBox())?.height <= 58, '关闭后头部仍是 52px');
 // 删除 → 两步确认（ConfirmDialog），取消不删
 await page.locator('[data-chat-more] summary').click();
 await page.waitForTimeout(200);
-await page.locator('[data-chat-more] .absolute button').nth(1).click();
+await page.locator('[data-chat-more] .absolute button').nth(3).click();
 await page.waitForTimeout(250);
 const dialog = page.getByRole('dialog');
 ok((await dialog.count()) === 1, '删除弹两步确认框');

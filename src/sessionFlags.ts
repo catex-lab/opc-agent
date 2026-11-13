@@ -64,6 +64,12 @@ export interface SessionFlags {
   avatarImage?: string;
   /** 群消息接收方式；缺省等同 'normal' */
   notifyMode?: NotifyMode;
+  /**
+   * A225：群聊并行隔离（git worktree）。true = 每轮群聊各成员独立检出、
+   * 结束后逐个汇合。与同文件其他标记同理：「我这台机器上这个群怎么跑」的
+   * 偏好，不落 sessions 表；服务端每轮请求显式携带。
+   */
+  groupWorktree?: boolean;
 }
 
 type FlagMap = Record<string, SessionFlags>;
@@ -107,6 +113,8 @@ function patch(sessionId: string, next: SessionFlags): void {
   if (!flags.avatarImage) delete flags.avatarImage;
   // 'normal' 是该字段的缺省值，不必占位
   if (!flags.notifyMode || flags.notifyMode === 'normal') delete flags.notifyMode;
+  // A225：false 是缺省值，不占位
+  if (!flags.groupWorktree) delete flags.groupWorktree;
 
   if (Object.keys(flags).length === 0) delete merged[sessionId];
   else merged[sessionId] = flags;
@@ -219,6 +227,25 @@ export function useGroupAvatarImage(sessionId: string | null | undefined): strin
     subscribeSessionFlags,
     () => (sessionId ? snapshot[sessionId]?.avatarImage ?? '' : ''),
     () => ''
+  );
+}
+
+/** A225：读群并行隔离开关（非 Hook，供发请求的事件回调里读） */
+export function groupWorktree(sessionId: string): boolean {
+  return snapshot[sessionId]?.groupWorktree === true;
+}
+
+/** A225：设置群并行隔离开关。false = 关（缺省） */
+export function setGroupWorktree(sessionId: string, on: boolean): void {
+  patch(sessionId, { groupWorktree: on });
+}
+
+/** A225：订群并行隔离开关（开关按钮用） */
+export function useGroupWorktree(sessionId: string | null | undefined): boolean {
+  return useSyncExternalStore(
+    subscribeSessionFlags,
+    () => (sessionId ? snapshot[sessionId]?.groupWorktree === true : false),
+    () => false
   );
 }
 

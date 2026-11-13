@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Message, OrchestrationMode } from '../types';
+import { groupWorktree } from '../sessionFlags';
 // A132：与单聊共用同一个待授权队列与唯一答复出口
 import { push as pushPermission, markSessionEnded } from '../permissions/permissionStore';
 import {
@@ -440,6 +441,9 @@ export function useGroupChat(options: UseGroupChatOptions) {
             agentIds,
             orchestration,
             title,
+            // A225：并行隔离开关（sessionFlags，用户在群头部开的）。
+            // 服务端只在「绑定了 git 目录」时真正启用，否则 note 说明并退回共享目录
+            worktree: groupWorktree(currentSessionId),
           }),
         });
 

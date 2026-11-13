@@ -808,6 +808,10 @@ export class CliAdapter implements AgentProvider {
     // `--input-format stream-json`。flag 位置只有 buildArgs 知道
     // （与 variadic 的 --allowedTools 有冲突），适配器只做「要不要双向」的决定。
     const bidi = this.spec.bidi === true;
+    // A223：简单 stdin 输入。与 bidi 共用「stdin 是管道」的进程形态，
+    // 但语义不同：写完 prompt 立即 EOF，没有后续控制协议。
+    const stdinPrompt = !bidi && this.spec.stdinPrompt === true;
+    const needsStdin = bidi || stdinPrompt;
     /**
      * A209：CLI **不读 `systemPrompt`** —— 各家的 CLI 没有统一的系统提示参数，
      * `CLI_PERMISSION_OPTIONS` 与 `buildArgs` 也只认自己的 flag。所以回答语言
@@ -852,9 +856,9 @@ export class CliAdapter implements AgentProvider {
         },
         shell: false,           // ★ 关键：不经过 shell
         windowsHide: true,
-        // A106：双向模式 stdin 走管道（写用户消息 / 收尾时 EOF）；
+        // A106：stdin 需要写 prompt（bidi / stdinPrompt）时走管道；
         // 一次性模式仍是 'ignore' —— 部分 CLI 见 stdin 是 TTY 会进交互模式。
-        stdio: bidi ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
+        stdio: needsStdin ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
       }) as CliChild | BidiChild;
     } catch (err) {
       yield { type: 'error', message: `启动失败：${(err as Error).message}` };
@@ -863,11 +867,11 @@ export class CliAdapter implements AgentProvider {
 
     this.running.set(ctx.sessionId, child);
 
-    // A106：双向模式的 stdin 收尾。关掉 = 告诉 CLI「没有更多输入了」，
+    // A106：stdin 收尾。关掉 = 告诉 CLI「没有更多输入了」，
     // 它自己走完退出路径（比信号干净，有机会把会话状态写盘）。
     // 关不上也有超时与 SIGTERM→SIGKILL 终止链兜底。
     const endStdin = () => {
-      if (!bidi) return;
+      if (!needsStdin) return;
       const stdin = (child as BidiChild).stdin;
       if (!stdin || stdin.destroyed) return;
       try {
@@ -877,7 +881,7 @@ export class CliAdapter implements AgentProvider {
       }
     };
 
-    if (bidi) {
+    if (needsStdin) {
       // stdin 的 EPIPE 是**异步**事件（进程死了之后一次迟到的 write 才会触发），
       // try/catch 拦不住。不挂监听的话它会以 unhandled 'error' 把整个服务端
       // 炸掉（A106 实测踩到：abort 之后补写 interrupt，桩进程已退）。
@@ -885,7 +889,14 @@ export class CliAdapter implements AgentProvider {
         /* 对端没了，忽略 —— 终止链会收尸 */
       });
       try {
-        (child as BidiChild).stdin.write(buildStdinUserMessage(promptForCli) + '\n');
+        if (bidi) {
+          (child as BidiChild).stdin.write(buildStdinUserMessage(promptForCli) + '\n');
+        } else {
+          // A223：简单 stdin——写完立即 EOF（stdinPrompt 模式下 buildArgs
+          // 不会带 prompt，这里就是它唯一的入口）
+          (child as BidiChild).stdin.write(promptForCli + '\n');
+          endStdin();
+        }
       } catch (err) {
         yield { type: 'error', message: `写入 stdin 失败：${(err as Error).message}` };
         return;

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Check, Pencil, Menu, Workflow } from 'lucide-react';
+import { ChevronDown, Check, Pencil, Menu, Workflow, GitBranch } from 'lucide-react';
 import { GroupAvatar } from './UserAvatar';
 import { PanelHeader } from './PanelHeader';
 import { KbScopeChip } from './kb/KbScopeChip';
 import { ORCHESTRATION_META, type OrchestrationMode, type RegisteredAgent } from '../types';
+import { useGroupWorktree, setGroupWorktree } from '../sessionFlags';
 
 /**
  * 群聊头部。
@@ -36,7 +37,7 @@ import { ORCHESTRATION_META, type OrchestrationMode, type RegisteredAgent } from
  * 面板本体、每项的交互与文案都在那个文件里，这里只负责开门。
  */
 
-const MODE_ORDER: OrchestrationMode[] = ['dispatch', 'broadcast', 'relay', 'debate', 'mention'];
+const MODE_ORDER: OrchestrationMode[] = ['dispatch', 'leader', 'broadcast', 'relay', 'debate', 'mention'];
 
 interface GroupChatHeaderProps {
   title: string;
@@ -80,6 +81,11 @@ interface GroupChatHeaderProps {
   groupAvatarImage?: string;
   /** 知识库按会话维度开关，群聊同样适用 */
   sessionId?: string;
+  /**
+   * A225：本群是否具备并行隔离的条件（绑定了目录且是 git 仓库）。
+   * false 时开关置灰并说明原因 —— 点了也不会生效的开关是假控件。
+   */
+  worktreeAvailable?: boolean;
 }
 
 export function GroupChatHeader({
@@ -97,10 +103,13 @@ export function GroupChatHeader({
   groupAvatar,
   groupAvatarImage,
   sessionId,
+  worktreeAvailable = false,
 }: GroupChatHeaderProps) {
   /** 正在就地改群名 */
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  // A225：并行隔离开关（sessionFlags 本机偏好，随每轮请求下发）
+  const worktreeOn = useGroupWorktree(sessionId);
   /**
    * 一次编辑是否已经收尾。
    *
@@ -255,6 +264,39 @@ export function GroupChatHeader({
           >
             <Workflow size={14} />
             工作流
+          </button>
+
+          {/* A225：并行隔离开关。与工作流按钮同规格；选中态与 ModePicker 同档
+              （品牌色浅底）。开关状态在 sessionFlags（本机偏好），随请求下发。
+              不满足条件（没绑 git 目录）时置灰 + 说明，不做点了没反应的假控件。 */}
+          <button
+            type="button"
+            onClick={() => {
+              if (sessionId && worktreeAvailable) setGroupWorktree(sessionId, !worktreeOn);
+            }}
+            disabled={!worktreeAvailable}
+            aria-pressed={worktreeOn}
+            data-chat-worktree
+            title={
+              worktreeAvailable
+                ? worktreeOn
+                  ? '并行隔离已开：本轮每个成员在独立检出中执行，结束后汇合'
+                  : '并行隔离已关：各成员在共享目录执行'
+                : '先在群里绑定一个 git 仓库目录，才能开启并行隔离'
+            }
+            aria-label="并行隔离"
+            className="flex h-8 items-center gap-1 rounded-lg px-2 text-xs transition-colors"
+            style={{
+              backgroundColor: worktreeOn ? 'var(--td-brand-color-light)' : undefined,
+              color: worktreeOn
+                ? 'var(--td-brand-color)'
+                : 'var(--td-text-color-secondary)',
+              opacity: worktreeAvailable ? 1 : 0.45,
+              cursor: worktreeAvailable ? 'pointer' : 'not-allowed',
+            }}
+          >
+            <GitBranch size={14} />
+            隔离
           </button>
 
           {/* 编排模式切换：群聊的核心控制，放在头部操作区 */}

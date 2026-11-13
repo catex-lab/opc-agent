@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FolderKanban, FolderOpen, Pencil, Trash2, MessageSquarePlus, Brain,
   Check, X, ChevronDown, ChevronLeft, Copy,
-  Circle, CircleDot, CheckCircle2, Plus, ListTodo,
+  Circle, CircleDot, CheckCircle2, Plus, ListTodo, UserPlus,
 } from 'lucide-react';
 import { MessagePlugin } from 'tdesign-react';
 import type { Project, ProjectTask, ProjectTaskStatus, Session, RegisteredAgent } from '../types';
@@ -225,6 +225,40 @@ export function ProjectDetail({
 
   const removeTask = (task: ProjectTask) => {
     void mutateTask(`/api/tasks/${task.id}`, { method: 'DELETE' }, '删除任务失败');
+  };
+
+  // A229：指派 / 改派 / 撤销指派。null = 撤销。
+  const assignTask = (task: ProjectTask, agentId: string | null) => {
+    void mutateTask(
+      `/api/tasks/${task.id}`,
+      { method: 'PATCH', body: JSON.stringify({ assigneeAgentId: agentId }) },
+      '指派失败'
+    );
+  };
+
+  /** A229：正在打开指派选择器的任务 id（一次只有一个弹层） */
+  const [assignFor, setAssignFor] = useState<string | null>(null);
+  const assignRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!assignFor) return;
+    const onDown = (e: PointerEvent) => {
+      if (assignRef.current && !assignRef.current.contains(e.target as Node)) {
+        setAssignFor(null);
+      }
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [assignFor]);
+
+  /** A229：可指派的成员。与群聊同一条可用性口径：在线的排前面 */
+  const assignableAgents = agents.filter(a => a.status.availability === 'ready');
+
+  const assigneeOf = (task: ProjectTask): string | null => task.assigneeAgentId ?? null;
+  const assigneeNameOf = (task: ProjectTask): string => {
+    const id = assigneeOf(task);
+    if (!id) return '';
+    // 名册查不到（已移除的手动接入等）退回 id 本身，不编名字
+    return agents.find(a => a.id === id)?.name ?? id;
   };
 
   // 换项目时收起所有临时状态 —— 否则切到另一个项目会带着上一个的输入框
@@ -642,6 +676,76 @@ export function ProjectDetail({
                     >
                       {t.title}
                     </span>
+                    {/* A229：指派人徽标 + 选择弹层。票与成员解耦——
+                        改派只是换这个徽标，状态机跟着票走。 */}
+                    <div className="relative shrink-0" ref={assignFor === t.id ? assignRef : undefined}>
+                      <button
+                        type="button"
+                        onClick={() => setAssignFor(v => (v === t.id ? null : t.id))}
+                        title={assigneeOf(t) ? `指派给 ${assigneeNameOf(t)}（点击改派）` : '指派给成员'}
+                        aria-label={assigneeOf(t) ? `改派任务` : '指派任务'}
+                        data-project-task-assign={t.id}
+                        className="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-caption opacity-60 transition-opacity hover:opacity-100"
+                        style={{
+                          color: assigneeOf(t) ? 'var(--td-brand-color)' : 'var(--td-text-color-placeholder)',
+                          backgroundColor: assigneeOf(t) ? 'var(--td-brand-color-light)' : 'transparent',
+                          maxWidth: 96,
+                        }}
+                      >
+                        <UserPlus size={12} />
+                        {assigneeOf(t) && (
+                          <span className="truncate">{assigneeNameOf(t)}</span>
+                        )}
+                      </button>
+                      {assignFor === t.id && (
+                        <div
+                          className="tc-glass absolute right-0 top-full z-30 mt-1 w-[200px] overflow-hidden rounded-xl py-1 shadow-popup"
+                          data-project-task-assign-menu={t.id}
+                        >
+                          {assignableAgents.length === 0 && (
+                            <p className="px-3 py-2 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                              没有在线的成员
+                            </p>
+                          )}
+                          {assignableAgents.map(a => (
+                            <button
+                              key={a.id}
+                              type="button"
+                              onClick={() => {
+                                assignTask(t, a.id);
+                                setAssignFor(null);
+                              }}
+                              className="mx-1 flex w-[calc(100%_-_8px)] items-center gap-2 rounded-lg px-2 py-1.5 text-left text-body transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                              style={{
+                                color: 'var(--td-text-color-primary)',
+                                backgroundColor: assigneeOf(t) === a.id ? 'var(--td-brand-color-light)' : undefined,
+                              }}
+                            >
+                              <span
+                                className="h-2 w-2 shrink-0 rounded-full"
+                                style={{ backgroundColor: a.color || 'var(--td-brand-color)' }}
+                              />
+                              <span className="min-w-0 flex-1 truncate">{a.name}</span>
+                              {assigneeOf(t) === a.id && <Check size={13} style={{ color: 'var(--td-brand-color)' }} />}
+                            </button>
+                          ))}
+                          {assigneeOf(t) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                assignTask(t, null);
+                                setAssignFor(null);
+                              }}
+                              className="mx-1 flex w-[calc(100%_-_8px)] items-center gap-2 rounded-lg px-2 py-1.5 text-left text-body transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                              style={{ color: 'var(--td-error-color)' }}
+                            >
+                              <X size={13} />
+                              取消指派
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={() => removeTask(t)}

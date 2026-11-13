@@ -309,6 +309,48 @@ export function useChat(options: UseChatOptions) {
     setInputValue(value);
   }, []);
 
+  /**
+   * A227：停掉某个会话正在跑的那一轮（打断并追加 与 停止按钮 共用同一份实现）。
+   *
+   * 原先这段逻辑只长在 handleStop 里；「追加发送」要做的是同一件事
+   * （掐 SSE + 服务端立刻中止子进程 + 收口 spinner），复制一份必然漂移。
+   * 返回是否真的停了东西（发送链路据此决定要不要带「上一轮被打断」的说明）。
+   */
+  const stopActiveTurn = useCallback((sessionId: string): boolean => {
+    const turn = turnsRef.current.get(sessionId);
+    if (!turn || turn.stopped) return false;
+
+    turn.stopped = true;
+    if (turn.runId) {
+      // fire-and-forget：按停止不该被一次网络往返拖住，界面要立刻收。
+      // 失败也不管 —— 最坏退回到「断开宽限后中止」，仍然会停。
+      fetch(`/api/runs/${turn.runId}/stop`, { method: 'POST' }).catch(() => {});
+    }
+    turn.controller.abort();
+    // 第四段绳：SSE 一断，服务端 finish() 补发的 block_close 就到不了了。
+    // 不在这里收口，thinking 块的 spinner 和「已用 Ns」会一直挂着。
+    turn.seal?.();
+    // 立刻摘掉：不等 finally（abort 到 finally 之间还隔着一次读流 reject，
+    // 那段时间按钮仍是「停止」，用户会以为没点上）
+    setRunningIds(prev => prev.filter(id => id !== sessionId));
+    setSessions(prev => prev.map(s => (
+      s.id !== sessionId
+        ? s
+        : {
+            ...s,
+            messages: s.messages.map(m => (
+              m.id === turn.messageId ? { ...m, isStreaming: false } : m
+            )),
+          }
+    )));
+    /* 让后台任务胶囊立刻重拉。
+       不加这句的话，用户点完停止马上切会话，那一刻拿到的还是停止前的快照 ——
+       界面上挂着一颗「1 个后台任务运行中」，看起来就像停止没生效（实测反馈）。
+       轮询间隔是 5 秒，靠它自己刷太晚。 */
+    notifyRunsChanged();
+    return true;
+  }, [setSessions]);
+
   // 发送消息
   const sendMessage = useCallback(async (
     messageContent: string,
@@ -324,13 +366,18 @@ export function useChat(options: UseChatOptions) {
        于是别的会话在跑 = 谁都发不出去，而且按钮还是停止键（点了停错人）。
        同一会话仍然要拦：CLI 一个进程同时只跑一个 prompt，并发两轮会把上一轮
        顶掉（`cli.ts` 的 `running.set(sessionId, child)` 是覆盖写）。
-       以前这里是**静默 return**，用户只看到「点了没反应」，现在给一句话。 */
+
+       A227 改动：同一会话在跑时**不再拦**，改为「打断并追加」——
+       停掉当前轮，然后让这条新指令照常走发送链。以前弹一句「等它结束，
+       或先点停止」就把用户挡回来，可用户的意图明明是「我有更急的事」：
+       让他先点停止再发，等于把一次意图拆成两次操作。被打断的那轮照旧
+       落库（部分产出保留），新指令成为下一轮。 */
     const busy = currentSessionId ? turnsRef.current.get(currentSessionId) : undefined;
     // `stopped` 的不算忙：用户按了停止之后 Map 里那条要等 finally 才摘掉，
     // 这中间他完全可能马上重发一条 —— 那一下不该被自己刚才的停止挡住。
-    if (busy && !busy.stopped) {
-      MessagePlugin.warning('这个会话还在回复中 —— 等它结束，或先点停止');
-      return;
+    const interrupted = !!(busy && !busy.stopped && currentSessionId && stopActiveTurn(currentSessionId));
+    if (interrupted) {
+      MessagePlugin.warning('已打断上一轮，正在发送你的新指令');
     }
 
     /**
@@ -981,8 +1028,15 @@ export function useChat(options: UseChatOptions) {
       // A142：只摘掉**这一轮**，别的会话继续跑。
       // 用 turn.sessionId（applyInit 可能已经换成后端真值）而不是闭包里的
       // sessionId —— 后者是发送那一刻的快照，换过 id 就摘错了。
-      turnsRef.current.delete(turn.sessionId);
-      setRunningIds(prev => prev.filter(id => id !== turn.sessionId));
+      //
+      // A227：还必须确认 Map 里挂着的**就是这一轮**。「打断并追加」会在同一
+      // 会话上立刻起下一轮并覆盖这个键 —— 旧轮的 finally 迟到一步，无条件
+      // delete 就会把新轮的停止把手拆掉（停止键失效、runningIds 被误摘，
+      // 气泡还在长字按钮却变回了发送）。
+      if (turnsRef.current.get(turn.sessionId) === turn) {
+        turnsRef.current.delete(turn.sessionId);
+        setRunningIds(prev => prev.filter(id => id !== turn.sessionId));
+      }
     }
   }, [currentSession, currentSessionId, selectedModel, getAgent, updateSessionModel, setCurrentSessionId, setSessions, onModelResolved, resumePrompt]);
 
@@ -1028,38 +1082,10 @@ export function useChat(options: UseChatOptions) {
     // A142：停的是**当前会话**那一轮，不是「最后一次发送的那一轮」。
     // 单值 `turnRef` 时代这里没有会话概念，于是「在 B 里点停止」会把 A 掐掉 ——
     // 探针里就是这么复现的（B 的发送键当时还画着停止图标）。
-    const turn = currentSessionId ? turnsRef.current.get(currentSessionId) : undefined;
-    if (!turn) return;
-
-    turn.stopped = true;
-    if (turn.runId) {
-      // fire-and-forget：按停止不该被一次网络往返拖住，界面要立刻收。
-      // 失败也不管 —— 最坏退回到「断开宽限后中止」，仍然会停。
-      fetch(`/api/runs/${turn.runId}/stop`, { method: 'POST' }).catch(() => {});
-    }
-    turn.controller.abort();
-    // 第四段绳：SSE 一断，服务端 finish() 补发的 block_close 就到不了了。
-    // 不在这里收口，thinking 块的 spinner 和「已用 Ns」会一直挂着。
-    turn.seal?.();
-    // 立刻摘掉：不等 finally（abort 到 finally 之间还隔着一次读流 reject，
-    // 那段时间按钮仍是「停止」，用户会以为没点上）
-    setRunningIds(prev => prev.filter(id => id !== turn.sessionId));
-    setSessions(prev => prev.map(s => (
-      s.id !== turn.sessionId
-        ? s
-        : {
-            ...s,
-            messages: s.messages.map(m => (
-              m.id === turn.messageId ? { ...m, isStreaming: false } : m
-            )),
-          }
-    )));
-    /* 让后台任务胶囊立刻重拉。
-       不加这句的话，用户点完停止马上切会话，那一刻拿到的还是停止前的快照 ——
-       界面上挂着一颗「1 个后台任务运行中」，看起来就像停止没生效（实测反馈）。
-       轮询间隔是 5 秒，靠它自己刷太晚。 */
-    notifyRunsChanged();
-  }, [currentSessionId, setSessions]);
+    // A227：停止序列收进 stopActiveTurn（与「打断并追加」共用），这里只剩调度。
+    if (!currentSessionId) return;
+    stopActiveTurn(currentSessionId);
+  }, [currentSessionId, stopActiveTurn]);
 
   /**
    * A207：处理「上一轮指令未完成」的确认结果。

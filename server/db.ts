@@ -354,6 +354,13 @@ ensureColumn('extension_item', 'body_original', 'body_original TEXT');
  * 这一点在 `getSessionProject()` 里兜住。
  */
 ensureColumn('sessions', 'project_id', 'project_id TEXT');
+// A226：待消费的会话交接摘要（跨 Agent 转交）。NULL = 没有待交接内容。
+// 语义是「一次性」：下一轮 /api/chat 把它前置进 prompt 后立刻清空，
+// 不留在会话上反复注入（它描述的是「转交那一刻的历史」，不是长期人设）。
+ensureColumn('sessions', 'handoff_context', 'handoff_context TEXT');
+// A229：项目任务的指派人（Agent id）。NULL = 未指派。
+// 刻意**不校验**名册：指给一个还没装的 Agent 是合法的排班，装好即生效。
+ensureColumn('project_tasks', 'assignee_agent_id', 'assignee_agent_id TEXT');
 // 群聊消息来源。老消息为 NULL，前端按「无作者」渲染成单气泡，行为不变。
 ensureColumn('messages', 'author_agent_id', 'author_agent_id TEXT');
 // P4-4：生图消息的图片块。老消息为 NULL（纯文本），语义正确。
@@ -460,6 +467,12 @@ export interface DbSession {
    * （NOT NULL DEFAULT 0），所以 `s.pinned === 1` 判断是安全的。
    */
   pinned?: number | null;
+  /**
+   * A226：待消费的会话交接摘要（跨 Agent 转交）。NULL = 没有交接。
+   * 由 `POST /api/sessions/:id/handoff` 写入、下一轮 /api/chat 消费后清空；
+   * 存的是已经裁剪好的纯文本，读取侧不需要再碰消息表。
+   */
+  handoff_context?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -623,6 +636,12 @@ export interface DbProjectTask {
   project_id: string;
   title: string;
   status: ProjectTaskStatus;
+  /**
+   * A229：指派的 Agent id。NULL = 未指派。
+   * 票与成员解耦的落点：票不绑死某个人，改派只是改这个字段，
+   * 状态机（todo/doing/done）跟着票走、不跟着人走。
+   */
+  assignee_agent_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -670,10 +689,11 @@ export function createProjectTask(projectId: string, title: string): DbProjectTa
  */
 export function updateProjectTask(
   id: string,
-  updates: { title?: string; status?: string }
+  updates: { title?: string; status?: string; assignee?: string | null }
 ): DbProjectTask | undefined {
   const fields: string[] = [];
-  const values: Array<string> = [];
+  // A229：assignee 可传 null（撤销指派），值列放宽成 string | null
+  const values: Array<string | null> = [];
 
   if (typeof updates.title === 'string' && updates.title.trim()) {
     fields.push('title = ?');
@@ -683,6 +703,12 @@ export function updateProjectTask(
     if (!isProjectTaskStatus(updates.status)) return undefined;
     fields.push('status = ?');
     values.push(updates.status);
+  }
+  // A229：指派。与 reasoning_effort 同构 —— null = 撤销指派（清成 NULL），
+  // undefined = 这一项不动。
+  if (updates.assignee !== undefined) {
+    fields.push('assignee_agent_id = ?');
+    values.push(updates.assignee);
   }
   if (fields.length === 0) return getProjectTask(id);
 
@@ -874,6 +900,7 @@ export function updateSession(
       | 'sdk_thread_permission'
       | 'pinned'
       | 'project_id'
+      | 'handoff_context'
     >
   >
 ): boolean {
@@ -936,6 +963,11 @@ export function updateSession(
   if (updates.sdk_thread_permission !== undefined) {
     fields.push('sdk_thread_permission = ?');
     values.push(updates.sdk_thread_permission);
+  }
+  // A226：交接摘要。与上面两列同构 —— null = 消费完毕（清空），undefined = 不动。
+  if (updates.handoff_context !== undefined) {
+    fields.push('handoff_context = ?');
+    values.push(updates.handoff_context);
   }
   if (updates.pinned !== undefined) {
     fields.push('pinned = ?');

@@ -699,6 +699,9 @@ export function SettingsPage({
           <>
             <PermissionRulesPanel />
             <PermissionGrantsSection />
+            {/* A228：远程审批。管的是同一件事的「人不在场」那一半 ——
+                门禁决策仍走本机，这里只是把请求递到手机上 */}
+            <RemoteApprovalSection />
           </>
         )}
 
@@ -2296,6 +2299,186 @@ function PermissionGrantsSection() {
 
       <p className="tc-hint" data-permission-mgr-hint style={{ marginTop: 8 }}>
         {t('settings.permissionMgr.hint')}
+      </p>
+    </section>
+  );
+}
+
+// ============= 远程审批（A228）=============
+//
+// 人不在电脑前时，越权请求外发成 IM 卡片，手机上点链接放行/拒绝。
+// 通道由用户自配 webhook（应用不做云端中继——local-first 的边界），
+// 审批链接的基址默认本机局域网 IP，配了反代就填自己的地址。
+
+const NOTIFY_KINDS: Array<{ key: 'lark' | 'wecom' | 'dingtalk' | 'generic'; labelKey: MessageKey }> = [
+  { key: 'lark', labelKey: 'settings.remote.kindLark' },
+  { key: 'wecom', labelKey: 'settings.remote.kindWecom' },
+  { key: 'dingtalk', labelKey: 'settings.remote.kindDingtalk' },
+  { key: 'generic', labelKey: 'settings.remote.kindGeneric' },
+];
+
+function RemoteApprovalSection() {
+  const { t } = useTranslation();
+  const [kind, setKind] = useState<'lark' | 'wecom' | 'dingtalk' | 'generic'>('lark');
+  const [url, setUrl] = useState('');
+  const [hasUrl, setHasUrl] = useState(false);
+  const [externalBaseUrl, setExternalBaseUrl] = useState('');
+  const [enabled, setEnabled] = useState(false);
+  const [approvalBase, setApprovalBase] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/notify/config')
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return;
+        setKind(d.kind ?? 'lark');
+        setHasUrl(d.hasUrl === true);
+        setExternalBaseUrl(d.externalBaseUrl ?? '');
+        setEnabled(d.enabled === true);
+        setApprovalBase(d.approvalBase ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = async (nextEnabled?: boolean) => {
+    setSaving(true);
+    try {
+      const r = await fetch('/api/notify/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind,
+          // 留空 = 不改已保存的地址（改渠道/开关时不必重贴密钥 URL）
+          ...(url.trim() ? { url: url.trim() } : {}),
+          externalBaseUrl: externalBaseUrl.trim(),
+          enabled: nextEnabled ?? enabled,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        MessagePlugin.error(String(d.error ?? t('settings.remote.saveFailed')));
+        return false;
+      }
+      setHasUrl(hasUrl || !!url.trim());
+      setUrl('');
+      const cfg = await fetch('/api/notify/config').then(x => x.json());
+      setApprovalBase(cfg.approvalBase ?? null);
+      return true;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const test = async () => {
+    setTesting(true);
+    try {
+      const r = await fetch('/api/notify/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...(url.trim() ? { url: url.trim() } : {}), kind }),
+      });
+      const d = await r.json();
+      if (!r.ok) MessagePlugin.error(String(d.error ?? t('settings.remote.testFailed')));
+      else MessagePlugin.success(String(d.message ?? t('settings.remote.testSent')));
+    } catch {
+      MessagePlugin.error(t('settings.remote.testFailed'));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <section data-remote-approval>
+      <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--td-text-color-primary)' }}>
+        {t('settings.remote.title')}
+      </h3>
+      <p className="tc-hint" style={{ marginBottom: 12 }}>
+        {t('settings.remote.desc')}
+      </p>
+
+      {/* 渠道：四个等权选项，选中走品牌色描边（与外观区主题卡同一形态） */}
+      <div className="mb-3 flex flex-wrap gap-2" data-remote-kind>
+        {NOTIFY_KINDS.map(k => {
+          const selected = kind === k.key;
+          return (
+            <button
+              key={k.key}
+              type="button"
+              onClick={() => setKind(k.key)}
+              aria-pressed={selected}
+              className="rounded-lg px-3 py-1.5 text-caption transition-colors"
+              style={{
+                border: `1px solid ${selected ? 'var(--td-brand-color)' : 'var(--tc-edge)'}`,
+                color: selected ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)',
+                backgroundColor: selected ? 'var(--td-brand-color-light)' : 'transparent',
+              }}
+            >
+              {t(k.labelKey)}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mb-3">
+        <label className="mb-1 block text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
+          {t('settings.remote.webhookUrl')}
+        </label>
+        <input
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          placeholder={hasUrl ? t('settings.remote.urlSaved') : 'https://…'}
+          spellCheck={false}
+          data-remote-url
+          className="h-9 w-full rounded-lg px-3 font-mono text-body outline-none"
+          style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-primary)' }}
+        />
+      </div>
+
+      <div className="mb-3">
+        <label className="mb-1 block text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
+          {t('settings.remote.externalBase')}
+        </label>
+        <input
+          value={externalBaseUrl}
+          onChange={e => setExternalBaseUrl(e.target.value)}
+          placeholder={t('settings.remote.externalBasePlaceholder')}
+          spellCheck={false}
+          data-remote-external
+          className="h-9 w-full rounded-lg px-3 font-mono text-body outline-none"
+          style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-primary)' }}
+        />
+        <p className="tc-hint" style={{ marginTop: 4 }}>
+          {t('settings.remote.externalBaseHint', { base: approvalBase ?? t('settings.remote.externalBaseNone') })}
+        </p>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          className="tc-btn-secondary"
+          onClick={() => void save(!enabled).then(ok => ok && setEnabled(!enabled))}
+          disabled={saving}
+          data-remote-toggle
+        >
+          {enabled ? t('settings.remote.disable') : t('settings.remote.enable')}
+        </Button>
+        <Button variant="outline" className="tc-btn-secondary" onClick={test} disabled={testing} data-remote-test>
+          {t('settings.remote.test')}
+        </Button>
+        {enabled && (
+          <span className="text-caption" style={{ color: 'var(--tc-status-success)' }} data-remote-state>
+            {t('settings.remote.on')}
+          </span>
+        )}
+      </div>
+      <p className="tc-hint" style={{ marginTop: 8 }}>
+        {t('settings.remote.securityHint')}
       </p>
     </section>
   );

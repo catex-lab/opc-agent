@@ -769,6 +769,9 @@ export function ChatPage({
           groupAvatar={groupAvatar}
           groupAvatarImage={groupAvatarImage}
           sessionId={currentSession.id}
+          // A225：绑定了工作目录才具备并行隔离的前提（是否 git 仓库由服务端
+          // 每轮复核，不满足时以群提示说明并退回共享目录）
+          worktreeAvailable={!!currentSession.cwd}
         />
       )}
 

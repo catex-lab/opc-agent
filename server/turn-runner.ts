@@ -41,6 +41,14 @@ export interface TurnRunnerDeps {
   /** 工作目录。缺省退到 process.cwd()，与历史行为一致 */
   cwd?: string;
   /**
+   * A225：按成员取工作目录（worktree 隔离用）。
+   *
+   * 群聊并行时每个成员要各在自己的检出里跑（否则并行改同一个目录必然互踩）。
+   * 与 `cwd` 的关系：`cwdFor(agentId)` 命中就用它，否则回落 `cwd`。
+   * 单聊不传这个字段，行为不变。
+   */
+  cwdFor?: (agentId: string) => string | undefined;
+  /**
    * A62：思考强度档位。缺省 = 不显式传，用 CLI 自己的默认。
    *
    * 群聊也要接：否则前端在群聊里摆一个档位下拉就是假控件
@@ -194,7 +202,8 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
       // 逐个成员解析模型：每个 Agent 的模型命名空间都不同，
       // 统一塞一个全局值必然把其中一部分成员直接打挂
       model: resolvedModel,
-      cwd: deps.cwd || process.cwd(),
+      // A225：群聊隔离时每个成员各用各的检出；未命中回落共享目录
+      cwd: deps.cwdFor?.(agentId) || deps.cwd || process.cwd(),
       reasoningEffort: deps.reasoningEffort,
       permissionMode: deps.permissionMode || 'default',
       // 群聊/工作流同样受场景白名单约束：进了群不等于放开

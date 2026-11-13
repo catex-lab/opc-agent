@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MessagePlugin } from 'tdesign-react';
-import { ChevronDown, Check, Trash2, X, LogOut, UserPlus, UserMinus, Plus } from 'lucide-react';
+import { ChevronDown, Check, Trash2, X, LogOut, UserPlus, UserMinus, Plus, CalendarClock } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentHoverCard } from './AgentHoverCard';
 import { ConfirmDialog } from './ConfirmDialog';
 import { AvatarCropDialog } from './AvatarCropDialog';
+import { ScheduleDialog } from './ScheduleDialog';
 import { removeGroupAvatar, uploadGroupAvatar } from '../avatarApi';
 import { useAgentRemarks } from '../agentRemarks';
 import {
@@ -161,6 +162,8 @@ export function GroupSettingsPanel({
   const notifyRef = useRef<HTMLDivElement>(null);
 
   const [confirmClear, setConfirmClear] = useState(false);
+  // A224：群定时任务对话框
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [confirmExit, setConfirmExit] = useState(false);
 
   /**
@@ -922,6 +925,28 @@ export function GroupSettingsPanel({
 
           <Divider />
 
+          {/* ── 定时任务（A224）──
+              群排班是与「置顶 / 免打扰」同层的会话配置，放中性区；
+              与危险操作（删记录 / 退群）之间用一条 Divider 隔开 ——
+              往下翻到危险区之前，先能路过它。 */}
+          <div className="px-4 pb-4 pt-3" data-group-schedule-section>
+            <button
+              type="button"
+              onClick={() => setScheduleOpen(true)}
+              data-group-schedule
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-body transition-colors"
+              style={{
+                color: 'var(--td-text-color-primary)',
+                border: '1px solid var(--tc-edge-strong)',
+              }}
+            >
+              <CalendarClock size={15} />
+              {t('chat.schedule')}
+            </button>
+          </div>
+
+          <Divider />
+
           {/* ── 两个不可恢复的操作：**上下排列**，跟在「群消息设置」后面 ──
               2026-10-20 反馈：不要并排，要竖排；并且要落到「群消息设置」
               下面，得往下滚才看得到 —— 不再钉在面板底边。
@@ -971,6 +996,15 @@ export function GroupSettingsPanel({
           </div>
         </div>
       </aside>
+
+      {/* A224：群定时任务。与单聊共用同一个对话框（管理的是同一个会话的任务） */}
+      {sessionId && (
+        <ScheduleDialog
+          open={scheduleOpen}
+          session={{ id: sessionId, title, kind: 'group' }}
+          onClose={() => setScheduleOpen(false)}
+        />
+      )}
 
       {/* 两个确认框都不可恢复，各过一次。删除记录是「普通危险」，
           退出群聊是全红实心 —— 档位要比删除记录更高 */}

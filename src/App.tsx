@@ -1976,6 +1976,27 @@ function AppContent() {
                           onBack={compact ? handleBackToList : undefined}
                           sessionId={currentSession.id}
                           sessionTitle={currentSession.title || '新对话'}
+                          // A226：跨 Agent 转交。成功后在本地把会话归属改掉 ——
+                          // 头像与状态立刻换人，不必等下一轮名册轮询。
+                          onHandoff={async targetAgentId => {
+                            try {
+                              const res = await fetch(`/api/sessions/${currentSession.id}/handoff`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ targetAgentId }),
+                              });
+                              const data = await res.json();
+                              if (!res.ok) return { ok: false, error: String(data.error ?? '') };
+                              setSessions(p =>
+                                p.map(s =>
+                                  s.id === currentSession.id ? { ...s, agentId: targetAgentId } : s
+                                )
+                              );
+                              return { ok: true, targetName: String(data.targetName ?? '') };
+                            } catch (e: any) {
+                              return { ok: false, error: e?.message || '转交失败' };
+                            }
+                          }}
                         />
                       )}
                       <Suspense

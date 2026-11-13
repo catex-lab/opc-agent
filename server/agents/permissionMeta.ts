@@ -34,10 +34,34 @@ export interface PendingPermissionMeta {
   sessionId: string;
   /** 记入时刻（epoch ms），排障用 */
   at: number;
+  /**
+   * A228：工具输入的一行摘要（投影器在登记时截断）。
+   *
+   * 为什么在这里而不在通知模块里再取一次：input 只在事件上存在，事件流过
+   * 投影器就没了。谁消费 meta 谁都可能想看一眼「它要对什么授权」——
+   * 持久授权的落库键不需要它，远程审批的卡片需要。
+   * 已由投影器做 JSON 压缩 + 截断 + 敏感扫描（复用 extensions/safety 的口径），
+   * 这里只是搬运。
+   */
+  inputSummary?: string;
 }
 
 const MAX_ENTRIES = 512;
 const pending = new Map<string, PendingPermissionMeta>();
+
+/**
+ * A228：待授权登记的观察钩子（可选）。index.ts 启动时挂上远程审批的外发。
+ *
+ * 为什么是回调注入而不是 permissionMeta 直接 import 通知模块：本模块必须
+ * 保持**零依赖**（见文件头），projector 的脱机闸门直接 import 它——
+ * 一旦这里沾上网络/磁盘，那些闸门就要开真端口。回调由宿主注册，
+ * 没注册 = 纯记录，行为与 A228 之前完全一致。
+ */
+let observer: ((meta: PendingPermissionMeta) => void) | null = null;
+
+export function setPendingPermissionObserver(fn: ((meta: PendingPermissionMeta) => void) | null): void {
+  observer = fn;
+}
 
 /**
  * 记入一条待授权元数据。同一 requestId 重复到达（理论不该发生）以最新为准。
@@ -51,6 +75,11 @@ export function recordPendingPermissionMeta(meta: PendingPermissionMeta): void {
     pending.delete(oldest);
   }
   pending.set(meta.requestId, { ...meta });
+  try {
+    observer?.(pending.get(meta.requestId)!);
+  } catch {
+    /* 观察者（通知）失败不影响权限链本身 */
+  }
 }
 
 /**

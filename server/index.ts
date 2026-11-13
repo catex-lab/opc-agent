@@ -61,6 +61,52 @@ import {
   normalizeCustomInput,
   updateCustomSpec,
 } from "./agents/customAgents.js";
+// A223：手动接入的本地 CLI Agent（分发声明 + 启动验证）。与上面的 HTTP 自建
+// 同属「用户自建」，但存储与合成定义完全分开（见模块头注释）。
+import {
+  createCustomCliSpec,
+  customCliSpecToDefinition,
+  deleteCustomCliSpec,
+  loadCustomCliSpecs,
+  normalizeCustomCliInput,
+  resolveCustomCliCommand,
+  trialCustomCli,
+  updateCustomCliSpec,
+} from "./agents/customCliAgents.js";
+// A224：定时派活。cron 是纯函数解析器；调度器到点后对**本机**聊天路由
+// 自取回（self-fetch），与手发消息走同一条链（理由见模块头注释）。
+import {
+  createSchedule,
+  deleteSchedule,
+  listSchedules,
+  scheduleRuntimeOf,
+  startScheduler,
+  stopScheduler,
+  updateSchedule,
+  type ScheduleTask,
+} from "./scheduler.js";
+// A228：远程审批的 IM 通知渠道。config 存 data/notify-channels.json，
+// 审批走一次性 token 的 GET 链接（IM 卡片里能点的只有链接）。
+import {
+  approvalBaseOf,
+  consumeRemoteToken,
+  loadNotifyConfig,
+  notifyPermissionRequest,
+  notifyTest,
+  saveNotifyConfig,
+  validateNotifyUrl,
+  type NotifyChannelKind,
+} from "./notify.js";
+import { setPendingPermissionObserver } from "./agents/permissionMeta.js";
+// A224 续：cron 解析与预览（调度器本体在 scheduler.js）
+import { cronIntervalWarning, cronPreview } from "./cron.js";
+// A225：群聊并行隔离。创建 / 汇合 / 清理都在本模块，路由只管时机与 note。
+import {
+  cleanupWorktrees,
+  createWorktrees,
+  isGitWorkTree,
+  mergeWorktree,
+} from "./worktree.js";
 import { listProviderModels, testProvider } from "./agents/providerTest.js";
 import {
   getImageProvider,
@@ -234,7 +280,24 @@ import { isProviderDialect } from "../shared/providerUrl.js";
 import { AUTO_SESSION_TITLE } from "../shared/session-title.js";
 
 /**
- * 注册用户自建 Agent，再把应用内保存的凭据注入进程环境。
+ * A223：自建定义表的统一重灌入口。
+ *
+ * HTTP 自建（A114）与手动 CLI（A223）共用 `registerCustomDefs` 这一张运行时
+ * 定义表。曾打算各管各的：但 HTTP 的增删改路由每次都整表重灌——只灌 HTTP
+ * 会把已注册的 CLI 定义**静默清掉**（表是替换语义，不是合并语义），
+ * 用户建完 CLI 再改一次厂商地址，CLI 就从名册上消失了。
+ * 所以所有重灌都必须走这里，任何调用点不许再单独 map 一份。
+ */
+function reloadCustomDefs(): void {
+  const defs = [
+    ...loadCustomSpecs().map(customSpecToDefinition),
+    ...loadCustomCliSpecs().map(customCliSpecToDefinition),
+  ];
+  registerCustomDefs(defs);
+}
+
+/**
+ * 注册用户自建 Agent（HTTP 厂商 + 手动 CLI），再把应用内保存的凭据注入进程环境。
  *
  * **自建注册必须在 loadAgentCredentials() 之前**：那条路要按
  * `findDef(id)?.credential` 找每条 Agent 的变量名，而自建 Agent 的定义
@@ -246,12 +309,38 @@ import { AUTO_SESSION_TITLE } from "../shared/session-title.js";
  * 手动刷新才能看到真实状态。
  */
 {
-  const defs = loadCustomSpecs().map(customSpecToDefinition);
-  registerCustomDefs(defs);
-  for (const def of defs) registry.registerCustom(def);
-  console.log(`[CustomAgents] 已注册 ${defs.length} 个自建 Agent`);
+  reloadCustomDefs();
+  for (const def of [...loadCustomSpecs().map(customSpecToDefinition), ...loadCustomCliSpecs().map(customCliSpecToDefinition)]) {
+    registry.registerCustom(def);
+  }
+  console.log(
+    `[CustomAgents] 已注册 ${loadCustomSpecs().length} 个自建厂商、${loadCustomCliSpecs().length} 个手动 CLI`
+  );
 }
 loadAgentCredentials();
+
+// ════════ A228：远程审批的外发钩子 ════════
+// 端口在 listen 回调才有真值（打包态 PORT=0），闭包读变量而不是常量；
+// 未监听前（null）观察者直接跳过——那个阶段不该有任何待审批请求。
+let serverPort: number | null = null;
+{
+  setPendingPermissionObserver(meta => {
+    const cfg = loadNotifyConfig();
+    if (!cfg.enabled || !cfg.url || serverPort === null) return;
+    void notifyPermissionRequest(
+      {
+        requestId: meta.requestId,
+        agentId: meta.agentId,
+        agentName: registry.get(meta.agentId)?.name || meta.agentId,
+        toolName: meta.toolName,
+        sessionId: meta.sessionId,
+        inputSummary: meta.inputSummary ?? '',
+      },
+      cfg,
+      serverPort
+    );
+  });
+}
 
 const app = express();
 
@@ -951,7 +1040,7 @@ app.post("/api/agents/custom", async (req, res) => {
     // 先把定义注册进 definitions，**再**存 Key：saveCredential() 内部要按
     // `findDef(id)?.credential` 找变量名，定义还没注册就找不到，会抛
     // 「该 Agent 不支持在应用内配置凭据」—— 顺序反了创建必然失败。
-    registerCustomDefs(loadCustomSpecs().map(customSpecToDefinition));
+    reloadCustomDefs();
     registry.registerCustom(def);
     // Key 走既有凭据存储：一份只存定义、一份只存密钥，设置页「登录配置」
     // 因此能直接换 Key，不必删掉重建。saveCredential 内部会顺手把它注入
@@ -1037,7 +1126,7 @@ app.patch("/api/agents/custom/:agentId", async (req, res) => {
 
     // 定义表换新 → 实例换新。顺序不能反：`saveCredential()` 要按新定义找变量名，
     // 而 `registerCustom()` 是幂等的（已存在直接 return），必须先注销再注册。
-    registerCustomDefs(loadCustomSpecs().map(customSpecToDefinition));
+    reloadCustomDefs();
     registry.unregisterCustom(agentId);
     registry.registerCustom(customSpecToDefinition(spec));
 
@@ -1067,11 +1156,119 @@ app.delete("/api/agents/custom/:agentId", async (req, res) => {
     const releasedLogo = clearAgentLogo(agentId);
     if (releasedLogo) deleteAvatarFileIfUnused(releasedLogo);
     registry.unregisterCustom(agentId);
-    registerCustomDefs(loadCustomSpecs().map(customSpecToDefinition));
+    reloadCustomDefs();
     res.json({ ok: true, id: agentId });
   } catch (error: any) {
     console.error("[CustomAgents] Delete error:", error);
     res.status(500).json({ error: error?.message || "删除自建 Agent 失败" });
+  }
+});
+
+// ════════ A223：手动接入的本地 CLI Agent ════════
+// 路由必须注册在 `/api/agents/:agentId` 之前（与 custom 同一条规矩，
+// 见 A177 注释）——`:agentId` 会吞掉任何两段路径。
+
+app.get("/api/agents/custom-cli", (_req, res) => {
+  try {
+    res.json({ agents: loadCustomCliSpecs() });
+  } catch (error: any) {
+    console.error("[CustomCli] List error:", error);
+    res.status(500).json({ error: error?.message || "获取手动接入 Agent 失败" });
+  }
+});
+
+// 检测：只做零成本解析（命令能否找到），不拉进程、不花钱。
+// 试跑是另一个动作（见下），两者分开——验证一步不该让用户被扣一次额度。
+app.post("/api/agents/custom-cli/validate", (req, res) => {
+  try {
+    const norm = normalizeCustomCliInput(req.body);
+    if (!norm.ok) return res.status(400).json({ error: norm.error });
+    const resolvedPath = resolveCustomCliCommand(norm.value);
+    res.json({ ok: !!resolvedPath, resolvedPath, command: norm.value.command });
+  } catch (error: any) {
+    console.error("[CustomCli] Validate error:", error);
+    res.status(500).json({ error: error?.message || "检测失败" });
+  }
+});
+
+// 试跑：真的拉起进程发一句 prompt。失败也用 200 返回（结果里 ok:false），
+// 这是**测试结论**而不是服务端故障（与 /api/agents/custom/test 同一口径）。
+app.post("/api/agents/custom-cli/trial", async (req, res) => {
+  try {
+    const norm = normalizeCustomCliInput(req.body);
+    if (!norm.ok) return res.status(400).json({ error: norm.error });
+    const prompt = String((req.body as any)?.prompt ?? "ping").trim() || "ping";
+    const spec = { ...norm.value, id: "customcli-trial", createdAt: Date.now() };
+    res.json(await trialCustomCli(spec, prompt));
+  } catch (error: any) {
+    console.error("[CustomCli] Trial error:", error);
+    res.status(500).json({ error: error?.message || "试跑失败" });
+  }
+});
+
+app.post("/api/agents/custom-cli", async (req, res) => {
+  try {
+    const norm = normalizeCustomCliInput(req.body);
+    if (!norm.ok) return res.status(400).json({ error: norm.error });
+    // 保存前必须检测得到命令：存一条本机拉不起来的声明没有意义，
+    // 用户只会在名册上看到一个永远「未安装」的灰条目。
+    if (!resolveCustomCliCommand(norm.value)) {
+      return res.status(400).json({
+        error: `检测不到命令：${norm.value.command}（不在 PATH 里，路径也不存在）`,
+      });
+    }
+    const spec = createCustomCliSpec(norm.value);
+    const def = customCliSpecToDefinition(spec);
+    reloadCustomDefs();
+    registry.registerCustom(def);
+    // 建完立刻探一次：用户下一步就是去点这个 Agent（与 HTTP 自建同口径）
+    const agent = await registry.probeOne(spec.id, true);
+    res.json({ agent, id: spec.id });
+  } catch (error: any) {
+    console.error("[CustomCli] Create error:", error);
+    res.status(500).json({ error: error?.message || "创建手动接入 Agent 失败" });
+  }
+});
+
+app.patch("/api/agents/custom-cli/:agentId", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    if (!agentId.startsWith("customcli-")) {
+      return res.status(400).json({ error: "只能修改手动接入的 Agent" });
+    }
+    const norm = normalizeCustomCliInput(req.body);
+    if (!norm.ok) return res.status(400).json({ error: norm.error });
+    const spec = updateCustomCliSpec(agentId, norm.value);
+    if (!spec) return res.status(404).json({ error: "手动接入的 Agent 不存在" });
+    // 定义表换新 → 实例换新（顺序与 HTTP 自建一致：先注销再注册）
+    registry.unregisterCustom(agentId);
+    reloadCustomDefs();
+    registry.registerCustom(customCliSpecToDefinition(spec));
+    const agent = await registry.probeOne(agentId, true);
+    res.json({ agent, id: agentId });
+  } catch (error: any) {
+    console.error("[CustomCli] Update error:", error);
+    res.status(500).json({ error: error?.message || "修改手动接入 Agent 失败" });
+  }
+});
+
+app.delete("/api/agents/custom-cli/:agentId", (req, res) => {
+  try {
+    const { agentId } = req.params;
+    if (!agentId.startsWith("customcli-")) {
+      return res.status(400).json({ error: "只能删除手动接入的 Agent" });
+    }
+    const removed = deleteCustomCliSpec(agentId);
+    if (!removed) return res.status(404).json({ error: "手动接入的 Agent 不存在" });
+    // CLI 不存凭据（用用户自己的登录态），但自定义 Logo 同样要释放（A160 同款）
+    const releasedLogo = clearAgentLogo(agentId);
+    if (releasedLogo) deleteAvatarFileIfUnused(releasedLogo);
+    registry.unregisterCustom(agentId);
+    reloadCustomDefs();
+    res.json({ ok: true, id: agentId });
+  } catch (error: any) {
+    console.error("[CustomCli] Delete error:", error);
+    res.status(500).json({ error: error?.message || "删除手动接入 Agent 失败" });
   }
 });
 
@@ -2396,6 +2593,164 @@ app.post("/api/sessions/:sessionId/branch", (req, res) => {
   }
 });
 
+// ════════ A226：跨 Agent 会话转交 ════════
+// 单聊会话换人接力：历史摘要存进 handoff_context，下一轮 /api/chat 前置注入后清空。
+// 为什么不立刻替用户发一条「接手确认」：转交是用户的决定，新 Agent 开口的第一句
+// 应该留给真正的下一条指令——注入摘要只为它服务。
+app.post("/api/sessions/:sessionId/handoff", (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const targetAgentId = String((req.body ?? {}).targetAgentId ?? '').trim();
+    if (!targetAgentId) return res.status(400).json({ error: '缺少 targetAgentId' });
+
+    const session = db.getSession(sessionId);
+    if (!session) return res.status(404).json({ error: '会话不存在' });
+    if (session.kind === 'group') {
+      return res.status(400).json({ error: '群聊由成员分工，没有「转交」——把新人拉进群即可' });
+    }
+    if (session.agent_id === targetAgentId) {
+      return res.status(400).json({ error: '这个会话已经在和它对话了' });
+    }
+    const target = registry.get(targetAgentId);
+    if (!target) return res.status(404).json({ error: `未知的 Agent: ${targetAgentId}` });
+
+    const fromName = registry.get(session.agent_id || '')?.name || session.agent_id || '上一任';
+    // 摘要在切换**之前**取：消息还是那个对话的完整样子
+    let rows: db.DbMessage[] = [];
+    try {
+      rows = db.getMessagesBySession(sessionId);
+    } catch {
+      rows = [];
+    }
+    const summary = historySummary(rows);
+    db.updateSession(sessionId, {
+      agent_id: targetAgentId,
+      // 新 Agent 没有自己的 CLI 会话，清掉前任的续接令牌与档位记账
+      sdk_session_id: null,
+      sdk_thread_permission: null,
+      handoff_context: summary || null,
+    });
+
+    console.log(
+      `[Sessions] 转交 ${sessionId}: ${session.agent_id} → ${targetAgentId}` +
+        `（携带摘要 ${summary.length} 字）`
+    );
+    res.json({
+      ok: true,
+      fromAgentId: session.agent_id,
+      targetAgentId,
+      targetName: target.name,
+      carried: summary.length > 0,
+    });
+  } catch (error: any) {
+    console.error("[Handoff] Error:", error);
+    res.status(500).json({ error: error?.message || '转交失败' });
+  }
+});
+
+// ════════ A228：远程审批 ════════
+// 配置（设置页）+ 一次性审批链接（IM 卡片里的按钮就是这两个 GET）。
+
+app.get("/api/notify/config", (_req, res) => {
+  const cfg = loadNotifyConfig();
+  // url 只回「有没有配」与尾段：完整 webhook 里嵌着机器人的密钥，前端不需要它
+  res.json({
+    kind: cfg.kind,
+    enabled: cfg.enabled,
+    externalBaseUrl: cfg.externalBaseUrl ?? null,
+    hasUrl: !!cfg.url,
+    urlTail: cfg.url ? cfg.url.replace(/[?&]([^=&]+)=([^&]*)/g, (_m, k) => `?${k}=***`) : null,
+    approvalBase: approvalBaseOf(cfg, serverPort ?? PORT),
+  });
+});
+
+app.put("/api/notify/config", (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const prev = loadNotifyConfig();
+    const kind = (['lark', 'wecom', 'dingtalk', 'generic'] as const).includes(body.kind as never)
+      ? (body.kind as NotifyChannelKind)
+      : prev.kind;
+    // url 传 null / '' = 清空；不传 = 保持原值（编辑其他字段时不必重贴密钥 URL）
+    let url = prev.url;
+    if (body.url !== undefined) url = String(body.url ?? '').trim();
+    const externalBaseUrl =
+      body.externalBaseUrl !== undefined ? String(body.externalBaseUrl ?? '').trim() : prev.externalBaseUrl;
+    if (url) {
+      const err = validateNotifyUrl(url);
+      if (err) return res.status(400).json({ error: err });
+    }
+    if (externalBaseUrl) {
+      const err = validateNotifyUrl(externalBaseUrl);
+      if (err) return res.status(400).json({ error: `外部可达地址不合法：${err}` });
+    }
+    const next = {
+      url,
+      kind,
+      enabled: body.enabled === true && !!url,
+      ...(externalBaseUrl ? { externalBaseUrl } : {}),
+    };
+    saveNotifyConfig(next);
+    res.json({ ok: true, enabled: next.enabled });
+  } catch (error: any) {
+    console.error("[Notify] Save error:", error);
+    res.status(500).json({ error: error?.message || '保存通知配置失败' });
+  }
+});
+
+app.post("/api/notify/test", async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const prev = loadNotifyConfig();
+    const url = typeof body.url === 'string' && body.url.trim() ? body.url.trim() : prev.url;
+    const kind = (['lark', 'wecom', 'dingtalk', 'generic'] as const).includes(body.kind as never)
+      ? (body.kind as NotifyChannelKind)
+      : prev.kind;
+    if (!url) return res.status(400).json({ error: '先填写 webhook 地址' });
+    res.json(await notifyTest({ ...prev, url, kind, enabled: true }));
+  } catch (error: any) {
+    console.error("[Notify] Test error:", error);
+    res.status(500).json({ error: error?.message || '测试发送失败' });
+  }
+});
+
+// 审批兑现。GET：IM 卡片里能点的只有链接；响应是一个极小的 HTML 结果页
+// （手机浏览器打开要给人看一个结果，JSON 没有这个体验）。
+app.get("/api/remote-approve/:token", (req, res) => {
+  const token = String(req.params.token ?? '');
+  const decision = req.query.decision === 'deny' ? 'deny' : 'allow';
+  const page = (title: string, detail: string) =>
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<body style="font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f5f5f5">` +
+    `<div style="text-align:center;padding:32px;border-radius:16px;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.08)">` +
+    `<h2 style="margin:0 0 8px">${title}</h2><p style="margin:0;color:#666">${detail}</p></div></body>`;
+  try {
+    const hit = consumeRemoteToken(token);
+    if (!hit) {
+      res.status(404).send(page('链接已失效', '这条审批链接已被使用或已过期，请回应用内处理'));
+      return;
+    }
+    // token 与 decision 是成对铸造的：allow 链接只允许 allow——防止「点错链接前改参数」
+    if (hit.decision !== decision) {
+      res.status(400).send(page('链接与操作不符', '这条链接只对应一种操作，请使用卡片里的对应按钮'));
+      return;
+    }
+    const hitAgent = registry.resolvePermissionAnywhere(hit.requestId, {
+      behavior: decision,
+      ...(decision === 'deny' ? { reasonCode: 'user_rejected' as const } : {}),
+    });
+    if (!hitAgent) {
+      res.status(404).send(page('请求已处理', '这条审批请求已被答复（本机应用内或另一条链接），无需重复处理'));
+      return;
+    }
+    console.log(`[Permission] Remote approve: requestId=${hit.requestId} → ${decision}（${hitAgent}）`);
+    res.send(page(decision === 'allow' ? '已放行' : '已拒绝', '可以关闭这个页面，回到应用继续查看'));
+  } catch (error: any) {
+    console.error("[Notify] Approve error:", error);
+    res.status(500).send(page('处理失败', error?.message || '服务端错误，请回应用内处理'));
+  }
+});
+
 // 权限响应 API
 // 权限请求可能来自任意 Agent（SDK 的 canUseTool、ACP 的 session/request_permission），
 // 所以这里不绑定具体 Agent —— 直接问注册表谁能认领这个 requestId。
@@ -2776,6 +3131,20 @@ app.post("/api/chat", async (req, res) => {
   }
 
   /**
+   * A226：消费待交接摘要（跨 Agent 转交）。
+   *
+   * 「一次性」：读出即清空 —— 它描述的是转交那一刻的历史，反复注入会把
+   * 旧背景当成每轮都该重新看的上下文。与 freshSummary 的拼装顺序：
+   * 交接摘要在前（更早的背景），新建会话摘要在后（更近的历史）。
+   */
+  let handoffPrefix = '';
+  if (session.handoff_context) {
+    db.updateSession(session.id, { handoff_context: null });
+    handoffPrefix = `【会话交接】这个会话刚刚由另一位 Agent 转交给你。以下是交接摘要（背景参考，不是待办指令）：\n\n${session.handoff_context}`;
+    console.log(`[Chat] 注入交接摘要 ${session.handoff_context.length} 字（已清空待办标记）`);
+  }
+
+  /**
    * A208：HTTP 直连型 Agent 的历史装配。
    *
    * 这一类接口每次请求都是无状态的（豆包 / Kimi / 自建 OpenAI 兼容网关），
@@ -2953,8 +3322,9 @@ app.post("/api/chat", async (req, res) => {
     writeEvent(projector.kbRefs(kbInjection.citations));
   }
   // A207：新建 CLI 会话时把历史摘要前置（仅背景，措辞已注明不是指令）。
-  // 顺序：知识库前缀 → 历史摘要 → 本轮提问；三者都是纯文本，CLI 侧无结构要求。
-  const promptWithHistory = freshSummary ? `${freshSummary}\n\n${message}` : message;
+  // 顺序：交接摘要 → 知识库前缀 → 历史摘要 → 本轮提问；三者都是纯文本，CLI 侧无结构要求。
+  const backgroundParts = [handoffPrefix, freshSummary].filter(Boolean);
+  const promptWithHistory = backgroundParts.length > 0 ? `${backgroundParts.join('\n\n')}\n\n${message}` : message;
   const promptForAgent = kbInjection ? `${kbInjection.promptPrefix}\n\n${promptWithHistory}` : promptWithHistory;
 
   let newResumeToken: string | null = null;
@@ -3813,9 +4183,18 @@ app.patch("/api/tasks/:taskId", (req, res) => {
     res.status(400).json({ error: `无效的任务状态：${String(status)}` });
     return;
   }
+  // A229：指派 / 改派。**不校验** agentId 是否在名册里——名册是动态的，
+  // 指给一个「还没装」的 Agent 是合法的排班动作，装好即生效。
+  const assignee =
+    req.body?.assigneeAgentId === null
+      ? null // 明确传 null = 撤销指派
+      : typeof req.body?.assigneeAgentId === "string" && req.body.assigneeAgentId.trim()
+        ? req.body.assigneeAgentId.trim()
+        : undefined; // 不传 = 不动
   const task = updateProjectTask(req.params.taskId, {
     title: typeof title === "string" ? title : undefined,
     status,
+    assignee,
   });
   if (!task) {
     res.status(404).json({ error: "任务不存在" });
@@ -3982,6 +4361,9 @@ app.post("/api/group-chat", async (req, res) => {
     // P4：场景模板 id / 会话级系统提示词（可选）
     scenarioId,
     systemPrompt,
+    // A225：群聊并行隔离（git worktree）。true = 每个成员各检出一份，
+    // 结束后逐成员汇合回主工作区。只在会话绑定了 git 目录时生效。
+    worktree = false,
     // 群名。用户可能在建群后、发第一条消息之前就改过群名 ——
     // 那时会话还没落库（前端是本地空壳），改名只能攒着，随首条消息一起带上。
     // 不带的话，落库时会用「首条消息前 30 字」把用户起的名字盖掉。
@@ -4087,10 +4469,15 @@ app.post("/api/group-chat", async (req, res) => {
    * 动态工作流的 dispatch/broadcast/relay/debate 走的是同一份实现，
    * 群聊路由只留下 SSE 与断开口。
    */
+  // A225：worktree 批次。在下面按需创建；createTurnRunner 的 cwdFor 用闭包取值
+  let wtBatch: Awaited<ReturnType<typeof createWorktrees>> | null = null;
   const turn = createTurnRunner({
     session,
     model,
     cwd,
+    // A225：worktree 隔离时按成员取各自的检出目录。wtBatch 在下面才创建，
+    // 用闭包取值（未启用时恒为 undefined，回落共享目录）
+    cwdFor: agentId => wtBatch?.slots.get(agentId)?.dir,
     reasoningEffort: reasoningEffort || session.reasoning_effort || undefined,
     // A123：每一棒也要吃会话里存的权限档（请求体没带时兜住），与一对一同一口径
     permissionMode: permissionMode || session.permission_mode || undefined,
@@ -4135,21 +4522,91 @@ app.post("/api/group-chat", async (req, res) => {
   }
 
   try {
-    await runOrchestration(
-      { mode: orchestration, members, prompt: message },
-      {
-        runAgent,
-        note: text => sse({ type: 'group_note', text }),
-        displayName: id => registry.get(id)?.name || id,
-        skillScore: id => {
-          const agent = registry.get(id);
-          return agent ? scoreAgentSkills(agent.skills ?? [], message) : 0;
-        },
-        // 只把真正可用的 Agent 纳入编排：把任务派给一个必然失败的人，
-        // 只会浪费一轮调用并给用户一个空结果
-        isUsable: id => registry.get(id)?.status.availability === 'ready',
+    // ── A225：worktree 隔离的创建与汇合 ──────────────────────────────
+    // 生效条件（全部满足才启用，任一不满足都如实 note 并退回共享目录）：
+    //   显式开启 && 成员 > 1 && 会话绑定了目录 && 该目录是 git 工作树。
+    // 单成员的「群」没有并行互踩问题，不值得为它建检出。
+    const wantWorktree =
+      worktree === true && members.length > 1 && typeof session.cwd === 'string' && !!session.cwd;
+    if (wantWorktree) {
+      // wantWorktree 已确认 session.cwd 是非空字符串；TS 的收尾进不了分支，这里收一次
+      const repoDir = session.cwd as string;
+      const isRepo = await isGitWorkTree(repoDir);
+      if (!isRepo) {
+        sse({ type: 'group_note', text: `已开启并行隔离，但工作目录不是 git 仓库（${repoDir}），本轮退回共享目录执行` });
+      } else {
+        wtBatch = await createWorktrees(repoDir, members, session.id);
+        const made = wtBatch.slots.size;
+        for (const f of wtBatch.failures) {
+          sse({ type: 'group_note', text: `${registry.get(f.agentId)?.name || f.agentId} 的隔离检出创建失败（${f.reason}），退回共享目录` });
+        }
+        if (made > 0) {
+          sse({ type: 'group_note', text: `已开启并行隔离：${made} 位成员各在独立检出中执行，结束后逐个汇合（绝不自动 push）` });
+        }
       }
-    );
+    }
+
+    // 成员完成标记：汇合时只处理真的跑完编排的成员（中止/失败的不汇合——
+    // 半途而废的改动也可能是有用的，但它没有走完编排，由用户自己在检出里看）
+    let orchestrationFinished = false;
+    try {
+      await runOrchestration(
+        { mode: orchestration, members, prompt: message },
+        {
+          runAgent,
+          note: text => sse({ type: 'group_note', text }),
+          displayName: id => registry.get(id)?.name || id,
+          skillScore: id => {
+            const agent = registry.get(id);
+            return agent ? scoreAgentSkills(agent.skills ?? [], message) : 0;
+          },
+          // 只把真正可用的 Agent 纳入编排：把任务派给一个必然失败的人，
+          // 只会浪费一轮调用并给用户一个空结果
+          isUsable: id => registry.get(id)?.status.availability === 'ready',
+        }
+      );
+      orchestrationFinished = !ac.signal.aborted;
+    } finally {
+      // 汇合在 finally 里做：编排抛错时已产出改动的成员照样要收回来，
+      // 但**被中止**时不收（用户点了停止 = 别再动我的主区），只清检出。
+      if (wtBatch) {
+        if (orchestrationFinished) {
+          // 串行汇合：并发 merge 会互相踩主区的 index
+          const keep = new Set<string>();
+          for (const [agentId, slot] of wtBatch.slots) {
+            const outcome = await mergeWorktree(wtBatch, slot, registry.get(agentId)?.name || agentId);
+            switch (outcome.kind) {
+              case 'merged':
+                sse({
+                  type: 'group_note',
+                  text: `已汇合 ${registry.get(agentId)?.name || agentId} 的改动（${outcome.files} 个文件）`,
+                });
+                break;
+              case 'clean':
+                sse({ type: 'group_note', text: `${registry.get(agentId)?.name || agentId} 没有文件改动` });
+                break;
+              case 'conflict':
+                // 冲突现场保留：分支与检出都留着，用户自己去解
+                keep.add(agentId);
+                sse({
+                  type: 'group_note',
+                  text:
+                    `${registry.get(agentId)?.name || agentId} 的改动与主工作区冲突：${outcome.files.join('、')}。` +
+                    `已停止自动汇合，改动保留在分支 ${outcome.branch}（检出：${outcome.dir}），解完后自行合并或删除`,
+                });
+                break;
+              case 'failed':
+                sse({ type: 'group_note', text: `汇合 ${registry.get(agentId)?.name || agentId} 的改动失败：${outcome.reason}` });
+                break;
+            }
+          }
+          await cleanupWorktrees(wtBatch, keep);
+        } else {
+          // 被中止：全部清掉，不碰主区
+          await cleanupWorktrees(wtBatch);
+        }
+      }
+    }
   } catch (err: any) {
     console.error(`[GroupChat] 编排失败:`, err);
     sse({ type: 'error', message: err?.message || '编排失败' });
@@ -4763,6 +5220,90 @@ app.post("/api/verify/run", async (req, res) => {
 // 知识库接口：范围/回填/重建/会话开关。界面在 P1 之外单独做。
 registerKbRoutes(app);
 
+// ════════ A224：定时派活 ════════
+// /api/schedules 前缀与 /api/sessions 互不吞并，注册位置只求可读性。
+
+app.get("/api/schedules", (req, res) => {
+  try {
+    const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
+    const tasks: Array<ScheduleTask & { runtime: { running: boolean } }> = listSchedules(sessionId).map(t => ({
+      ...t,
+      runtime: scheduleRuntimeOf(t),
+    }));
+    res.json({ tasks });
+  } catch (error: any) {
+    console.error("[Scheduler] List error:", error);
+    res.status(500).json({ error: error?.message || "获取定时任务失败" });
+  }
+});
+
+// 预览未来几次触发：表单里选完表达式立即看到「下一次是几点」，用户不必心算 cron
+app.post("/api/schedules/preview", (req, res) => {
+  const expr = String((req.body ?? {}).cron ?? '');
+  const parsed = cronPreview(expr, 3);
+  res.json({ runs: parsed.map(d => d.toISOString()), nextRunAt: parsed[0]?.toISOString() ?? null });
+});
+
+app.post("/api/schedules", (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const sessionId = String(body.sessionId ?? '');
+    if (!sessionId) return res.status(400).json({ error: '缺少 sessionId' });
+    const session = db.getSession(sessionId);
+    if (!session) return res.status(404).json({ error: '会话不存在' });
+    const cron = String(body.cron ?? '');
+    // 高频拒绝放在创建边界：语法合法 ≠ 该跑（每次都是真实调用）
+    const warning = cronIntervalWarning(cron);
+    if (warning) return res.status(400).json({ error: warning });
+    const result = createSchedule(
+      {
+        sessionId,
+        prompt: String(body.prompt ?? ''),
+        cron,
+        enabled: body.enabled !== false,
+        agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
+      },
+      session
+    );
+    if ('error' in result) return res.status(400).json({ error: result.error });
+    res.json({ task: { ...result, runtime: scheduleRuntimeOf(result) } });
+  } catch (error: any) {
+    console.error("[Scheduler] Create error:", error);
+    res.status(500).json({ error: error?.message || "创建定时任务失败" });
+  }
+});
+
+app.patch("/api/schedules/:id", (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (body.cron !== undefined) {
+      const warning = cronIntervalWarning(String(body.cron));
+      if (warning) return res.status(400).json({ error: warning });
+    }
+    const task = updateSchedule(req.params.id, {
+      ...(body.prompt !== undefined ? { prompt: String(body.prompt) } : {}),
+      ...(body.cron !== undefined ? { cron: String(body.cron) } : {}),
+      ...(body.enabled !== undefined ? { enabled: body.enabled === true } : {}),
+    });
+    if (!task) return res.status(404).json({ error: '定时任务不存在或参数非法' });
+    res.json({ task: { ...task, runtime: scheduleRuntimeOf(task) } });
+  } catch (error: any) {
+    console.error("[Scheduler] Patch error:", error);
+    res.status(500).json({ error: error?.message || "修改定时任务失败" });
+  }
+});
+
+app.delete("/api/schedules/:id", (req, res) => {
+  try {
+    const removed = deleteSchedule(req.params.id);
+    if (!removed) return res.status(404).json({ error: '定时任务不存在' });
+    res.json({ ok: true });
+  } catch (error: any) {
+    console.error("[Scheduler] Delete error:", error);
+    res.status(500).json({ error: error?.message || "删除定时任务失败" });
+  }
+});
+
 const webDir = process.env.OPC_WEB_DIR
   ? path.resolve(process.env.OPC_WEB_DIR)
   : path.join(process.cwd(), 'dist');
@@ -4904,6 +5445,11 @@ const server = app.listen(PORT, HOST, () => {
 ╚════════════════════════════════════════════╝
   `);
 
+  // A224：定时派活。必须在拿到真实端口之后启动（打包态 PORT=0，
+  // 自取回要按 actualPort 回环请求）。
+  serverPort = actualPort;
+  startScheduler({ port: actualPort, host: HOST });
+
   // 启动后立刻在后台探一轮。
   //
   // 不 await：ACP 握手 20 秒以上，会拖住启动。但不做又不行 —— 探测只发生在
@@ -4933,6 +5479,8 @@ function shutdown(signal: string) {
   shuttingDown = true;
   console.log(`\n[Server] 收到 ${signal}，正在清理...`);
   try {
+    // A224：先停调度循环，避免清理期间又触发一轮
+    stopScheduler();
     registry.disposeAll();
   } catch (err) {
     console.error('[Server] 清理失败:', (err as Error).message);

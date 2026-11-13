@@ -302,8 +302,12 @@ console.log('\n[2] 用户点停止后的收口');
 console.log('\n[3] 源码契约');
 {
   const chat = fs.readFileSync(join(ROOT, 'src/hooks/useChat.ts'), 'utf8');
-  const stopSeg = chat.slice(chat.indexOf('const handleStop'), chat.indexOf('const resolveResumeConfirm'));
-  ok(/turn\.seal\?\.\(\)/.test(stopSeg), '[3] handleStop 掐流后立刻调第四段绳');
+  // A227：停止序列收进 stopActiveTurn（停止按钮与「打断并追加」共用），
+  // 契约跟着结构走：handleStop 必须委托它，而它必须掐流后立刻调第四段绳——
+  // 顺序契约不放宽（掐了流不收口 = spinner 永转，这正是本闸门要守的事）。
+  const stopSeg = chat.slice(chat.indexOf('const stopActiveTurn'), chat.indexOf('const handleStop'));
+  ok(/turn\.controller\.abort\(\)[\s\S]{0,200}turn\.seal\?\.\(\)/.test(stopSeg), '[3] handleStop 掐流后立刻调第四段绳（经 stopActiveTurn）');
+  ok(/const handleStop[\s\S]{0,400}stopActiveTurn\(currentSessionId\)/.test(chat), '[3] 停止按钮与打断追加共用同一停止序列（不许分叉）');
   const finSeg = chat.slice(chat.lastIndexOf('} finally {'));
   ok(/sealOpenBlocks\(blocks\)[\s\S]{0,240}flushNow\(\)/.test(finSeg), '[3] finally 先收口再 flush（覆盖报错/断流出口）');
   ok(/turn\.seal = \(\) =>/.test(chat), '[3] 每轮句柄持有自己的收口函数（不借全局单值）');

@@ -11,12 +11,16 @@ import {
   ChevronRight,
   Download,
   Plug,
+  Terminal,
+  Trash2,
 } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentHoverCard } from './AgentHoverCard';
 import { GetAgentsDialog, isInstallable } from './GetAgentsDialog';
 import { ContextMenu } from './ContextMenu';
 import { RemarkDialog } from './RemarkDialog';
+import { ConfirmDialog } from './ConfirmDialog';
+import { AddCustomCliDialog } from './AddCustomCliDialog';
 import { useAgentRemarks, setAgentRemark } from '../agentRemarks';
 import {
   SEARCH_PILL_CLASS,
@@ -151,6 +155,14 @@ export function ContactsPanel({
   const [getAgentsOpen, setGetAgentsOpen] = useState(false);
   /** 右上角「+」的下拉（发起群聊 / 重新探测） */
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  /**
+   * A223：手动添加 CLI Agent 弹窗。editingId 非空 = 编辑模式
+   * （从自定义条目的右键菜单进入）。
+   */
+  const [addCliOpen, setAddCliOpen] = useState(false);
+  const [editingCliId, setEditingCliId] = useState<string | null>(null);
+  /** A223：移除确认（右键菜单 → ConfirmDialog），pending 存待删条目 */
+  const [removeCli, setRemoveCli] = useState<{ id: string; name: string } | null>(null);
 
   const filter = (list: RegisteredAgent[]) =>
     keyword
@@ -183,6 +195,21 @@ export function ContactsPanel({
   /** 一条都没就绪 = 真正的新用户场景（安装包里不带任何 CLI），值得在列表顶上提示 */
   const readyCount = agents.filter(a => a.status.availability === 'ready').length;
   const installableCount = agents.filter(isInstallable).length;
+
+  // ── A223：手动接入条目的编辑 / 移除 ──────────────────────────────
+  // 移除走确认框：删的是「联系人」，误触右键直接删没有后悔药。
+  const removeCustomCli = async (id: string) => {
+    try {
+      const r = await fetch(`/api/agents/custom-cli/${id}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        console.error('[Contacts] 移除失败:', (data as { error?: string }).error);
+      }
+    } finally {
+      setRemoveCli(null);
+      onProbe(); // 名册里少了一条，重新探测一次刷掉残留状态
+    }
+  };
 
   /**
    * 同族分组（A68）。
@@ -337,6 +364,23 @@ export function ContactsPanel({
                       {t('contacts.newGroup')}
                     </button>
                   )}
+                  {/* A223：手动接入本地 CLI。放在「添加模型厂商」前面 —— 它添加的
+                      是完整联系人（可进群、可分派），比「只多几个模型」高一档，
+                      是「+」菜单里的第二顺位动作。 */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddMenuOpen(false);
+                      setEditingCliId(null);
+                      setAddCliOpen(true);
+                    }}
+                    className={MENU_ITEM_CLASS}
+                    style={{ color: 'var(--td-text-color-primary)' }}
+                    data-contacts-add-cli
+                  >
+                    <Terminal size={14} />
+                    {t('contacts.addCliAgent')}
+                  </button>
                   {/* A129：自定义厂商收进设置页。这里只做跳转 —— 添加流程
                       要拉模型清单、测连通，弹窗里做不下，也不该做两套。 */}
                   <button
@@ -506,6 +550,15 @@ export function ContactsPanel({
                     key={s.agent.id}
                     agent={s.agent}
                     onViewDetail={() => onViewDetail(s.agent.id)}
+                    {...(s.agent.custom
+                      ? {
+                          onEdit: () => {
+                            setEditingCliId(s.agent.id);
+                            setAddCliOpen(true);
+                          },
+                          onRemove: () => setRemoveCli({ id: s.agent.id, name: s.agent.name }),
+                        }
+                      : {})}
                   />
                 ) : (
                   /* 同族分组：标题可折叠。标题行本身不是 Agent，不可点开资料页 ——
@@ -533,6 +586,15 @@ export function ContactsPanel({
                           key={agent.id}
                           agent={agent}
                           onViewDetail={() => onViewDetail(agent.id)}
+                          {...(agent.custom
+                            ? {
+                                onEdit: () => {
+                                  setEditingCliId(agent.id);
+                                  setAddCliOpen(true);
+                                },
+                                onRemove: () => setRemoveCli({ id: agent.id, name: agent.name }),
+                              }
+                            : {})}
                         />
                       ))}
                   </section>
@@ -606,6 +668,33 @@ export function ContactsPanel({
         onOpenCredential={onOpenCredential}
         onViewDetail={onViewDetail}
       />
+
+      {/* A223：手动添加 / 编辑本地 CLI Agent。保存成功后重探一次名册，
+          新条目的状态（就绪/未安装）立刻可见，而不是等 TTL。 */}
+      <AddCustomCliDialog
+        open={addCliOpen}
+        editingId={editingCliId}
+        onClose={() => setAddCliOpen(false)}
+        onSaved={onProbe}
+      />
+
+      {/* A223：移除确认。删除只影响接入声明，本机文件不动 —— 文案要说清，
+          否则「移除」看起来像卸载。 */}
+      <ConfirmDialog
+        open={removeCli !== null}
+        title={t('contacts.removeCliAgent')}
+        danger
+        confirmText={t('contacts.removeCliAgent')}
+        cancelText={t('addcli.cancel')}
+        onConfirm={() => {
+          if (removeCli) void removeCustomCli(removeCli.id);
+        }}
+        onCancel={() => setRemoveCli(null)}
+      >
+        <p>
+          {t('contacts.removeCliConfirm', { name: removeCli?.name ?? '' })}
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }
@@ -613,6 +702,12 @@ export function ContactsPanel({
 interface ContactRowProps {
   agent: RegisteredAgent;
   onViewDetail: () => void;
+  /**
+   * A223：仅自定义条目（descriptor.custom）携带。缺省 = 内置条目，
+   * 菜单里不出现「编辑 / 移除」—— 内置条目没有可编辑的声明。
+   */
+  onEdit?: () => void;
+  onRemove?: () => void;
 }
 
 /**
@@ -634,7 +729,7 @@ interface ContactRowProps {
  * 悬停有底色反馈，箭头在 300px 的窄栏里只是把名称的可读宽度又切掉一截，
  * 属于「解释一个已经说清楚的事」。可点性靠 hover 态和 `title` 承担。
  */
-function ContactRow({ agent, onViewDetail }: ContactRowProps) {
+function ContactRow({ agent, onViewDetail, onEdit, onRemove }: ContactRowProps) {
   const { t } = useTranslation();
   const remarks = useAgentRemarks();
   const remark = remarks[agent.id] ?? '';
@@ -732,6 +827,24 @@ function ContactRow({ agent, onViewDetail }: ContactRowProps) {
               icon: <IdCard size={14} />,
               onSelect: onViewDetail,
             },
+            // A223：自定义条目才有「声明」可编辑；内置条目的接入方式是核实过的，
+            // 不提供编辑入口（改了等于换一条没核实过的接入）
+            ...(onEdit && onRemove
+              ? [
+                  {
+                    key: 'edit-cli',
+                    label: t('contacts.editCliAgent'),
+                    icon: <Terminal size={14} />,
+                    onSelect: onEdit,
+                  },
+                  {
+                    key: 'remove-cli',
+                    label: t('contacts.removeCliAgent'),
+                    icon: <Trash2 size={14} />,
+                    onSelect: onRemove,
+                  },
+                ]
+              : []),
           ]}
         />
       )}

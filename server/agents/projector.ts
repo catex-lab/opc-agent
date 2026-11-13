@@ -31,6 +31,34 @@ import type { AgentEvent } from './types.js';
 // permission_request 事件经过投影器的唯一收口点在这里记下 agentId+toolName，
 // 供 POST /api/permission-response 落「该 Agent 永久」授权时取用。
 import { recordPendingPermissionMeta } from './permissionMeta.js';
+// A228：输入摘要的敏感扫描。safety 是纯函数模块（正则表 + 无 IO），
+// 不会把脱机闸门拖进网络/磁盘——符合本文件「纯逻辑」的约束。
+import { scanSensitive } from '../extensions/safety.js';
+
+/**
+ * A228：工具输入的一行摘要（远程审批卡片用）。
+ *
+ * 纯函数，可单测。三条规矩：
+ *   1. 压成一行、截断到 200 字符——卡片是给人扫一眼的，不是日志全文；
+ *   2. 命中敏感扫描（sk- 开头的 Key / 用户路径 / 私钥……）时**整段替换**
+ *      为「含敏感内容」——与 safety.ts 的硬规矩一致：绝不把命中原文
+ *      带到第二张桌子（IM 服务商看得见卡片全文）；
+ *   3. 序列化失败（循环引用等）返回空串，调用方按「无摘要」渲染。
+ */
+export function summarizePermissionInput(input: unknown): string {
+  if (input === undefined || input === null) return '';
+  let text: string;
+  try {
+    text = typeof input === 'string' ? input : JSON.stringify(input);
+  } catch {
+    return '';
+  }
+  if (!text) return '';
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  const hits = scanSensitive(oneLine);
+  if (hits.length > 0) return `（含敏感内容：${hits.join('、')}，已隐去）`;
+  return oneLine.length > 200 ? `${oneLine.slice(0, 200)}…` : oneLine;
+}
 import type {
   Block,
   BlockState,
@@ -487,12 +515,15 @@ export class RunProjector {
         // 「该 Agent 永久」的落库元数据：requestId → agentId + toolName。
         // agentId 用 meta 里那一份（投影器构造时由调用方按注册表填），
         // 不信任何前端回传 —— 这是授权键，来源必须是事件流本身。
+        // A228：顺带留一行输入摘要（截断），远程审批的卡片要用——
+        // 事件流过这里就没了，没有第二处能拿到 input。
         recordPendingPermissionMeta({
           requestId: ev.requestId,
           agentId: this.meta.agentId,
           toolName: ev.toolName,
           sessionId: this.meta.sessionId,
           at: Date.now(),
+          inputSummary: summarizePermissionInput(ev.input),
         });
         return [
           this.make({

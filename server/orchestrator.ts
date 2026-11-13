@@ -15,7 +15,7 @@
  * 显式传参更好推理，也更好调试。
  */
 
-export type OrchestrationMode = 'dispatch' | 'broadcast' | 'relay' | 'debate' | 'mention';
+export type OrchestrationMode = 'dispatch' | 'broadcast' | 'relay' | 'debate' | 'mention' | 'leader';
 
 /** 某个 turn 在编排里扮演的角色，前端据此做差异化展示（如折叠「路由」过程） */
 export type TurnPhase =
@@ -237,6 +237,111 @@ function convergePrompt(topic: string, proText: string, conText: string): string
   ].join('\n');
 }
 
+// ============= 带队（A230）：Leader–成员 =============
+
+/**
+ * 主控的分工计划（结构化）。与 dispatch 的「一句话路由」不同：
+ * leader 是**一次拆分、多人并行**——计划必须是机器可读的，
+ * 否则服务端没法把子任务分头投递出去。
+ */
+export interface LeaderAssignment {
+  agentId: string;
+  subtask: string;
+}
+
+export interface LeaderPlan {
+  assignments: LeaderAssignment[];
+}
+
+function leaderPlanPrompt(task: string, candidates: string[], displayName: (id: string) => string): string {
+  return [
+    '你是这个团队的主控（Leader）。请把下面的任务拆分给合适的成员。',
+    '',
+    `用户的任务：「${task}」`,
+    '',
+    '可调度的成员：',
+    memberList(candidates, displayName),
+    '',
+    '只输出一个 JSON 对象，不要输出其它任何内容，格式：',
+    '{"assignments":[{"agentId":"成员id","subtask":"分给他的具体任务"}]}',
+    '规则：',
+    '- 只列真正需要的成员，每个成员最多出现一次；',
+    '- subtask 要写清楚他要做什么（他会只看到自己的子任务和原始任务）；',
+    '- 简单任务不需要拆分，列一个成员即可。',
+  ].join('\n');
+}
+
+function leaderWorkPrompt(task: string, subtask: string): string {
+  return [
+    `团队的原始任务：「${task}」`,
+    '',
+    `主控分配给你的部分：「${subtask}」`,
+    '',
+    '请完成你这部分，并给出可直接汇总的结论或产出。',
+  ].join('\n');
+}
+
+function leaderSummaryPrompt(task: string, parts: Array<{ name: string; text: string }>): string {
+  return [
+    `团队的原始任务：「${task}」`,
+    '',
+    '各成员按分工完成的结果：',
+    ...parts.map(p => `【${p.name}】\n${p.text || '（无输出）'}`),
+    '',
+    '请作为主控给用户一个汇总：整合各部分产出、指出衔接处，不要逐条复述。',
+  ].join('\n');
+}
+
+/**
+ * 从主控的自由输出里解析分工计划。**纯函数**，闸门直接枚举。
+ *
+ * 三级容错（解析 LLM 输出的老规矩，与 parseRouting 同一哲学）：
+ *   1. 找第一段 {...}（支持 ```json 围栏）→ JSON.parse；
+ *   2. 校验：agentId 必须在候选里、subtask 非空、按成员去重；
+ *   3. 全部失败返回 null，由调用方退化到广播。
+ * 分配上限 8 条：正常团队用不到这么多，防止模型把「每行一个字」也当子任务。
+ */
+export function parseLeaderPlan(
+  reply: string,
+  candidates: string[],
+  displayName: (id: string) => string
+): LeaderPlan | null {
+  if (!reply) return null;
+  const start = reply.indexOf('{');
+  const end = reply.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(reply.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  const list = (parsed as { assignments?: unknown })?.assignments;
+  if (!Array.isArray(list)) return null;
+
+  const seen = new Set<string>();
+  const assignments: LeaderAssignment[] = [];
+  for (const item of list) {
+    if (assignments.length >= 8) break;
+    const o = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+    const rawId = String(o.agentId ?? '').trim().toLowerCase();
+    const agentId = candidates.find(c => c.toLowerCase() === rawId)
+      // 容错②：写的是展示名（「小码」）也认——模型比用户更常写名字
+      ?? candidates.find(c => displayName(c).toLowerCase() === rawId)
+      ?? candidates.find(c => replyIncludesCandidate(c, rawId));
+    const subtask = String(o.subtask ?? '').trim();
+    if (!agentId || !subtask || seen.has(agentId)) continue;
+    seen.add(agentId);
+    assignments.push({ agentId, subtask });
+  }
+  return assignments.length > 0 ? { assignments } : null;
+}
+
+/** 宽松匹配：候选 id 出现在给出的标识里（「codex-cli」认作 codex） */
+function replyIncludesCandidate(candidate: string, rawId: string): boolean {
+  return rawId.length > 2 && (rawId.startsWith(candidate.toLowerCase()) || candidate.toLowerCase().startsWith(rawId));
+}
+
 // ============= 各模式实现 =============
 
 export interface OrchestrationInput {
@@ -282,6 +387,9 @@ export async function runOrchestration(
       break;
     case 'mention':
       await runMention(members, prompt, deps);
+      break;
+    case 'leader':
+      await runLeader(members, prompt, deps);
       break;
     case 'dispatch':
     default:
@@ -403,6 +511,73 @@ async function runMention(
 
   deps.note(`只唤醒：${targets.map(deps.displayName).join('、')}`);
   await Promise.all(targets.map(id => deps.runAgent(id, prompt, 'mention')));
+}
+
+/**
+ * 带队（A230）：主控先产出**结构化分工计划**，各成员并行执行，主控汇总。
+ *
+ * 与 dispatch 的区别：dispatch 是「选一个人做」，leader 是「拆给几个人做」——
+ * 成员间没有输入依赖，所以并行（与 broadcast 同一个 Promise.all）。
+ * 计划解析失败就退化成广播，绝不猜：一个错误的分工比没有分工更浪费额度。
+ */
+async function runLeader(
+  members: string[],
+  prompt: string,
+  deps: OrchestratorDeps
+): Promise<void> {
+  const leader = members[0];
+
+  // 单人群没有「带队」可言，退化为直接作答（与 dispatch 同一条兜底）
+  if (members.length === 1) {
+    deps.note(`群里只有 ${deps.displayName(leader)}，直接作答`);
+    await deps.runAgent(leader, prompt, 'work');
+    return;
+  }
+
+  const candidates = members.slice(1);
+  deps.note(`主控 ${deps.displayName(leader)} 正在分工`);
+
+  const plan = await deps.runAgent(
+    leader,
+    leaderPlanPrompt(prompt, candidates, deps.displayName),
+    'route'
+  );
+  const parsed = parseLeaderPlan(plan.text, candidates, deps.displayName);
+
+  if (!parsed) {
+    deps.note('主控没有给出可解析的分工，已退化为广播（所有候选成员各自作答）');
+    await runBroadcast(candidates, prompt, deps);
+    return;
+  }
+
+  for (const a of parsed.assignments) {
+    deps.note(`分工 → ${deps.displayName(a.agentId)}：${a.subtask.slice(0, 60)}${a.subtask.length > 60 ? '…' : ''}`);
+  }
+
+  // 并行执行：成员间没有依赖（依赖已经在分工里拆开了）
+  const results = await Promise.all(
+    parsed.assignments.map(async a => ({
+      assignment: a,
+      result: await deps.runAgent(
+        a.agentId,
+        leaderWorkPrompt(prompt, a.subtask),
+        'work'
+      ),
+    }))
+  );
+
+  deps.note(`由 ${deps.displayName(leader)} 汇总`);
+  await deps.runAgent(
+    leader,
+    leaderSummaryPrompt(
+      prompt,
+      results.map(r => ({
+        name: deps.displayName(r.assignment.agentId),
+        text: r.result.text,
+      }))
+    ),
+    'converge'
+  );
 }
 
 /**

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { MoreHorizontal, PanelRight } from 'lucide-react';
+import { MoreHorizontal, PanelRight, CalendarClock, ArrowLeftRight } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
 import { StatusDot } from './StatusDot';
 import { AgentDetailModal } from './AgentDetailModal';
 import { ConfirmDialog } from './ConfirmDialog';
+import { ScheduleDialog } from './ScheduleDialog';
+import { HandoffDialog } from './HandoffDialog';
 import { WorkspaceBadge } from './WorkspaceBadge';
 import { KbScopeChip } from './kb/KbScopeChip';
 import { MENU_ITEM_TEXT_CLASS } from './menuItem';
@@ -50,6 +52,13 @@ interface ChatHeaderProps {
   sessionId?: string;
   /** 会话标题，仅用于知识库面板头部 */
   sessionTitle?: string;
+  /**
+   * A226：跨 Agent 转交。由上层实现（POST + 本地状态更新）；
+   * 不传 = 菜单里不出现这个入口（本地空壳会话还没有归属，谈不上转交）。
+   */
+  onHandoff?: (
+    targetAgentId: string
+  ) => Promise<{ ok: boolean; error?: string; targetName?: string }>;
 }
 
 /**
@@ -91,10 +100,15 @@ export function ChatHeader({
   onBack,
   sessionId,
   sessionTitle,
+  onHandoff,
 }: ChatHeaderProps) {
   const { t } = useTranslation();
   const [showDetail, setShowDetail] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // A224：定时任务管理（⋯ 菜单入口）
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  // A226：跨 Agent 转交（⋯ 菜单入口）
+  const [handoffOpen, setHandoffOpen] = useState(false);
   const moreRef = useRef<HTMLDetailsElement>(null);
   /** 备注优先：列表里显示什么名字，头部就显示什么名字，不能两处不一致 */
   const remarks = useAgentRemarks();
@@ -260,6 +274,39 @@ export function ChatHeader({
             >
               {t('chat.agentDetail')}
             </button>
+            {/* A224：定时任务。低频配置，收在「⋯」里与详情/删除同一层；
+                有 sessionId 才渲染（新建空壳会话还没落库，没有可挂任务的对象） */}
+            {sessionId && (
+              <button
+                type="button"
+                onClick={() => {
+                  closeMore();
+                  setScheduleOpen(true);
+                }}
+                className={MENU_ITEM_TEXT_CLASS}
+                style={{ color: 'var(--td-text-color-primary)' }}
+                data-chat-schedule
+              >
+                <CalendarClock size={14} />
+                {t('chat.schedule')}
+              </button>
+            )}
+            {/* A226：转交给另一位 Agent。与定时任务同层 —— 都是会话级的低频操作 */}
+            {sessionId && onHandoff && (
+              <button
+                type="button"
+                onClick={() => {
+                  closeMore();
+                  setHandoffOpen(true);
+                }}
+                className={MENU_ITEM_TEXT_CLASS}
+                style={{ color: 'var(--td-text-color-primary)' }}
+                data-chat-handoff
+              >
+                <ArrowLeftRight size={14} />
+                {t('chat.handoff')}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -278,6 +325,25 @@ export function ChatHeader({
     >
       {/* 详情改成浮层弹窗：不再往下顶消息区，点空白即关 */}
       <AgentDetailModal open={showDetail} agent={agent} onClose={() => setShowDetail(false)} />
+
+      {/* A224：定时任务管理。入口菜单已挡掉无 sessionId 的场景 */}
+      {sessionId && (
+        <ScheduleDialog
+          open={scheduleOpen}
+          session={{ id: sessionId, title: sessionTitle || agent?.name || '', kind: 'direct' }}
+          onClose={() => setScheduleOpen(false)}
+        />
+      )}
+
+      {/* A226：转交给另一位 Agent。成功后上层更新会话归属，头部随之换人 */}
+      {sessionId && onHandoff && (
+        <HandoffDialog
+          open={handoffOpen}
+          currentAgentId={agent?.id}
+          onClose={() => setHandoffOpen(false)}
+          onHandoff={onHandoff}
+        />
+      )}
 
       {/* 删除确认：与会话列表同一个对话框（两步确认，不误删） */}
       <ConfirmDialog
