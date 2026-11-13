@@ -70,15 +70,76 @@ function freePort() {
     });
   });
 }
-function killTree(child) {
+/**
+ * A221：kill() 返回 ≠ 进程已死。旧版这里只 spawn 了 taskkill 就固定睡 600ms，
+ * 整链跑到这一段时 Windows 仍偶发 `EBUSY ... chat.db`，33 条断言全绿却被
+ * finally 里的 rmSync 崩成红。现在等「子进程 exit + taskkill 自己收口」两件事，
+ * 并有硬上限，不让清理本身变成新的挂起点。
+ */
+async function killTree(child) {
   if (!child || child.exitCode != null) return;
   const pid = child.pid;
   if (!pid) return;
+  const exited = new Promise(resolve => {
+    if (child.exitCode != null) return resolve();
+    child.once('exit', () => resolve());
+  });
+  let killer = null;
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'],
+      { stdio: 'ignore', windowsHide: true });
   } else {
     child.kill('SIGTERM');
   }
+  const killerDone = killer
+    ? new Promise(resolve => killer.once('close', () => resolve()))
+    : Promise.resolve();
+  await Promise.race([
+    Promise.all([exited, killerDone]),
+    new Promise(resolve => setTimeout(resolve, 4000)),
+  ]);
+}
+
+/**
+ * 夹具清理要「退避重试 + 显式计入断言」：句柄释放有延迟，直接吞异常会把
+ * 残留文件藏起来，直接抛异常又会让 33 条产品断言全绿却整段判红、看不出原因。
+ */
+async function removeFixture(dir, onRetry) {
+  const budget = Number(process.env.OPC_A211_CLEANUP_DEADLINE_MS) > 0
+    ? Number(process.env.OPC_A211_CLEANUP_DEADLINE_MS) : 8000;
+  const deadline = Date.now() + budget;
+  let last = '';
+  for (;;) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      onRetry?.();
+      if (!fs.existsSync(dir)) return { ok: true, detail: '' };
+      last = '目录仍存在（可能有进程仍持有句柄）';
+    } catch (err) {
+      last = `${err?.code ?? 'E?'}: ${String(err?.message ?? err).slice(0, 160)}`;
+    }
+    if (Date.now() >= deadline) return { ok: false, detail: last };
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+}
+
+/**
+ * 反向探针：每轮清理后立刻把夹具重新造出来，模拟「句柄一直没释放」。
+ * 要求清理断言真的判红、并带出原因；否则 `ok(cleanup.ok, …)` 就是恒绿摆设。
+ * 不启动服务端、不打开浏览器，几百毫秒即可跑完。
+ */
+if (process.argv.includes('--probe=no-cleanup')) {
+  process.env.OPC_A211_CLEANUP_DEADLINE_MS = '400';
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-a211-probe-'));
+  const r = await removeFixture(dir, () => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'chat.db'), 'still-held');
+  });
+  ok(!r.ok, '★ 反向探针：夹具删不掉时清理断言会判红');
+  ok(Boolean(r.detail), '★ 反向探针：失败原因被如实带出');
+  fs.rmSync(dir, { recursive: true, force: true });
+  console.log(`\n${failures.length ? '✗' : '✓'} A211 清理反向探针：${pass}/${pass + fail} 通过`);
+  process.exit(failures.length ? 1 : 0);
 }
 async function waitReady(base, child, timeoutMs = 90000) {
   const deadline = Date.now() + timeoutMs;
@@ -150,7 +211,7 @@ const { ready, log } = await waitReady(base, child);
 ok(ready, '[1] 服务端起来了');
 if (!ready) {
   console.log(log.slice(-2000));
-  killTree(child);
+  await killTree(child);
   process.exit(1);
 }
 ok(fs.existsSync(path.join(ROOT, 'dist', 'index.html')), '[1] 前端产物存在（否则整条 UI 闸门会一起假红）');
@@ -276,10 +337,9 @@ try {
   ok(false, '执行期未抛异常', (err?.stack || String(err)).slice(0, 600));
 } finally {
   if (browser) await browser.close().catch(() => {});
-  killTree(child);
-  // 等进程真的退出再删夹具，避免 Windows 文件占用（kill() 返回 ≠ 进程已死）
-  await new Promise(r => setTimeout(r, 600));
-  fs.rmSync(TMP, { recursive: true, force: true });
+  await killTree(child);
+  const cleanup = await removeFixture(TMP);
+  ok(cleanup.ok, '临时夹具已清理（子进程释放了 chat.db）', cleanup.detail);
 }
 
 console.log(`\n${failures.length ? '✗' : '✓'} A211 真服务端 / 浏览器序列：${pass}/${pass + fail} 通过`);

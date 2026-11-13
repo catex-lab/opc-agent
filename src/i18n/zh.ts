@@ -168,6 +168,16 @@ export const zh = {
   'status.credential-invalid': '凭据无效',
   'status.probe-failed': '探测失败',
   'status.needs-key': '缺 Key',
+  // A222：本地有登录态却被拒，与「从没登录过」不是一回事
+  'status.session-invalid': '登录态失效',
+  'agent.login.starting': '正在准备登录链接…',
+  'agent.login.waiting': '等待浏览器完成登录…',
+  'agent.login.succeeded': '登录完成，正在刷新状态…',
+  'agent.login.failed': '登录未完成，请重试',
+  'agent.login.timeout': '登录等待超时，请重试',
+  'agent.login.busy': '另一个登录正在进行…',
+  'agent.login.reopen': '重新打开登录页',
+  'agent.login.retry': '重新获取登录链接',
 
   // ===== 聊天页 chrome =====
   'chat.action.copyAnswer': '复制回答',

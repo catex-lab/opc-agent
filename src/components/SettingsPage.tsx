@@ -1418,9 +1418,12 @@ function CloseBehaviorSetting() {
             <InfoHint
               label={t('settings.common.about', { label: t('settings.closeBehavior.label') })}
               text={t('settings.closeBehavior.info')}
+              note={current.hint}
             />
           </div>
-          <p className="opc-enum-setting__hint">{current.hint}</p>
+          {/* A222：当前选项的说明不再常驻占两行 —— 选项名（直接退出 /
+              最小化到托盘 / 每次询问）已经把意思说完了，需要细节时 info
+              图标里带 note。四处 enum 设置同口径。 */}
         </div>
         {/* 自绘下拉：原生 select 的展开菜单由操作系统绘制、边线无法软化，
             换成自绘面板才能让弹层走设计令牌。键盘与朗读语义见 EnumSelect。 */}
@@ -1489,9 +1492,9 @@ function LinkOpenModeSetting() {
             <InfoHint
               label={t('settings.common.about', { label: t('settings.linkOpen.label') })}
               text={t('settings.linkOpen.info')}
+              note={current.hint}
             />
           </div>
-          <p className="opc-enum-setting__hint">{current.hint}</p>
         </div>
         <EnumSelect
           id="opc-link-open-mode"
@@ -1566,9 +1569,9 @@ function InterfaceLanguageSetting() {
                 label: t('settings.interfaceLanguage.label'),
               })}
               text={t('settings.interfaceLanguage.info')}
+              note={current.hint}
             />
           </div>
-          <p className="opc-enum-setting__hint">{current.hint}</p>
         </div>
         <EnumSelect
           id="opc-interface-language"
@@ -1640,9 +1643,9 @@ function AnswerLanguageSetting() {
                 label: t('settings.answerLanguage.label'),
               })}
               text={t('settings.answerLanguage.info')}
+              note={current.hint}
             />
           </div>
-          <p className="opc-enum-setting__hint">{current.hint}</p>
         </div>
         <EnumSelect
           id="opc-answer-language"
@@ -2177,8 +2180,15 @@ function PermissionGrantsSection() {
 
   return (
     <section data-permission-mgr>
-      <h3 className="tc-section-title">{t('settings.permissionMgr.title')}</h3>
-      <p className="tc-hint" style={{ marginTop: 2 }}>{t('settings.permissionMgr.desc')}</p>
+      {/* A222：分区说明不再常驻。表格的「范围 / 授权时间 / 操作」三列已经
+          说明了授权跨会话与可撤销，需要时才从 info 图标读原文。 */}
+      <div className="flex items-center gap-1.5">
+        <h3 className="tc-section-title">{t('settings.permissionMgr.title')}</h3>
+        <InfoHint
+          label={t('settings.common.about', { label: t('settings.permissionMgr.title') })}
+          text={t('settings.permissionMgr.desc')}
+        />
+      </div>
 
       {loading ? (
         <div className="flex justify-center py-6"><Loading size="small" /></div>

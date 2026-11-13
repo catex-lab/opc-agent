@@ -59,8 +59,8 @@
   min-height: 36px;
 }
 
-/* 左列：标签行 + 说明行，整体与右侧控件垂直居中（参考图里两行文字和 36px
-   控件是居中对齐的，说明首行与控件底边会有几像素的重叠区）。 */
+/* 左列只剩标签行（A222 把常驻说明收进 info 图标后）；行的 36px 由
+   __row 的 min-height 兜住，标签与右侧控件靠 align-items:center 对齐。 */
 .opc-enum-setting__text {
   min-width: 0;
   flex: 1 1 auto;
@@ -91,24 +91,9 @@
   white-space: normal;
 }
 
-.opc-enum-setting__hint {
-  /* 两行高固定预留：切换选项时说明文字长短不一，不预留会让下面的
-     透明度/光斑设置整体上下跳。
-     上边距 2：标题行被 InfoHint 图标撑到 22，22 + 2 = 24，正是参考图
-     实测的「标签字身顶 → 说明字身顶」距离。 */
-  min-height: calc(18px * 2);
-  margin: 2px 0 0;
-  font-size: var(--text-caption);
-  line-height: 18px;
-  color: var(--td-text-color-secondary);
-}
-
-/* 英文说明普遍比中文长三到五成（「Always reply in Simplified Chinese…」）。
-   两行预留是中文口径；英文下放行第三行，避免下一行设置项被说明挤得上下跳。
-   只加在 `:lang(en)` 上，中文布局一个像素都不动。 */
-:lang(en) .opc-enum-setting__hint {
-  min-height: calc(18px * 3);
-}
+/* A222：`.opc-enum-setting__hint` 两行预留规则已随常驻说明一起删除。
+   当前选项的解释改由 `InfoHint` 的 note 承载（hover / focus 才出现），
+   不再为一段只有第一次看才需要的文字固定占掉 36px。 */
 
 /* 控件：高 36（参考图三处控件实测均 54 原始像素 → 36）。
    宽度按内容自适应（参考图里「工作区内修改」≈143、「中文」≈100，

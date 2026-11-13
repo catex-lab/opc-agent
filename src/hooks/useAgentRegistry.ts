@@ -160,6 +160,22 @@ export function useAgentRegistry() {
     return () => clearInterval(timer);
   }, [load]);
 
+  /**
+   * A222：从系统浏览器登录完回到应用时立刻重拉名册。
+   *
+   * 这里**只重拉、不重新探测**：探测的强制重探已由服务端在登录流
+   * `onSettled` 时做过一次（`configureLoginFlowHooks`），再在前端每个焦点
+   * 事件上 probe 一次只会重新起 CLI、把刚写好的会话又搅一遍。
+   * 后端缓存是新的，重拉就够让绿点回来。
+   */
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [load]);
+
   /** 按状态分组，供通讯录展示 */
   const grouped = useMemo(() => {
     const ready: RegisteredAgent[] = [];

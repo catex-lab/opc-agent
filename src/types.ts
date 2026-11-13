@@ -528,7 +528,7 @@ export interface AgentStatus {
    * probeState 是 `timeout` —— 界面必须显示「探测超时」，
    * 不能让用户去重登一个其实已经登录好的账号。
    */
-  probeState?: 'timeout' | 'credential-invalid' | 'probe-failed';
+  probeState?: 'timeout' | 'credential-invalid' | 'probe-failed' | 'session-invalid';
 }
 
 /**
@@ -884,6 +884,18 @@ export function agentStatusViewOf(agent: {
   }
   if (probeState === 'probe-failed') {
     return { ...AVAILABILITY_META['needs-setup'], key: 'probe-failed', label: '探测失败' };
+  }
+  /**
+   * A222 / C：本地有登录态却被拒 ≠ 从没登录过。
+   * 状态词必须独立成「登录态失效」，配色沿用 warn（不是 danger 的「需修复」）：
+   * 用户要做的动作是重新登录，不是修配置。
+   */
+  if (probeState === 'session-invalid') {
+    return {
+      ...AVAILABILITY_META['needs-auth'],
+      key: 'session-invalid',
+      label: '登录态失效',
+    };
   }
 
   const base = AVAILABILITY_META[availability];

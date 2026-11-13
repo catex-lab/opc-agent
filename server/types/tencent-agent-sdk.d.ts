@@ -68,6 +68,11 @@ declare module '@tencent-ai/agent-sdk' {
   export interface QueryOptions {
     cwd?: string;
     model?: string;
+    /**
+     * A217：主模型不可用时的兜底模型。SDK 会转成 CLI 的 `--fallback-model`；
+     * 上游在 `fallbackModel === model` 时直接抛错，调用方必须先去重。
+     */
+    fallbackModel?: string;
     maxTurns?: number;
     systemPrompt?: string;
     permissionMode?: string;
@@ -93,6 +98,12 @@ declare module '@tencent-ai/agent-sdk' {
   }
 
   export interface AuthenticateOptions {
+    /**
+     * A216：这里的 `external` 是**登录层**（海外版）取值，不是 CLI 的 product
+     * config 环境。打包 CLI 只有 product.{internal,ioa,cloudhosted,selfhosted}.json
+     * + 默认 product.json，没有 product.external.json —— 别把这个值当成
+     * createSession 的 environment 原样透传。
+     */
     environment?: 'external' | 'internal' | (string & {});
     /** A155：显式端点；缺省由 CLI 按 environment 自己选 */
     endpoint?: string;
@@ -162,12 +173,19 @@ declare module '@tencent-ai/agent-sdk' {
     systemPrompt?: string;
     permissionMode?: string;
     canUseTool?: CanUseTool;
-    /** A155：产品环境（WorkBuddy 国内版是 internal） */
+    /**
+     * A155/A216：CLI 产品环境。只接受 CLI 认得的取值；官方桌面端快照里的
+     * `networkEnvironment=external` 属于登录层，不能透传到这里。A216 起有官方
+     * 配置快照时干脆省略本字段，改由 `ACC_PRODUCT_CONFIG_PATH` 让 CLI 自己读
+     * 权威 endpoint / deploymentType。
+     */
     environment?: 'external' | 'internal' | (string & {});
     /** A155：显式端点，缺省由 CLI 按 environment 自己选 */
     endpoint?: string;
-    /** A155：注入给 CLI 子进程的环境变量（与 process.env 合并） */
+    /** A155/A216：注入给 CLI 子进程的环境变量（与 process.env 合并） */
     env?: Record<string, string>;
+    /** A217：自定义模型挂起时的兜底模型，不能与 model 相同。 */
+    fallbackModel?: string;
     /** 显式端口等透传参数（对象 → `--flag value`） */
     extraArgs?: Record<string, string | null>;
     [key: string]: unknown;
@@ -185,6 +203,8 @@ declare module '@tencent-ai/agent-sdk' {
       environment?: 'external' | 'internal' | (string & {});
       endpoint?: string;
       env?: Record<string, string>;
+      /** A217：与 createSession 共用同一份 options，兜底模型同样可用。 */
+      fallbackModel?: string;
       extraArgs?: Record<string, string | null>;
       [key: string]: unknown;
     }

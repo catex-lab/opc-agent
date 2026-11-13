@@ -210,7 +210,12 @@ group('1. 只装国内版：自动选中，且与定义表兜底值一致');
   eq(spec?.configDir, root, 'configDir 被覆盖成该数据根的绝对路径');
   eq(rt.env.CODEBUDDY_CONFIG_DIR, root, 'SDK 子进程的 CODEBUDDY_CONFIG_DIR 指向它');
   eq(rt.endpoint, CN.endpoint, 'SDK endpoint 跟随官方');
-  eq(rt.environment, 'internal', 'SDK environment 跟随官方');
+  // A216：有官方 V3 配置时，environment 交给 CLI 从 ACC_PRODUCT_CONFIG_PATH
+  // 指向的快照自己读，不再由我们透传。旧断言 `rt.environment === 'internal'`
+  // 描述的是「跨层混用」的坏实现，见 verify-a216 的复盘。
+  eq(rt.env.ACC_PRODUCT_CONFIG_PATH, snapshotFiles(root)[0],
+    '★ A216：官方产品配置快照路径注入给 CLI');
+  ok(!('environment' in rt), '★ A216：有官方配置时省略 environment（不替 CLI 猜）');
   eq(workbuddyKeyblobPath(), path.join(root, 'keyblob'), 'keyblob 路径跟随生效 profile');
   eq(workbuddyKeyblobDisplay(), '~/.workbuddy/keyblob', '给人看的登录态路径是 ~/ 形态');
   ok(officialConfigForActive() !== null, '模型补齐源指向生效 profile');
@@ -243,6 +248,13 @@ group('2. 只装国际版：三项参数全变 + 漂移告警 + 自定义模型�
   const { rt } = activeRuntime();
   eq(rt.env.CODEBUDDY_CONFIG_DIR, root, '★ SDK 配置根切到 .workbuddy-ai（401 的直接修复点）');
   eq(rt.endpoint, INTL.endpoint, 'SDK endpoint 切到国际站');
+  // A216：国际版官方声明 networkEnvironment=external，但 external 是登录层
+  // 取值，CLI 没有 product.external.json。透传它正是「项目会话一直无响应」
+  // 的直接诱因，这里必须钉死「绝不透传」。
+  eq(rt.env.ACC_PRODUCT_CONFIG_PATH, snapshotFiles(root)[0],
+    '★ A216：国际版也注入官方配置快照路径');
+  ok(rt.environment !== 'external',
+    '★ A216：external 绝不透传给 CLI（打包 SDK 无 product.external.json）');
   eq(workbuddyKeyblobDisplay(), '~/.workbuddy-ai/keyblob', '恢复话术里的登录态路径跟着换');
 
   eq(s.customModels.length, 2, '读到桌面端两条自定义模型');

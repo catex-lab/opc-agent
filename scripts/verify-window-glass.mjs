@@ -66,12 +66,14 @@ function exeFromArgs() {
   );
 }
 
+/** A221 自检：只验硬截止本身，不启动应用、不碰用户正在跑的实例。 */
+const SELFTEST_WATCHDOG = process.argv.includes('--selftest=watchdog');
 const EXE = exeFromArgs();
-if (!EXE) {
+if (!EXE && !SELFTEST_WATCHDOG) {
   console.error('✗ 找不到打包版，先 npm run electron:build');
   process.exit(2);
 }
-console.log(`测试对象: ${EXE}`);
+console.log(SELFTEST_WATCHDOG ? '自检：不启动应用，只验硬截止' : `测试对象: ${EXE}`);
 
 /**
  * 子进程环境：两个宿主变量必须 delete（`X: undefined` 删不掉，见
@@ -85,6 +87,32 @@ delete env.OPC_GLASS;
 
 let child = null;
 let browser = null;
+
+/**
+ * A221：整链不能无限挂。
+ *
+ * 旧回归链曾挂 1h+；CDP 断线时 `browser.close()` / `page.evaluate()` 这类
+ * 没有自带超时的 await 可能永远不 resolve，外层只看到「还在跑」。这里给整段
+ * 脚本一个硬截止：超时就杀子进程并**明确判红（exit 3）**，绝不把「没跑完」
+ * 当成绿。默认 180s（各 Playwright 超时之和 + 余量），可用
+ * `OPC_WINDOW_GLASS_TIMEOUT_MS` 调。
+ *
+ * 自检：`node scripts/verify-window-glass.mjs --selftest=watchdog`
+ * 故意挂住不启动应用，应当被硬截止以 3 退出；挂不住说明本保护是摆设。
+ */
+const WATCHDOG_MS = SELFTEST_WATCHDOG
+  ? 60
+  : Math.max(1000, Number(process.env.OPC_WINDOW_GLASS_TIMEOUT_MS) || 180_000);
+const watchdog = setTimeout(() => {
+  if (SELFTEST_WATCHDOG) {
+    console.log(`\n✓ 探针：硬截止按预期触发（${WATCHDOG_MS}ms；正式运行同路径会判红 exit 3）`);
+    process.exit(0);
+  }
+  console.error(`\n✗ 窗口玻璃闸门 ${WATCHDOG_MS}ms 未收口（CDP / 子进程可能挂死）；本次判红，不计通过`);
+  try { browser?.close(); } catch {}
+  try { child?.kill(); } catch {}
+  process.exit(3);
+}, WATCHDOG_MS);
 
 /** 读一个 CSS 令牌，拆成 [r,g,b,a] */
 function parseColor(s) {
@@ -145,6 +173,11 @@ async function cdpEndpoint(fallback) {
     await new Promise(r => setTimeout(r, 150));
   }
   return fallback;
+}
+
+if (SELFTEST_WATCHDOG) {
+  // 故意永不 resolve：只能由硬截止兜住。不启动 EXE、不连 CDP、不碰用户实例。
+  await new Promise(() => {});
 }
 
 try {
@@ -400,6 +433,7 @@ const TRANSPARENCY_RANGE = 'input[aria-label="界面透明度"]';
   try { await browser?.close(); } catch {}
   try { child?.kill(); } catch {}
 }
+clearTimeout(watchdog);
 
 const failed = results.filter(r => !r.pass).length;
 console.log(`\n结果：${results.length - failed}/${results.length} 通过`);

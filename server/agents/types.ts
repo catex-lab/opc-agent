@@ -37,6 +37,17 @@ export type AgentEvent =
        * 缺省 = 适配器没报，投影器退回静态值，UI 不额外标注。
        */
       source?: EventSource;
+      /**
+       * A217：控制事件 —— 本轮「零产出」失败时作废本轮刚写下的续接令牌。
+       *
+       * 为什么复用 init 而不是新增事件型：它属于会话状态而不是可渲染内容，
+       * 和 `resumeToken` 是一对反向操作；投影器的 init 分支在 run 已开始后
+       * 本来就返回空数组，天然不会在界面上多出一块。
+       *
+       * 服务端只在「本轮确实写过新令牌」时才清（见 /api/chat），否则会误删
+       * 上一轮留下的有效上下文。
+       */
+      invalidateResumeToken?: boolean;
     }
   | { type: 'text'; content: string }
   /**
@@ -517,8 +528,15 @@ export interface AgentStatus {
  * - `timeout`：探测在预算内没有返回（SDK 冷启动 / 网络挂起）
  * - `credential-invalid`：鉴权明确拒绝（401/403 / invalid key / token 过期）
  * - `probe-failed`：探测进程崩溃、权限拒绝或其它未分类错误
+ * - `session-invalid`（A222）：本地登录态文件存在、但 CLI 仍要求重新登录
+ *   —— 令牌过期 / 被另一个账号顶掉，**不是**「从未登录」。界面必须说
+ *   「登录态失效」，否则用户会反复去登录一个本来就在的账号。
  */
-export type AgentProbeState = 'timeout' | 'credential-invalid' | 'probe-failed';
+export type AgentProbeState =
+  | 'timeout'
+  | 'credential-invalid'
+  | 'probe-failed'
+  | 'session-invalid';
 
 /**
  * 权限模式与强制能力矩阵的类型，收敛在 `shared/types.ts`。

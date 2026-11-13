@@ -232,6 +232,9 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
 
       try {
         for await (const ev of stream) {
+          // A217：零产出恢复的控制事件。群聊/工作流这条路径本来就不落
+          // sdk_session_id（没有半空令牌要清），也不该把它交给投影器。
+          if (ev.type === 'init' && ev.invalidateResumeToken) continue;
           if (ev.type === 'done') {
             turnDone = { durationMs: ev.durationMs, cost: ev.cost, tokens: ev.tokens };
           }

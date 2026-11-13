@@ -207,41 +207,53 @@ export function ResumeNotice({ info, onChoose }: ResumeNoticeProps) {
 
   return (
     <>
-      <section
-        data-resume-notice
-        role="group"
-        aria-label={t('chat.resume.pendingAria')}
-        className="mt-3 flex h-[38px] items-center gap-2 rounded-lg px-3"
-        style={{
-          background: 'color-mix(in srgb, var(--td-warning-color) 7%, transparent)',
-          border: '1px solid color-mix(in srgb, var(--td-warning-color) 26%, transparent)',
-        }}
-      >
-        <span
-          aria-hidden="true"
-          className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: 'var(--td-warning-color)' }}
-        />
-        <span className="shrink-0 text-caption" style={{ color: 'var(--td-warning-color)' }}>
-          {t('chat.resume.pending')}
-        </span>
-        {/* 常驻行里给一句「为什么停」；全文在弹层里，这里只省空间，不删信息 */}
-        <span
-          className="min-w-0 flex-1 truncate text-caption"
-          style={{ color: 'var(--td-text-color-secondary)' }}
-          title={info.reason}
-        >
-          · {info.reason}
-        </span>
-        <button
-          type="button"
-          className="inline-flex h-8 shrink-0 items-center rounded px-2 text-caption"
-          style={{ color: 'var(--td-brand-color)' }}
-          onClick={() => setOpen(true)}
-        >
-          {t('chat.resume.view')}
-        </button>
-      </section>
+      {/*
+        A215：状态条跟输入框同宽，且随窗口一起收缩。
+        它挂在消息滚动容器里（p-6 = 左右各 24px），而输入区外层是 px-4
+        （左右各 16px）——先 -mx-2 把这段 padding 差抵消，内层再套
+        `.tc-chat-column`（与 ChatInput 共用的唯一列宽来源）。
+        只写 max-w-* 会让它在窄窗口里仍然比输入框窄 8px；完全不写约束
+        就是修复前那条撑满整个消息区的宽橙条。
+      */}
+      <div className="-mx-2">
+        <div className="tc-chat-column mt-3">
+          <section
+            data-resume-notice
+            role="group"
+            aria-label={t('chat.resume.pendingAria')}
+            className="flex h-[38px] items-center gap-2 rounded-lg px-3"
+            style={{
+              background: 'color-mix(in srgb, var(--td-warning-color) 7%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--td-warning-color) 26%, transparent)',
+            }}
+          >
+            <span
+              aria-hidden="true"
+              className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{ background: 'var(--td-warning-color)' }}
+            />
+            <span className="shrink-0 text-caption" style={{ color: 'var(--td-warning-color)' }}>
+              {t('chat.resume.pending')}
+            </span>
+            {/* 常驻行里给一句「为什么停」；全文在弹层里，这里只省空间，不删信息 */}
+            <span
+              className="min-w-0 flex-1 truncate text-caption"
+              style={{ color: 'var(--td-text-color-secondary)' }}
+              title={info.reason}
+            >
+              · {info.reason}
+            </span>
+            <button
+              type="button"
+              className="inline-flex h-8 shrink-0 items-center rounded px-2 text-caption"
+              style={{ color: 'var(--td-brand-color)' }}
+              onClick={() => setOpen(true)}
+            >
+              {t('chat.resume.view')}
+            </button>
+          </section>
+        </div>
+      </div>
 
       {open && (
         <ResumeDialog

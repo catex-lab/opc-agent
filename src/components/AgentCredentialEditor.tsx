@@ -5,6 +5,7 @@ import type { AgentAvailability } from '../types';
 import { useTranslation, type MessageKey } from '../i18n';
 import { describeProvenance, asProvenance } from '../../shared/provenance';
 import { emitCredentialsChanged, subscribeCredentialChanges } from '../lib/credentialEvents';
+import { InfoHint } from './InfoHint';
 
 /**
  * 单个 Agent 的凭据编辑器（取 / 存 / 清 + 连通性 + 模型清单）。
@@ -412,6 +413,9 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
             {t('settings.credential.notConfigured')}
           </Tag>
         )}
+        {/* A222：原来这行下面常驻一句凭据说明。它只在第一次配置时需要，
+            收进唯一的 info 图标里，标签行不再多占一行。 */}
+        {item.hint && <InfoHint label={`${item.name} 凭据说明`} text={item.hint} />}
       </div>
 
       {/* API Key */}
@@ -421,7 +425,6 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
           style={{ color: 'var(--td-text-color-placeholder)' }}
         >
           {item.keyEnvs.join(' / ')}
-          {configured && t('settings.credential.keyConfiguredHint')}
         </label>
         <Input
           type="password"
@@ -442,7 +445,6 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
             style={{ color: 'var(--td-text-color-placeholder)' }}
           >
             {item.baseUrlEnv}
-            {t('settings.credential.baseUrlOptional')}
           </label>
           <Input
             value={draftBaseUrl}
@@ -451,12 +453,6 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
             data-credential-baseurl={agentId}
           />
         </div>
-      )}
-
-      {item.hint && (
-        <p className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          {item.hint}
-        </p>
       )}
 
       {/* 保存 / 清除 */}
@@ -486,10 +482,13 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
           data-credential-profiles={agentId}
           data-profile-count={profiles.list.length}
         >
-          <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-            {t('settings.credential.currentAccount')}:{' '}
-            <strong data-credential-active-profile>{profiles.active}</strong>
-            {' · '}{t('settings.credential.profileCount', { n: profiles.list.length })}
+          <div className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+            <span>
+              {t('settings.credential.currentAccount')}:{' '}
+              <strong data-credential-active-profile>{profiles.active}</strong>
+              {' · '}{t('settings.credential.profileCount', { n: profiles.list.length })}
+            </span>
+            <InfoHint label="账号切换说明" text={t('settings.credential.accountHint')} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {profiles.list.map(p => (
@@ -536,9 +535,6 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
                 {t('settings.credential.deleteAccount')}
               </Button>
             )}
-          </div>
-          <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-            {t('settings.credential.accountHint')}
           </div>
         </div>
       )}

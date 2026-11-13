@@ -665,7 +665,9 @@ export function ChatInput({
         backgroundColor: 'var(--tc-surface-content)'
       }}
     >
-      <div className="max-w-3xl mx-auto">
+      {/* A215：内容列宽度与居中规则的唯一来源（.tc-chat-column，见 index.css）。
+          流内的「上一轮指令未完成」状态条用的是同一个类，改宽度只改一处。 */}
+      <div className="tc-chat-column">
         {/*
           群聊成员条。
           放在发送器**上方**而不是塞进 footer-prefix：成员是「这次要 @ 谁」，

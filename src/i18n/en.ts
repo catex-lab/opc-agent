@@ -173,6 +173,16 @@ export const en: Record<MessageKey, string> = {
   'status.credential-invalid': 'Bad key',
   'status.probe-failed': 'Failed',
   'status.needs-key': 'No API key',
+  // A222: a cached session was rejected, which is not "never signed in"
+  'status.session-invalid': 'Session expired',
+  'agent.login.starting': 'Preparing sign-in link…',
+  'agent.login.waiting': 'Waiting for browser sign-in…',
+  'agent.login.succeeded': 'Signed in, refreshing status…',
+  'agent.login.failed': 'Sign-in did not finish, please retry',
+  'agent.login.timeout': 'Sign-in timed out, please retry',
+  'agent.login.busy': 'Another sign-in is in progress…',
+  'agent.login.reopen': 'Reopen sign-in page',
+  'agent.login.retry': 'Get a new sign-in link',
 
   // ===== Chat page chrome =====
   'chat.action.copyAnswer': 'Copy answer',

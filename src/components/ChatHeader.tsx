@@ -25,6 +25,7 @@ const STATUS_KEY: Record<string, MessageKey> = {
   'credential-invalid': 'status.credential-invalid',
   'probe-failed': 'status.probe-failed',
   'needs-key': 'status.needs-key',
+  'session-invalid': 'status.session-invalid',
 };
 
 interface ChatHeaderProps {

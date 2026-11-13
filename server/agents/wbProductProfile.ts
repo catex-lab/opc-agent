@@ -507,11 +507,18 @@ export function applyWorkbuddyProfile(
   if (agentId !== 'workbuddy') return spec;
   const active = activeWorkbuddyProfile();
   if (!active || !active.detected) return spec;
+  // A216：把官方产品配置快照的路径一起交给 CLI。`snapshotFiles()` 已按 mtime
+  // 降序，取最新那份；CLI 通过 ACC_PRODUCT_CONFIG_PATH 读它自己的 endpoint /
+  // productName / 模型清单，不再需要我们替它猜 environment 对应哪个 product 文件。
+  // 传**路径**而不是内联 JSON：配置里有认证等用户数据，塞进环境变量会出现在
+  // 进程列表里，越过隐私边界（本仓红线）。
+  const configPath = snapshotFiles(active.root)[0] ?? null;
   return {
     ...(spec ?? {}),
     environment: active.environment,
     endpoint: active.endpoint,
     configDir: active.root,
+    ...(configPath ? { productConfigPath: configPath } : {}),
   };
 }
 

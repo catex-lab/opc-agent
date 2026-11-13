@@ -3,9 +3,11 @@ import { useEffect, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { InstallCard } from './InstallCard';
 import { AgentCredentialEditor } from './AgentCredentialEditor';
+import { InfoHint } from './InfoHint';
 import { describeProbeFeedback, type AgentProbeFeedback } from '../agentProbe';
 import { describeProvenance, asProvenance } from '../../shared/provenance';
 import { subscribeCredentialChanges } from '../lib/credentialEvents';
+import { useAgentLogin } from '../agentLogin';
 import {
   AVAILABILITY_META,
   CAPABILITY_META,
@@ -85,6 +87,12 @@ export function AgentDetailSections({
    * 拿不到（null）时整块不渲染：读不到 ≠ 没有账号，摆一行「未知」只会误导。
    */
   const account = useAgentAccount(agent.id);
+
+  // A222：登录流完成后只刷新这一个条目。`onReprobe` 在弹窗里可能没有；
+  // 那种场合靠服务端 onSettled 的强制重探 + 名册轮询把状态带回来。
+  const login = useAgentLogin(agent.id, agent.status.authUrl, ok => {
+    if (ok) onReprobe?.(agent.id);
+  });
 
   // A115：整页共用的排版刻度（理由见文件头）。值写成常量而不是散在 JSX 里，
   // 是为了让「加一块新内容」时直接抄这两个名字，不会再长出第四种规格。
@@ -271,10 +279,21 @@ export function AgentDetailSections({
               <button
                 type="button"
                 className="tc-btn-brand"
-                onClick={() => window.open(agent.status.authUrl, '_blank', 'noopener')}
+                data-agent-login-btn
+                disabled={!login.canOpen}
+                onClick={login.openLogin}
               >
                 去登录 {agent.name}
               </button>
+              {login.label && (
+                <div
+                  className="mt-1 text-secondary"
+                  data-agent-login-state={login.phase}
+                  style={{ color: 'var(--td-text-color-secondary)' }}
+                >
+                  {login.label}
+                </div>
+              )}
             </div>
           )}
           <DetailRow
@@ -282,8 +301,15 @@ export function AgentDetailSections({
             value={agent.status.version ? `v${agent.status.version}` : '未上报'}
           />
           <DetailRow label="接入方式" value={kindLabel(agent.kind)} />
+          {/* A222：不再摆一个「接入说明」的标签去解释右边那段话 —— 那段话
+              本身就是说明。改成整行正文，少一列重复标签，读起来也不断行。 */}
           {agent.installHint && !showInstallCard && (
-            <DetailRow label="接入说明" value={agent.installHint} />
+            <div
+              className={`${ROW_X} pb-3 text-secondary`}
+              style={{ color: 'var(--td-text-color-secondary)' }}
+            >
+              {agent.installHint}
+            </div>
           )}
           {/* A71：没装（或装了起不来）时，把「接入说明」这句散文升级成「获取」卡片。
               为什么只在这两个状态下出现：`needs-auth` 是"已经装好了、只差登录"，
@@ -297,12 +323,8 @@ export function AgentDetailSections({
               style={{ borderColor: 'var(--tc-edge)' }}
               data-agent-install
             >
-              {/* A115：这个小标签原来写 `text-[12px]` —— 与旁边的 `text-secondary`
-                  是同一个字号，却是两种写法；同屏出现第三种「差不多大的小字」
-                  正是原话里的大小不统一。现在统一走 token。 */}
-              <div className={`${ROW_X} pt-2.5 text-secondary`} style={{ color: 'var(--td-text-color-placeholder)' }}>
-                获取
-              </div>
+              {/* A222：删掉「获取」这个常驻小标签 —— 下面那张卡有命令、有安装
+                  按钮、有来源核实，布局本身已经说清这是什么，不需要再挂个标题。 */}
               <InstallCard
                 agent={agent}
                 onReprobe={onReprobe}
@@ -324,12 +346,8 @@ export function AgentDetailSections({
               style={{ borderColor: 'var(--tc-edge)' }}
               data-agent-credential-inline
             >
-              <div
-                className={`${ROW_X} pt-2.5 text-secondary`}
-                style={{ color: 'var(--td-text-color-placeholder)' }}
-              >
-                凭据配置
-              </div>
+              {/* A222：同理删掉「凭据配置」小标签；编辑器自己的输入框标签
+                  已经说明这一块管什么。 */}
               <div className={ROW_X}>
                 <AgentCredentialEditor
                   agentId={agent.id}
@@ -684,7 +702,21 @@ export function AgentDetailSections({
         const undeclared = observed.filter(k => !declared.includes(k));
         return (
           <section className="mt-6" data-agent-event-capabilities>
-            <h3 className="tc-section-title mb-2">过程能力</h3>
+            {/* A222 / UI 收口：标题不再配一段常驻小字。虚线置灰的 chip 自己已经
+                写着「（不支持）」，再补一句「只返回最终回答」是同一件事说两遍；
+                确实需要解释（全灰看起来像坏了）时收进标题旁唯一的 info 图标。 */}
+            <div className="mb-2 flex items-center gap-1.5">
+              <h3 className="tc-section-title">过程能力</h3>
+              <InfoHint
+                label="过程能力说明"
+                text="这份清单来自 Agent 自己声明的能力；虚线置灰表示它没有暴露这类执行过程。"
+                note={
+                  declared.length === 0 && !observedProfile
+                    ? '这个 Agent 只返回最终回答，不暴露执行过程。'
+                    : undefined
+                }
+              />
+            </div>
             <div className="flex flex-wrap gap-2">
               {EVENT_CAPABILITY_ORDER.map(key => {
                 const meta = EVENT_CAPABILITY_META[key];
@@ -724,11 +756,6 @@ export function AgentDetailSections({
                 );
               })}
             </div>
-            {declared.length === 0 && !observedProfile && (
-              <p className="mt-2 text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                这个 Agent 只返回最终回答，不暴露执行过程。
-              </p>
-            )}
             {observedProfile && (
               <p
                 className="mt-2 text-secondary"
@@ -752,23 +779,38 @@ export function AgentDetailSections({
       {(agent.skills?.length ?? 0) > 0 && (
         <section className="mt-6" data-agent-skills>
           <h3 className="tc-section-title mb-2">可承接的任务</h3>
+          {/* A222 / UI 收口：「关键词：」是给一串标签贴的重复标签，改成 chip 让排版
+              自己说明这是一组标签；输入 / 输出的数据形式确实不显然，但也不是每次
+              都要读，收进标题旁唯一的 info 图标里。 */}
           <div className={`tc-detail-rows overflow-hidden ${CARD}`} style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
-            {agent.skills!.map(skill => (
-              <div key={skill.id} className={`${ROW_X} ${ROW_Y}`} data-agent-skill={skill.id}>
-                <div className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>{skill.name}</div>
-                <div className="mt-1 text-body leading-relaxed" style={{ color: 'var(--td-text-color-secondary)' }}>{skill.description}</div>
-                {skill.tags && skill.tags.length > 0 && (
-                  <div className="mt-1 text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>关键词：{skill.tags.join(' · ')}</div>
-                )}
-                {((skill.inputModes?.length ?? 0) > 0 || (skill.outputModes?.length ?? 0) > 0) && (
-                  <div className="mt-1 text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                    {skill.inputModes?.length ? `输入 ${skill.inputModes.join(', ')}` : ''}
-                    {skill.inputModes?.length && skill.outputModes?.length ? ' · ' : ''}
-                    {skill.outputModes?.length ? `输出 ${skill.outputModes.join(', ')}` : ''}
+            {agent.skills!.map(skill => {
+              const modes = [
+                skill.inputModes?.length ? `输入 ${skill.inputModes.join(', ')}` : '',
+                skill.outputModes?.length ? `输出 ${skill.outputModes.join(', ')}` : '',
+              ].filter(Boolean).join(' · ');
+              return (
+                <div key={skill.id} className={`${ROW_X} ${ROW_Y}`} data-agent-skill={skill.id}>
+                  <div className="flex items-center gap-1.5">
+                    <div className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>{skill.name}</div>
+                    {modes && <InfoHint label={`${skill.name} 数据形式说明`} text={modes} />}
                   </div>
-                )}
-              </div>
-            ))}
+                  <div className="mt-1 text-body leading-relaxed" style={{ color: 'var(--td-text-color-secondary)' }}>{skill.description}</div>
+                  {skill.tags && skill.tags.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {skill.tags.map(tag => (
+                        <span
+                          key={tag}
+                          className={CHIP}
+                          style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-secondary)' }}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
       )}

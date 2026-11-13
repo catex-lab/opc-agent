@@ -44,6 +44,8 @@ import { applyWorkbuddyProfile, workbuddyKeyblobDisplay } from '../wbProductProf
 import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 import { workbuddyKeyblobInfo, formatLocalMinute } from '../credentialStatus.js';
 import { appendFailureAdvice } from '../recovery.js';
+// A222：登录流全局单飞。探测必须先让路，且只在流活着时下发它的 URL。
+import { activeLoginFlowAuthUrl, isLoginFlowActive } from '../loginFlow.js';
 // A214：首字护栏。send() → 首条流事件是 SDK 通道唯一的「无限等」窗口，
 // 2026-11-13 真机实锤（详见 firstTokenGuard.ts 顶部复盘）。
 import {
@@ -51,6 +53,13 @@ import {
   FirstTokenGuard,
   firstTokenTimeoutMessage,
 } from './firstTokenGuard.js';
+// A217：失败分类 → 安全恢复决策。纯函数层，适配器只负责执行。
+import {
+  classifySdkFailure,
+  isCustomModelId,
+  planTurnRecovery,
+  resolveFallbackModel,
+} from './turnRecovery.js';
 
 /** 权限请求等待上限，与前端提示一致 */
 const PERMISSION_TIMEOUT = 5 * 60 * 1000;
@@ -63,7 +72,7 @@ const PERMISSION_TIMEOUT = 5 * 60 * 1000;
  * 收到 authUrl 就已经知道「没登录」了，所以这里把等待压到 8 秒：
  * 期间真的完成登录就返回 ready；没完成就按「未登录」返回，并带上登录地址。
  */
-const SDK_LOGIN_WAIT_MS = 8_000;
+export const SDK_LOGIN_WAIT_MS = 8_000;
 
 /** SDK transport 的 initialize 控制请求默认 60s 后抛这个错误（A178 实测） */
 export function isInitializeTimeout(message: string): boolean {
@@ -216,11 +225,43 @@ export function configDiff(oldKey: string, newKey: string): 'same' | 'mode-only'
   return a[0] === b[0] && a[3] === b[3] ? 'mode-only' : 'structural';
 }
 
-/** 未登录时拿到的登录地址，供前端渲染「去登录」按钮 */
-let lastAuthUrl: string | null = null;
+/**
+ * A222 / C：把「本地有登录态但被拒」与「从没登录过」分开。
+ *
+ * 2026-11-13 真机：用户桌面端明明登录着，名册却写「未登录」，于是他反复去
+ * 登录一个本来就在的账号。真相是 `~/.workbuddy-ai/keyblob` 存在（11-09 后没再
+ * 刷新），但 CLI 的 `AuthRefresh` 连续 401 / `account list is empty` —— 这是
+ * **会话令牌失效或被另一个账号顶掉**，不是「从未登录」。两者恢复动作不同：
+ * 前者要在桌面端重新登录并避免再点旧链接，后者才是首次登录。
+ *
+ * 判据只用两个可观测信号，不去猜 CLI 内部实现：
+ *   - 本地登录态文件存在 ⇒ 一定不是「从没登录过」；
+ *   - 没有文件但错误明确是 401 / refresh 失败 / 并发登出 ⇒ 同样按失效处理。
+ */
+export type WorkbuddyLoginState = 'never-logged-in' | 'session-invalid';
 
+export function classifyWorkbuddyLoginState(input: {
+  keyblobExists: boolean;
+  message?: string;
+}): WorkbuddyLoginState {
+  if (input.keyblobExists) return 'session-invalid';
+  if (
+    /401|403|unauthorized|account list is empty|concurrent logout|superseded|refresh.*fail|token.*(expired|invalid)/i.test(
+      input.message ?? ''
+    )
+  ) {
+    return 'session-invalid';
+  }
+  return 'never-logged-in';
+}
+
+/**
+ * 旧导出保留兼容，但**不再返回探测遗留的一次性 URL**。
+ * A222 起唯一可下发的登录地址来自还活着的 `loginFlow`。
+ * （`claude-sdk.ts` 的注释把它当探测辅助，语义现在由 loginFlow 承担。）
+ */
 export function getLastAuthUrl(): string | null {
-  return lastAuthUrl;
+  return activeLoginFlowAuthUrl();
 }
 
 export class SdkAdapter implements AgentProvider {
@@ -254,6 +295,15 @@ export class SdkAdapter implements AgentProvider {
   >();
   /** 探测缓存（避免每次刷新名册都跑一次鉴权） */
   private status: AgentStatus | null = null;
+  /**
+   * A222：**本次**探测收到的登录地址，探测开头必清空。
+   *
+   * 原来是模块级 `let lastAuthUrl`，被所有适配器实例共享、且只在成功分支清空：
+   * 于是 21:44 那次 8 秒探测生成的 `state=063e4899…` 到 22:02 还挂在名册上，
+   * 而生成它的 CLI（pid 20232）早已退出 —— 用户点的是一个永远收不到回调的
+   * 死链接。改成实例字段 + 每轮清空后，「失败分支复用旧 URL」这条路径消失。
+   */
+  private probeAuthUrl: string | null = null;
   /** A107/A109：长驻会话池：我们的会话 id → 槽位（条目 + 串行链） */
   private slots = new Map<string, SessionSlot>();
   /** 空闲清扫定时器（整个适配器一个就够） */
@@ -291,8 +341,64 @@ export class SdkAdapter implements AgentProvider {
     );
   }
 
+  /** A222/C：本次「需要登录」是从没登录过，还是本地会话失效 */
+  private loginStateOf(message?: string): WorkbuddyLoginState {
+    if (this.descriptor.id !== 'workbuddy') return 'never-logged-in';
+    return classifyWorkbuddyLoginState({
+      keyblobExists: Boolean(workbuddyKeyblobInfo().exists),
+      message,
+    });
+  }
+
+  /** 统一构造 needs-auth：状态词、文案、URL 三处同源，避免各分支各自漂移 */
+  private needsAuthStatus(
+    now: string,
+    message: string,
+    extra: Partial<AgentStatus> = {}
+  ): AgentStatus {
+    const sessionInvalid = this.loginStateOf(message) === 'session-invalid';
+    return {
+      availability: 'needs-auth',
+      installed: true,
+      message: sessionInvalid
+        ? '本地登录态已失效（令牌过期或账号被顶替）：请在 WorkBuddy 桌面端重新登录，然后点「重新探测」'
+        : message,
+      ...(this.probeAuthUrl ? { authUrl: this.probeAuthUrl } : {}),
+      ...(sessionInvalid ? { probeState: 'session-invalid' as const } : {}),
+      probedAt: now,
+      ...extra,
+    };
+  }
+
   async probe(): Promise<AgentStatus> {
     const now = new Date().toISOString();
+
+    // A222：上一轮探测拿到的一次性登录地址一律作废。它原来存在模块级全局里，
+    // 21:44 生成的 state 到 22:02 还挂在「去登录」按钮上（CLI 早已退出）。
+    this.probeAuthUrl = null;
+
+    // A222：全局单飞。有登录流在跑就**绝不再起第二个 CLI** —— 它们共用
+    // ~/.workbuddy-ai 一份会话文件，真机上 10+ 个 state 互相顶掉登录成功。
+    // 这里把活着的流的 URL 直接挂到状态上，按钮因此永远指向能收回调的地址。
+    if (isLoginFlowActive()) {
+      const live = activeLoginFlowAuthUrl();
+      const state = this.loginStateOf();
+      const envOk = Boolean(
+        process.env.CODEBUDDY_API_KEY || process.env.CODEBUDDY_AUTH_TOKEN
+      );
+      this.status = {
+        availability: 'needs-auth',
+        installed: true,
+        message: state === 'session-invalid'
+          ? '本地登录态已失效，正在等待浏览器完成登录…'
+          : '正在等待浏览器完成登录…',
+        ...(live ? { authUrl: live } : {}),
+        ...(state === 'session-invalid' ? { probeState: 'session-invalid' as const } : {}),
+        probedAt: now,
+        provenance: this.authProvenance(now, envOk),
+      };
+      return this.status;
+    }
 
     // 2026-10-30：内置 CLI 已从安装包排除，需本机自行安装。
     // bootstrap.cjs 会探测并注入 CODEBUDDY_CODE_PATH；没注入就是没找到。
@@ -322,7 +428,7 @@ export class SdkAdapter implements AgentProvider {
         onAuthUrl: async (authState: { authUrl?: string }) => {
           needsLogin = true;
           authUrlSeen = true;
-          if (authState?.authUrl) lastAuthUrl = authState.authUrl;
+          if (authState?.authUrl) this.probeAuthUrl = authState.authUrl;
         },
       });
     };
@@ -355,16 +461,10 @@ export class SdkAdapter implements AgentProvider {
       const userinfo = (result as { userinfo?: { userName?: string } } | undefined)?.userinfo;
 
       if (needsLogin) {
-        this.status = {
-          availability: 'needs-auth',
-          installed: true,
-          message: '未登录，请先完成登录',
-          // 结构化地址：前端「去登录」按钮直接用它，不从 message 里抠
-          ...(lastAuthUrl ? { authUrl: lastAuthUrl } : {}),
-          probedAt: now,
-        };
+        // 结构化地址由 needsAuthStatus 统一挂（本轮的，不是上轮的）
+        this.status = this.needsAuthStatus(now, '未登录，请先完成登录');
       } else {
-        lastAuthUrl = null;
+        this.probeAuthUrl = null;
         // 2026-11：不再说「已登录」。SDK 的 authenticate 只返回 CLI 本地缓存的
         // account，不发业务请求；而 WorkBuddy 的 keyblob 可能早已停止刷新
         // （实测停在 2026-09-24，桌面端却每天活跃）。所以把「本地登录态」
@@ -425,13 +525,10 @@ export class SdkAdapter implements AgentProvider {
         // `Authentication timed out`，也应归到「未登录」而不是「探测超时」。
         const probeState = classifySdkProbeFailure(message);
         if (authUrlSeen) {
-          this.status = {
-            availability: 'needs-auth',
-            installed: true,
-            message: '未登录，请先在 WorkBuddy 桌面客户端登录（或点「去登录」完成授权）',
-            ...(lastAuthUrl ? { authUrl: lastAuthUrl } : {}),
-            probedAt: now,
-          };
+          this.status = this.needsAuthStatus(
+            now,
+            '未登录，请先在 WorkBuddy 桌面客户端登录（或点「去登录」完成授权）'
+          );
         } else if (probeState === 'timeout') {
           this.status = {
             availability: 'unknown',
@@ -451,25 +548,20 @@ export class SdkAdapter implements AgentProvider {
               `凭据无效：${message}`
             ),
             probeState: 'credential-invalid',
-            ...(lastAuthUrl ? { authUrl: lastAuthUrl } : {}),
+            ...(this.probeAuthUrl ? { authUrl: this.probeAuthUrl } : {}),
             probedAt: now,
           };
         } else {
-          this.status = lastAuthUrl
-            ? {
-                availability: 'needs-auth',
-                installed: true,
-                message: '未登录，请先完成登录',
-                authUrl: lastAuthUrl,
-                probedAt: now,
-              }
-            : {
-                availability: 'needs-auth',
-                installed: true,
-                message: appendFailureAdvice(this.descriptor.id, `探测失败：${message}`),
-                probeState: 'probe-failed',
-                probedAt: now,
-              };
+          // A222：旧实现在这里把**上一次**探测的 authUrl 翻出来继续下发，
+          // 于是「探测失败」也会挂一个早已失效的登录按钮。本轮没收到
+          // authUrl 就老实报探测失败，不给假入口。
+          this.status = {
+            availability: 'needs-auth',
+            installed: true,
+            message: appendFailureAdvice(this.descriptor.id, `探测失败：${message}`),
+            probeState: 'probe-failed',
+            probedAt: now,
+          };
         }
       }
     }
@@ -710,12 +802,18 @@ export class SdkAdapter implements AgentProvider {
   }
 
   private createEntry(slot: SessionSlot, ctx: SendContext, resumeFrom: string | null): PoolEntry {
+    // A217：自定义模型在 SDK 层也挂一个内置兜底（--fallback-model）。
+    // 只对 custom* 挂：内置模型再挂一个相近兜底没有意义，还会给桩 CLI 多塞
+    // 一个它不认识的参数。resolveFallbackModel 保证 fallback !== model，
+    // 否则 SDK 的 process-transport.js 会直接抛错。
+    const fallback = isCustomModelId(ctx.model) ? resolveFallbackModel(ctx.model) : undefined;
     const options = {
       // A155：产品三要素（environment / endpoint / env）必须跟着会话走。
       // 少这三项的后果不是报错，而是**连到另一个产品**上继续跑。
       ...this.runtime,
       cwd: ctx.cwd || process.cwd(),
       model: ctx.model,
+      ...(fallback ? { fallbackModel: fallback } : {}),
       maxTurns: 10,
       // P1：正文/思考要逐块到达，不能等整条 assistant 消息。
       includePartialMessages: true,
@@ -770,10 +868,108 @@ export class SdkAdapter implements AgentProvider {
   }
 
   /**
+   * A217/#10：护栏超时后的完整回收。
+   *
+   * `dropEntry()` 只做 `session.close()`（杀进程、释放会话锁）。但 V2 Session
+   * 的 `stream()` 还挂在 `messageIterator.next()` 上；官方 SDK 文档特别提醒
+   * 终态可能只来 `task_updated` 而没有 `task_notification`。所以这里按
+   * 「interrupt → 尽力归还 generator → close/drop」三段走，且**不 await**
+   * 任何一个可能永远不 resolve 的 promise —— 那正是护栏要治的病。
+   * 真正让挂起的 iterator 终了的仍是 close()：进程一死，stdout 关闭，
+   * `messageIterator` 自然 done。
+   */
+  private terminateStalledEntry(
+    slot: SessionSlot,
+    entry: PoolEntry,
+    iterator?: AsyncIterator<unknown>
+  ): void {
+    void entry.session.interrupt().catch(() => {});
+    if (iterator && typeof iterator.return === 'function') {
+      void Promise.resolve(iterator.return()).catch(() => {});
+    }
+    this.dropEntry(slot, entry);
+  }
+
+  /**
+   * A217：零产出窗口的统一「恢复或如实报错」。
+   *
+   * 返回 true = 已经发起过一次重试，调用方**必须直接 return**：队列由内层
+   * 轮次收口，外层再 push error / close 会把一次对话劈成两条。
+   *
+   * 三条边界（都来自 turnRecovery.ts 的纯函数判据，不在这里另写一套）：
+   * 1. 已经产出过内容 ⇒ 永不重试（防重放双重副作用）；
+   * 2. 已经恢复过一次 ⇒ 不再重试（防死循环）；
+   * 3. 降级必须发 note 如实告知，不许静默换模型。
+   */
+  private async recoverOrReport(
+    queue: AsyncQueue<AgentEvent>,
+    message: string,
+    input: {
+      firstTokenSeen: boolean;
+      attempt: number;
+      model?: string;
+      guardSeconds: number;
+      sessionId: string;
+      /** 本轮是否已经 push 过带 resumeToken 的 init（one-shot 路径没有） */
+      wroteResumeToken: boolean;
+    },
+    retry: (model: string | undefined) => Promise<void>
+  ): Promise<boolean> {
+    const category = classifySdkFailure(message);
+    // 「能走到 initialize 超时 / 首字护栏超时」本身就是 CLI 已经 spawn 并且
+    // 进了握手的证据 —— 没 CLI 时 SDK 会立刻 ENOENT（归为 'other'，本来也不会
+    // 恢复）。所以这两类不必再依赖 CODEBUDDY_CODE_PATH 这个只在 Electron
+    // 打包态注入的变量：dev / 单测下 SDK 用的是自带 cli/dist，环境变量为空。
+    const hasCli =
+      category === 'initialize-timeout' || category === 'first-token-timeout'
+        ? true
+        : Boolean(process.env.CODEBUDDY_CODE_PATH || process.env.OPC_CODEBUDDY_CLI);
+    const plan = planTurnRecovery({
+      category,
+      firstTokenSeen: input.firstTokenSeen,
+      attempt: input.attempt,
+      hasCli,
+      model: input.model,
+      fallbackModel: resolveFallbackModel(input.model),
+      guardSeconds: input.guardSeconds,
+    });
+
+    // A217/#10：本轮一个流事件都没到，却已经把 cliSessionId 写进了会话表。
+    // 不清掉，下一条消息会拿这个空转录的令牌去 resume，稳定报
+    // "No conversation found with session ID"。服务端只在「本轮确实写过令牌」
+    // 时才清，避免误删上一轮留下的有效上下文。
+    if (!input.firstTokenSeen && input.wroteResumeToken) {
+      queue.push({
+        type: 'init',
+        sessionId: input.sessionId,
+        invalidateResumeToken: true,
+      });
+    }
+
+    if (plan.action === 'report') {
+      // 首字护栏的报错文案本身写了「可直接重发」，再补一条同义 note 只会让
+      // 消息流多一块灰色胶囊；其余类别（认证 / 额度 / 网络…）的建议才补。
+      if (plan.advice && category !== 'first-token-timeout' && category !== 'cancelled') {
+        queue.push({ type: 'note', text: plan.advice, level: 'info' });
+      }
+      console.warn(`[SDK] A217 不自动恢复（${category}）：${plan.reason}`);
+      return false;
+    }
+
+    if (plan.notice) queue.push({ type: 'note', text: plan.notice, level: 'warn' });
+    console.warn(`[SDK] A217 自动恢复一次：${plan.action} — ${plan.reason}`);
+    await retry(plan.model);
+    return true;
+  }
+
+  /**
    * 跑一轮（池路径）。queue 由调用方 drain，这里只负责生产与收尾。
    *
    * 条目在**链里**才取（`ensureEntry`）：这样「配置变了要重建」不会撞上
    * 上一轮还在跑的情况 —— 轮到这一轮时上一轮必然已经收尾。
+   *
+   * `attempt` 是 A217 的恢复计数：0 = 用户发的那一轮，1 = 自动恢复的那一轮。
+   * 只有 0 才可能进入恢复窗口，绝不会滚到 2。
    */
   private async runPooledTurn(
     slot: SessionSlot,
@@ -782,7 +978,8 @@ export class SdkAdapter implements AgentProvider {
     canUseTool: CanUseTool,
     token: object,
     shouldAbort: () => boolean,
-    started: number
+    started: number,
+    attempt = 0
   ): Promise<void> {
     // 排队期间被中止：这一轮直接作废，不发给 CLI
     if (shouldAbort()) {
@@ -790,6 +987,30 @@ export class SdkAdapter implements AgentProvider {
       return;
     }
     let entry: PoolEntry | null = null;
+    // A217：唯一的安全重试窗口判据。只要用户已经看见一个字/一张工具卡，
+    // 就一律不再重发 —— 声明在 try 外，catch 分支也读得到。
+    let firstTokenSeen = false;
+    /** 恢复时用新模型重建 CLI；ctx.resumeToken 仍是这一轮之前的旧令牌。 */
+    const retryWith = async (model: string | undefined): Promise<void> => {
+      await this.runPooledTurn(
+        slot,
+        { ...ctx, model },
+        queue,
+        canUseTool,
+        token,
+        shouldAbort,
+        started,
+        attempt + 1
+      );
+    };
+    const recoveryInput = (guardSeconds: number) => ({
+      firstTokenSeen,
+      attempt,
+      model: ctx.model,
+      guardSeconds,
+      sessionId: ctx.sessionId,
+      wroteResumeToken: true,
+    });
     try {
       entry = this.ensureEntry(slot, ctx);
       entry.inflightToken = token;
@@ -827,12 +1048,20 @@ export class SdkAdapter implements AgentProvider {
         guard.timeout,
       ]);
       if (sendStage === FIRST_TOKEN_TIMEOUT) {
-        // send() 本身挂死：不等一个永远不会 resolve 的 promise，驱逐收口
-        this.dropEntry(slot, entry);
-        queue.push({
-          type: 'error',
-          message: firstTokenTimeoutMessage(guard.ms),
-        });
+        // send() 本身挂死：不等一个永远不会 resolve 的 promise，完整回收收口
+        this.terminateStalledEntry(slot, entry);
+        const message = firstTokenTimeoutMessage(guard.ms);
+        // A217：零产出窗口内可安全恢复一次（initialize 超时同模型重建 /
+        // 自定义模型换内置兜底重建）。恢复由内层轮次接管 queue，这里直接 return。
+        if (
+          await this.recoverOrReport(
+            queue,
+            message,
+            recoveryInput(Math.round(guard.ms / 1000)),
+            retryWith
+          )
+        ) return;
+        queue.push({ type: 'error', message });
         queue.close();
         return;
       }
@@ -848,16 +1077,23 @@ export class SdkAdapter implements AgentProvider {
       let step = await Promise.race([iterator.next(), guard.timeout]);
       if (step === FIRST_TOKEN_TIMEOUT) {
         // 今晚实锤的形态：send 已回但模型侧一个事件都不来。同上收口。
-        this.dropEntry(slot, entry);
-        queue.push({
-          type: 'error',
-          message: firstTokenTimeoutMessage(guard.ms),
-        });
+        this.terminateStalledEntry(slot, entry, iterator);
+        const message = firstTokenTimeoutMessage(guard.ms);
+        if (
+          await this.recoverOrReport(
+            queue,
+            message,
+            recoveryInput(Math.round(guard.ms / 1000)),
+            retryWith
+          )
+        ) return;
+        queue.push({ type: 'error', message });
         queue.close();
         return;
       }
-      // 首字已到：撤护栏
+      // 首字已到：撤护栏。A217：从这一刻起重放就有双重副作用风险，永不重试。
       guard.disarm();
+      firstTokenSeen = true;
       while (!step.done) {
         if (shouldAbort()) break;
         const m = step.value as Record<string, unknown>;
@@ -898,9 +1134,20 @@ export class SdkAdapter implements AgentProvider {
       // 被 abort：queue 已由 abort() 关闭，这里什么都不用做
     } catch (err) {
       // 结构性失败（进程死了 / 会话失效 / 控制请求超时）：驱逐 + 报错。
-      // 不做轮内重试 —— prompt 可能已在 CLI 侧执行了一半，重放有双重
-      // 副作用风险。下一条消息会自动重建（resumeToken 还在，上下文不丢）。
+      // A217 之前一律不重试；现在只在「一个流事件都没到」且是 initialize
+      // 冷启动超时时重建一次。已经产出过内容的轮次仍然绝不重放 ——
+      // prompt 可能已在 CLI 侧执行了一半，重放有双重副作用风险。
+      if (entry) void entry.session.interrupt().catch(() => {});
       this.dropEntry(slot, entry ?? undefined);
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        await this.recoverOrReport(
+          queue,
+          message,
+          recoveryInput(0),
+          retryWith
+        )
+      ) return;
       queue.fail(err instanceof Error ? err : new Error(String(err)));
     } finally {
       if (entry && entry.inflightToken === token) {
@@ -920,9 +1167,26 @@ export class SdkAdapter implements AgentProvider {
     queue: AsyncQueue<AgentEvent>,
     canUseTool: CanUseTool,
     shouldAbort: () => boolean,
-    started: number
+    started: number,
+    attempt = 0
   ): Promise<void> {
+    let firstTokenSeen = false;
+    const retryWith = async (model: string | undefined): Promise<void> => {
+      await this.runOneShotTurn(
+        { ...ctx, model }, queue, canUseTool, shouldAbort, started, attempt + 1
+      );
+    };
+    // one-shot 的 init 不带 resumeToken，服务端不会写会话令牌 ⇒ 无令牌可作废。
+    const recoveryInput = (guardSeconds: number) => ({
+      firstTokenSeen,
+      attempt,
+      model: ctx.model,
+      guardSeconds,
+      sessionId: ctx.sessionId,
+      wroteResumeToken: false,
+    });
     try {
+      const fallback = isCustomModelId(ctx.model) ? resolveFallbackModel(ctx.model) : undefined;
       const stream = query({
         prompt: ctx.prompt,
         options: {
@@ -931,6 +1195,7 @@ export class SdkAdapter implements AgentProvider {
           ...this.runtime,
           cwd: ctx.cwd || process.cwd(),
           model: ctx.model,
+          ...(fallback ? { fallbackModel: fallback } : {}),
           maxTurns: 10,
           includePartialMessages: true,
           systemPrompt: withAnswerLanguage(
@@ -963,14 +1228,21 @@ export class SdkAdapter implements AgentProvider {
       if (step === FIRST_TOKEN_TIMEOUT) {
         const gen = iterator as AsyncGenerator<unknown>;
         void gen.return?.(undefined).catch(() => {});
-        queue.push({
-          type: 'error',
-          message: firstTokenTimeoutMessage(guard.ms),
-        });
+        const message = firstTokenTimeoutMessage(guard.ms);
+        if (
+          await this.recoverOrReport(
+            queue,
+            message,
+            recoveryInput(Math.round(guard.ms / 1000)),
+            retryWith
+          )
+        ) return;
+        queue.push({ type: 'error', message });
         queue.close();
         return;
       }
       guard.disarm();
+      firstTokenSeen = true;
 
       const st: TurnState = { currentToolId: null, openTools: [], started };
       let failed: Error | null = null;
@@ -999,6 +1271,8 @@ export class SdkAdapter implements AgentProvider {
       }
       queue.close();
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (await this.recoverOrReport(queue, message, recoveryInput(0), retryWith)) return;
       queue.fail(err instanceof Error ? err : new Error(String(err)));
     }
   }

@@ -269,6 +269,19 @@ A141 量了 `data/model-catalog.json` 里 **137 个真实模型名**，最宽 17
 ⚠️ 量的时候**必须塞进真实 DOM**（复制目标节点的 computed style 克隆一个 span），
 不能用 canvas 的 `font` 简写 —— 实测偏大约 20%，照它定上限会白留一截。
 
+### 聊天内容列（A215）
+
+输入框与消息流里的横向提醒条共用 `.tc-chat-column`（`index.css`）：
+`width: min(var(--tc-chat-column-max), 100%); margin-inline: auto`，
+`--tc-chat-column-max: 768px`（原 `max-w-3xl` 的取值）。**组件里不要另写
+`max-w-*`** ——「上一轮指令未完成」状态条曾因缺这层约束直接撑满消息滚动区，
+比输入框宽两百多 px；两处各写一份宽度也迟早会漂移。
+
+消息滚动区是 `p-6`（左右 24），输入区外层是 `px-4`（左右 16）：流内元素要先用
+`-mx-2` 抵消这 8px 再套列类。滚动区的 `[scrollbar-gutter:stable]` 另占约 6px，
+所以窄窗口允许 ≤8px 的差，列宽封顶时两者严格同宽。跨窗口判据见
+`verify:a215-resume-width`（1440 / 1080 / 900 三档 + 反向探针）。
+
 ### 弹窗硬规矩
 
 - 模态弹窗**固定在窗口内、不许拖拽**（A130 用户拍板）。全应用只有一个 `BrowserWindow`，

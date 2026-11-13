@@ -236,6 +236,21 @@ export interface SdkSpec {
    * 指到默认的 `~/.codebuddy` 则等同于「换了一个客户端」，未登录且初始化超时。
    */
   configDir?: string;
+  /**
+   * A216：官方产品配置快照（`acc-product-config-v3*.json`）的绝对路径。
+   *
+   * 官方配置自己用 `productConfigPathEnv` 声明了 `ACC_PRODUCT_CONFIG_PATH`，
+   * 打包 CLI 的 `resolveAuthoritativeFieldsFromConfigFile()` 会读这个文件里的
+   * `endpoint` / `deploymentType` 作为**权威值**覆盖最终配置。以前我们不注入，
+   * CLI 只能按 `environment` 去猜 `product.<env>.json`；桌面端声明的是
+   * `external`，而打包 CLI 根本没有 `product.external.json`，于是落到
+   * 「reuse product.json」并警告 endpoint 可能路由到错误 host（真机 2026-11-13
+   * 的 `productName=CodeBuddy, isWorkBuddy=false` 与 endpoint 漂移即由此而来）。
+   *
+   * 这项**由 A211 运行时发现填充**（`applyWorkbuddyProfile`），定义表里不写死：
+   * 官方快照按进程落多份带 PID+UUID 后缀的文件，写死路径必然过期。
+   */
+  productConfigPath?: string;
   /** 额外注入给 CLI 的环境变量（一般不需要，非必要不写） */
   env?: Record<string, string>;
 }

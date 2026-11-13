@@ -25,6 +25,7 @@ import { TypingText } from './TypingText';
 import { formatUsage } from '../utils/formatUsage';
 import { stripEmoji } from '../utils/plainText';
 import { useTranslation } from '../i18n';
+import { useAgentLogin } from '../agentLogin';
 
 /* ── 消息呈现（A33）─────────────────────────────────────────────────────
  *
@@ -1129,6 +1130,12 @@ function AuthErrorActions({ agentId, authUrl }: { agentId?: string; authUrl?: st
     }
   };
 
+  // A222：登录成功后把名册状态拉回来（服务端 onSettled 已强制重探一次），
+  // 用户不必再点「重新探测」就能看到绿点。
+  const login = useAgentLogin(agentId, authUrl, ok => {
+    if (ok) void reprobe();
+  });
+
   return (
     <div className="mt-2.5 flex flex-col gap-1.5" data-auth-error-actions={agentId ?? ''}>
       <div className="flex flex-wrap items-center gap-2">
@@ -1137,7 +1144,8 @@ function AuthErrorActions({ agentId, authUrl }: { agentId?: string; authUrl?: st
             type="button"
             className="tc-btn-brand"
             data-auth-login-btn
-            onClick={() => window.open(authUrl, '_blank', 'noopener')}
+            disabled={!login.canOpen}
+            onClick={login.openLogin}
           >
             {t('chat.error.goLogin')}
           </button>
@@ -1156,6 +1164,15 @@ function AuthErrorActions({ agentId, authUrl }: { agentId?: string; authUrl?: st
           </button>
         )}
       </div>
+      {login.label && (
+        <div
+          className="text-caption"
+          data-agent-login-state={login.phase}
+          style={{ color: 'var(--td-text-color-secondary)' }}
+        >
+          {login.label}
+        </div>
+      )}
       {hint && (
         <div
           className="whitespace-pre-wrap break-words text-caption"

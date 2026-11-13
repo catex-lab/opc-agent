@@ -26,7 +26,17 @@ import {
   renameProject,
   updateProjectTask,
 } from "./db.js";
+// A220：会话项目归属的唯一推导入口（/api/sessions / PATCH / /api/chat 共用）。
+import { projectIdForCwd } from "./project-ownership.js";
 import { isValidAgentId, registry } from "./agents/registry.js";
+// A222：登录流全局单飞（探测 / check-login / 显式登录共用一个 CLI）。
+import {
+  configureLoginFlowHooks,
+  isLoginFlowActive,
+  loginFlowStatus,
+  startLoginFlow,
+} from "./agents/loginFlow.js";
+import { SDK_LOGIN_WAIT_MS } from "./agents/adapters/sdk.js";
 import { scoreAgentSkills, type PermissionMode } from "./agents/types.js";
 import { agentAcceptsModel, findDef, registerCustomDefs } from "./agents/definitions.js";
 // A155：SDK 产品参数（environment / endpoint / configDir）的唯一展开点。
@@ -385,6 +395,21 @@ interface LoginStatusResponse {
  * 条目没声明就按 SDK 自己的默认走（external + ~/.codebuddy），
  * 这样新增 SDK 产品时不会因为「漏配」被悄悄接到别的产品上而看不出来。
  */
+/**
+ * A222：登录收口后的善后。
+ *
+ * 不能只靠前端 60 秒的轮询变绿：`GET /api/agents` 只回后端缓存，
+ * `ensureProbedInBackground()` 有 probedOnce 闸门，用户不点「重新探测」
+ * 就永远停在 needs-auth。所以由服务端在流结束时主动作废官方 profile
+ * 缓存并强制重探一次（只有成功才重探，失败不制造新一轮 CLI）。
+ */
+configureLoginFlowHooks({
+  onSettled: (agentId, ok) => {
+    invalidateWorkbuddyProfile();
+    if (ok) void registry.probeOne(agentId, true).catch(() => {});
+  },
+});
+
 function sdkRuntimeFor(agentId: string) {
   // A211：WorkBuddy 的三项参数不再吃定义表里的静态快照，而是从官方产品配置
   // 运行时派生（其它 SDK Agent 原样）。与 SdkAdapter 构造器共用同一个函数，
@@ -400,7 +425,14 @@ app.get("/api/check-login", async (req, res) => {
     cliConfigured: false,
     envVars: {},
   };
-  
+
+  // A222：有登录流在跑就**直接让路**。原来这里连 timeout 都没给，一个
+  // 「查登录」的 GET 会起一个 300 秒的 CLI 登录流，与探测流互相顶掉会话。
+  if (isLoginFlowActive()) {
+    response.error = '登录流程进行中，请先在浏览器里完成登录';
+    return res.json(response);
+  }
+
   // 1. 检查环境变量
   const apiKey = process.env.CODEBUDDY_API_KEY;
   const authToken = process.env.CODEBUDDY_AUTH_TOKEN;
@@ -433,6 +465,9 @@ app.get("/api/check-login", async (req, res) => {
       // A155：以前写死 environment: 'external' —— 查的是 CodeBuddy 国际站，
       // WorkBuddy 桌面端的登录态在 ~/.workbuddy，这里必须用同一套参数。
       ...sdkRuntimeFor('workbuddy'),
+      // A222：显式预算。SDK 默认 300000ms，会让这个 GET 挂 5 分钟并常驻
+      // 一个登录 CLI；与探测共用 8 秒口径，需要真登录请走 /login/start。
+      timeout: SDK_LOGIN_WAIT_MS,
       onAuthUrl: async (authState) => {
         // 如果执行到这个回调，说明未登录
         needsLogin = true;
@@ -1051,6 +1086,52 @@ app.delete("/api/agents/custom/:agentId", async (req, res) => {
  * `agentId` 只走字符集校验（内置 id、自建 `custom-xxxxxxxx` 都满足），
  * 不参与任何路径拼接，因此不存在路径穿越面。
  */
+/**
+ * A222：显式登录流的两条端点。
+ *
+ * 为什么不复用 `POST /api/agents/:id/probe`：探测是**只读判断**（8 秒预算），
+ * 登录是**有副作用的长等待**（300 秒，要有人接浏览器回调）。混在一条链里
+ * 就是 21:44 那张死链接的来历 —— 8 秒后 CLI 退出，URL 却留在名册上。
+ *
+ * 两条都同步返回、不挂请求：start 立刻给快照，前端轮询 status 拿 authUrl
+ * 与最终结果。单飞在 loginFlow 模块里，重复点击不会起第二个 CLI。
+ * 必须注册在 `/api/agents/:agentId` 之前（与 custom 路由同一条规矩）。
+ */
+app.post("/api/agents/:agentId/login/start", async (req, res) => {
+  try {
+    const agentId = String(req.params.agentId ?? "");
+    if (!isValidAgentId(agentId)) {
+      return res.status(400).json({ error: "agentId 非法" });
+    }
+    const agent = registry.get(agentId);
+    if (!agent) return res.status(404).json({ error: "Agent 不存在" });
+    if (agent.kind !== "sdk") {
+      return res.status(400).json({ error: "该 Agent 不支持浏览器登录流" });
+    }
+    const snapshot = startLoginFlow(agentId);
+    res.json({ ok: snapshot.state !== "busy", ...snapshot });
+  } catch (error: any) {
+    console.error("[Agent] Login start error:", error);
+    res.status(500).json({ error: error?.message || "启动登录失败" });
+  }
+});
+
+app.get("/api/agents/:agentId/login/status", async (req, res) => {
+  try {
+    const agentId = String(req.params.agentId ?? "");
+    if (!isValidAgentId(agentId)) {
+      return res.status(400).json({ error: "agentId 非法" });
+    }
+    if (!registry.hasAgent(agentId)) {
+      return res.status(404).json({ error: "Agent 不存在" });
+    }
+    res.json(loginFlowStatus(agentId));
+  } catch (error: any) {
+    console.error("[Agent] Login status error:", error);
+    res.status(500).json({ error: error?.message || "读取登录状态失败" });
+  }
+});
+
 app.post("/api/agents/:agentId/probe", async (req, res) => {
   try {
     const agentId = String(req.params.agentId ?? "");
@@ -1922,7 +2003,8 @@ app.patch("/api/sessions/:sessionId", (req, res) => {
       // A98：换目录 = 换项目。清空目录则解绑（null）。
       // 这里同步更新而不是留给读取时现算，是因为「会话属于哪个项目」
       // 会被列表分组直接用到，每次现算会让分组查询退化成 N 次查找。
-      updates.project_id = cwd ? (getOrCreateProject(cwd)?.id ?? null) : null;
+      // A220：与新建 / 首条消息落库走同一个推导函数，别在这里抄第二份判据。
+      updates.project_id = projectIdForCwd(cwd);
     }
     // A62：思考强度同理。null = 清空档位、回到 CLI 自己的默认
     if (typeof reasoningEffort === 'string') updates.reasoning_effort = reasoningEffort || null;
@@ -2505,6 +2587,14 @@ app.post("/api/chat", async (req, res) => {
       reasoning_effort: reasoningEffort || null,
       scenario_id: scenarioId || null,
       system_prompt: systemPrompt || null,
+      // A220：项目归属必须与 `POST /api/sessions` 同源。项目入口新建的是前端
+      // 本地空壳，首条消息才在这里落库；以前没写 project_id，而项目视图按
+      // `s.projectId === selectedProject.id` 过滤（App.tsx），于是刚建的会话
+      // 在下次启动 `backfillSessionProjects()` 之前根本不出现在项目里。
+      // 走唯一推导入口：与回填共用 getOrCreateProject / 路径归一化，
+      // cwd 为空时不建项目（纯问答不属于任何项目）；目录不存在已由本路由
+      // 上方的 validateDirectory(cwd) === 'not-found' 挡成 400，不会走到这里。
+      project_id: projectIdForCwd(cwd),
       created_at: now,
       updated_at: now,
     });
@@ -2922,6 +3012,20 @@ app.post("/api/chat", async (req, res) => {
 
   try {
     for await (const ev of stream) {
+      // A217：零产出失败（initialize / 首字护栏超时）时，适配器要求作废它
+      // 本轮刚写下的 cliSessionId —— 那个令牌对应的 CLI 转录是空的，下一轮
+      // 拿它去 resume 会稳定报 "No conversation found with session ID"。
+      // 只清「本轮写的」：newResumeToken 为空说明这轮没改过令牌，误清会把
+      // 上一轮的有效上下文抹掉。控制事件不进投影器，界面上不会多出一块。
+      if (ev.type === 'init' && ev.invalidateResumeToken) {
+        if (newResumeToken) {
+          db.updateSession(session.id, { sdk_session_id: null });
+          console.log(`[Chat] A217：作废本轮半空续接令牌 ${redactSecret(newResumeToken)}`);
+          newResumeToken = null;
+        }
+        continue;
+      }
+
       // 续接令牌要在投影之前处理：它属于会话状态，不是可渲染的块
       if (ev.type === 'init' && ev.resumeToken && ev.resumeToken !== resumeToken) {
         newResumeToken = ev.resumeToken;
