@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MoreHorizontal, PanelRight, CalendarClock, ArrowLeftRight } from 'lucide-react';
+import { MoreHorizontal, PanelRight, CalendarClock, ArrowLeftRight, IdCard, Trash2 } from 'lucide-react';
 import { PanelHeader } from './PanelHeader';
 import { StatusDot } from './StatusDot';
 import { AgentDetailModal } from './AgentDetailModal';
@@ -8,7 +8,7 @@ import { ScheduleDialog } from './ScheduleDialog';
 import { HandoffDialog } from './HandoffDialog';
 import { WorkspaceBadge } from './WorkspaceBadge';
 import { KbScopeChip } from './kb/KbScopeChip';
-import { MENU_ITEM_TEXT_CLASS } from './menuItem';
+import { MENU_ITEM_CLASS } from './menuItem';
 import { agentStatusViewOf, type RegisteredAgent } from '../types';
 import type { ScenarioTemplate } from '../scenarios';
 import { useAgentRemarks } from '../agentRemarks';
@@ -269,9 +269,10 @@ export function ChatHeader({
                 closeMore();
                 setShowDetail(true);
               }}
-              className={MENU_ITEM_TEXT_CLASS}
+              className={MENU_ITEM_CLASS}
               style={{ color: 'var(--td-text-color-primary)' }}
             >
+              <IdCard size={14} />
               {t('chat.agentDetail')}
             </button>
             {/* A224：定时任务。低频配置，收在「⋯」里与详情/删除同一层；
@@ -283,7 +284,7 @@ export function ChatHeader({
                   closeMore();
                   setScheduleOpen(true);
                 }}
-                className={MENU_ITEM_TEXT_CLASS}
+                className={MENU_ITEM_CLASS}
                 style={{ color: 'var(--td-text-color-primary)' }}
                 data-chat-schedule
               >
@@ -299,7 +300,7 @@ export function ChatHeader({
                   closeMore();
                   setHandoffOpen(true);
                 }}
-                className={MENU_ITEM_TEXT_CLASS}
+                className={MENU_ITEM_CLASS}
                 style={{ color: 'var(--td-text-color-primary)' }}
                 data-chat-handoff
               >
@@ -313,9 +314,10 @@ export function ChatHeader({
                 closeMore();
                 setConfirmDelete(true);
               }}
-              className={MENU_ITEM_TEXT_CLASS}
+              className={MENU_ITEM_CLASS}
               style={{ color: 'var(--td-error-color)' }}
             >
+              <Trash2 size={14} />
               {t('chat.deleteChat')}
             </button>
           </div>

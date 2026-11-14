@@ -167,6 +167,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
+  /* P5 修1：line-height 继承触发器的 1 → 行盒 14px，CJK 字形（约 1.15em）
+     上下沿被 overflow:hidden 削掉约 1px（中英文都可见，CJK 更明显）。
+     normal 让行盒回到字形自然高度（约 20px < 36px 触发器），居中不变。 */
+  line-height: normal;
 }
 
 .opc-select__leading,
