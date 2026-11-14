@@ -1834,6 +1834,7 @@ function AppContent() {
                 probing={registry.probing}
                 error={registry.error}
                 onProbe={registry.probe}
+                onCanary={registry.canaryAll}
                 onCreateGroup={handleCreateGroup}
                 onViewDetail={setDetailAgentId}
                 getAgent={registry.getAgent}
@@ -1932,6 +1933,7 @@ function AppContent() {
                     onOpenCredential={handleOpenCredential}
                     onDeleteCustom={handleDeleteCustomAgent}
                     onAvatarChanged={registry.load}
+                    onRequestRefresh={registry.load}
                   />
                 ) : currentSession ? (
                   /* A103：gap 让「聊天列 / 工作区」之间留缝；两块各自圆角，

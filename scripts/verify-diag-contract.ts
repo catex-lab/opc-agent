@@ -89,9 +89,11 @@ function contracts(mutate?: (src: string, file: string) => string): void {
       assert.match(src, /lastDiagnostic: \{/, 'recordError 未写入 lastDiagnostic');
       assert.ok(src.includes('authDiagnosticFor'), 'auth 的 missing/expired 细分缺失');
     });
-    check('toAgentInfo 必须派生 diagnostic（运行期优先于探测）', () => {
+    check('toAgentInfo 必须派生 diagnostic（P1 起三源按 at 取最新）', () => {
       const src = S('server/agents/types.ts');
-      assert.match(src, /status\.lastDiagnostic \?\?/, 'toAgentInfo 未优先消费运行期事实');
+      assert.match(src, /status\.lastDiagnostic/, '未消费运行期事实');
+      assert.match(src, /status\.lastCanary/, '未消费 canary 事实');
+      assert.match(src, /candidates\.sort\(/, '缺少按 at 排序的优先级合并');
       assert.ok(src.includes('availabilityToDiagnostic'), '探测侧映射未接线');
     });
     check('前后端可用性联合类型必须同源于 shared（不许手抄镜像）', () => {

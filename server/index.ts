@@ -98,6 +98,8 @@ import {
   type NotifyChannelKind,
 } from "./notify.js";
 import { setPendingPermissionObserver } from "./agents/permissionMeta.js";
+// P1：真实健康度检测（canary）。名册打开时自动补跑过期项，手动检测走专用端点。
+import { runCanary, scheduleAutoCanaries } from "./agents/canary.js";
 // A224 续：cron 解析与预览（调度器本体在 scheduler.js）
 import { cronIntervalWarning, cronPreview } from "./cron.js";
 // A225：群聊并行隔离。创建 / 汇合 / 清理都在本模块，路由只管时机与 note。
@@ -807,6 +809,29 @@ function comingSoonList(): Array<(typeof COMING_SOON_AGENTS)[number]> {
   return COMING_SOON_AGENTS.filter(a => !registered.has(a.id));
 }
 
+// P1：手动「真实检测」。force = 不受 TTL 频控（用户点了按钮就要有动作）；
+// agentId 缺省 = 全部可检测的都测一遍。fire-and-forget：检测最长要等 SDK
+// 冷启动（2 分钟预算），挂住 HTTP 请求只会让前端转圈——结果由轮询收回。
+app.post("/api/agents/canary", (req, res) => {
+  try {
+    const target = typeof (req.body ?? {}).agentId === 'string' ? (req.body as any).agentId : null;
+    const ids = target
+      ? [target]
+      : registry
+          .list()
+          .filter(a => a.status.availability !== 'not-installed' && a.status.availability !== 'unsupported')
+          .map(a => a.id);
+    if (target && !registry.hasAgent(target)) {
+      return res.status(404).json({ error: `未知的 Agent: ${target}` });
+    }
+    for (const id of ids) void runCanary(id);
+    res.json({ ok: true, started: ids.length });
+  } catch (error: any) {
+    console.error("[Canary] Start error:", error);
+    res.status(500).json({ error: error?.message || '启动真实检测失败' });
+  }
+});
+
 // 列出全部 Agent（含探测状态）。带 TTL 缓存，不会每次都重探。
 app.get("/api/agents", async (req, res) => {
   try {
@@ -820,6 +845,9 @@ app.get("/api/agents", async (req, res) => {
     // 冷启动时缓存是空的，此时名册里全是 unknown（前端会显示成「未接入」）。
     // 这里把探测在后台启动起来，本次仍按当前缓存如实返回，由前端轮询补齐。
     registry.ensureProbedInBackground();
+    // P1：名册打开 = 自动 canary 的触发点。TTL/频控/开关都在 canary 模块内，
+    // fire-and-forget——本次响应如实返回当前状态，前端既有轮询收回结果。
+    scheduleAutoCanaries(registry.list().map(a => a.id));
     res.json({
       agents: withObservedCapabilities(registry.list()),
       comingSoon: comingSoonList(),

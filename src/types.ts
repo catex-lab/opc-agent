@@ -8,7 +8,7 @@ import type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlo
 import type { EventCapability, CapabilityProfile } from '../shared/capabilities';
 import type { PermissionOption, PermissionReasonCode } from '../shared/permissions';
 import type { Provenance } from '../shared/provenance';
-import type { ProbeAvailability } from '../shared/diagnostics';
+import type { Diagnostic, ProbeAvailability } from '../shared/diagnostics';
 export type { ProbeAvailability };
 export type { PermissionMode, PermissionSupport };
 export type { PermissionOption, PermissionReasonCode };
@@ -530,6 +530,16 @@ export interface AgentStatus {
    * 不能让用户去重登一个其实已经登录好的账号。
    */
   probeState?: 'timeout' | 'credential-invalid' | 'probe-failed' | 'session-invalid';
+  /**
+   * P1：最近一次真实健康度检测（canary）。checking → ok | failed。
+   * 结论（failed 时）已并入 RegisteredAgent.diagnostic（服务端按 at 取最新）；
+   * 这里原样保留状态本身，供「检测中…」与「上次检测时间」显示。
+   */
+  lastCanary?: {
+    state: 'checking' | 'ok' | 'failed';
+    at: string;
+    diagnostic?: Diagnostic;
+  };
 }
 
 /**
@@ -619,6 +629,13 @@ export interface RegisteredAgent {
    */
   installEnv?: InstallEnv;
   status: AgentStatus;
+  /**
+   * P0/P1：诊断契约的唯一出口（shared/diagnostics）——服务端已按
+   * 「canary > 运行期失败 > 探测派生」取最新。UI 显示与动作按钮都读它。
+   */
+  diagnostic?: Diagnostic;
+  /** P1：canary 状态原样下发（「检测中…」显示用） */
+  canary?: { state: 'checking' | 'ok' | 'failed'; at: string };
   /** 该 Agent 的恢复指引（后端按 id 下发；非 ready 时界面展示） */
   recoveryHint?: string;
   /** P4-5：权限强制能力 */
@@ -855,7 +872,7 @@ export const AVAILABILITY_META: Record<
  */
 export function availabilityLabelOf(agent: {
   kind: AgentKind;
-  status: { availability: AgentAvailability; probeState?: AgentStatus['probeState'] };
+  status: { availability: AgentAvailability; probeState?: AgentStatus['probeState']; lastCanary?: AgentStatus['lastCanary'] };
 }): string {
   const view = agentStatusViewOf(agent);
   return view.label;
@@ -870,11 +887,58 @@ export function availabilityLabelOf(agent: {
  * SDK 自己的 60 秒预算内完成初始化。这里把 probeState 优先，保证四种
  * 状态词互不混淆；没有 probeState 时完全沿用旧口径，不影响历史断言。
  */
+/** P1：诊断分类的中文状态词（i18n 站点用 labelKey，与既有 probe 状态词同风格） */
+const DIAGNOSTIC_LABEL_ZH: Record<string, string> = {
+  ok: '在线',
+  auth_missing: '未登录',
+  auth_expired: '登录态失效',
+  quota: '额度受限',
+  network: '网络不通',
+  binary_broken: '需要修复',
+  not_installed: '未安装',
+  degraded: '部分受限',
+  unknown: '存在异常',
+};
+
 export function agentStatusViewOf(agent: {
   kind: AgentKind;
-  status: { availability: AgentAvailability; probeState?: AgentStatus['probeState'] };
-}): { key: string; label: string; color: string; dot: string; dotShape: StatusDotShape } {
+  status: { availability: AgentAvailability; probeState?: AgentStatus['probeState']; lastCanary?: AgentStatus['lastCanary'] };
+  /** P1：诊断事实（canary > 运行期 > 探测，服务端已合并）。非 ok 时优先于 availability 展示 */
+  diagnostic?: Diagnostic;
+}): { key: string; label: string; color: string; dot: string; dotShape: StatusDotShape; labelKey?: string } {
   const { availability, probeState } = agent.status;
+  // P1：真实检测进行中——它不是可用性结论，是「正在核对事实」的过程态
+  if (agent.status.lastCanary?.state === 'checking') {
+    return {
+      ...AVAILABILITY_META['unknown'],
+      key: 'diag-checking',
+      label: '检测中…',
+      labelKey: 'diag.checking',
+    };
+  }
+  // P1：诊断非 ok → 状态词与动作都以它为准（这是比探测更新的事实）。
+  // 配色沿用既有档位语义：auth/quota/network/degraded/unknown 走 warn（needs-auth），
+  // binary_broken 走「需修复」（needs-setup），not_installed 走灰（not-installed）。
+  const diag = agent.diagnostic;
+  if (diag && diag.class !== 'ok') {
+    const toneMap: Record<string, 'needs-auth' | 'needs-setup' | 'not-installed'> = {
+      auth_missing: 'needs-auth',
+      auth_expired: 'needs-auth',
+      quota: 'needs-auth',
+      network: 'needs-auth',
+      degraded: 'needs-auth',
+      unknown: 'needs-auth',
+      binary_broken: 'needs-setup',
+      not_installed: 'not-installed',
+    };
+    const tone = toneMap[diag.class] ?? 'needs-auth';
+    return {
+      ...AVAILABILITY_META[tone],
+      key: `diag-${diag.class}`,
+      label: DIAGNOSTIC_LABEL_ZH[diag.class] ?? diag.class,
+      labelKey: `diag.${diag.class}.label`,
+    };
+  }
   // 配色直接借用既有档位（warn / danger），不在这里再写一份 hex：
   // 状态词换了、颜色语义没换，圆点与标签自然保持同一套令牌。
   if (probeState === 'timeout') {
@@ -912,10 +976,37 @@ export function agentStatusViewOf(agent: {
   };
 }
 
+/**
+ * P1：诊断动作。服务端契约（shared/diagnostics）给动作键，这里只管**路由**：
+ * P1 统一进资料页（登录配置 / 安装指引 / 模型清单都在那里）；
+ * P2 登录代管落地后 open_login 改为直开登录终端。
+ */
+export function diagnosticActionOf(agent: { diagnostic?: Diagnostic }): {
+  action: NonNullable<Diagnostic>['class'] extends never ? never : string;
+  labelKey: string;
+} | null {
+  const cls = agent.diagnostic?.class;
+  // ok 无需动作；not_installed 不给行内按钮——整行可点进资料页（安装指引
+  // 就在那里），11 行灰条全挂链接只会把名册变成按钮墙。
+  if (!cls || cls === 'ok' || cls === 'not_installed') return null;
+  const actions: Record<string, string> = {
+    auth_missing: 'diag.action.open_login',
+    auth_expired: 'diag.action.open_login',
+    quota: 'diag.action.switch_model',
+    network: 'diag.action.check_network',
+    binary_broken: 'diag.action.open_install',
+    not_installed: 'diag.action.open_install',
+    degraded: 'diag.action.view_details',
+    unknown: 'diag.action.view_details',
+  };
+  const labelKey = actions[cls];
+  return labelKey ? { action: cls, labelKey } : null;
+}
+
 /** 状态圆点颜色：与状态词同源，避免「文字说超时、圆点还是橙色未登录」 */
 export function agentStatusDotOf(agent: {
   kind: AgentKind;
-  status: { availability: AgentAvailability; probeState?: AgentStatus['probeState'] };
+  status: { availability: AgentAvailability; probeState?: AgentStatus['probeState']; lastCanary?: AgentStatus['lastCanary'] };
 }): string {
   return agentStatusViewOf(agent).dot;
 }

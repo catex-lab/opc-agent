@@ -95,6 +95,14 @@ export interface Prefs {
    * 但缺键不会写文件，保持既有用户的 preferences.json 不变。
    */
   interfaceLanguage?: InterfaceLanguage;
+  /**
+   * 真实健康度检测（canary，P1）的总开关。
+   *
+   * 默认开（undefined = 开）：名册状态的唯一可信源是真实调用，关掉等于
+   * 退回启发式猜测。用户可在通讯录「+」菜单关闭（每次探测都花一点额度，
+   * 尊重在意这一点的用户）。显式 false 才关；null = 回到默认开。
+   */
+  canaryEnabled?: boolean;
 }
 
 export type LinkOpenMode = 'system' | 'in-app';
@@ -209,6 +217,11 @@ export function validatePrefsPatch(input: unknown): PrefsValidation {
   for (const key of Object.keys(o)) {
     const v = o[key];
     switch (key) {
+      case 'canaryEnabled':
+        if (v === null) patch.canaryEnabled = null;
+        else if (typeof v === 'boolean') patch.canaryEnabled = v;
+        else return { ok: false, error: `canaryEnabled 只能是布尔值，收到 ${JSON.stringify(v)}` };
+        break;
       case 'theme':
         if (v === null) patch.theme = null;
         else if (isTheme(v)) patch.theme = v;

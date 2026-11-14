@@ -521,6 +521,14 @@ export interface AgentStatus {
    * canary（P1）落地后同样写这里，source 区分谁说的。
    */
   lastDiagnostic?: Diagnostic;
+  /**
+   * P1：最近一次真实健康度检测（canary）。checking → ok | failed。
+   *
+   * 与 lastDiagnostic 的分工：lastDiagnostic 是「最近一次失败」的事实，
+   * lastCanary 是「最近一次主动检测」的事实——成功时它是**更新的好消息**，
+   * 优先级合并（toAgentInfo 按 at 取最新）时它负责把过期的坏消息顶掉。
+   */
+  lastCanary?: CanaryState;
 }
 
 /**
@@ -550,7 +558,7 @@ import type { ScenarioTool } from '../../shared/scenarios.js';
 import type { AnswerLanguage } from '../../shared/answer-language.js';
 // P0 诊断分类学契约：可用性联合类型的本体 + 到诊断的映射都在 shared，
 // 前后端共用同一份（防漂移纪律，见 AgentAvailability 注释）。
-import type { ProbeAvailability, Diagnostic } from '../../shared/diagnostics.js';
+import type { ProbeAvailability, Diagnostic, CanaryState } from '../../shared/diagnostics.js';
 import { availabilityToDiagnostic } from '../../shared/diagnostics.js';
 export type { ProbeAvailability };
 export type { PermissionMode, PermissionSupport, ToolWhitelistSupport } from '../../shared/types.js';
@@ -605,6 +613,11 @@ export interface AgentInfo extends AgentDescriptor {
    * lastDiagnostic、source=canary，UI 消费方不用改。
    */
   diagnostic: Diagnostic;
+  /**
+   * P1：canary 状态原样下发（UI 显示「检测中…」与上次检测时间用）。
+   * 结论本身已并入上面的 diagnostic（按 at 取最新），这里不再重复。
+   */
+  canary?: { state: CanaryState['state']; at: string };
 }
 
 // ============= 调用上下文 =============
@@ -747,17 +760,39 @@ export function toAgentInfo(
         inputModes: ['text/plain'],
         outputModes: capability === 'image' ? ['text/plain', 'image/*'] : ['text/plain'],
       }));
-  // P0：诊断契约的唯一出口。优先取运行期失败（比探测新），否则从
-  // availability 派生——探测结果是状态的本体，映射表在 shared（防漂移）。
-  // canary（P1）落地后同样走这个字段，UI 不需要再改。
-  const diagnostic: Diagnostic =
-    status.lastDiagnostic ?? {
-      class: availabilityToDiagnostic(status.availability),
-      at: status.probedAt,
-      source: 'probe' as const,
-      ...(status.lastError ? { detail: status.lastError } : {}),
-    };
-  return { ...descriptor, skills, status, diagnostic };
+  // P0/P1：诊断契约的唯一出口。三条事实按 **at 取最新**：
+  //   canary（真实检测）> 运行期失败 > 探测派生——「最新」是唯一诚实的
+  //   优先级，任何固定顺序都会出现「真实调用刚失败，名册还挂着旧 OK」。
+  // canary OK 时顺手清掉比它旧的运行期坏消息（更新的好消息顶掉旧坏消息）。
+  const candidates: Diagnostic[] = [];
+  const canary = status.lastCanary;
+  if (canary && canary.state !== 'checking') {
+    if (canary.state === 'failed' && canary.diagnostic) {
+      candidates.push({ ...canary.diagnostic, source: 'canary' });
+    }
+    if (canary.state === 'ok') {
+      const last = status.lastDiagnostic;
+      if (last && Date.parse(last.at) <= Date.parse(canary.at)) {
+        delete (status as AgentStatus).lastDiagnostic;
+      }
+    }
+  }
+  if (status.lastDiagnostic) candidates.push(status.lastDiagnostic);
+  candidates.push({
+    class: availabilityToDiagnostic(status.availability),
+    at: status.probedAt,
+    source: 'probe' as const,
+    ...(status.lastError ? { detail: status.lastError } : {}),
+  });
+  candidates.sort((a, b) => (b.at > a.at ? 1 : b.at < a.at ? -1 : 0));
+  const diagnostic = candidates[0]!;
+  return {
+    ...descriptor,
+    skills,
+    status,
+    diagnostic,
+    ...(canary ? { canary: { state: canary.state, at: canary.at } } : {}),
+  };
 }
 
 /** 未探测时的初始状态 */

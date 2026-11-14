@@ -131,17 +131,36 @@ export function useAgentRegistry() {
   const pollCount = useRef(0);
   useEffect(() => {
     const hasUnknown = agents.some(a => a.status.availability === 'unknown');
-    if (!hasUnknown) {
+    // P1：canary「检测中」同样驱动轮询——SDK 冷启动预算 120s，给足 50 拍（约 2.5 分钟）
+    const hasChecking = agents.some(a => a.status.lastCanary?.state === 'checking');
+    if (!hasUnknown && !hasChecking) {
       pollCount.current = 0;
       return;
     }
-    if (pollCount.current >= 20) return; // 上限约 60 秒，避免探测一直失败时空转
+    if (pollCount.current >= (hasUnknown ? 20 : 50)) return;
     const timer = setTimeout(() => {
       pollCount.current += 1;
       void load();
     }, 3000);
     return () => clearTimeout(timer);
   }, [agents, load]);
+
+  /**
+   * P1：手动「真实检测」。force = 服务端不受 TTL 频控。
+   * 立刻拉一次把 checking 状态带回来，后续由上面的 checking-aware 轮询收回结果。
+   */
+  const canaryAll = useCallback(async () => {
+    try {
+      await fetch('/api/agents/canary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+    } catch {
+      /* 结果轮询会兜底 */
+    }
+    void load();
+  }, [load]);
 
   const getAgent = useCallback(
     (id: string | undefined) => (id ? agents.find(a => a.id === id) : undefined),
@@ -205,6 +224,7 @@ export function useAgentRegistry() {
     error,
     load,
     probe,
+    canaryAll,
     probeOne,
     probingIds,
     probeFeedback,

@@ -13,6 +13,7 @@ import {
   Plug,
   Terminal,
   Trash2,
+  Radar,
 } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentHoverCard } from './AgentHoverCard';
@@ -33,7 +34,7 @@ import { NewGroupDialog } from './NewGroupDialog';
 import { GroupAvatar, groupAvatarMembersOf } from './UserAvatar';
 import { useGroupAvatar, useGroupAvatarImage } from '../sessionFlags';
 import { MENU_ITEM_CLASS } from './menuItem';
-import { agentStatusViewOf, type ComingSoonAgent, type RegisteredAgent, type Session } from '../types';
+import { agentStatusViewOf, diagnosticActionOf, type ComingSoonAgent, type RegisteredAgent, type Session } from '../types';
 import { useTranslation, type MessageKey } from '../i18n';
 
 interface ContactsPanelProps {
@@ -67,6 +68,11 @@ interface ContactsPanelProps {
    * 只有 `method:'key'` 的条目（豆包 / Kimi / WorkBuddy）会用到 ——
    * 它们不需要安装，缺的是 Key。不传就不画那个按钮（不做点不动的假控件）。
    */
+  /**
+   * P1：手动「真实检测」全部可检测 Agent（canary，区别于启发式探测）。
+   * 不传就不画菜单项。
+   */
+  onCanary?: () => void;
   onOpenCredential?: (agentId: string) => void;
   /**
    * 去设置页添加一个模型厂商（A129）。
@@ -132,6 +138,7 @@ export function ContactsPanel({
   compact = false,
   onOpenCredential,
   onAddProvider,
+  onCanary,
 }: ContactsPanelProps) {
   const { t } = useTranslation();
   const [keyword, setKeyword] = useState('');
@@ -427,6 +434,22 @@ export function ContactsPanel({
                     {probing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                     {t('contacts.reprobe')}
                   </button>
+                  {/* P1：真实检测——发一条最小真实调用核对状态（区别于启发式探测） */}
+                  {onCanary && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddMenuOpen(false);
+                        onCanary();
+                      }}
+                      className={MENU_ITEM_CLASS}
+                      style={{ color: 'var(--td-text-color-primary)' }}
+                      data-contacts-canary
+                    >
+                      <Radar size={14} />
+                      {t('canary.menu')}
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -735,6 +758,9 @@ function ContactRow({ agent, onViewDetail, onEdit, onRemove }: ContactRowProps) 
   const remark = remarks[agent.id] ?? '';
   /** 显示名：备注优先（与消息列表、聊天头部同一套规则） */
   const displayName = remark || agent.name;
+  // P1：状态词与动作都以诊断事实为准（canary > 运行期 > 探测，服务端已合并）
+  const view = agentStatusViewOf(agent);
+  const diagAction = diagnosticActionOf(agent);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [editing, setEditing] = useState(false);
 
@@ -779,11 +805,29 @@ function ContactRow({ agent, onViewDetail, onEdit, onRemove }: ContactRowProps) 
           配色走 `--tc-status-*`，浅深两档都过了 4.5:1（见 index.css 那段注释）。 */}
       <span
         className="shrink-0 text-caption"
-        style={{ color: agentStatusViewOf(agent).color }}
-        data-agent-status={agentStatusViewOf(agent).key}
+        style={{ color: view.color }}
+        data-agent-status={view.key}
       >
-        {t(`status.${agentStatusViewOf(agent).key}` as MessageKey)}
+        {/* P1：诊断事实带 labelKey（canary/运行期/探测），优先于 availability 口径 */}
+        {view.labelKey ? (t(view.labelKey as MessageKey)) : (t(`status.${view.key}` as MessageKey))}
       </span>
+      {/* P1：诊断动作——有病给药，一步进资料页（登录配置/安装指引都在那里） */}
+      {diagAction && (
+        <button
+          type="button"
+          onClick={e => {
+            e.stopPropagation();
+            onViewDetail();
+          }}
+          title={t(diagAction.labelKey as MessageKey)}
+          aria-label={t(diagAction.labelKey as MessageKey)}
+          data-agent-diag-action={agent.id}
+          className="shrink-0 rounded-md px-1 py-0.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
+          style={{ color: view.color }}
+        >
+          {t(diagAction.labelKey as MessageKey)}
+        </button>
+      )}
     </>
   );
 

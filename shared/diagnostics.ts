@@ -172,3 +172,14 @@ export function classifyErrorMessage(message: string): DiagnosticClass {
 export function authDiagnosticFor(wasReady: boolean): 'auth_missing' | 'auth_expired' {
   return wasReady ? 'auth_expired' : 'auth_missing';
 }
+
+// ═══════════════ 真实健康度（canary，P1）═════════════════
+
+/** 一次真实检测的状态。checking → ok | failed；状态本身也会随探测被覆盖（诚实降级） */
+export interface CanaryState {
+  state: 'checking' | 'ok' | 'failed';
+  /** 本次检测的时刻（ISO）。频控与「上次检测时间」都读它 */
+  at: string;
+  /** state === 'failed' 时携带归类结论；ok 时不带（ok 就是结论） */
+  diagnostic?: Diagnostic;
+}

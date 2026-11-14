@@ -29,6 +29,7 @@ import { loadAnswerLanguage } from '../answer-language.js';
 import type { EventSource } from '../../shared/blocks.js';
 // P0 诊断分类学契约：运行期错误 → 诊断分类（纯函数，shared 侧）
 import { authDiagnosticFor, classifyErrorMessage } from '../../shared/diagnostics.js';
+import type { CanaryState } from '../../shared/diagnostics.js';
 import type {
   AgentDescriptor,
   AgentInfo,
@@ -703,6 +704,19 @@ class AgentRegistry {
       );
     }
     return { timedOut };
+  }
+
+  /**
+   * P1：记录一次真实健康度检测（canary）的状态。
+   *
+   * 为什么独立成方法而不是让 canary.ts 直接改 statuses：与 recordError
+   * 同一条纪律——状态缓存只能经注册表的写入口变更。checking 会被后续
+   * 探测覆盖（探测是状态的本体），canary 完成时再写回来，可接受。
+   */
+  recordCanary(id: string, entry: CanaryState): void {
+    const prev = this.statuses.get(id);
+    if (!prev) return;
+    this.statuses.set(id, { ...prev, lastCanary: entry });
   }
 
   /** 把运行时错误回写到状态里，让名册页能显示「上次为什么失败」 */

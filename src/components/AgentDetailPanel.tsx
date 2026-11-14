@@ -1,5 +1,5 @@
 import { ChevronLeft, MessageSquarePlus, Trash2 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MessagePlugin } from 'tdesign-react';
 import { AgentAvatar } from './AgentAvatar';
 import { StatusDot } from './StatusDot';
@@ -9,6 +9,7 @@ import { removeAgentLogo, uploadAgentLogo } from '../avatarApi';
 import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent } from '../types';
 import type { AgentProbeFeedback } from '../agentProbe';
 import { describeProbeFeedback } from '../agentProbe';
+import { useTranslation } from '../i18n';
 
 interface AgentDetailPanelProps {
   agent: RegisteredAgent;
@@ -28,6 +29,8 @@ interface AgentDetailPanelProps {
   onDeleteCustom?: (agentId: string) => void;
   /** A160：Logo 变更后刷新注册表（列表 / 名片 / 头部一起变） */
   onAvatarChanged?: () => void;
+  /** P1：canary 触发后刷新名册（把 checking/结论带回来） */
+  onRequestRefresh?: () => void;
 }
 
 /**
@@ -60,8 +63,11 @@ export function AgentDetailPanel({
   probeFeedback,
   onOpenCredential,
   onDeleteCustom,
+  /** P1：canary 触发后刷新名册（把 checking/结论带回来） */
+  onRequestRefresh,
   onAvatarChanged,
 }: AgentDetailPanelProps) {
+  const { t } = useTranslation();
   const avail = agent.status.availability;
   const meta = agentStatusViewOf(agent);
   const canChat = avail === 'ready';
@@ -72,6 +78,12 @@ export function AgentDetailPanel({
   const [cropFile, setCropFile] = useState<File | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
+  // P1：canary 手动触发的本地态。canary.at 变化 = 服务端已有新结论，解除转圈
+  const [canaryArmedAt, setCanaryArmedAt] = useState<string | null>(null);
+  const canaryArmed = canaryArmedAt !== null && agent.canary?.at === canaryArmedAt;
+  useEffect(() => {
+    if (canaryArmedAt && agent.canary?.at !== canaryArmedAt) setCanaryArmedAt(null);
+  }, [agent.canary?.at, canaryArmedAt]);
 
   return (
     <div
@@ -152,7 +164,41 @@ export function AgentDetailPanel({
             )}
             <div className="mt-2 flex items-center gap-1.5 text-body" style={{ color: meta.color }}>
               <StatusDot color={meta.dot} shape={meta.dotShape} size={8} statusLabel={meta.label} />
-              {availabilityLabelOf(agent)}
+              {/* P1：状态词以诊断事实为准（labelKey 优先），与通讯录同一口径 */}
+              {meta.labelKey ? t(meta.labelKey as never) : availabilityLabelOf(agent)}
+            </div>
+            {/* P1：真实检测——上次时间 + 手动触发。这是名册状态的唯一可信源 */}
+            <div className="mt-2 flex items-center justify-center gap-2 text-caption" data-agent-canary>
+              <span style={{ color: 'var(--td-text-color-placeholder)' }}>
+                {agent.status.lastCanary
+                  ? t('canary.lastAt', {
+                      time: new Date(agent.status.lastCanary.at).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      }),
+                    })
+                  : t('canary.never')}
+              </span>
+              <button
+                type="button"
+                className="underline underline-offset-2"
+                style={{ color: 'var(--td-brand-color)' }}
+                disabled={canaryArmed}
+                data-agent-canary-run
+                onClick={() => {
+                  const at = new Date().toISOString();
+                  setCanaryArmedAt(at);
+                  void fetch('/api/agents/canary', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ agentId: agent.id }),
+                  })
+                    .catch(() => undefined)
+                    .finally(() => onRequestRefresh?.());
+                }}
+              >
+                {canaryArmed ? t('canary.running') : t('canary.run')}
+              </button>
             </div>
             {/* A160：头像入口只在资料页（用户确认的交互位置）。
                 上传是叠加在 icon 之上的覆盖层；「恢复默认」只删映射，
