@@ -560,7 +560,10 @@ export class CliAdapter implements AgentProvider {
     const { binPath, blocked } = this.probeTarget(now);
     if (!binPath) return blocked ?? (this.status as AgentStatus);
 
-    const { version, raw, timedOut } = await probeVersion(binPath);
+    // P5：探测预算支持 per-agent 覆盖（shim 冷启动慢的 CLI，如 pi 实测 2992ms
+    // 卡在默认 3s 边缘）。缺省仍是全局 3s。
+    const probeBudget = this.def.probeBudgetMs ?? PROBE_VERSION_TIMEOUT_MS;
+    const { version, raw, timedOut } = await probeVersion(binPath, probeBudget);
 
     // 版本探测超时（不再连环试三个参数）：状态如实标成「未知」。
     // 不能因为"没拿到版本号"就判不可用 —— CLI 本身可能是好的，只是启动慢；
@@ -571,7 +574,7 @@ export class CliAdapter implements AgentProvider {
         installed: true,
         binaryPath: binPath,
         message:
-          `命令版本探测超过 ${PROBE_VERSION_TIMEOUT_MS / 1000} 秒未返回，状态未知。` +
+          `命令版本探测超过 ${Math.round(probeBudget / 1000)} 秒未返回，状态未知。` +
           '这不影响发送消息；首条消息可能需要等进程冷启动。',
         probedAt: now,
       };

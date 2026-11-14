@@ -95,9 +95,15 @@ section('[2] method 与 kind 相容');
 for (const d of defs) {
   const m = d.install?.method;
   if (!m) continue;
-  if (d.kind === 'http' || d.kind === 'sdk') {
-    // 这两种形态由本应用直接发 HTTP / 内置 SDK，机器上不需要任何可执行文件
-    eq(m, 'key', `${d.id}(kind=${d.kind}): 只能是「不用装，缺 Key」`);
+  if (d.kind === 'http') {
+    // HTTP 由本应用直接发请求，机器上不需要任何可执行文件
+    eq(m, 'key', `${d.id}(kind=http): 只能是「不用装，缺 Key」`);
+  }
+  if (d.kind === 'sdk') {
+    // A156/A157 起 codex / claude 是「SDK 接入 + CLI 基线保留」的双规格定义：
+    // install 描述 **CLI 伴生件**的获取方式（npm），与 key（只缺登录）并存。
+    // 允许 key / npm；别的仍不收。
+    ok(m === 'key' || m === 'npm', `${d.id}(kind=sdk): 只允许「缺 Key」或「CLI 伴生件 npm 安装」`, `实际 ${m}`);
   }
   if (d.kind === 'cli' || d.kind === 'acp') {
     ok(m !== 'key', `${d.id}(kind=${d.kind}): 本机要起进程，不能标成「不用装」`, `实际 ${m}`);

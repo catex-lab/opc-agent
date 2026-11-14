@@ -291,6 +291,15 @@ export interface AgentDefinition {
   /** 已知的不可用原因（用于 GUI-only 之类） */
   unsupportedReason?: string;
   /**
+   * 探测预算（毫秒）——`--version` 版本探测的超时预算（P5）。
+   *
+   * 为什么需要：默认 3 秒对「通过 node shim 冷启动的 CLI」太紧——实测
+   * `pi --version` 冷启动 2992ms、热态 1974ms，卡在预算边缘，系统忙时
+   * 必超时 → 名册误标「存在异常」。给慢冷启动的 Agent 单独放宽，不拖慢
+   * 其它 14 家的探测。缺省 = 3000。
+   */
+  probeBudgetMs?: number;
+  /**
    * ACP 通道的额外参数（P4 预备，接入架构收敛方案）。
    *
    * AcpAdapter 拉起 `descriptor.command` 后只传启动垫片的 prefixArgs；
@@ -2085,6 +2094,9 @@ cli: {
       installHint:
         'npm i -g @earendil-works/pi-coding-agent，然后在交互模式用 /login 或设置 provider 的 API Key（如 DEEPSEEK_API_KEY）',
     },
+    // P5：实测 `pi --version` 冷启动 2992ms（热态 1974ms），默认 3s 预算
+    // 卡边缘——放宽到 10s，让这个能用的 Agent 不再被误标「存在异常」。
+    probeBudgetMs: 10000,
     cli: {
       bin: 'pi',
       buildArgs: (prompt, ctx) => {

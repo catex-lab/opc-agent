@@ -36,7 +36,7 @@ const RECOVERY_HINTS: Record<string, string> = {
   zcode: '打开 ZCode 桌面端重新登录（凭据在 ~/.zcode/cli/config.json），然后点「重新探测」',
   kimicode:
     '在「设置 → 登录配置 → Agent API Key」填 MOONSHOT_API_KEY（或 KIMI_API_KEY）；注意它和 Kimi Code 的登录态不通用',
-  pi: '在终端运行 `pi`，用 `/login` 或在对应 provider 的 API Key（如 DEEPSEEK_API_KEY）完成登录',
+  pi: 'pi 的模型由它自己的 provider 配置管理（实测 sensenova 等已可用）：在终端运行 `pi` 后用 `/login`，或编辑其 provider 配置；也可设对应 API Key（如 DEEPSEEK_API_KEY）',
   antigravity:
     '先在终端交互运行一次 `agy` 完成 Google 登录（登录态在系统钥匙串，磁盘上没有凭据文件）',
   kimicli:

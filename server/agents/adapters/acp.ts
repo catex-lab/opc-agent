@@ -97,8 +97,26 @@ const REQUEST_TIMEOUT_ENV = 'OPC_ACP_REQUEST_TIMEOUT_MS';
  * 自动杀树重建并重试一次；第二次仍超时才报错 —— 文案必须短、可执行、不甩锅，
  * 并且诚实说明「已经自动重启过」，引导用户做唯一剩下的那步动作。
  */
-const SESSION_TIMEOUT_EXHAUSTED_MESSAGE =
-  'Hermes 会话无响应（其 gateway 可能已挂起）。已自动重启连接并重试仍失败——请重启 Hermes 桌面端后重试。';
+/**
+ * P5：整轮会话超时且重试耗尽的诚实文案。两处修正：
+ *   1. **带阶段**（initialize / session/new / prompt）——用户与支持方分得清
+ *      「桥坏了」还是「gateway 忙」；
+ *   2. **不写死 Hermes**——适配器是通用的，gemini / opencode 切 ACP 后
+ *      同一份文案必须说它们的名字。
+ */
+function sessionTimeoutExhausted(name: string, method: string): string {
+  return (
+    `${name} 会话无响应（${method} 阶段超时，其 gateway 可能已挂起）。` +
+    `已自动重启连接并重试仍失败——请重启 ${name} 桌面端后重试。`
+  );
+}
+
+/**
+ * P5：session/new 的重试预算（次）。与 initialize 的 retryBudget 分开：
+ * gateway 瞬时忙时，第二拍常能过——实测一次「Reconnecting」后恢复的案例，
+ * 1 次重试不够，2 次覆盖绝大多数瞬态（最坏等待 = 3 × 90s 请求超时）。
+ */
+const SESSION_NEW_RETRY_BUDGET = 2;
 
 export interface AcpAdapterOptions {
   /**
@@ -347,7 +365,7 @@ export class AcpAdapter implements AgentProvider {
         if (!(err instanceof AcpRequestTimeoutError)) throw err;
         if (attempt >= this.retryBudget) {
           throw attempt > 0
-            ? new Error(SESSION_TIMEOUT_EXHAUSTED_MESSAGE)
+            ? new Error(sessionTimeoutExhausted(this.descriptor.name, 'initialize'))
             : err; // 预算为 0：没重建过，诚实报原始超时，不谎称「已重启」
         }
         console.error('[ACP] initialize 超时，自动重启连接并重试一次');
@@ -692,8 +710,8 @@ export class AcpAdapter implements AgentProvider {
           break;
         } catch (err) {
           const timeout = err instanceof AcpRequestTimeoutError;
-          if (timeout && attempt < this.retryBudget) {
-            console.error('[ACP] session/new 超时，自动重启连接（杀进程树）并重试一次');
+          if (timeout && attempt < SESSION_NEW_RETRY_BUDGET) {
+            console.error('[ACP] session/new 超时，自动重启连接（杀进程树）并重试');
             try {
               rpc = await this.recoverRpc();
             } catch (recoverErr) {
@@ -709,7 +727,10 @@ export class AcpAdapter implements AgentProvider {
             // 重试过的那次进程同样挂死：它上面不可能有别的会话（重建时
             // 映射已清空），收掉它，别把挂死状态留给下一次 send。
             this.destroyConnection();
-            yield { type: 'error', message: SESSION_TIMEOUT_EXHAUSTED_MESSAGE };
+            yield {
+              type: 'error',
+              message: sessionTimeoutExhausted(this.descriptor.name, 'session/new'),
+            };
             return;
           }
           yield {
