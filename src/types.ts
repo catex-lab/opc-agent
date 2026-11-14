@@ -8,6 +8,8 @@ import type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlo
 import type { EventCapability, CapabilityProfile } from '../shared/capabilities';
 import type { PermissionOption, PermissionReasonCode } from '../shared/permissions';
 import type { Provenance } from '../shared/provenance';
+import type { ProbeAvailability } from '../shared/diagnostics';
+export type { ProbeAvailability };
 export type { PermissionMode, PermissionSupport };
 export type { PermissionOption, PermissionReasonCode };
 export type { Block, ThinkingBlock, ToolBlock, TextBlock, NoteBlock, ArtifactBlock, RawBlock, RawEntry };
@@ -499,15 +501,11 @@ export interface AgentSkill {
  * 2026-11 起 ready 不再等价于「一定能用」：探测只确认命令/凭据文件存在，
  * 没有发真实业务请求。界面文案必须写「未校验」，不能写「就绪」。
  */
-export type AgentAvailability =
-  | 'ready'
-  | 'needs-auth'
-  | 'needs-setup'
-  /** 本机/代理连不上它的后端：凭据与二进制都齐也调不通，该去查网络而不是去登录 */
-  | 'unreachable'
-  | 'not-installed'
-  | 'unsupported'
-  | 'unknown';
+/**
+ * 可用性七档。P0（诊断分类学契约）起本体在 shared/diagnostics（与后端同一份，
+ * 防手抄镜像漂移），这里保留旧名字作再导出。
+ */
+export type AgentAvailability = ProbeAvailability;
 
 export interface AgentStatus {
   availability: AgentAvailability;

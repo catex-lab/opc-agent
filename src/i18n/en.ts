@@ -269,6 +269,22 @@ export const en: Record<MessageKey, string> = {
   'status.needs-key': 'No API key',
   // A222: a cached session was rejected, which is not "never signed in"
   'status.session-invalid': 'Session expired',
+
+  // P0 diagnostic taxonomy (shared/diagnostics): single vocabulary for last-failure + next action
+  'diag.ok.label': 'Online',
+  'diag.auth_missing.label': 'Not signed in',
+  'diag.auth_expired.label': 'Sign-in expired',
+  'diag.quota.label': 'Quota limited',
+  'diag.network.label': 'Network unreachable',
+  'diag.binary_broken.label': 'Needs repair',
+  'diag.not_installed.label': 'Not installed',
+  'diag.degraded.label': 'Partially limited',
+  'diag.unknown.label': 'Erroring',
+  'diag.action.open_login': 'Open sign-in',
+  'diag.action.open_install': 'Install guide',
+  'diag.action.switch_model': 'Switch model or top up',
+  'diag.action.check_network': 'Check network / proxy',
+  'diag.action.view_details': 'View details',
   'agent.login.starting': 'Preparing sign-in link…',
   'agent.login.waiting': 'Waiting for browser sign-in…',
   'agent.login.succeeded': 'Signed in, refreshing status…',

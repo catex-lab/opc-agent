@@ -255,23 +255,15 @@ const SKILL_META: Record<AgentCapability, { name: string; description: string }>
   search: { name: '联网检索', description: '检索并综合在线信息' },
 };
 
-/** 可用性状态。前端据此渲染徽标与修复指引。 */
-export type AgentAvailability =
-  | 'ready'         // 已检测到凭据（未校验），不代表一次真实调用一定成功
-  | 'needs-auth'    // 已安装但未登录
-  | 'needs-setup'   // 已安装但需额外配置（如修复原生二进制）
-  /**
-   * 本机环境访问不到该 Agent 的后端（网络/代理拦截）。
-   *
-   * 为什么要单列一种状态：凭据与二进制都齐备的 Agent 也可能**一次都调不通**——
-   * 实测 codex 的 ~/.codex/auth.json 有效、版本探测通过，但它唯一的后端
-   * chatgpt.com 被代理以 502 拒绝，于是名册显示「在线」、每次对话却必然失败。
-   * 把它和 needs-auth 区分开，用户才知道该去查网络/代理而不是去登录。
-   */
-  | 'unreachable'
-  | 'not-installed' // 未在本机找到
-  | 'unsupported'   // 本机形态无法无头调用（如仅 GUI）
-  | 'unknown';      // 尚未探测
+/**
+ * 可用性状态。前端据此渲染徽标与修复指引。
+ *
+ * P0（2026-11-14，诊断分类学契约）：联合类型本体收编进 `shared/diagnostics.ts`
+ * （与 capabilities 同一条纪律——手抄镜像迟早漂），这里保留旧名字作再导出，
+ * 20 多个既有引用不用改。`availabilityToDiagnostic` 就在这一份上定义，
+ * 探测侧到诊断契约的映射因此不可能漂。
+ */
+export type AgentAvailability = ProbeAvailability;
 
 /**
  * 一条 Agent 在「本机没有」时，用户该怎么把它弄到机器上（A71）。
@@ -511,7 +503,7 @@ export interface AgentStatus {
    */
   provenance?: Provenance;
   /**
-   * 探测本身的结果分类（A177）。
+   * 探测动作本身的结果分类（A177）。
    *
    * 与 `availability` 是**两个维度**：availability 说的是「这个 Agent 现在能不能用」，
    * probeState 说的是「这次探测动作本身发生了什么」。
@@ -520,6 +512,15 @@ export interface AgentStatus {
    * 而不是「未登录」，否则用户会反复去登录一个其实已经登录好的账号。
    */
   probeState?: AgentProbeState;
+  /**
+   * P0：最近一次**运行期**失败的诊断归类（诊断分类学契约，shared/diagnostics）。
+   *
+   * 为什么只在运行期失败时存：探测侧的诊断由 `toAgentInfo` 从 availability
+   ** 派生（探测结果是状态的本体），而运行期失败是比探测更新的事实——
+   * 名册显示「在线」但上一轮 401 的情况必须以运行期为准（A222 的教训）。
+   * canary（P1）落地后同样写这里，source 区分谁说的。
+   */
+  lastDiagnostic?: Diagnostic;
 }
 
 /**
@@ -547,6 +548,11 @@ export type AgentProbeState =
 import type { PermissionMode, PermissionSupport } from '../../shared/types.js';
 import type { ScenarioTool } from '../../shared/scenarios.js';
 import type { AnswerLanguage } from '../../shared/answer-language.js';
+// P0 诊断分类学契约：可用性联合类型的本体 + 到诊断的映射都在 shared，
+// 前后端共用同一份（防漂移纪律，见 AgentAvailability 注释）。
+import type { ProbeAvailability, Diagnostic } from '../../shared/diagnostics.js';
+import { availabilityToDiagnostic } from '../../shared/diagnostics.js';
+export type { ProbeAvailability };
 export type { PermissionMode, PermissionSupport, ToolWhitelistSupport } from '../../shared/types.js';
 
 /** 描述 + 状态，即 /api/agents 返回的条目。 */
@@ -591,6 +597,14 @@ export interface AgentInfo extends AgentDescriptor {
    * 而不是让用户复制完才发现没装 Node。
    */
   installEnv?: InstallEnv;
+  /**
+   * P0：诊断契约的唯一出口（shared/diagnostics）。
+   *
+   * 取值优先级：运行期失败（status.lastDiagnostic，比探测新）>
+   * availability 派生（探测结果是状态的本体）。canary（P1）落地后写
+   * lastDiagnostic、source=canary，UI 消费方不用改。
+   */
+  diagnostic: Diagnostic;
 }
 
 // ============= 调用上下文 =============
@@ -733,7 +747,17 @@ export function toAgentInfo(
         inputModes: ['text/plain'],
         outputModes: capability === 'image' ? ['text/plain', 'image/*'] : ['text/plain'],
       }));
-  return { ...descriptor, skills, status };
+  // P0：诊断契约的唯一出口。优先取运行期失败（比探测新），否则从
+  // availability 派生——探测结果是状态的本体，映射表在 shared（防漂移）。
+  // canary（P1）落地后同样走这个字段，UI 不需要再改。
+  const diagnostic: Diagnostic =
+    status.lastDiagnostic ?? {
+      class: availabilityToDiagnostic(status.availability),
+      at: status.probedAt,
+      source: 'probe' as const,
+      ...(status.lastError ? { detail: status.lastError } : {}),
+    };
+  return { ...descriptor, skills, status, diagnostic };
 }
 
 /** 未探测时的初始状态 */

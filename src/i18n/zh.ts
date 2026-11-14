@@ -264,6 +264,22 @@ export const zh = {
   'status.needs-key': '缺 Key',
   // A222：本地有登录态却被拒，与「从没登录过」不是一回事
   'status.session-invalid': '登录态失效',
+
+  // P0 诊断分类学契约（shared/diagnostics）：名册「上次失败/下一步动作」的唯一口径
+  'diag.ok.label': '在线',
+  'diag.auth_missing.label': '未登录',
+  'diag.auth_expired.label': '登录态失效',
+  'diag.quota.label': '额度受限',
+  'diag.network.label': '网络不通',
+  'diag.binary_broken.label': '需要修复',
+  'diag.not_installed.label': '未安装',
+  'diag.degraded.label': '部分受限',
+  'diag.unknown.label': '存在异常',
+  'diag.action.open_login': '打开登录',
+  'diag.action.open_install': '查看安装指引',
+  'diag.action.switch_model': '换模型或充值',
+  'diag.action.check_network': '检查网络/代理',
+  'diag.action.view_details': '查看详情',
   'agent.login.starting': '正在准备登录链接…',
   'agent.login.waiting': '等待浏览器完成登录…',
   'agent.login.succeeded': '登录完成，正在刷新状态…',

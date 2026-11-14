@@ -27,6 +27,8 @@ import { withUserIdentity } from '../user-profile.js';
 // 有的不生效」这种没有报错的静默分歧。
 import { loadAnswerLanguage } from '../answer-language.js';
 import type { EventSource } from '../../shared/blocks.js';
+// P0 诊断分类学契约：运行期错误 → 诊断分类（纯函数，shared 侧）
+import { authDiagnosticFor, classifyErrorMessage } from '../../shared/diagnostics.js';
 import type {
   AgentDescriptor,
   AgentInfo,
@@ -709,7 +711,24 @@ class AgentRegistry {
     if (!prev) return;
     // 运行期失败同样要可执行：401/403 → 重新登录，429 → 额度/限流，ENOENT → 未安装。
     const annotated = appendFailureAdvice(id, message);
-    this.statuses.set(id, { ...prev, lastError: annotated });
+    // P0：运行期失败是比探测更新的事实，归类进诊断契约（shared/diagnostics），
+    // toAgentInfo 优先消费它。auth 的 missing/expired 细分靠上下文：探测说
+    // ready 却收到 401 = 登录态失效；本来就 needs-auth = 压根没登录。
+    const classified = classifyErrorMessage(message);
+    const diagClass =
+      classified === 'auth_expired'
+        ? authDiagnosticFor(prev.availability === 'ready')
+        : classified;
+    this.statuses.set(id, {
+      ...prev,
+      lastError: annotated,
+      lastDiagnostic: {
+        class: diagClass,
+        at: new Date().toISOString(),
+        detail: message.slice(0, 300),
+        source: 'runtime',
+      },
+    });
   }
 
   /**
