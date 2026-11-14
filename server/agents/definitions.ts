@@ -291,6 +291,25 @@ export interface AgentDefinition {
   /** 已知的不可用原因（用于 GUI-only 之类） */
   unsupportedReason?: string;
   /**
+   * 登录代管（P2，接入架构收敛方案）：该 Agent **已核实**的登录命令。
+   *
+   * 三条纪律（写死）：
+   *   1. **逐家实测溯源**——checkedAt/checkedFrom 必填，没核实的不写字段
+   *      （没有按钮好过有假按钮）；
+   *   2. 我们**永不解析、永不代存**凭据——只负责把厂商自己的登录命令拉起
+   *      在可见终端里，用户自己完成；退出后自动 canary 复检；
+   *   3. 命令**不经 shell**（与 cli.ts 同一安全边界），数组逐字传参。
+   * SDK 类（workbuddy/claude/codex）已有 A222 显式登录流，不在此表。
+   */
+  login?: {
+    command: string;
+    args?: string[];
+    /** 装完/登完之后用户该知道什么（如实一句话） */
+    note?: string;
+    checkedAt: string;
+    checkedFrom: string;
+  };
+  /**
    * 凭据检查：环境变量名。命中任一即认为已配置。
    * 用于在名册页直接显示「未登录」而不是等第一次调用才报错。
    */
@@ -1303,7 +1322,14 @@ const RAW_DEFS: AgentDefinition[] = [
     // 启动横幅不同导致 createOpencodeServer 永远超时；API 挂在 /api/* 且要
     // Basic Auth；/session/{id}/message 404、prompt 的 body 结构不匹配；
     // provider 清单返回空）。继续走 CLI 通道，直到官方发布与 2.x 匹配的 SDK。
-    cli: {
+        login: {
+      // 2026-11-14 本机实测：`opencode auth login --help`（opencode 1.19.5）
+      command: 'opencode',
+      args: ['auth', 'login'],
+      checkedAt: '2026-11-14',
+      checkedFrom: '本机 opencode auth login --help（opencode 1.19.5）',
+    },
+cli: {
       bin: 'opencode',
       buildArgs: (prompt, ctx) => {
         // `--format json`：NDJSON 事件流（text / reasoning / tool_use / step_finish）。

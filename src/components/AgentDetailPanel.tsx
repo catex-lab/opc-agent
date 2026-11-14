@@ -6,6 +6,7 @@ import { StatusDot } from './StatusDot';
 import { AgentDetailSections } from './AgentDetailSections';
 import { AvatarCropDialog } from './AvatarCropDialog';
 import { removeAgentLogo, uploadAgentLogo } from '../avatarApi';
+import { LoginTerminalDialog } from './LoginTerminalDialog';
 import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent } from '../types';
 import type { AgentProbeFeedback } from '../agentProbe';
 import { describeProbeFeedback } from '../agentProbe';
@@ -80,6 +81,8 @@ export function AgentDetailPanel({
   const logoInputRef = useRef<HTMLInputElement>(null);
   // P1：canary 手动触发的本地态。canary.at 变化 = 服务端已有新结论，解除转圈
   const [canaryArmedAt, setCanaryArmedAt] = useState<string | null>(null);
+  // P2：登录终端对话框
+  const [loginOpen, setLoginOpen] = useState(false);
   const canaryArmed = canaryArmedAt !== null && agent.canary?.at === canaryArmedAt;
   useEffect(() => {
     if (canaryArmedAt && agent.canary?.at !== canaryArmedAt) setCanaryArmedAt(null);
@@ -179,6 +182,17 @@ export function AgentDetailPanel({
                     })
                   : t('canary.never')}
               </span>
+              {agent.login && (
+                <button
+                  type="button"
+                  className="underline underline-offset-2"
+                  style={{ color: 'var(--td-brand-color)' }}
+                  data-agent-open-login
+                  onClick={() => setLoginOpen(true)}
+                >
+                  {t('login.terminal.open')}
+                </button>
+              )}
               <button
                 type="button"
                 className="underline underline-offset-2"
@@ -359,6 +373,10 @@ export function AgentDetailPanel({
           )}
         </div>
       </div>
+      {/* P2：登录代管终端（portal 到 body，DOM 位置无关；退出后自动 canary 复检） */}
+      {loginOpen && agent.login && (
+        <LoginTerminalDialog agent={agent} onClose={() => setLoginOpen(false)} />
+      )}
     </div>
   );
 }

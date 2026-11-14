@@ -22,6 +22,7 @@ import { ContextMenu } from './ContextMenu';
 import { RemarkDialog } from './RemarkDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { AddCustomCliDialog } from './AddCustomCliDialog';
+import { LoginTerminalDialog } from './LoginTerminalDialog';
 import { useAgentRemarks, setAgentRemark } from '../agentRemarks';
 import {
   SEARCH_PILL_CLASS,
@@ -170,6 +171,8 @@ export function ContactsPanel({
   const [editingCliId, setEditingCliId] = useState<string | null>(null);
   /** A223：移除确认（右键菜单 → ConfirmDialog），pending 存待删条目 */
   const [removeCli, setRemoveCli] = useState<{ id: string; name: string } | null>(null);
+  /** P2：登录代管终端（open_login 且该 Agent 有已核实登录命令时直开） */
+  const [loginTerminalAgent, setLoginTerminalAgent] = useState<RegisteredAgent | null>(null);
 
   const filter = (list: RegisteredAgent[]) =>
     keyword
@@ -573,6 +576,7 @@ export function ContactsPanel({
                     key={s.agent.id}
                     agent={s.agent}
                     onViewDetail={() => onViewDetail(s.agent.id)}
+                    onOpenLogin={() => setLoginTerminalAgent(s.agent)}
                     {...(s.agent.custom
                       ? {
                           onEdit: () => {
@@ -609,6 +613,7 @@ export function ContactsPanel({
                           key={agent.id}
                           agent={agent}
                           onViewDetail={() => onViewDetail(agent.id)}
+                          onOpenLogin={() => setLoginTerminalAgent(agent)}
                           {...(agent.custom
                             ? {
                                 onEdit: () => {
@@ -701,6 +706,11 @@ export function ContactsPanel({
         onSaved={onProbe}
       />
 
+      {/* P2：登录代管终端。退出后服务端自动 canary 复检，名册经轮询自动更新 */}
+      {loginTerminalAgent && (
+        <LoginTerminalDialog agent={loginTerminalAgent} onClose={() => setLoginTerminalAgent(null)} />
+      )}
+
       {/* A223：移除确认。删除只影响接入声明，本机文件不动 —— 文案要说清，
           否则「移除」看起来像卸载。 */}
       <ConfirmDialog
@@ -731,6 +741,8 @@ interface ContactRowProps {
    */
   onEdit?: () => void;
   onRemove?: () => void;
+  /** P2：open_login 直开登录终端（仅 agent.login 存在时被调用） */
+  onOpenLogin?: () => void;
 }
 
 /**
@@ -752,7 +764,7 @@ interface ContactRowProps {
  * 悬停有底色反馈，箭头在 300px 的窄栏里只是把名称的可读宽度又切掉一截，
  * 属于「解释一个已经说清楚的事」。可点性靠 hover 态和 `title` 承担。
  */
-function ContactRow({ agent, onViewDetail, onEdit, onRemove }: ContactRowProps) {
+function ContactRow({ agent, onViewDetail, onEdit, onRemove, onOpenLogin }: ContactRowProps) {
   const { t } = useTranslation();
   const remarks = useAgentRemarks();
   const remark = remarks[agent.id] ?? '';
@@ -817,7 +829,9 @@ function ContactRow({ agent, onViewDetail, onEdit, onRemove }: ContactRowProps) 
           type="button"
           onClick={e => {
             e.stopPropagation();
-            onViewDetail();
+            // P2：open_login 且有已核实登录命令 → 直开登录终端；其余进资料页
+            if (diagAction.action === 'open_login' && agent.login && onOpenLogin) onOpenLogin();
+            else onViewDetail();
           }}
           title={t(diagAction.labelKey as MessageKey)}
           aria-label={t(diagAction.labelKey as MessageKey)}

@@ -614,6 +614,17 @@ export interface AgentInfo extends AgentDescriptor {
    */
   diagnostic: Diagnostic;
   /**
+   * P2：已核实的登录命令（定义表 `login` 原样透出）。缺字段 = 没核实，
+   * UI 不画「打开登录」按钮（没有按钮好过有假按钮）。
+   */
+  login?: {
+    command: string;
+    args?: string[];
+    note?: string;
+    checkedAt: string;
+    checkedFrom: string;
+  };
+  /**
    * P1：canary 状态原样下发（UI 显示「检测中…」与上次检测时间用）。
    * 结论本身已并入上面的 diagnostic（按 at 取最新），这里不再重复。
    */

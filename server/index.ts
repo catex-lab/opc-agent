@@ -100,6 +100,13 @@ import {
 import { setPendingPermissionObserver } from "./agents/permissionMeta.js";
 // P1：真实健康度检测（canary）。名册打开时自动补跑过期项，手动检测走专用端点。
 import { runCanary, scheduleAutoCanaries } from "./agents/canary.js";
+// P2：登录代管的进程编排（pty 优先/管道兜底 + 退出自动 canary 复检）
+import {
+  getLoginState,
+  startLogin,
+  stopLogin,
+  writeLogin,
+} from "./agents/loginRunner.js";
 // A224 续：cron 解析与预览（调度器本体在 scheduler.js）
 import { cronIntervalWarning, cronPreview } from "./cron.js";
 // A225：群聊并行隔离。创建 / 汇合 / 清理都在本模块，路由只管时机与 note。
@@ -808,6 +815,38 @@ function comingSoonList(): Array<(typeof COMING_SOON_AGENTS)[number]> {
   const registered = new Set(registry.list().map(a => a.id));
   return COMING_SOON_AGENTS.filter(a => !registered.has(a.id));
 }
+
+// ════════ P2：登录代管（可见终端 + 退出自动 canary 复检）════════
+// 路由必须注册在 /api/agents/:agentId 之前（既有规矩）。
+
+app.post("/api/agents/login-terminal/start", (req, res) => {
+  try {
+    const agentId = String((req.body ?? {}).agentId ?? '');
+    if (!agentId) return res.status(400).json({ error: '缺少 agentId' });
+    const result = startLogin(agentId);
+    if ('error' in result) return res.status(400).json({ error: result.error });
+    res.json({ ok: true, ...result });
+  } catch (error: any) {
+    console.error('[LoginRunner] Start error:', error);
+    res.status(500).json({ error: error?.message || '启动登录失败' });
+  }
+});
+
+app.get("/api/agents/login-terminal/state", (_req, res) => {
+  res.json(getLoginState());
+});
+
+app.post("/api/agents/login-terminal/write", (req, res) => {
+  const data = String((req.body ?? {}).data ?? '');
+  if (!data) return res.status(400).json({ error: '缺少 data' });
+  writeLogin(data.includes('\n') ? data : data + '\r');
+  res.json({ ok: true });
+});
+
+app.post("/api/agents/login-terminal/stop", (_req, res) => {
+  stopLogin();
+  res.json({ ok: true });
+});
 
 // P1：手动「真实检测」。force = 不受 TTL 频控（用户点了按钮就要有动作）；
 // agentId 缺省 = 全部可检测的都测一遍。fire-and-forget：检测最长要等 SDK

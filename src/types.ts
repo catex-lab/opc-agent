@@ -630,6 +630,17 @@ export interface RegisteredAgent {
   installEnv?: InstallEnv;
   status: AgentStatus;
   /**
+   * P2：已核实的登录命令（与后端 AgentInfo.login 同源）。缺字段 = 没核实，
+   * UI 不画「打开登录」按钮。
+   */
+  login?: {
+    command: string;
+    args?: string[];
+    note?: string;
+    checkedAt: string;
+    checkedFrom: string;
+  };
+  /**
    * P0/P1：诊断契约的唯一出口（shared/diagnostics）——服务端已按
    * 「canary > 运行期失败 > 探测派生」取最新。UI 显示与动作按钮都读它。
    */

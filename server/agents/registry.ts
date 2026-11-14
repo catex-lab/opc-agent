@@ -262,11 +262,14 @@ class AgentRegistry {
     // A156：SDK 厂商只下发**显式写了**的那些；缺省仍是 Tencent SDK，
     // 前端把「缺字段」当 tencent 处理，与旧版本响应兼容。
     const sdkProvider = findDef(id)?.sdk?.provider;
+    // P2：已核实的登录命令原样下发（UI 据此画「打开登录」；没核实就没字段，不画假按钮）
+    const login = findDef(id)?.login;
     // A160：自定义 Logo 只挂**有值**的；缺字段 = 用内置 icon，与老响应兼容。
     const logoUrl = getAgentLogoUrl(id);
     return {
       ...toAgentInfo(descriptor, status),
       ...(sdkProvider && descriptor.kind === 'sdk' ? { sdkProvider } : {}),
+      ...(login ? { login } : {}),
       ...(logoUrl ? { logoUrl } : {}),
       ...(hosts && hosts.length > 0 ? { endpointHosts: hosts } : {}),
       ...(peers.length > 0 ? { familyPeers: peers } : {}),
