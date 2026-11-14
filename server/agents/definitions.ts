@@ -291,6 +291,17 @@ export interface AgentDefinition {
   /** 已知的不可用原因（用于 GUI-only 之类） */
   unsupportedReason?: string;
   /**
+   * ACP 通道的额外参数（P4 预备，接入架构收敛方案）。
+   *
+   * AcpAdapter 拉起 `descriptor.command` 后只传启动垫片的 prefixArgs；
+   * 走 ACP 需要的旗标（如 gemini 的 `--acp`）从这里追加。缺省 = 无额外参数
+   * （hermes 的 hermes-acp 不需要）。**AcpAdapter 已支持消费本字段**；
+   * 切通道本身（kind: 'cli' → 'acp'）另需逐家验证四链路后才落。
+   */
+  acp?: {
+    args?: string[];
+  };
+  /**
    * 登录代管（P2，接入架构收敛方案）：该 Agent **已核实**的登录命令。
    *
    * 三条纪律（写死）：

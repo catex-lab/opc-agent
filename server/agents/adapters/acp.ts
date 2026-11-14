@@ -373,7 +373,9 @@ export class AcpAdapter implements AgentProvider {
       );
     }
 
-    const child = spawn(this.target.command, this.target.prefixArgs, {
+    // P4 预备：ACP 旗标（如 gemini 的 --acp）从定义表追加在启动垫片之后
+    const acpArgs = this.def.acp?.args ?? [];
+    const child = spawn(this.target.command, [...this.target.prefixArgs, ...acpArgs], {
       cwd: process.cwd(),
       env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
       shell: false,

@@ -75,12 +75,17 @@ const FROZEN_IDS = [
   'trae',
 ];
 
-/** kind（我们怎么接）→ 允许的 surface（产品形态） */
-const KIND_TO_SURFACE: Record<string, string> = {
-  sdk: 'sdk',
-  cli: 'cli',
-  acp: 'acp',
-  http: 'http',
+/** kind（我们怎么接）→ 允许的 surface（产品形态）。
+ *
+ * P4 预备修正（2026-11-14）：kind 与 surface 是**两个维度**（types.ts 教义）——
+ * codex / claude 的产品本身是 CLI（surface='cli'），我们走 SDK 接（kind='sdk'），
+ * 这是合法组合。允许多值：sdk 类产品可能是 SDK 形态（WorkBuddy）也可能是
+ * CLI 形态（codex / claude）。 */
+const KIND_TO_SURFACE: Record<string, string[]> = {
+  sdk: ['sdk', 'cli'],
+  cli: ['cli'],
+  acp: ['acp'],
+  http: ['http'],
 };
 
 // ============= [1] 字段齐全 =============
@@ -115,7 +120,11 @@ for (const d of defs) {
   // 我们接的永远是 CLI/ACP/HTTP 那一面 —— 所以 surface 一旦出现 ide，
   // 说明有人把「产品形态」和「我们接的面」搞混了。
   ok(d.surface !== 'ide', `${d.id} 不接 IDE 面（surface ≠ ide）`, String(d.surface));
-  eq(d.surface, KIND_TO_SURFACE[d.kind], `${d.id} surface 与 kind 对应（kind=${d.kind}）`);
+  ok(
+    (KIND_TO_SURFACE[d.kind] ?? []).includes(String(d.surface)),
+    `${d.id} surface 与 kind 组合合法（kind=${d.kind} surface=${d.surface}）`,
+    String(d.surface)
+  );
 }
 
 // ============= [4] 不存在「看起来是同一个东西接了两遍」 =============
