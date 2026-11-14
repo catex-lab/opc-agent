@@ -20,6 +20,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from '../i18n';
 
 /** 预览区边长（逻辑像素）。导出固定 320，与显示尺寸无关 */
@@ -45,6 +46,20 @@ export function AvatarCropDialog({ file, title, onCancel, onConfirm }: AvatarCro
   const [error, setError] = useState('');
   /** 拖动起点。放 ref 里避免每次 pointermove 都触发一次重渲染前的闭包丢状态 */
   const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
+
+  // Esc 只关裁剪自己，不冒泡到下层的「群设置面板」（它也在监听 Esc）。
+  // 面板的监听注册在先，这里必须走**捕获阶段**才能抢在它前面。
+  useEffect(() => {
+    if (!file) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onCancel();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [file, onCancel]);
 
   // 文件 → objectURL → Image。卸载时释放 URL，否则连续换图会一直占内存
   useEffect(() => {
@@ -145,22 +160,26 @@ export function AvatarCropDialog({ file, title, onCancel, onConfirm }: AvatarCro
 
   if (!file) return null;
 
-  return (
+  // 2026-11-14（用户反馈：上传后裁剪弹层在群设置窄栏里显示不全）：
+  // 必须 portal 到 body。原先直接渲染在 GroupSettingsPanel 里，`fixed` 会被
+  // 玻璃拟态祖先（backdrop-filter / transform）困住——「全屏居中」退化成
+  // 「相对面板定位」，360px 的对话框塞进 236px 的窄栏必然被裁。
+  // 顺带换上全站弹窗同一套语言（.tc-dialog + --tc-mask-soft），不再是孤例。
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'var(--tc-mask-soft)' }}
+      onMouseDown={e => {
+        // 只有点在遮罩本身才关闭（与其他弹窗同一手势）
+        if (e.target === e.currentTarget) onCancel();
+      }}
       data-avatar-crop
       role="dialog"
       aria-modal="true"
       aria-label={heading}
     >
       <div
-        className="w-full max-w-[360px] rounded-2xl p-5"
-        style={{
-          backgroundColor: 'var(--td-bg-color-container)',
-          border: '1px solid var(--tc-edge)',
-          boxShadow: '0 18px 48px rgba(0,0,0,0.28)',
-        }}
+        className="tc-dialog w-[min(400px,100%)] rounded-2xl p-5"
       >
         <h3 className="mb-1 text-title font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
           {heading}
@@ -254,7 +273,8 @@ export function AvatarCropDialog({ file, title, onCancel, onConfirm }: AvatarCro
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

@@ -226,12 +226,6 @@ export function GroupSettingsPanel({
     setGroupAvatarImage(sid, '');
   };
 
-  const currentAvatarLabel = groupAvatarImage
-    ? t('groupAvatar.currentCustom')
-    : groupAvatar
-      ? t('groupAvatar.currentPreset')
-      : t('groupAvatar.currentCollage');
-
   // ── 开 / 关与退场动画 ──
   useEffect(() => {
     if (open) {
@@ -278,12 +272,14 @@ export function GroupSettingsPanel({
   /**
    * 点面板以外的地方收起。
    *
-   * 三处必须放过，否则会「关错东西」：
+   * 必须放过的：
    *   1. 面板自己（含它内部的确认框）—— 那是正常操作；
    *   2. 头部的「⋯」—— 它是**开关**，由它自己 toggle；这里若不放过，
    *      mousedown 先关、click 再开，用户会觉得「点了没反应」；
-   *   3. 确认框正开着时 —— 那层遮罩是 portal 到 body 的，点它本意是取消
-   *      删除/退群，不该顺手把整个设置面板也收了。
+   *   3. 从本面板打开、**portal 到 body 的弹层**（确认框 / 头像裁切 /
+   *      定时任务）—— 它们的点击在 DOM 树上不在面板里，但语义上是
+   *      「面板内操作」。2026-11-14 实测踩过：裁切弹层居中到窗口中央后，
+   *      点「使用这张图」把整个设置面板关掉了。
    */
   useEffect(() => {
     if (!open) return;
@@ -294,7 +290,9 @@ export function GroupSettingsPanel({
       if (!t) return;
       if (wrapRef.current?.contains(t)) return;
       if (t.closest?.('[data-chat-more]')) return;
-      if (document.querySelector('[data-confirm-dialog]')) return;
+      if (t.closest?.('[data-confirm-dialog]')) return;
+      if (t.closest?.('[data-avatar-crop]')) return;
+      if (t.closest?.('[data-schedule-dialog]')) return;
       onClose();
     };
     document.addEventListener('pointerdown', onDown, true);
@@ -422,14 +420,16 @@ export function GroupSettingsPanel({
             `[&>*]:shrink-0` 是必须的 —— flex 列默认会压缩子项来「塞进」
             容器，那样内容就永远不溢出、也就没有滚动条了。 */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto [&>*]:shrink-0">
-          {/* ── 群头像（A115；2026-11-12 加自定义图片与成员拼贴）──
+          {/* ── 群头像（A115；2026-11-12 加自定义图片与成员拼贴；2026-11-14 重排）──
               放在最前面：它是这个群的「脸」，比任何一项设置都更该被看见。
-              72px 预览就是三处共用的 GroupAvatar 实时渲染（图片 > 预设 > 拼贴），
-              hover 出「更换头像」遮罩，点头像或「上传」走 A160 同款的
-              裁剪 → POST /api/avatars 流程。
-              「使用预设」展开 A115 的 12 枚预设；改选预设会顺手放弃自定义图
-              （与「我的资料」同一套覆盖层语义：图片是覆盖层，移除后回到预设）。
-              「恢复默认（成员拼贴）」一次清空图片与预设，回到新默认。 */}
+              重排（用户反馈：解释文字冗余、上传后裁切弹层在窄栏里显示不全）：
+              · 解释文字全删——「当前是什么」头像本身就在眼前，「怎么换」hover
+                遮罩已经说了；格式与 2MB 约束收进头像的悬停 title，越权输入由
+                服务端校验 + 错误提示兜底（原有链路）。
+              · 居中 88px 大头像 + 双按钮横排；纠正动作收敛为一行小链接
+                （有自定义图 → 移除图片；只有预设 → 恢复默认拼贴）。
+              · 裁切弹层 portal 到 body（见 AvatarCropDialog 顶部说明）——
+                fixed 在玻璃拟态祖先里会被困住，这是显示不全的根因。 */}
           <Section label="群头像" />
           <div className="px-4 pb-3" data-group-avatar-section>
             <AvatarCropDialog
@@ -465,88 +465,96 @@ export function GroupSettingsPanel({
                 if (f) setCropFile(f);
               }}
             />
-            <div className="flex items-start gap-3">
-              <button
-                type="button"
-                onClick={() => imageInputRef.current?.click()}
-                data-group-avatar-preview
-                title={t('groupAvatar.hoverChange')}
-                aria-label={t('groupAvatar.hoverChange')}
-                className="group/av relative shrink-0 rounded-full"
-                style={{ padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
-              >
-                <GroupAvatar
-                  avatar={groupAvatar}
-                  image={groupAvatarImage}
-                  members={members.map(m => ({
-                    id: m.id,
-                    name: m.name,
-                    icon: m.icon,
-                    src: m.logoUrl,
-                    color: m.color,
-                  }))}
-                  size={72}
-                  title={title}
-                />
-                <span
-                  aria-hidden="true"
-                  className="absolute inset-0 flex items-center justify-center rounded-full text-secondary opacity-0 transition-opacity group-hover/av:opacity-100"
-                  style={{ backgroundColor: 'var(--tc-mask-soft)', color: '#fff' }}
+            <div className="flex flex-col">
+              {/* 头像：居中 88px。hover 整圆遮罩就是「怎么换」的全部说明 */}
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  data-group-avatar-preview
+                  title={t('groupAvatar.uploadHint')}
+                  aria-label={t('groupAvatar.hoverChange')}
+                  className="group/av relative shrink-0 rounded-full"
+                  style={{ padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
                 >
-                  {t('groupAvatar.hoverChange')}
-                </span>
-              </button>
-              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                <div
-                  className="text-body font-medium"
-                  style={{ color: 'var(--td-text-color-primary)' }}
+                  <GroupAvatar
+                    avatar={groupAvatar}
+                    image={groupAvatarImage}
+                    members={members.map(m => ({
+                      id: m.id,
+                      name: m.name,
+                      icon: m.icon,
+                      src: m.logoUrl,
+                      color: m.color,
+                    }))}
+                    size={88}
+                    title={title}
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-0 flex items-center justify-center rounded-full text-secondary opacity-0 transition-opacity group-hover/av:opacity-100"
+                    style={{ backgroundColor: 'var(--tc-mask-soft)', color: '#fff' }}
+                  >
+                    {t('groupAvatar.hoverChange')}
+                  </span>
+                </button>
+              </div>
+              {/* 两个动作等宽横排，与头像同宽对齐 */}
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  disabled={uploadingImage}
+                  data-group-avatar-upload
+                  className="tc-btn-brand flex-1"
                 >
-                  {currentAvatarLabel}
-                </div>
-                <div className="text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
-                  {t('groupAvatar.uploadHint')}
-                </div>
-                <div className="mt-1 flex flex-col items-stretch gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => imageInputRef.current?.click()}
-                    disabled={uploadingImage}
-                    data-group-avatar-upload
-                    className="tc-btn-brand"
-                  >
-                    {uploadingImage ? t('groupAvatar.uploading') : t('groupAvatar.upload')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAvatarPickerOpen(v => !v)}
-                    aria-expanded={avatarPickerOpen}
-                    data-group-avatar-toggle
-                    className="tc-btn-secondary"
-                  >
-                    {t('groupAvatar.usePreset')}
-                  </button>
+                  {uploadingImage ? t('groupAvatar.uploading') : t('groupAvatar.upload')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAvatarPickerOpen(v => !v)}
+                  aria-expanded={avatarPickerOpen}
+                  data-group-avatar-toggle
+                  className="tc-btn-secondary flex-1"
+                >
+                  {t('groupAvatar.usePreset')}
+                </button>
+              </div>
+              {/* 纠正动作：一行居中小链接。
+                  · 有自定义图 → 「移除自定义」（覆盖层语义：图盖在预设上，先揭图）；
+                  · 有预设 → 「恢复默认（成员拼贴）」一键清空图片与预设（B7 契约）。
+                  两者都设时并存；都没有时不渲染——没有「撤销没做过的选择」的按钮。 */}
+              {(groupAvatarImage || groupAvatar) && (
+                <div className="mt-2 flex items-center justify-center gap-3">
                   {groupAvatarImage && (
                     <button
                       type="button"
                       onClick={() => sessionId && releaseImage(sessionId)}
                       data-group-avatar-remove-image
-                      className="self-start text-caption underline"
+                      className="text-caption underline-offset-2 transition-opacity hover:opacity-80 hover:underline"
                       style={{ color: 'var(--td-text-color-placeholder)' }}
                     >
                       {t('groupAvatar.remove')}
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!sessionId) return;
+                      if (groupAvatarImage) releaseImage(sessionId);
+                      setGroupAvatar(sessionId, '');
+                    }}
+                    data-group-avatar-reset
+                    className="text-caption underline-offset-2 transition-opacity hover:opacity-80 hover:underline"
+                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                  >
+                    {t('groupAvatar.reset')}
+                  </button>
                 </div>
-              </div>
+              )}
             </div>
             {avatarPickerOpen && (
               <div className="mt-3">
-                <div
-                  className="mb-1.5 text-caption"
-                  style={{ color: 'var(--td-text-color-placeholder)' }}
-                >
-                  {t('groupAvatar.presetSection')}
-                </div>
                 <AvatarPickerGrid
                   value={groupAvatar}
                   onChange={id => {
@@ -557,23 +565,6 @@ export function GroupSettingsPanel({
                     if (groupAvatarImage) releaseImage(sessionId);
                   }}
                 />
-              </div>
-            )}
-            {(groupAvatar || groupAvatarImage) && (
-              <div className="mt-2 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!sessionId) return;
-                    if (groupAvatarImage) releaseImage(sessionId);
-                    setGroupAvatar(sessionId, '');
-                  }}
-                  data-group-avatar-reset
-                  className="text-caption transition-opacity hover:opacity-80"
-                  style={{ color: 'var(--td-error-color)' }}
-                >
-                  {t('groupAvatar.reset')}
-                </button>
               </div>
             )}
           </div>
