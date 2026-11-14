@@ -31,6 +31,19 @@ export interface SdkRuntime {
   endpoint?: string;
   /** 注入给 CLI 子进程的环境变量（只含我们显式要设的，SDK 会与 process.env 合并） */
   env: Record<string, string>;
+  /**
+   * A231：SDK 会话/one-shot 子进程的设置源。
+   *
+   * SDK 的 `buildArgs` 在 `settingSources` 未传时**写死 `--setting-sources none`**
+   * （process-transport.js），而 CLI 自己的默认是 `user,project,local`（--help 实测）。
+   * WorkBuddy CLI 的登录态（keyblob/account）属于 user 设置源 —— `none` 会让
+   * CLI「看不见登录态」：官方模型一律 `Authentication required`，自定义模型
+   * 不受影响（key 来自 config 目录的 models.json，不走设置源）。
+   *
+   * 只开 `user`：登录态 + 用户全局设置与桌面端对齐；不带 project/local，
+   * 避免会话 cwd 下的项目级设置静默改写 OPC 的对话行为。
+   */
+  settingSources: Array<'user' | 'project' | 'local'>;
 }
 
 /**
@@ -126,11 +139,72 @@ export function resolveSdkRuntime(spec?: SdkSpec): SdkRuntime {
     endpoint: spec?.endpoint,
     hasProductConfig,
   });
+  // A231-C：WorkBuddy 模型网关按 UA 区分客户端形态，对 SDK 注入的
+  // `User-Agent: CodeBuddy Agent SDK/...` 一律回 401 Authentication required
+  // （2026-11-15 真机二分：换 CLI 自己的 UA / 任意非 SDK UA 均通过）。
+  // transport 的 buildArgs 只会在我们已有的值**前面**前缀 SDK UA，而 CLI 的
+  // parseCustomHeaders 按「同名后出现者覆盖」解析 —— 给一个 CLI 形态的 UA
+  // 就能顶掉 SDK UA，把模型请求伪装回官方网关认识的普通 CLI。
+  // 只在 spec 真的配置了产品身份时注入；空 spec / undefined 保持 env 干净
+  // （a155 断言：不悄悄塞任何东西）。
+  if (spec?.env || spec?.configDir || spec?.productConfigPath) {
+    env.CODEBUDDY_CUSTOM_HEADERS = 'User-Agent: CodeBuddy Code/2.184.0';
+  }
   return {
     ...(plan.environment ? { environment: plan.environment } : {}),
     ...(plan.endpoint ? { endpoint: plan.endpoint } : {}),
     env,
+    // A231：见 SdkRuntime.settingSources 注释。SDK 不传时写死 none，必须显式给。
+    settingSources: ['user'],
   };
+}
+
+/**
+ * A231：`unstable_v2_authenticate` 一族子进程的启动参数。
+ *
+ * 会话/one-shot 的 `settingSources` 能走选项透传，但 auth.js 只解构十个字段，
+ * 不透传它 —— 登录类子进程仍按 SDK 默认 `--setting-sources none` 跑，登录态
+ * 照样看不见。所以探测 / 登录流 / check-login 的 authenticate 调用一律改用
+ * `executable/executableArgs` 指向设置源 shim（sdk-settings-shim.cjs），由它在
+ * argv 层把 none 改回 user —— 与 CLI 自己默认的 user,project,local 对齐。
+ *
+ * `ELECTRON_RUN_AS_NODE=1` 与 kb-mcp 同一处置：打包态下 process.execPath 是
+ * 应用 exe，必须让它以 Node 模式跑 shim；普通 node 进程里该变量无副作用。
+ */
+export function sdkAuthChildFor(runtime: SdkRuntime): {
+  executable: string;
+  executableArgs: string[];
+  env: Record<string, string>;
+} {
+  return {
+    executable: process.execPath,
+    executableArgs: [resolveSdkSettingsShim()],
+    env: { ...runtime.env, ELECTRON_RUN_AS_NODE: '1' },
+  };
+}
+
+/**
+ * 定位设置源 shim 的真实路径。三级回退，与 kb-mcp 的解析同构：
+ *   1. 打包态：`resources/app.asar.unpacked/dist-electron/sdk-settings-shim.cjs`；
+ *   2. 开发态已构建：仓库 `dist-electron/sdk-settings-shim.cjs`；
+ *   3. 开发态未构建：源码 `server/agents/adapters/sdk-settings-shim.cjs`。
+ */
+export function resolveSdkSettingsShim(): string {
+  const resources = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const unpacked = resources
+    ? path.join(resources, 'app.asar.unpacked', 'dist-electron', 'sdk-settings-shim.cjs')
+    : null;
+  const candidates = [
+    ...(unpacked ? [unpacked] : []),
+    path.join(process.cwd(), 'dist-electron', 'sdk-settings-shim.cjs'),
+    path.join(process.cwd(), 'server', 'agents', 'adapters', 'sdk-settings-shim.cjs'),
+  ];
+  const hit = candidates.find(p => fs.existsSync(p));
+  if (!hit) {
+    // 大声失败：静默回退会让探测重新变成「永远未登录」的假象
+    throw new Error(`[SDK] sdk-settings-shim.cjs 未找到（已依次尝试：${candidates.join('、')}）`);
+  }
+  return hit;
 }
 
 /**

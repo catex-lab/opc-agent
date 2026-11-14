@@ -41,7 +41,7 @@ import { scoreAgentSkills, type PermissionMode } from "./agents/types.js";
 import { agentAcceptsModel, findDef, registerCustomDefs } from "./agents/definitions.js";
 // A155：SDK 产品参数（environment / endpoint / configDir）的唯一展开点。
 // 适配器与这里的两个路由共用它，避免「一处修好、另一处仍是 external」。
-import { resolveSdkRuntime } from "./agents/sdkRuntime.js";
+import { resolveSdkRuntime, sdkAuthChildFor } from "./agents/sdkRuntime.js";
 // A211：WorkBuddy 官方产品配置的运行时发现（目录/端点/环境/自定义模型）。
 import {
   applyWorkbuddyProfile,
@@ -563,6 +563,9 @@ app.get("/api/check-login", async (req, res) => {
       // A155：以前写死 environment: 'external' —— 查的是 CodeBuddy 国际站，
       // WorkBuddy 桌面端的登录态在 ~/.workbuddy，这里必须用同一套参数。
       ...sdkRuntimeFor('workbuddy'),
+      // A231：authenticate 不透传 settingSources，登录类子进程一律套 shim
+      // （SDK 默认 --setting-sources none 会让「已登录」也显示未登录）。
+      ...sdkAuthChildFor(sdkRuntimeFor('workbuddy')),
       // A222：显式预算。SDK 默认 300000ms，会让这个 GET 挂 5 分钟并常驻
       // 一个登录 CLI；与探测共用 8 秒口径，需要真登录请走 /login/start。
       timeout: SDK_LOGIN_WAIT_MS,

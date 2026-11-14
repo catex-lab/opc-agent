@@ -47,6 +47,7 @@ import {
   isCliEnvironment,
   planSdkRuntime,
   resolveSdkRuntime,
+  resolveSdkSettingsShim,
 } from '../server/agents/sdkRuntime.js';
 import {
   applyWorkbuddyProfile,
@@ -163,6 +164,14 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-a216-'));
   eq(rt.endpoint, 'https://www.workbuddy.ai', '端点跟随官方声明');
   ok(!('environment' in rt), '★ 运行时不再给 CLI 一个不存在的 environment');
 
+  // A231：设置源与 UA 覆盖（SDK 默认 none 屏蔽登录态；SDK UA 被网关 401）
+  eq(rt.settingSources.join(','), 'user', '★ A231 会话子进程显式给 settingSources=user（SDK 默认 none）');
+  ok(
+    rt.env.CODEBUDDY_CUSTOM_HEADERS?.includes('CodeBuddy Code/') &&
+      !rt.env.CODEBUDDY_CUSTOM_HEADERS.includes('Agent SDK'),
+    '★ A231-C env 注入 CLI 形态 UA（顶掉 transport 前缀的 SDK UA）'
+  );
+
   // 路径不存在：宁可回落声明式，也不能指一个读不到的文件（CLI 会静默丢权威端点）。
   const missing = path.join(TMP, 'does-not-exist.json');
   const rt2 = resolveSdkRuntime({
@@ -173,6 +182,16 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-a216-'));
   ok(!('ACC_PRODUCT_CONFIG_PATH' in rt2.env), '★ 快照不可读时不注入路径（不制造静默失败）');
   eq(rt2.environment, 'internal', '快照不可读时诚实回落到声明式 environment');
   eq(rt2.endpoint, 'https://www.workbuddy.cn', '回落时端点仍在');
+}
+
+// ═══════════════════ [3.5] A231 设置源 shim 契约 ═══════════════════
+group('3.5. 登录类子进程的设置源 shim 存在且会改写 none → user');
+{
+  const shimPath = resolveSdkSettingsShim();
+  ok(fs.existsSync(shimPath), `★ shim 文件真实存在（dev 解析到源码）：${path.basename(shimPath)}`);
+  const src = fs.readFileSync(shimPath, 'utf8');
+  ok(src.includes('--setting-sources'), 'shim 源码包含改写逻辑（不只存在）');
+  ok(src.includes('require(cliJs)'), 'shim 以 require 原样执行 CLI（argv 重写后不丢参数）');
 }
 
 // ═══════════════════════ [4] profile → spec 接线 ═══════════════════════

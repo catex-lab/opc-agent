@@ -41,7 +41,7 @@
 import { unstable_v2_authenticate } from '@tencent-ai/agent-sdk';
 import { findDef } from './definitions.js';
 import { applyWorkbuddyProfile, invalidateWorkbuddyProfile } from './wbProductProfile.js';
-import { resolveSdkRuntime, type SdkRuntime } from './sdkRuntime.js';
+import { resolveSdkRuntime, sdkAuthChildFor, type SdkRuntime } from './sdkRuntime.js';
 
 /** 与 SDK 默认 300000 对齐：给用户在浏览器里完成登录留出真实时间 */
 export const LOGIN_FLOW_TIMEOUT_MS = 300_000;
@@ -206,6 +206,10 @@ export function startLoginFlow(
     try {
       await authenticate({
         ...runtime,
+        // A231：authenticate 不透传 settingSources（会话路径才能显式传）。
+        // 登录流的子进程同样必须通过 shim 读到 user 设置源，否则浏览器登录
+        // 完成后 initialize 仍看不到刚写入的登录态，流会「死而不知已成功」。
+        ...sdkAuthChildFor(runtime),
         timeout: timeoutMs,
         onAuthUrl: async authState => {
           const url = authState?.authUrl;

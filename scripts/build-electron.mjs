@@ -84,4 +84,15 @@ try {
   console.warn('⚠ 未找到 build/icon.png 或 build/tray-icon.ico，跳过窗口/托盘图标（先运行 node scripts/make-icons.mjs）');
 }
 
+/**
+ * A231：设置源 shim（--setting-sources none → user）要保持独立文件。
+ *
+ * 它由 SDK 登录类子进程当脚本 spawn（executable/executableArgs），不能参与
+ * esbuild 内联；与 kb-mcp.cjs 同样的三级解析（见 sdkRuntime.ts
+ * resolveSdkSettingsShim），源码一份拷进 dist-electron/，并由 electron-builder
+ * 的 asarUnpack 放行（electron-builder.yml 里有对应条目），打包态才能当真实
+ * 文件执行。
+ */
+await cp('server/agents/adapters/sdk-settings-shim.cjs', `${OUT_DIR}/sdk-settings-shim.cjs`);
+
 console.log(`✓ ${OUT_DIR}/main.cjs + bootstrap.cjs + preload.cjs 构建完成`);

@@ -39,7 +39,7 @@ import type {
   SendContext,
 } from '../types.js';
 import type { AgentDefinition } from '../definitions.js';
-import { resolveSdkRuntime, type SdkRuntime } from '../sdkRuntime.js';
+import { resolveSdkRuntime, sdkAuthChildFor, type SdkRuntime } from '../sdkRuntime.js';
 import { applyWorkbuddyProfile, workbuddyKeyblobDisplay } from '../wbProductProfile.js';
 import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 import { workbuddyKeyblobInfo, formatLocalMinute } from '../credentialStatus.js';
@@ -423,8 +423,11 @@ export class SdkAdapter implements AgentProvider {
       // A155：以前这里写死 `environment: 'external'`，所以 WorkBuddy 查的是
       // CodeBuddy 国际站的登录态 —— 用户明明登录了 WorkBuddy，名册却显示未登录。
       // `this.runtime` 带着 internal / workbuddy.cn / ~/.workbuddy 三项。
+      // A231：authenticate 不透传 settingSources，子进程拿 SDK 默认 none
+      // 会「看不见登录态」—— 必须再套 sdkAuthChildFor 的 shim（见 sdkRuntime.ts）。
       return unstable_v2_authenticate({
         ...this.runtime,
+        ...sdkAuthChildFor(this.runtime),
         // A178：把 SDK 默认的 300 秒登录等待压到 8 秒（见 SDK_LOGIN_WAIT_MS）
         timeout: SDK_LOGIN_WAIT_MS,
         onAuthUrl: async (authState: { authUrl?: string }) => {
