@@ -44,6 +44,8 @@ import { applyWorkbuddyProfile, workbuddyKeyblobDisplay } from '../wbProductProf
 import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 import { workbuddyKeyblobInfo, formatLocalMinute } from '../credentialStatus.js';
 import { appendFailureAdvice } from '../recovery.js';
+// P5 修2：首内容等待说明的看门狗（与 claude/codex 同一份）
+import { armWaitNote } from '../waitNote.js';
 // A222：登录流全局单飞。探测必须先让路，且只在流活着时下发它的 URL。
 import { activeLoginFlowAuthUrl, isLoginFlowActive } from '../loginFlow.js';
 // A214：首字护栏。send() → 首条流事件是 SDK 通道唯一的「无限等」窗口，

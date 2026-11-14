@@ -30,6 +30,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+// P5 修2：首内容等待说明的看门狗（shared with codex-sdk / workbuddy）
+import { armWaitNote } from '../waitNote.js';
 import type {
   CanUseTool,
   SDKMessage,
@@ -369,6 +371,11 @@ export class ClaudeSdkAdapter implements AgentProvider {
       let tokens = 0;
       let cost: number | undefined;
       let claimed: ClaudeWarmEntry | null = null;
+      // P5 修2：看门狗声明在 try 外（finally 也要够得着）
+      const waitNote = armWaitNote(
+        ev => queue.push(ev),
+        `正在等待 ${this.descriptor.name} 首个响应（冷启动中）…`
+      );
       try {
         const sdk = await loadSdk();
         let q: AsyncIterable<SDKMessage> | null = null;
@@ -396,7 +403,10 @@ export class ClaudeSdkAdapter implements AgentProvider {
         }
 
         const streamState = createStreamTextState();
+        let doneSent = false;
         for await (const msg of q) {
+          // P5 修2：首个内容事件到达 → 撤看门狗
+          if (msg.type === 'assistant' || msg.type === 'stream_event') waitNote.markContent();
           const mapped = mapClaudeSdkMessage(msg, ctx, queue, streamState);
           if (mapped === 'result') {
             const r = msg as {
@@ -416,10 +426,21 @@ export class ClaudeSdkAdapter implements AgentProvider {
             tokens =
               Number(r.usage?.input_tokens ?? 0) + Number(r.usage?.output_tokens ?? 0);
             cost = typeof r.total_cost_usd === 'number' ? r.total_cost_usd : undefined;
+            // P5 修1：result = 语义整轮结束（SDK 自己的 duration_ms 更准）——
+            // done **在这里推**，不等迭代器排干（与 codex-sdk 同款修正）。
+            doneSent = true;
+            queue.push({
+              type: 'done',
+              durationMs:
+                typeof r.duration_ms === 'number' ? r.duration_ms : Date.now() - started,
+              ...(tokens > 0 ? { tokens } : {}),
+              ...(cost != null ? { cost } : {}),
+            });
+            break;
           }
         }
 
-        if (!aborted) {
+        if (!aborted && !doneSent) {
           queue.push({
             type: 'done',
             durationMs: Date.now() - started,
@@ -436,6 +457,7 @@ export class ClaudeSdkAdapter implements AgentProvider {
           });
         }
       } finally {
+        waitNote.dispose();
         queue.close();
       }
     })();

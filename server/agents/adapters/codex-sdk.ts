@@ -252,6 +252,8 @@ export class CodexSdkAdapter implements AgentProvider {
     const unlinkAbort = linkAbort(ctx.signal, abort);
 
     const started = Date.now();
+    // P5 修1：done 是否已随 turn.completed 推送（防双推）
+    let doneSent = false;
     // 每轮新建映射器：累积文本的游标不能跨会话串味
     const mapper = createCodexLineageMapper('Codex');
 
@@ -308,15 +310,28 @@ export class CodexSdkAdapter implements AgentProvider {
            * 而不是假装有正文，也不让用户在 20 秒里对着空白猜。
            */
           if (event.type === 'turn.started') {
+            // P5 修2：占位说明改用 note（灰色胶囊）——原先是 thinking 内容，
+            // 用户会把它当成真实思考（思考块还显示「47 字」的假计数）。
             queue.push({
-              type: 'thinking',
-              content: '思考中：首事件已到（turn.started），正文未到。Codex 在整段完成后才返回正文。',
+              type: 'note',
+              text: 'Codex 正在生成正文（此通道整段返回、不流式输出），完成后自动显示。',
+              level: 'info',
             });
             continue;
           }
           if (event.type === 'turn.completed') {
             const u = event.usage;
             tokens = Number(u.input_tokens ?? 0) + Number(u.output_tokens ?? 0);
+            // P5 修1：turn.completed = 语义整轮结束（usage 已在手）——done
+            // **在这里推**，不等事件流排干。实测网关拖着不关流时，正文已
+            // 显示、计时还在虚跑 10 秒+。turn 之后的事件（如果有）丢弃。
+            doneSent = true;
+            queue.push({
+              type: 'done',
+              durationMs: Date.now() - started,
+              ...(tokens > 0 ? { tokens } : {}),
+            });
+            break;
           }
           // 未知事件走原生旁路，保证「不折损」
           const mapped = mapper(event as unknown);
@@ -325,7 +340,6 @@ export class CodexSdkAdapter implements AgentProvider {
           } else if (mapped) {
             queue.push(mapped);
           } else if (
-            event.type !== 'turn.completed' &&
             event.type !== 'item.started' &&
             event.type !== 'item.updated' &&
             event.type !== 'item.completed'
@@ -353,6 +367,11 @@ export class CodexSdkAdapter implements AgentProvider {
           });
         }
       } finally {
+        // P5 修1：done 已在 turn.completed 语义结束时推过（doneSent），
+        // 这里只为「流异常结束且没到过 turn.completed」的路径兜底。
+        if (!aborted && !doneSent) {
+          queue.push({ type: 'done', durationMs: Date.now() - started });
+        }
         queue.close();
       }
     })();
