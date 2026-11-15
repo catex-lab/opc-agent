@@ -1497,7 +1497,9 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
           configured,
           defaultModel: fromConfig.currentModel ?? defaultModel ?? "",
           source: "agent-config",
-          selectable: false,
+          // ZCode 这类改不了（只读展示），Kimi Code 的 --model 真会生效；
+          // 由配置读取层声明，避免把「能切」的也锁死。
+          selectable: fromConfig.selectable ?? false,
           note: fromConfig.note,
           provenance: agentModelsProvenance(
             `${agentId} 自己的本地配置（只读）`,

@@ -39,6 +39,13 @@ export interface AgentConfigModels {
   currentModel?: string;
   /** 界面上要显示的一句解释（为什么不能在这里切） */
   note?: string;
+  /**
+   * 这份清单里的模型能否在**本应用内**切换。
+   *
+   * 缺省 false：ZCode 那种只认自己设置里的选择，点了不生效，必须锁住。
+   * 例外是 Kimi Code —— 它的 `-m/--model` 真的会生效，配置只是提供默认值。
+   */
+  selectable?: boolean;
 }
 
 /**
@@ -255,8 +262,37 @@ export function readZcodeModels(): AgentConfigModels | null {
   };
 }
 
-/** 按 agentId 分派。目前只有 zcode 有可读的配置文件 */
+/**
+ * Kimi Code：只读它自己的 `~/.kimi-code/config.toml` 里的 `default_model`。
+ *
+ * 与 ZCode 的区别必须说清：Kimi **支持** `-m/--model`（本应用发消息时会把
+ * 用户选的模型传过去），所以这里的清单是**可选的**；config.toml 只是它的
+ * 默认值。我们不改那个文件 —— 只读，用户在应用里换的模型只影响本应用会话。
+ *
+ * 不做完整 TOML 解析：只认顶层那一行，认不出就当没读到。
+ */
+export function readKimiModels(): AgentConfigModels | null {
+  const home = process.env.USERPROFILE || process.env.HOME || '';
+  if (!home) return null;
+  try {
+    const raw = fs.readFileSync(path.join(home, '.kimi-code', 'config.toml'), 'utf8');
+    const m = raw.match(/^\s*default_model\s*=\s*["']([^"']+)["']/m);
+    const current = m?.[1];
+    if (!current) return null;
+    return {
+      models: [{ modelId: current, name: current, description: '当前默认 · 来自 config.toml' }],
+      currentModel: current,
+      selectable: true,
+      note: '默认模型来自 Kimi Code 自己的 config.toml；在这里换只影响本应用会话，不改它的配置。',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 按 agentId 分派：只有这两家有「只读配置」这条路 */
 export function readAgentConfigModels(agentId: string): AgentConfigModels | null {
   if (agentId === 'zcode') return readZcodeModels();
+  if (agentId === 'kimicli') return readKimiModels();
   return null;
 }

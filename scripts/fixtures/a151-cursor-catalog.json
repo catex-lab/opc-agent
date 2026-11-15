@@ -1,12 +1,18 @@
 {
-  "_readme": "A151 [2]/[6] 用的固定模型目录快照。形状 = server/agents/modelCatalog.ts 的 CatalogState（不含 fetchedAt，由闸门运行时注入当前时刻，保证 24h TTL 内不触发本机 CLI 刷新）。cursorStdout 是 `cursor-agent models` 的原始输出样本，闸门用真实 parseCursorModels/parseCursorDefaultModel 反算一遍，夹具与解析器对不上就判红 —— 不许夹具悄悄失效。",
+  "_readme": "A151 [2]/[6] 用的固定模型目录快照。形状 = server/agents/modelCatalog.ts 的 CatalogState（不含 fetchedAt，由闸门运行时注入当前时刻，保证 24h TTL 内不触发本机 CLI 刷新）。cursorStdout / piStdout 分别是 `cursor-agent models` / `pi --list-models` 的原始输出样本，闸门用真实 parseCursorModels/parseCursorDefaultModel/parsePiModels 反算一遍，夹具与解析器对不上就判红 —— 不许夹具悄悄失效。pi 的样本特意带了表头、警告行和重复行：解析器少过滤一种，反算就对不上。",
   "version": 4,
   "cursorStdout": "fixture-cursor-default - Fixture Cursor Auto (current, default)\nfixture-cursor-01 - Fixture GPT 5.2\nfixture-cursor-02 - Fixture Claude 4.5 Sonnet\nfixture-cursor-03 - Fixture Gemini 3 Pro\nfixture-cursor-04 - Fixture o3 (NO ZDR)\nfixture-cursor-05 - Fixture Grok 4\nfixture-cursor-06 - Fixture DeepSeek V3\nfixture-cursor-07 - Fixture Qwen 3\nnot a model line\nERROR: something went wrong\n",
+  "piStdout": "provider        model                  context  max-out  thinking  images\nfixture-pi-a    fixture-pi-a-1         1M       384K     yes       no\nfixture-pi-b    fixture-pi-b-1         200K     64K      no        yes\nfixture-pi-b    fixture-pi-b-2         200K     64K      yes       yes\nwarning: startup lookup failed (EPERM)\nfixture-pi-b    fixture-pi-b-1         200K     64K      no        yes\n",
   "agents": {
     "opencode": [],
     "qoder": [],
     "qoder-cn": [],
     "codex": [],
+    "pi": [
+      "fixture-pi-a/fixture-pi-a-1",
+      "fixture-pi-b/fixture-pi-b-1",
+      "fixture-pi-b/fixture-pi-b-2"
+    ],
     "cursor": [
       "fixture-cursor-default",
       "fixture-cursor-01",
@@ -20,6 +26,20 @@
   },
   "providers": {},
   "details": {
+    "pi": {
+      "fixture-pi-a/fixture-pi-a-1": {
+        "name": "fixture-pi-a-1",
+        "description": "上下文 1M · 输出 384K · 支持思考"
+      },
+      "fixture-pi-b/fixture-pi-b-1": {
+        "name": "fixture-pi-b-1",
+        "description": "上下文 200K · 输出 64K"
+      },
+      "fixture-pi-b/fixture-pi-b-2": {
+        "name": "fixture-pi-b-2",
+        "description": "上下文 200K · 输出 64K · 支持思考"
+      }
+    },
     "cursor": {
       "fixture-cursor-default": { "name": "Fixture Cursor Auto" },
       "fixture-cursor-01": { "name": "Fixture GPT 5.2" },

@@ -1,5 +1,5 @@
 {
-  "_readme": "A151 [2]/[3]/[6] 用的固定 ZCode HOME 文件树，形状对齐 server/agents/agentConfigModels.ts 的 readZcodeModels()。闸门把它写进临时 HOME 再起一个专用服务端，避免读入本机 ~/.zcode 的真实配置（换机器 / 用户没装 ZCode 时结果必须一致）。刻意让 rollout 里的当前模型不在配置清单里，这样「补一行 runtime 且明说不在清单」这条分支也会被跑到。",
+  "_readme": "A151 [2]/[3]/[6] 用的固定 HOME 文件树（ZCode + Kimi Code），形状对齐 server/agents/agentConfigModels.ts 的 readZcodeModels() / readKimiModels()。闸门把它写进临时 HOME 再起一个专用服务端，避免读入本机 ~/.zcode / ~/.kimi-code 的真实配置（换机器 / 用户没装这两家时结果必须一致）。刻意让 rollout 里的当前模型不在配置清单里，这样「补一行 runtime 且明说不在清单」这条分支也会被跑到；.kimi-code/config.toml 只有 default_model 一行，用来钉「只读默认值、不改配置」。",
   "files": [
     {
       "path": ".zcode/v2/config.json",
@@ -60,6 +60,10 @@
     {
       "path": ".zcode/cli/rollout/model-io-fixture.jsonl",
       "text": "{\"model\":{\"modelId\":\"fixture-runtime-current\"}}\n"
+    },
+    {
+      "path": ".kimi-code/config.toml",
+      "text": "[core]\ndefault_model = \"fixture-kimi-default\"\n"
     }
   ]
 }

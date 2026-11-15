@@ -58,7 +58,7 @@ const { mergeOfficialExtras, readOfficialModels } = await import(
   '../server/agents/modelAvailability.ts'
 );
 // [2] 的 cursor 夹具要用真实解析器反算一遍，形状变了必须红。
-const { parseCursorModels, parseCursorDefaultModel } = await import(
+const { parseCursorModels, parseCursorDefaultModel, parsePiModels } = await import(
   '../server/agents/modelCatalog.ts'
 );
 
@@ -107,6 +107,26 @@ const json = async res => {
     return { _raw: text.slice(0, 300) };
   }
 };
+
+/**
+ * 等某个选择器**恰好**出现 n 个。
+ *
+ * 为什么不能只 `waitForTimeout(2500)` 再 `count()`：首刷（临时数据目录 =
+ * 没有磁盘缓存）时目录要并行跑 6 个 CLI，本机 pi 单条就要 11~12s，模型接口
+ * 在 `loadCatalog()` 上等这一轮。而 `count()` 不等待、`click()` 会自动重试 ——
+ * 于是得到「动作过了、断言没过」的假红（[7] 早先踩过同一个坑）。
+ * 冷启动慢 ≠ 产品行为错，这里显式等到出现，超时 30s 仍然会红。
+ */
+async function waitForCount(page, selector, n = 1, timeout = 30000) {
+  const deadline = Date.now() + timeout;
+  let last = -1;
+  while (Date.now() < deadline) {
+    last = await page.locator(selector).count();
+    if (last === n) return last;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return last;
+}
 
 async function waitReady(base, child, timeoutMs = 90000) {
   const deadline = Date.now() + timeoutMs;
@@ -243,9 +263,25 @@ try {
        catalogFixture.details.cursor[id].name !== id),
     '[夹具] id 唯一且每条都有与 id 不同的显示名（否则下面「显示名不同」会假绿）');
   ok(fixtureIds.includes(catalogFixture.defaults.cursor), '[夹具] 默认模型在清单里');
-  ok(zcodeFixtureFiles.files.length === 4 &&
-     new Set(zcodeFixtureFiles.files.map(f => f.path)).size === 4,
-    '[夹具] ZCode HOME 文件树齐 4 份（config / provider_config / plan-cache / rollout）');
+
+  /* pi 的样本同样要能被真实解析器反算：表头、警告行、重复行是**故意**放进去的，
+     解析器少过滤一种，这里就红（否则「pi 有清单」只是把 CLI 的输出原样贴了一遍）。 */
+  const fixturePiIds = catalogFixture.agents.pi;
+  const parsedPi = parsePiModels(catalogFixture.piStdout);
+  ok(parsedPi.map(m => m.id).join('|') === fixturePiIds.join('|'),
+    '[夹具] piStdout 经真实解析器反算 = 快照 id 列表（表头 / 警告 / 重复行都过滤掉了）',
+    `${parsedPi.length} vs ${fixturePiIds.length} 条`);
+  ok(parsedPi.every(m => catalogFixture.details.pi[m.id]?.description === m.description),
+    '[夹具] pi 的说明（上下文 / 输出 / 思考）与解析结果逐字一致');
+  ok(fixturePiIds.every(id => id.includes('/')),
+    '[夹具] pi 的 id 都是 provider/model（只写 provider 会被 pi 模糊匹配到别的模型）');
+  ok(parsePiModels(catalogFixture.piStdout.replace(/^fixture-pi-b {4}fixture-pi-b-2.*$/m, '')).length ===
+     fixturePiIds.length - 1,
+    '[夹具] 反向探针：样本少一条模型 → 解析器反算对不上');
+
+  ok(zcodeFixtureFiles.files.length === 5 &&
+     new Set(zcodeFixtureFiles.files.map(f => f.path)).size === 5,
+    '[夹具] 固定 HOME 文件树齐 5 份（ZCode 4 份 + Kimi config.toml）');
 
   // ★ 反向探针：把夹具改坏，上面的自检必须能发现 —— 否则自检本身是摆设。
   const brokenStdout = catalogFixture.cursorStdout.replace(' - Fixture GPT 5.2', '');
@@ -835,7 +871,8 @@ try {
   await page2.waitForTimeout(2500);
 
   const qTrigger = page2.locator('[data-model-trigger]');
-  ok((await qTrigger.count()) === 1, '[5] qoder 的模型触发器存在（有清单就可选）');
+  const qTriggerCount = await waitForCount(page2, '[data-model-trigger]');
+  ok(qTriggerCount === 1, '[5] qoder 的模型触发器存在（有清单就可选）', `${qTriggerCount} 个`);
   const qBefore = (await qTrigger.innerText()).trim();
   /* 肯定式：触发器上本来就该有一个真模型名。否则「标定失败后文字不变」
      在「本来就是空白」时也成立 —— 又是两边都 0 的假绿。 */
@@ -915,8 +952,10 @@ try {
   // 这一段钉三件事：① 谁该进这一档（判据是 buildArgs 自己，不是手写表）；
   // ② 谁**不**该进（没有 cli 通道的，填了也传不下去）；
   // ③ 三种标定结论的处置必须分开：ok/routed 选中、invalid 拦住、unknown 交用户。
-  console.log('\n[6] 手动填模型名：没有清单但接受 --model 的那些');
-  const MANUAL_EXPECT = ['gemini', 'claude', 'pi', 'antigravity', 'kimicli'];
+  console.log('\n[6] 模型清单来源：能枚举的给清单、能读配置的只读、都没有才手填');
+  /* 只剩三家手填：gemini 45s 挂起、claude 没有枚举命令、agy 未登录拿不到清单
+     （实测理由见 verify-model-catalog 的 NO_ENUMERATION）。 */
+  const MANUAL_EXPECT = ['gemini', 'claude', 'antigravity'];
   for (const id of MANUAL_EXPECT) {
     const r = await json(await fetch(`${base}/api/agents/${id}/models`));
     ok(r.source === 'manual' && r.manual === true && r.selectable === true,
@@ -930,11 +969,37 @@ try {
     ok(r.source === 'unknown' && !r.manual,
       `[6] ${id} 没有 cli 通道 ⇒ 不给手动输入框`, `${r.source}/${r.models?.length ?? 0} 条`);
   }
+
+  /* pi：`pi --list-models` 实测可用，不该再让用户手打模型名。
+     打夹具服务端（目录快照里带了 pi），结果与「本机装没装 pi」无关。 */
+  const piModels = await json(await fetch(`${fixtureBase}/api/agents/pi/models`));
+  ok(piModels.source === 'catalog' && !piModels.manual,
+    '[6] pi 走 catalog（CLI 有枚举命令，不再手填）', String(piModels.source));
+  ok(Array.isArray(piModels.models) && piModels.models.length === fixturePiIds.length,
+    '[6] pi 的清单非空且条数 = 快照', `${piModels.models?.length ?? 0} 条`);
+  ok(piModels.selectable === true, '[6] pi 的清单可选（--model 真生效）');
+  ok((piModels.models ?? []).every(m => String(m.modelId).includes('/')),
+    '[6] pi 的每条都是 provider/model（下拉里给的名字能直接喂给 --model）');
+
+  /* kimicli：没有枚举命令，只读 `~/.kimi-code/config.toml` 的 default_model。
+     只读的边界必须钉住：清单来自配置文件，但我们**不写**这个文件。 */
+  const kimiModels = await json(await fetch(`${fixtureBase}/api/agents/kimicli/models`));
+  ok(kimiModels.source === 'agent-config' && !kimiModels.manual,
+    '[6] kimicli 走 agent-config（读配置，不手填）', String(kimiModels.source));
+  ok(kimiModels.defaultModel === 'fixture-kimi-default' &&
+     (kimiModels.models ?? []).some(m => m.modelId === 'fixture-kimi-default'),
+    '[6] kimicli 读出的就是 config.toml 里的 default_model', String(kimiModels.defaultModel));
+  ok(kimiModels.selectable === true,
+    '[6] kimicli 的清单可选（Kimi 的 --model 真生效，只读的是「默认值」）');
+  ok(typeof kimiModels.note === 'string' && kimiModels.note.includes('不改'),
+    '[6] kimicli 明说「不改它的配置」', String(kimiModels.note ?? '').slice(0, 20));
+
   // 反面对照②：能枚举 / 能读配置的不许退化成手动
   const cursor2 = await json(await fetch(`${fixtureBase}/api/agents/cursor/models`));
   ok(cursor2.source === 'catalog' && !cursor2.manual, '[6] 能枚举的 Agent 不走手动模式', cursor2.source);
   const zcode2 = await json(await fetch(`${fixtureBase}/api/agents/zcode/models`));
   ok(zcode2.source === 'agent-config' && !zcode2.manual, '[6] 能读配置的 Agent 不走手动模式', zcode2.source);
+  ok(zcode2.selectable === false, '[6] zcode 的只读清单没有被「顺手」放开');
 
   const gCreated = await json(
     await fetch(`${base}/api/sessions`, {
@@ -981,7 +1046,8 @@ try {
   await page3.waitForTimeout(2500);
 
   const gTrigger = page3.locator('[data-model-trigger]');
-  ok((await gTrigger.count()) === 1, '[6] 手动模式下也有模型芯片（原来这里没有芯片）');
+  const gTriggerCount = await waitForCount(page3, '[data-model-trigger]');
+  ok(gTriggerCount === 1, '[6] 手动模式下也有模型芯片（原来这里没有芯片）', `${gTriggerCount} 个`);
   ok((await gTrigger.innerText()).trim() === '手动指定模型', '[6] 芯片上写「手动指定模型」',
     (await gTrigger.innerText()).trim());
 
@@ -1070,12 +1136,13 @@ try {
   /* 新建的会话页要先挂载输入区，2.5s 固定等待在冷启动时不够（第一版就红在
      这一条，而下面 click() 因为会自动重试反而成功 —— 断言比动作更严格，
      顺序错了就会得到「动作过了、断言没过」的假红）。这里显式等挂载。 */
-  const wbTriggerShown = await wbTrigger
-    .first()
-    .waitFor({ state: 'attached', timeout: 30000 })
-    .then(() => true)
-    .catch(() => false);
-  ok(wbTriggerShown && (await wbTrigger.count()) === 1, '[7] 模型触发器存在');
+  /* 90s：WorkBuddy 的芯片要等平台清单（`/api/models` → SDK 建会话）回来。
+     冷启动单次实测 13.7s；闸门里前面两个页面各打过一次，且没有单飞去重，
+     几次冷启动叠在一起会超过 30s。这里等的是「最终有没有」，不是延迟。 */
+  const wbWaitAt = Date.now();
+  const wbTriggerCount = await waitForCount(page4, '[data-model-trigger]', 1, 90000);
+  ok(wbTriggerCount === 1, '[7] 模型触发器存在',
+    `${wbTriggerCount} 个 / ${Date.now() - wbWaitAt}ms`);
   await wbTrigger.click();
   await page4.waitForTimeout(400);
 

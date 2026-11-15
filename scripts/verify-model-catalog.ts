@@ -1078,6 +1078,7 @@ function honestEmptySummary(catalogSrc: string): boolean {
     [...sourcesBlock.matchAll(/^ {2}'?([a-z][a-z0-9-]*)'?: \{/gm)].map(m => m[1] as string)
   );
   ok(inCatalog.has('cursor'), 'A151：cursor 已接进 CATALOG_SOURCES', [...inCatalog].join(','));
+  ok(inCatalog.has('pi'), 'pi 已接进 CATALOG_SOURCES（--list-models 实测可用）');
   ok(inCatalog.has('opencode') && inCatalog.has('qoder') && inCatalog.has('codex'), '既有三个来源仍在');
 
   /* 有意不接目录的，必须写明原因。**这张表本身就是文档** ——
@@ -1086,11 +1087,10 @@ function honestEmptySummary(catalogSrc: string): boolean {
      （见 agentAcceptsModel），所以这里写的是「为什么枚举不出来」，
      不是「为什么界面上什么都没有」。 */
   const NO_ENUMERATION: Record<string, string> = {
-    gemini: 'gemini --help 没有 models 子命令（2026-10-30 复核），只有 -m 旗标 ⇒ 走手动填',
+    gemini: 'gemini 有 --list-models / models 子命令，但 2026-11-15 本机实测 45s 无输出（挂起）⇒ 暂不接，走手动填',
     claude: 'claude 无枚举命令；且本机 native binary 缺失，CLI 直接报错 ⇒ 走手动填',
-    pi: 'pi 只有 --models（Ctrl+P 循环用），无枚举命令 ⇒ 走手动填',
-    antigravity: '本机未安装，无法实测 ⇒ 走手动填',
-    kimicli: '本机未安装，无法实测 ⇒ 走手动填',
+    antigravity: 'agy 有 models 子命令，但 2026-11-15 实测未登录且日志目录 Access denied，拿不到清单 ⇒ 走手动填',
+    kimicli: 'kimi 只有 -m，无枚举命令；默认模型从 ~/.kimi-code/config.toml 只读（2026-11-15 实测）',
     hermes: 'hermes 没有 cli 通道（走 ACP），无法传 --model',
     kimicode: 'kimicode 没有 cli 通道，无法传 --model',
     zcode: 'zcode 0.17.0 无 --model、无枚举命令；模型只能读配置文件（P1 处理）',
@@ -1115,8 +1115,8 @@ function honestEmptySummary(catalogSrc: string): boolean {
 // ── 8. 只读清单（A151）：读配置 → 接口透出 → 界面真的禁用 ──────────
 //
 // zcode 那条路有三段，任何一段断了都表现为「界面还是那句话」：
-//   ① `agentConfigModels.ts` 读它自己的配置；
-//   ② `/api/agents/:id/models` 把 `selectable: false` 透出去；
+//   ① `agentConfigModels.ts` 读它自己的配置（只读，一个字都不写回）；
+//   ② `/api/agents/:id/models` 把可切换性原样透出去（缺省 false）；
 //   ③ `ChatInput` / `ModelSelectPopup` 据此禁用点击。
 // 单测只钉得住 ①，所以 ②③ 用源码契约钉。
 {
@@ -1126,7 +1126,10 @@ function honestEmptySummary(catalogSrc: string): boolean {
   const cfgSrc = read('server/agents/agentConfigModels.ts');
 
   ok(/readAgentConfigModels/.test(routeSrc), 'A151：模型接口要问一次 Agent 自己的配置');
-  ok(/selectable:\s*false/.test(routeSrc), 'A151：只读清单必须显式透出 selectable:false');
+  /* 可切换性由配置读取层自己声明：缺省 false（ZCode 只认自己设置里的选择），
+     只有 `--model` 真会生效的那家（Kimi Code）才显式给 true。 */
+  ok(/selectable:\s*fromConfig\.selectable\s*\?\?\s*false/.test(routeSrc),
+    'A151：清单可切换性由配置读取层声明（缺省只读）');
   ok(/source:\s*"agent-config"/.test(routeSrc), 'A151：只读清单的来源标记为 agent-config');
 
   ok(/modelSource\?\.selectable\s*\?\?\s*true/.test(inputSrc), 'A151：ChatInput 认 selectable（不传按可选处理）');
@@ -1139,6 +1142,21 @@ function honestEmptySummary(catalogSrc: string): boolean {
 
   ok(/\.zcode/.test(cfgSrc) && /provider_config\.json/.test(cfgSrc), 'A151：zcode 读的是它自己的配置目录');
   ok(!/apiKey/.test(cfgSrc.replace(/\/\*[\s\S]*?\*\//g, '')), 'A151：读配置时不许碰 apiKey 字段');
+
+  /* 只读纪律（用户明确要求：不代写第三方配置文件）：
+     ① 这个模块一个字都不许写回 `~/.zcode` / `~/.kimi-code`；
+     ② ZCode 不声明 selectable（⇒ 接口层缺省 false，点了不生效的按钮一个都不做）；
+     ③ Kimi 显式 true —— 它的 `--model` 真生效，只读的只是「默认值」。 */
+  ok(!/writeFile|appendFile|createWriteStream|renameSync|unlinkSync/.test(cfgSrc),
+    'A151：读配置的模块不许写回第三方配置（只读）');
+  const zcodeBody = cfgSrc.slice(
+    cfgSrc.indexOf('export function readZcodeModels'),
+    cfgSrc.indexOf('export function readKimiModels')
+  );
+  ok(zcodeBody.length > 0 && !/selectable/.test(zcodeBody),
+    'A151：zcode 不声明 selectable（只读清单不能被「顺手」放开）');
+  ok(/selectable:\s*true/.test(cfgSrc.slice(cfgSrc.indexOf('export function readKimiModels'))),
+    'A151：kimi 声明 selectable:true（--model 生效，只读的是配置里的默认值）');
 }
 
 // ── 9. 可用性标定（A151 / P2）：判据只认 CLI 原文 ──────────────────

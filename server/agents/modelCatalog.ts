@@ -154,7 +154,7 @@ interface CatalogSource {
    * - `codex-json`：`codex debug models` 的 JSON（含 display_name / 描述 / 上下文 / 优先级）
    * - `cursor`：一行一个 `id - 显示名`，当前/默认模型在行尾带 `(current, default)`
    */
-  format?: 'provider-model' | 'qoder' | 'codex-json' | 'cursor';
+  format?: 'provider-model' | 'qoder' | 'codex-json' | 'cursor' | 'pi-table';
   /**
    * 二进制不在 PATH 里时的额外搜索目录（与 `definitions.ts` 的 `extraPaths` 同义）。
    * 目录枚举也走子进程，找不到二进制就等于没有清单 —— 不能只靠 PATH。
@@ -175,9 +175,17 @@ interface CatalogSource {
  * | qoder | `qodercli --list-models` | 裸名字（含自定义模型的 modelID） |
  * | codex | `codex debug models` | JSON（官方模型目录，含 hide/list 可见性） |
  * | cursor | `cursor-agent models` | `id - 显示名`（含 `(current, default)` 标记） |
+ * | pi | `pi --list-models` | 六列表格（provider / model / context / max-out / thinking / images） |
  *
- * gemini / claude / pi / zcode / kimi 的 CLI **没有任何枚举命令**
- * （已逐个翻过 `--help` 与子命令表，2026-10-21 与 2026-10-30 两次实测），
+ * gemini / claude / agy(antigravity) / zcode / kimi 的 CLI **没有可用的枚举命令**
+ * （2026-11-15 逐个实测复核）：
+ *   - gemini 有 `--list-models` 与 `models` 子命令，但本机跑 45 秒仍无任何输出
+ *     （挂起），接进目录只会让「刷新模型」跟着卡死 ⇒ 不接；
+ *   - agy 有 `models` 子命令，但未登录时它会拉起语言服务器并往
+ *     `~/.gemini/antigravity-cli/log` 写日志，本机实测 Access denied，
+ *     拿不到清单 ⇒ 不接；
+ *   - claude / zcode / kimi 确实没有枚举命令（kimi 只有 `-m`，默认值在
+ *     config.toml；zcode 只有交互式 `/model`，模型在 config.json）。
  * 硬塞一份 models.dev 清单等于给用户一堆本机跑不通的选项 —— 那是把一个假控件
  * 换成另一个假控件。它们继续显示「模型由 Agent 决定」，比铺一份没人验证过的
  * 清单诚实。
@@ -242,6 +250,25 @@ const CATALOG_SOURCES: Record<string, CatalogSource> = {
     cli: { bin: 'cursor-agent', args: ['models'] },
     format: 'cursor',
     extraDirs: ['%LOCALAPPDATA%\\cursor-agent'],
+    fallbackProviders: [],
+  },
+  // `pi --list-models`（2026-11-15 实测：输出完整的六列表）。
+  //
+  // 为什么之前一直没接：旧注释把 `--models`（Ctrl+P 循环用）当成了唯一的
+  // 模型参数，漏看了 `--list-models`。实测它输出
+  // `provider model context max-out thinking images` 六列，
+  // 而 pi 的 `--model` 要的是 `provider/id`（截图里它自己报过错：
+  // 「光输 sensenova 不够，会因模糊匹配跳到别的模型」），
+  // 所以 id 必须拼成 `sensenova/sensenova-6.8-flash-lite` 这种完整引用。
+  //
+  // ⚠️ 耗时：本机重复实测 **11~12s**（它启动时会做一次 global settings 的
+  // 会话查找，本机 `~/.pi/agent/settings.json.lock` 建不出来、报 EPERM 后
+  // 才继续），而不是最初误记的「秒回」。这一条与其它 CLI **并行**跑，
+  // 所以首刷（无磁盘缓存时）从 ~8s 变成 ~13s；之后都走缓存。CLI_TIMEOUT_MS
+  // 是 30s，仍在预算内。别把它改成串行，否则首刷会叠加成 20s+。
+  pi: {
+    cli: { bin: 'pi', args: ['--list-models'] },
+    format: 'pi-table',
     fallbackProviders: [],
   },
 };
@@ -700,6 +727,46 @@ function stripCursorStateMarker(name: string): string {
 }
 
 /**
+ * `pi --list-models`：固定列宽的表，首行是表头。
+ *
+ * ```
+ * provider   model                     context  max-out  thinking  images
+ * deepseek   deepseek-v4-flash         1M       384K     yes       no
+ * ```
+ *
+ * 三条纪律：
+ * 1. **id 必须是 `provider/model`** —— pi 自己说了，只写 provider 会因模糊
+ *    匹配跳到别的模型；下拉里给的名字必须能直接喂给 `--model`。
+ * 2. 只认「至少两列且第一列形如 provider 标识」的行；表头、空行、警告
+ *    （EPERM / startup lookup 之类）一律跳过，宁可少列，不可把报错当模型名。
+ * 3. context / max-out / thinking 有就写进说明，拿不到就不写，不编。
+ */
+export function parsePiModels(stdout: string): CatalogEntry[] {
+  const out: CatalogEntry[] = [];
+  const seen = new Set<string>();
+
+  for (const rawLine of stdout.replace(ANSI_RE, '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/^provider\s+model\b/i.test(line)) continue;
+    const cols = line.split(/\s{2,}/);
+    if (cols.length < 2) continue;
+    const [provider, model, context, maxOut, thinking] = cols;
+    if (!/^[a-z][a-z0-9._-]*$/i.test(provider ?? '')) continue;
+    if (!/^[A-Za-z0-9._:@/-]+$/.test(model ?? '')) continue;
+    const id = `${provider}/${model}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const bits: string[] = [];
+    if (context) bits.push(`上下文 ${context}`);
+    if (maxOut) bits.push(`输出 ${maxOut}`);
+    if (/^yes$/i.test((thinking ?? '').trim())) bits.push('支持思考');
+    out.push({ id, name: model, ...(bits.length ? { description: bits.join(' · ') } : {}) });
+  }
+  return out;
+}
+
+/**
  * `cursor-agent models` 里标着 `default` 的那一条 —— 它是 CLI 自己声明的默认值。
  *
  * 与 `readCodexDefaultModel()` 同一角色（那边读 config.toml，这边读枚举输出）。
@@ -1008,7 +1075,9 @@ async function refreshCatalog(): Promise<CatalogState> {
         ? parseQoderModels(stdout)
         : format === 'cursor'
           ? parseCursorModels(stdout)
-          : parseCodexModels(stdout);
+          : format === 'pi-table'
+            ? parsePiModels(stdout)
+            : parseCodexModels(stdout);
 
     // qoder 的 CLI 只吐 Default + Custom（见 QODER_VERIFIED_EXTRA 的说明），
     // 把实测路由通过的 New Models 补上。只在 qoder 分支做，别的影响不到 codex。
