@@ -304,19 +304,12 @@ export class CodexSdkAdapter implements AgentProvider {
           /**
            * Codex 的 ThreadEvent 没有 token 级正文增量：`turn.started` 之后
            * 要等到整段 `item.completed` 才有正文（实测首正文 22.5 秒）。
-           * 这段时间原本一条可渲染事件都没有，界面看起来像卡死。
            *
-           * 这里立刻给一条**明确的**思考态：说清「首事件已到、正文未到」，
-           * 而不是假装有正文，也不让用户在 20 秒里对着空白猜。
+           * 这段时间**不推任何占位文案**（2026-11-15）：界面已有「正在处理」
+           * 的运行态，再补一条「此通道不流式输出」的灰色胶囊，只是把等待
+           * 解释了一遍，既占版面又像故障提示。等待由组件自身的运行态表达。
            */
           if (event.type === 'turn.started') {
-            // P5 修2：占位说明改用 note（灰色胶囊）——原先是 thinking 内容，
-            // 用户会把它当成真实思考（思考块还显示「47 字」的假计数）。
-            queue.push({
-              type: 'note',
-              text: 'Codex 正在生成正文（此通道整段返回、不流式输出），完成后自动显示。',
-              level: 'info',
-            });
             continue;
           }
           if (event.type === 'turn.completed') {

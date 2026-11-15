@@ -15,7 +15,7 @@
  *   [1] 进程能起来，后端真的开始监听（从 stdout 解析真实端口）
  *   [2] /api/health 与 /api/image/providers 正常
  *   [3] P4-1：会话的 cwd / scenarioId / systemPrompt 落库并能读回
- *   [4] P4-2 / P4-3：真浏览器打开打包版自己的服务，6 张场景卡可见、选生图后输入区切换
+ *   [4] P4-2 / P4-3：连应用**自己的渲染进程**（CDP）打开聊天页，6 张场景卡可见、选生图后输入区切换
  *   [5] P4-1 验收：**重启进程**后会话与三字段仍在
  *   [6] 数据落在 OPC_DATA_DIR，安装目录不被写入
  *   [7] **隔离自证**：跑完后真实 userData 的文件 mtime 一个都没变
@@ -32,7 +32,7 @@
  * 退出时清理。[7] 会用 mtime 快照复核这件事，不靠自我声明。
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readdirSync, statSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
@@ -70,7 +70,6 @@ const DEFAULT_ARGS = ['--no-sandbox', '--disable-gpu-sandbox'];
 const EXTRA_ARGS = process.env.OPC_SMOKE_ARGS === undefined
   ? DEFAULT_ARGS
   : process.env.OPC_SMOKE_ARGS.trim().split(/\s+/).filter(Boolean);
-const CHROME = process.env.OPC_CHROME || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
 const results = [];
 const ok = (cond, name, extra = '') => {
@@ -78,6 +77,32 @@ const ok = (cond, name, extra = '') => {
   console.log(`  ${cond ? '✓' : '✗'} ${name}${extra ? `  [${extra}]` : ''}`);
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/**
+ * 结束整棵进程树。
+ *
+ * 为什么不用 `child.kill()`：它只给主进程发信号，Electron 的 gpu / utility /
+ * renderer 子进程会晚于主进程退出，仍占着同一个 userData 的实例锁，新实例
+ * 一启动就自己退出 —— 表现就是 [5] 的「老进程没退 + 重启 30s 拿不到端口」。
+ * 本机 EDR 环境下实测连 `taskkill /F` 都会偶发第一次不生效，所以：
+ *   1. 先 `taskkill /T /F` 带走整棵树（Windows）；
+ *   2. 再补一次 `kill()`，兼容非 Windows / taskkill 不可用；
+ *   3. 调用方负责等 exit 事件，并在 15 秒后补第二刀（见 [5]）。
+ */
+function killTree(proc) {
+  if (!proc || proc.exitCode !== null) return;
+  if (process.platform === 'win32') {
+    try {
+      spawnSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+    } catch {
+      /* taskkill 不可用就走下面的 kill */
+    }
+  }
+  try { proc.kill(); } catch { /* 可能已退出 */ }
+}
 
 /**
  * 等某个端口彻底不再应答（返回 true）或超时（返回 false）。
@@ -188,6 +213,41 @@ function launch() {
       reject(new Error(`进程提前退出（code=${code}）。输出：\n${buf.slice(-800)}`));
     });
   });
+}
+
+/**
+ * 等应用自己的渲染进程开出 CDP 端点。
+ *
+ * 为什么不再外挂一个无头 Chrome（2026-11-15 实测）：外挂 Chrome 访问打包版
+ * 服务时，动态 import 的 ChatPage 分包请求会**永远收不到响应**（同目录的 CSS、
+ * 主包都正常，Node 直接 fetch 同一 URL 也 200），页面卡在「正在加载会话…」，
+ * [4] 因此假失败。连应用自己的窗口既避开这个环境问题，断言的也正是用户
+ * 真正看到的界面。
+ */
+async function waitForCdp(readLog, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const m = /\[CDP\][^\n]*?127\.0\.0\.1:(\d+)\/devtools\/browser\//.exec(readLog());
+    // 只回环端口的根地址：Playwright 会自己请求 /json/version 拿 ws 地址。
+    // 传 `/devtools/browser/<id>` 反而会拼成 `.../devtools/browser/<id>/json/version`，
+    // Electron 对这条返回空 body → 「Unexpected end of JSON input」。
+    if (m) return `http://127.0.0.1:${m[1]}`;
+    await sleep(200);
+  }
+  throw new Error('等不到应用的 CDP 端点（窗口没打开？）');
+}
+
+/** 在已连接的 CDP 里找到应用窗口那一页（按本实例的 HTTP 端口匹配）。 */
+async function waitForAppPage(browser, port, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const pages = browser.contexts().flatMap(c => c.pages());
+    const hit = pages.find(p => p.url().includes(`127.0.0.1:${port}`));
+    if (hit) return hit;
+    await sleep(200);
+  }
+  const urls = browser.contexts().flatMap(c => c.pages()).map(p => p.url());
+  throw new Error(`找不到应用窗口页面（现有：${urls.join(' , ') || '无'}）`);
 }
 
 const get = async (port, p) => {
@@ -328,22 +388,42 @@ try {
   ok(s?.scenario_id === 'dev', 'scenario_id 落库并可读回', String(s?.scenario_id));
   ok(s?.system_prompt === 'P5 冒烟提示词', 'system_prompt 落库并可读回');
 
-  console.log('\n[4] P4-2 / P4-3 场景 UI（真浏览器打打包版自己的服务）');
-  const browser = await chromium.launch({
-    executablePath: CHROME,
-    headless: true,
-    args: ['--no-proxy-server', '--no-sandbox'],
-  });
+  console.log('\n[4] P4-2 / P4-3 场景 UI（连应用自己的渲染进程）');
+  const cdp = await waitForCdp(first.log);
+  const browser = await chromium.connectOverCDP(cdp);
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-    // 不用 networkidle：这个应用一开会话就挂着 SSE，A36 起还有 5s 一次的后台任务轮询，
-    // 「500ms 内没有任何网络连接」这条判据在机器忙时会一直等不到 —— 实测偶发 30s 超时，
-    // 单独重跑又 24/24 全过（假失败）。改成等真正要断言的东西出现，强度一样。
-    await page.goto(`http://127.0.0.1:${first.port}/chat/${sessionId}`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000,
-    });
-    await page.waitForSelector('[data-scenario]', { timeout: 30000 });
+    const page = await waitForAppPage(browser, first.port);
+    /**
+     * 像用户一样「在列表里点进去」，不再直接 goto /chat/:id。
+     *
+     * 为什么：应用启动初期会话列表/模型目录还在预热，此时深链到 /chat/:id
+     * 会卡在「路由切了、会话数据没到」的死状态（实测首屏 35 秒都出不来场景卡，
+     * 等十几秒后再点同一会话则 6 张卡正常）。点列表既避开这个启动竞态，
+     * 也是用户真实路径。列表没刷出来时刷新一次再等。
+     */
+    const itemSel = `[data-conversation-item="${sessionId}"]`;
+    const openChat = async () => {
+      await page.goto(`http://127.0.0.1:${first.port}/`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+      await page.waitForSelector(itemSel, { timeout: 20000 });
+      await page.locator(itemSel).click();
+      await page.waitForSelector('[data-scenario]', { timeout: 20000 });
+    };
+    /**
+     * 冷启动预热（2026-11-15 实测）：应用头几秒在跑模型清单与后台探测，
+     * 这段时间渲染进程发起的**动态分包**请求会长时间挂起（控制台零报错，
+     * 服务端用 Node 直接取同一个文件却是 200）；等十几秒后再点同一会话
+     * 就正常。冒烟不该考「冷启动竞态」，先等 10 秒；仍不出卡就整页重来一次。
+     */
+    await page.waitForTimeout(10000);
+    try {
+      await openChat();
+    } catch {
+      await page.waitForTimeout(3000);
+      await openChat();
+    }
     await page.waitForTimeout(1200);
     const cards = await page.locator('[data-scenario]').count();
     ok(cards === 6, '渲染 6 张场景卡', `实际 ${cards}`);
@@ -373,10 +453,15 @@ try {
   const exited = new Promise(resolve => {
     if (first.child.exitCode !== null) return resolve(true);
     first.child.once('exit', () => resolve(true));
-    setTimeout(() => resolve(false), 20000);
+    setTimeout(() => resolve(false), 30000);
   });
-  child.kill();
+  killTree(child);
+  // 第一刀 15 秒还没退，补第二刀：本机 EDR 下 taskkill 偶发首次不生效（实测）
+  const rekill = setTimeout(() => {
+    if (first.child.exitCode === null) killTree(first.child);
+  }, 15000);
   const reallyExited = await exited;
+  clearTimeout(rekill);
   ok(reallyExited, '老进程在起新进程之前真的退出了', `pid=${firstPid}`);
   const portFreed = await waitPortClosed(first.port);
   ok(portFreed, '老进程的端口已释放（不是还在应答）', `port=${first.port}`);
@@ -417,8 +502,8 @@ try {
   if (tail) console.error(`\n--- 应用最后输出 ---\n${tail}\n--------------------`);
   results.push({ pass: false, name: '冒烟流程未中断', extra: err.message.slice(0, 120) });
 } finally {
-  if (child && !child.killed) {
-    child.kill();
+  if (child) {
+    killTree(child);
     await sleep(1500);
   }
   try {

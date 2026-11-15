@@ -1,7 +1,8 @@
-import { memo, useMemo } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatMarkdown } from '@tdesign-react/chat';
 import { useSmoothText } from '../hooks/useSmoothText';
 import { stripEmoji } from '../utils/plainText';
+import { useTranslation } from '../i18n';
 import { chartOf, planAnswer, type AnswerSegment } from '../answer/renderPlan';
 import { AnswerChartCard, AnswerCodeCard, AnswerEvidence, AnswerLinkCards, AnswerTableCard } from './AnswerCards';
 
@@ -46,6 +47,211 @@ function segmentKeys(segments: AnswerSegment[]): string[] {
     used.set(base, seen + 1);
     return seen === 0 ? base : `${base}#${seen}`;
   });
+}
+
+/** 复制成功后临时替换的勾图标：尺寸/描边与 cherryCodeIcon.ts 的复制图标同档 */
+const CHECK_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+  'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+  'stroke-linejoin="round" style="display:block"><path d="m4 12 5 5L20 6"/></svg>';
+
+/**
+ * 把正文末段的段落下边距归零。
+ *
+ * 为什么必须注入 `<style>` 而不是在 index.css 里写 `::part(md_p):last-child`：
+ * Cherry 给 `p / pre / blockquote / table` 的规则是 `margin: 0 0 16px`，而
+ * `::part()` 之后接 `:last-child` 在 Chromium 里**不匹配**（实测末段仍是 16px），
+ * 只能进影子根内部加一条规则。样式元素挂在 shadowRoot 上而不是 Cherry 的
+ * 渲染容器里 —— 流式每帧都会重写容器 innerHTML，挂在里面会被一起冲掉。
+ */
+const FLUSH_TAIL_CSS = `
+p:last-child,
+ul:last-child,
+ol:last-child,
+pre:last-child,
+table:last-child,
+blockquote:last-child,
+h1:last-child,
+h2:last-child,
+h3:last-child,
+h4:last-child,
+h5:last-child,
+h6:last-child,
+div[data-type='codeBlock']:last-child {
+  margin-bottom: 0 !important;
+}
+`;
+
+/**
+ * 单个 markdown 片段的外壳。
+ *
+ * 两件事都要求「拿到影子根」，所以合在这里做：
+ *   1. 末段不留白 —— 见 FLUSH_TAIL_CSS；
+ *   2. 代码块复制回显 —— Cherry 的复制按钮在 shadow DOM 里，它自己的反馈是
+ *      把字体图标从 copy 换成 ok，而这套字体从未加载，点完屏幕毫无变化。
+ *      这里在捕获阶段监听宿主影子根上的 click：命中复制按钮后用**同一段代码
+ *      文本**写一次剪贴板来判断成败（Cherry 自己也会写一次，内容完全一致，
+ *      不会改掉复制出去的内容），成功就把图标换成勾、并在按钮左侧浮出气泡。
+ *
+ * 监听挂在 shadowRoot 上而不是按钮上：Cherry 的按钮是**hover 时重建**的，
+ * 挂在按钮上的监听下一次 hover 就丢了；影子根的生命周期跟着宿主走，稳定得多。
+ */
+function MarkdownSegment({ text, flushTail }: { text: string; flushTail: boolean }) {
+  const { t } = useTranslation();
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [flash, setFlash] = useState<{ top: number; right: number; ok: boolean } | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  /** 还原被临时换成勾的图标；连点两次时先还原再存新值，避免把勾当成原图标 */
+  const iconUndo = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+
+    const bound = new WeakSet<ShadowRoot>();
+    const roots: Array<{ sr: ShadowRoot; handler: (event: Event) => void }> = [];
+
+    const clearIcon = () => {
+      if (iconUndo.current) {
+        iconUndo.current();
+        iconUndo.current = null;
+      }
+    };
+
+    /**
+     * 取这次点击对应代码块的 `pre`。
+     *
+     * 不能直接 `btn.closest('[data-type="codeBlock"]')`：Cherry 把工具条容器
+     * 挂在**预览区之外**（`previewerDom.after(...)`），按钮在 DOM 上并不属于
+     * 那个代码块。这里改成按几何位置找 —— 工具条正覆盖在代码块右上角，
+     * 包含按钮中心点的那个代码块就是它要复制的那一块。
+     */
+    const preOf = (btn: Element, sr: ShadowRoot): HTMLElement | null => {
+      const direct = btn.closest('[data-type="codeBlock"]')?.querySelector('pre');
+      if (direct) return direct;
+      const r = btn.getBoundingClientRect();
+      let best: HTMLElement | null = null;
+      let bestDist = Infinity;
+      sr.querySelectorAll('[data-type="codeBlock"]').forEach(el => {
+        const blockRect = el.getBoundingClientRect();
+        const inside =
+          r.left >= blockRect.left - 1 &&
+          r.right <= blockRect.right + 1 &&
+          r.top >= blockRect.top - 1 &&
+          r.bottom <= blockRect.bottom + 1;
+        const dist = inside
+          ? 0
+          : Math.abs(r.top - blockRect.top) + Math.abs(blockRect.right - r.right);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = el.querySelector('pre');
+        }
+      });
+      return best;
+    };
+
+    const onClick = (event: Event, sr: ShadowRoot) => {
+      const target = event.target as Element | null;
+      const btn = target?.closest?.('.cherry-copy-code-block');
+      if (!btn) return;
+
+      // Cherry 复制的是 `pre.innerText`；用同一份文本判断成败，复制结果不变
+      const code = preOf(btn, sr)?.innerText ?? '';
+      const btnRect = btn.getBoundingClientRect();
+      const boxRect = box.getBoundingClientRect();
+
+      const show = (ok: boolean) => {
+        if (!box.isConnected) return;
+        if (flashTimer.current) window.clearTimeout(flashTimer.current);
+        setFlash({
+          top: Math.max(0, btnRect.top - boxRect.top + 2),
+          right: Math.max(0, boxRect.right - btnRect.left + 4),
+          ok,
+        });
+        flashTimer.current = window.setTimeout(() => {
+          setFlash(null);
+          clearIcon();
+          flashTimer.current = null;
+        }, 1600);
+      };
+
+      clearIcon();
+      // 非安全上下文（如 file://）里 clipboard 可能整个不存在，按失败处理
+      if (!code || !navigator.clipboard) {
+        show(false);
+        return;
+      }
+      navigator.clipboard
+        .writeText(code)
+        .then(() => {
+          const icon = btn.querySelector('.tc-cherry-copy-icon');
+          if (icon) {
+            const prev = icon.innerHTML;
+            icon.innerHTML = CHECK_SVG;
+            iconUndo.current = () => {
+              if (icon.isConnected) icon.innerHTML = prev;
+            };
+          }
+          show(true);
+        })
+        .catch(() => show(false));
+    };
+
+    const attach = (sr: ShadowRoot) => {
+      if (bound.has(sr)) return;
+      bound.add(sr);
+      const handler = (event: Event) => onClick(event, sr);
+      roots.push({ sr, handler });
+      sr.addEventListener('click', handler, true);
+      if (flushTail && !sr.querySelector('style[data-tc-md-flush]')) {
+        const style = document.createElement('style');
+        style.setAttribute('data-tc-md-flush', '1');
+        style.textContent = FLUSH_TAIL_CSS;
+        sr.appendChild(style);
+      }
+    };
+
+    const scan = () => {
+      box.querySelectorAll('t-chat-md-content').forEach(host => {
+        const sr = (host as HTMLElement).shadowRoot;
+        if (sr) attach(sr);
+      });
+    };
+
+    scan();
+    // 宿主节点可能晚一帧才升级出影子根，持续盯着子树的增删
+    const mo = new MutationObserver(scan);
+    mo.observe(box, { childList: true, subtree: true });
+
+    return () => {
+      mo.disconnect();
+      roots.forEach(({ sr, handler }) => sr.removeEventListener('click', handler, true));
+      // flushTail 由真变假（后面又排上了表格卡等片段）时，末段留白要还回去
+      box.querySelectorAll('t-chat-md-content').forEach(host => {
+        host.shadowRoot?.querySelector('style[data-tc-md-flush]')?.remove();
+      });
+      if (flashTimer.current) {
+        window.clearTimeout(flashTimer.current);
+        flashTimer.current = null;
+      }
+      clearIcon();
+    };
+  }, [flushTail]);
+
+  return (
+    <div ref={boxRef} className="relative min-w-0 max-w-full">
+      <ChatMarkdown content={text} />
+      {flash && (
+        <span
+          className="tc-copy-flash"
+          data-copy-flash={flash.ok ? 'ok' : 'fail'}
+          style={{ top: flash.top, right: flash.right }}
+        >
+          {flash.ok ? `✓ ${t('chat.copy.done')}` : t('chat.copy.failedClipboard')}
+        </span>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -141,7 +347,15 @@ function AnswerMarkdownImpl({
               />
             );
           default:
-            return <ChatMarkdown key={key} content={seg.text} />;
+            return (
+              <MarkdownSegment
+                key={key}
+                text={seg.text}
+                /* 只有整条回答的**最后一段**才吃掉末段留白：中间片段后面还跟着
+                   表格卡 / 证据卡，保留 16px 才有可能读的块间距。 */
+                flushTail={idx === segments.length - 1}
+              />
+            );
         }
       })}
     </div>

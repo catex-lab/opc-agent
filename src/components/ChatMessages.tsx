@@ -173,11 +173,13 @@ function StreamStatus({
 
   return (
     <span
-      className="mt-1.5 flex items-center gap-1.5 text-caption"
-      /* 与下方操作行同槽位：`.tc-actions` 是 26px + `mt-1.5`，这里补上同样的
+      className="mt-1.5 flex items-center gap-1.5 text-secondary"
+      /* 与下方操作行同槽位：`.tc-actions` 是 28px + `mt-0.5`，这里补上同样的
          上边距与最小高度，回合结束那一帧「状态行 → 操作行」才是纯内容替换，
-         不再矮/高一档（实测状态行 16.5px、操作行 26px + 6px 上边距）。 */
-      style={{ color: 'var(--td-text-color-placeholder)', minHeight: 26 }}
+         不再矮/高一档（24 + 6 与 28 + 2 同高 = 30px）。
+         字号从 11px caption 提到 12px，颜色从占位灰升到次级灰：这一行是
+         「它现在在干什么」，属于实时状态而不是脚注，11px 隔着半屏读不清。 */
+      style={{ color: 'var(--td-text-color-secondary)', minHeight: 24 }}
       data-stream-status
       data-stream-phase={imageMode ? 'image' : runActivity(blocks ?? [])}
     >
@@ -204,56 +206,74 @@ function StreamStatus({
 }
 
 /**
- * 正文末尾的流式光标 / 空行占位。
+ * 正文末尾的流式光标行。
  *
  * 三个阶段：
  *   · `live`   —— 正在流式，显示闪烁光标；
  *   · `settle` —— 刚流完、正文还在收尾追赶（见 `SMOOTH_SETTLE_MS`），
- *                光标先留着，追完才换成不可见占位；
+ *                光标留到追完，随后把这一行的高度收到 0 再卸载；
  *   · `none`   —— 不占行。
  *
- * 为什么要「换成不可见占位」而不是直接删掉：光标是紧跟块级 markdown 宿主
- * 之后的行内 span，浏览器会为它另起一个匿名行盒。实测（720px 列宽）同一段
- * 单行答案：带光标 57.4px、不带 32.9px，差值正好 1lh = 24.5px。直接删会让
- * 正文在流式结束那一帧矮一行。占位保留同一个行盒、只把字形藏起来，高度连续。
- *
- * 只给本条会话最后一条助手消息保留（由调用方的 `settle` 阶段表达）：历史
- * 消息保持原排版；新回合开始时这条让位，缩小发生在新消息上方，而那时视口
- * 已经钉在底部，看不到。
+ * 这一行是紧跟块级 markdown 宿主之后的行盒，实测正好 1lh = 24.5px。以前
+ * 收尾时只把字形藏起来、行盒永远留着 —— 于是每条「最后一轮」的回答底下，
+ * 正文最后一行到操作行之间都多出这一整行空白（与末段 margin、列间距叠加
+ * 就是用户看到的约 30px）。现在流式收尾仍保留 160ms 等正文追完，然后做
+ * 160ms 高度收拢；历史消息挂载时就不在流式中，直接不渲染，不占一行。
  */
+/** 光标行高度收拢时长（ms）。与占位收拢（StreamPlaceholder）同一档，读起来是一次动作。 */
+const CURSOR_RETIRE_MS = 160;
+
 const StreamCursorLine = memo(function StreamCursorLine({
   phase,
 }: {
   phase: 'live' | 'settle' | 'none';
 }) {
-  // 挂载时就在流式中才显示；历史消息挂载即 settle，直接是占位
+  // 挂载时就在流式中才显示；历史消息挂载即 settle，不占行
   const [visible, setVisible] = useState(phase === 'live');
+  /**
+   * 是否已经收完高度、整行卸载。
+   *
+   * 2026-11-15：这里从「永远留一个不可见行盒」改成「收完就卸载」。那个行盒
+   * 实测正好 1lh = 24.5px —— 它才是最后一行正文与操作行之间 30px 空白里
+   * 最大的一块（末段 margin 归零、列间距收到 4px、操作行 mt 2px 之后仍在）。
+   * 历史消息挂载时就已经不在流式中，没有「从有到无」可延续，直接不渲染；
+   * 真正的流式收尾仍先留 160ms（等正文追完）再收拢高度，不是硬跳。
+   */
+  const [retired, setRetired] = useState(phase !== 'live');
   const prevPhase = useRef(phase);
   useEffect(() => {
     const prev = prevPhase.current;
     prevPhase.current = phase;
     if (phase === 'live') {
+      setRetired(false);
       setVisible(true);
       return;
     }
     if (phase === 'settle' && prev === 'live') {
-      const timer = setTimeout(() => setVisible(false), SMOOTH_SETTLE_MS);
-      return () => clearTimeout(timer);
+      const hide = setTimeout(() => setVisible(false), SMOOTH_SETTLE_MS);
+      const drop = setTimeout(() => setRetired(true), SMOOTH_SETTLE_MS + CURSOR_RETIRE_MS);
+      return () => {
+        clearTimeout(hide);
+        clearTimeout(drop);
+      };
     }
     setVisible(false);
+    setRetired(true);
   }, [phase]);
-  if (phase === 'none') return null;
-  if (visible) {
-    return (
+  if (phase === 'none' || retired) return null;
+  return (
+    <div
+      aria-hidden={visible ? undefined : true}
+      style={{
+        height: visible ? '1lh' : 0,
+        overflow: 'hidden',
+        transition: `height ${CURSOR_RETIRE_MS}ms var(--ease-tencent)`,
+      }}
+    >
       <span className="animate-cursor-blink ml-0.5" style={{ color: 'var(--td-brand-color)' }}>
         |
       </span>
-    );
-  }
-  return (
-    <span className="ml-0.5 invisible" aria-hidden="true">
-      |
-    </span>
+    </div>
   );
 });
 
@@ -373,7 +393,7 @@ function MessageActions({
   };
 
   return (
-    <div className="tc-actions mt-1.5 flex items-center gap-0.5">
+    <div className="tc-actions mt-0.5 flex items-center gap-0.5">
       <button
         type="button"
         className="tc-act-btn"
@@ -1422,7 +1442,7 @@ const MessageRow = memo(function MessageRow({
       )}
 
       <div
-        className={`flex flex-col gap-2 ${message.role === 'user' ? 'items-end max-w-[80%] ml-auto tc-user-msg' : 'min-w-0 max-w-full'}`}
+        className={`flex flex-col gap-1 ${message.role === 'user' ? 'items-end max-w-[80%] ml-auto tc-user-msg' : 'min-w-0 max-w-full'}`}
       >
 
         {/* 用户消息。
@@ -2113,8 +2133,13 @@ export function ChatMessages({
      *
      * 用 `aria-hidden` + 纯装饰：读屏软件不该念出一个光标。
      */
+    /* 2026-11-15：还没有任何内容块时不占位。
+       刚发出请求的那几十毫秒里 `blocks` 是空数组，之前的占位行会先撑出
+       一行光标（实测 57.4px）+ 列间距，状态行被推到下面，形成一个空洞；
+       而此刻唯一该出现的是「正在处理」。有块之后（思考 / 工具 / 空文本块）
+       照旧占位 —— 那时光标确实在等正文，行盒提前占住才有意义。 */
     const showAnswerPlaceholder =
-      !!message.isStreaming && !hasAnswer && !message.error && !imageMode;
+      !!message.isStreaming && !hasAnswer && !message.error && !imageMode && blocks.length > 0;
 
     // 合并后从答案起点继续；未合并时仍从 0 开始走原来的逐段规则。
     let i = groupProcess ? processEnd : 0;

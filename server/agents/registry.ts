@@ -28,7 +28,7 @@ import { withUserIdentity } from '../user-profile.js';
 import { loadAnswerLanguage } from '../answer-language.js';
 import type { EventSource } from '../../shared/blocks.js';
 // P0 诊断分类学契约：运行期错误 → 诊断分类（纯函数，shared 侧）
-import { authDiagnosticFor, classifyErrorMessage } from '../../shared/diagnostics.js';
+import { authDiagnosticFor, classifyErrorMessage, isAcpSessionTimeout } from '../../shared/diagnostics.js';
 import type { CanaryState } from '../../shared/diagnostics.js';
 import type {
   AgentDescriptor,
@@ -732,8 +732,10 @@ class AgentRegistry {
     // toAgentInfo 优先消费它。auth 的 missing/expired 细分靠上下文：探测说
     // ready 却收到 401 = 登录态失效；本来就 needs-auth = 压根没登录。
     const classified = classifyErrorMessage(message);
-    const diagClass =
-      classified === 'auth_expired'
+    // ACP 建会话超时：握手已通过，属于「部分受限」而不是来路不明的故障。
+    const diagClass = isAcpSessionTimeout(message)
+      ? 'degraded'
+      : classified === 'auth_expired'
         ? authDiagnosticFor(prev.availability === 'ready')
         : classified;
     this.statuses.set(id, {

@@ -25,7 +25,7 @@ const RECOVERY_HINTS: Record<string, string> = {
   claude:
     '在终端运行 `claude`，用 `/login` 完成登录（写入 ~/.claude/.credentials.json）；也可设置 ANTHROPIC_API_KEY',
   hermes:
-    '在终端运行 `hermes` 完成登录（凭据在 ~/.hermes/auth.json 或 %LOCALAPPDATA%/hermes/auth.json）',
+    '重启 Hermes 后端（终端运行 `hermes gateway restart`）或 Hermes 桌面端后重试；若提示未登录，再在终端运行 `hermes`（凭据在 ~/.hermes/auth.json 或 %LOCALAPPDATA%/hermes/auth.json）',
   cursor: '在终端运行 `cursor-agent login`，或在「设置 → 登录配置 → Agent API Key」填 CURSOR_API_KEY',
   qoder:
     '在终端运行 `qodercli` 完成 Qoder 国际版登录（凭据在 ~/.qoder/.auth/user）',
@@ -109,9 +109,22 @@ export function classifyFailure(message: string): FailureKind {
   return 'unknown';
 }
 
+/**
+ * ACP 的失败发生在「建连接 / 建会话」这一层，而不是凭据层。
+ *
+ * 为什么单独判：initialize 能过就说明凭据通常没问题（Hermes 的 ACP 握手
+ * 根本不校验凭据）。这类报错甩一句「重新登录」会把用户引到错的方向，
+ * 真正可执行的动作是看原始报错 + 重启对方的客户端。
+ */
+const ACP_STAGE_RE =
+  /(?:initialize|session\/new|prompt) 阶段超时|ACP 进程已退出（code=|无法解析 ACP 启动垫片/;
+
 export function failureAdvice(id: string, message: string): string | undefined {
-  const kind = classifyFailure(message);
   const hint = recoveryHintFor(id);
+  if (ACP_STAGE_RE.test(message ?? '')) {
+    return `这是 ACP 连接/建会话阶段的失败（不是登录问题，先看上面的原始报错）：${hint}`;
+  }
+  const kind = classifyFailure(message);
   switch (kind) {
     case 'quota':
       return `额度/限流（不是登录失效）：等待额度重置、切换模型或补充额度后重试。${hint}`;

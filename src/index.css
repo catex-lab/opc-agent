@@ -3755,7 +3755,9 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
  * （hover 才出现）又会让用户根本不知道有这些能力 —— 折中成「看得见、
  * 不抢戏」，hover 时提亮到正文级对比度。 */
 .tc-actions {
-  opacity: 0.5;
+  /* 2026-11-15：0.5 → 0.62。操作行从正文下方 30px 收到 6px 之后，它离正文更近、
+     更像这一条回答的一部分；常驻 0.5 在浅底上几乎看不见图标轮廓。 */
+  opacity: 0.62;
   transition: opacity var(--duration-fast) var(--ease-tencent);
 }
 
@@ -3784,8 +3786,9 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  /* 26 → 28：图标仍是 15px，只放大点击热区；与状态行 minHeight 24 + mt 6 同高 */
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 0;
   border-radius: var(--td-radius-small);
@@ -3816,6 +3819,55 @@ t-chat-sender [slot='footer-prefix'] input:focus-visible {
 .tc-act-btn:focus-visible {
   outline: 2px solid var(--td-brand-color);
   outline-offset: 1px;
+}
+
+/* 代码块复制回显（2026-11-15）。
+ *
+ * Cherry 的复制按钮在 Markdown 的 Shadow DOM 里，它自带反馈是把 `i.ch-icon-copy`
+ * 换成 `ch-icon-ok` —— 而这套字体从未随 JS 包加载（见 cherryCodeIcon.ts），
+ * 所以点完屏幕上什么都不变。这里由 AnswerMarkdown 在宿主容器上渲染一个气泡，
+ * 绝对定位到按钮左侧；图标临时换勾也由它负责。
+ *
+ * 1.6s 的动画里前 10% 淡入、后 20% 淡出：用户看到的是「闪一下」，不是常驻标签。
+ * pointer-events: none 保证气泡不挡代码选择与下一次点击。 */
+.tc-copy-flash {
+  position: absolute;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #1f2329;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: tc-copy-flash 1.6s var(--ease-tencent) both;
+}
+
+/* 失败时只换底色：文案本身已经说明问题，不需要再加一个图标 */
+.tc-copy-flash[data-ok='0'] {
+  background: var(--td-error-color);
+}
+
+@keyframes tc-copy-flash {
+  0% {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  10% {
+    opacity: 1;
+    transform: none;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 /* 流式状态行的呼吸灯（A34）：实心核 + 向外扩散的环，同周期 1.8s。
@@ -4400,7 +4452,10 @@ html[data-opc-glass='1'] t-chat-sender {
      消息列的灰带，像一条分割线而不是「这一行可以点」。
      A35 时它的父级是普通块级容器，inline-flex 会自己收缩，所以没暴露。 */
   align-self: flex-start;
-  padding: 2px 6px 2px 2px;
+  /* 2026-11-15 排版收敛：上下 4px。这条摘要同时是「可点区域」和「过程流的
+     第一屏」，2px 时点击热区贴着文字、下方步骤又紧贴一条线；4px 把这一行
+     从两端各松开一点，外层间距反而能收得更紧（见 .tc-trace 的 8px 外边距）。 */
+  padding: 4px 6px 4px 2px;
   border-radius: 6px;
   color: var(--td-text-color-secondary);
   cursor: pointer;

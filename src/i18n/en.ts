@@ -281,7 +281,8 @@ export const en: Record<MessageKey, string> = {
   'diag.binary_broken.label': 'Needs repair',
   'diag.not_installed.label': 'Not installed',
   'diag.degraded.label': 'Partially limited',
-  'diag.unknown.label': 'Erroring',
+  'diag.unknown.label': 'Unverified',
+  'diag.needs_config.label': 'Needs setup',
   'diag.action.open_login': 'Open sign-in',
   'diag.action.open_install': 'Install guide',
   'diag.action.switch_model': 'Switch model or top up',
@@ -774,6 +775,8 @@ export const en: Record<MessageKey, string> = {
   'settings.login.viewDocs': 'View docs',
 
   // A211: WorkBuddy runtime profiles (one Agent + several official product variants)
+  'settings.wbProfile.accountNote': "Uses the desktop app's account. Switch there, then Re-detect",
+  'settings.wbProfile.accountTitle': 'WorkBuddy account',
   'settings.wbProfile.active': 'Active',
   'settings.wbProfile.auto': 'Auto (most recently active)',
   'settings.wbProfile.autoNote': 'Follows the desktop app when it switches data folders',

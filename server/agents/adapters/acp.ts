@@ -165,6 +165,15 @@ class JsonRpcStdio {
   /** 服务端主动发来的通知（如 session/update） */
   onNotification: ((msg: Json) => void) | null = null;
   onClose: ((code: number | null) => void) | null = null;
+  /**
+   * 进程 stderr 的尾部读取器（由适配器注入）。
+   *
+   * 为什么必须挂在请求层：进程死亡时，正在飞的请求是被**这里**拒绝的，
+   * 而调用方拿到的那条 message 会一路显示给用户。不带上 stderr，用户就只
+   * 看到「ACP 进程已退出（code=1）」——真因（如 Hermes 的 install state
+   * 不可写、Python traceback）全被吞掉，支持方无从判断。
+   */
+  stderrTail: (() => string) | null = null;
 
   constructor(private readonly child: ChildProcessWithoutNullStreams) {
     child.stdout.setEncoding('utf8');
@@ -172,7 +181,10 @@ class JsonRpcStdio {
     child.stdout.on('data', (chunk: string) => this.feed(chunk));
     child.on('close', code => {
       this.closed = true;
-      const err = new Error(`ACP 进程已退出（code=${code}）`);
+      const tail = this.stderrTail?.().trim() ?? '';
+      const err = new Error(
+        `ACP 进程已退出（code=${code}）${tail ? `：${tail.slice(-800)}` : ''}`
+      );
       for (const [, p] of this.pending) {
         clearTimeout(p.timer);
         p.reject(err);
@@ -412,6 +424,8 @@ export class AcpAdapter implements AgentProvider {
     child.on('error', () => { /* 由 onClose 统一处理 */ });
 
     const rpc = new JsonRpcStdio(child);
+    // 进程死亡时，在飞请求（initialize / session/new / prompt）的报错要带 stderr 尾部
+    rpc.stderrTail = () => errTail;
     rpc.onNotification = msg => this.handleNotification(msg);
     rpc.onRequest = msg => this.handleServerRequest(msg);
     rpc.onClose = code => {

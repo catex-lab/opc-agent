@@ -163,6 +163,21 @@ export function classifyErrorMessage(message: string): DiagnosticClass {
 }
 
 /**
+ * ACP「桥活着、但会话建不出来」的判定。**纯函数**。
+ *
+ * 文案由 ACP 适配器的 `sessionTimeoutExhausted` 产出。这类失败既不是登录
+ * 也不是网络：`initialize` 已经通过，说明进程与协议都正常，只是对方 gateway
+ * 在 session/new（或 prompt）阶段不再回包。
+ *
+ * 为什么单独判：把它归进 unknown，名册就显示「存在异常」，用户会被引去
+ * 重装/重登；而实际可执行的动作只有一个——重启对方的客户端。所以调用方
+ * 应把它记成 degraded（部分受限），并在详情里保留原始阶段与原文。
+ */
+export function isAcpSessionTimeout(message: string): boolean {
+  return /会话无响应（(?:initialize|session\/new|prompt) 阶段超时/.test(message ?? '');
+}
+
+/**
  * 运行期 auth 错误的 missing/expired 细分。**纯函数**。
  *
  * 文本本身分不出来（401 既可能是没配过也可能是过期了），但**上下文**分得

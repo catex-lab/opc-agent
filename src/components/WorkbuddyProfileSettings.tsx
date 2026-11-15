@@ -157,6 +157,16 @@ export function WorkbuddyProfileSettings({ onChanged }: WorkbuddyProfileSettings
 
   return (
     <div className="space-y-3" data-workbuddy-profile-section>
+      {/* 单账号：运行时就使用桌面端那份登录态，这里只说明换账号的正确路径 */}
+      <div className="space-y-1" data-wb-account-note>
+        <div className="text-sm" style={{ color: 'var(--td-text-color-primary)' }}>
+          {t('settings.wbProfile.accountTitle')}
+        </div>
+        <p className="text-xs leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
+          {t('settings.wbProfile.accountNote')}
+        </p>
+      </div>
+
       <div
         className="rounded-lg px-3 py-2.5 text-xs leading-5"
         style={{

@@ -790,24 +790,13 @@ function ContactRow({ agent, onViewDetail, onEdit, onRemove, onOpenLogin }: Cont
           size={42}
         />
       </AgentHoverCard>
-      {/* 名字 + 上次失败：失败的详细原因不再只藏在详情页。
-          为什么放在名字下面而不是状态词旁边：状态词只有 2~4 个字，塞不下
-          「HTTP 401：API Key 被拒绝…」；而把整行撑高只在**真的有失败**时发生，
-          正常 Agent 的视觉密度不变。 */}
+      {/* 名称：状态由行尾状态词与头像圆点表达，失败原因只留在详情页。
+          2026-11-15 规则：列表行不写解释性文案——删掉这句话，用户仍能
+          正确操作，所以它不该占这行的高度。 */}
       <div className="min-w-0 flex-1">
         <div className="truncate text-body-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
           {displayName}
         </div>
-        {agent.status.lastError && (
-          <div
-            className="mt-0.5 truncate text-caption"
-            style={{ color: 'var(--tc-status-danger)' }}
-            title={agent.status.lastError}
-            data-agent-last-error={agent.id}
-          >
-            {t('contacts.lastFailure', { message: agent.status.lastError.replace(/\s+/g, ' ') })}
-          </div>
-        )}
       </div>
       {/* 状态词：**每一行都写**，不只写异常行（A134 / 审查报告 P0-3）。
           原来只有非 ready 行才有文字，于是「三个 Agent 只有绿点、Gemini 有橙字」——

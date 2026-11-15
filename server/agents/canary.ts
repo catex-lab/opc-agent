@@ -21,7 +21,7 @@
  */
 
 import type { Diagnostic, DiagnosticClass } from '../../shared/diagnostics.js';
-import { classifyErrorMessage, authDiagnosticFor } from '../../shared/diagnostics.js';
+import { classifyErrorMessage, authDiagnosticFor, isAcpSessionTimeout } from '../../shared/diagnostics.js';
 import { registry } from './registry.js';
 import { loadPrefs } from '../preferences.js';
 
@@ -111,7 +111,10 @@ export async function runCanary(
         if (ev.type === 'error') {
           const cls = classifyErrorMessage(ev.message);
           const final = cls === 'auth_expired' ? authDiagnosticFor(wasReady) : cls;
-          return finish(agentId, failure(final, ev.message));
+          // ACP 的会话创建超时：握手已通过，只是对方 gateway 不回包 ——
+          // 记「部分受限」而不是「存在异常」，否则用户会被引去重装/重登。
+          const diagClass = isAcpSessionTimeout(ev.message) ? 'degraded' : final;
+          return finish(agentId, failure(diagClass, ev.message));
         }
         // 首个内容事件 = 通道活着、凭据被接受、模型开始产出 → 结论 OK，
         // 立刻中止省 token（ping 的答案没人看）

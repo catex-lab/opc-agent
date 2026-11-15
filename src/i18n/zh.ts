@@ -276,7 +276,9 @@ export const zh = {
   'diag.binary_broken.label': '需要修复',
   'diag.not_installed.label': '未安装',
   'diag.degraded.label': '部分受限',
-  'diag.unknown.label': '存在异常',
+  'diag.unknown.label': '未验证',
+  // 缺 Key 不是失败，是待填的配置项
+  'diag.needs_config.label': '待配置',
   'diag.action.open_login': '打开登录',
   'diag.action.open_install': '查看安装指引',
   'diag.action.switch_model': '换模型或充值',
@@ -770,6 +772,8 @@ export const zh = {
   'settings.login.viewDocs': '查看文档',
 
   // A211：WorkBuddy 运行时 profile（一个 Agent + 多个官方产品版本）
+  'settings.wbProfile.accountNote': '与 WorkBuddy 桌面端共用同一账号。需要换账号时，请先在桌面端切换，再回到这里点「重新检测」。',
+  'settings.wbProfile.accountTitle': 'WorkBuddy 账号',
   'settings.wbProfile.active': '当前生效',
   'settings.wbProfile.auto': '自动选择（按最近活跃）',
   'settings.wbProfile.autoNote': '官方客户端切换数据目录后会自动跟随',

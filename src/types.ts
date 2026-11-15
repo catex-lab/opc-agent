@@ -908,12 +908,15 @@ const DIAGNOSTIC_LABEL_ZH: Record<string, string> = {
   binary_broken: '需要修复',
   not_installed: '未安装',
   degraded: '部分受限',
-  unknown: '存在异常',
+  // 2026-11-15：unknown 的字面意思是「还没得出结论」，不是「坏了」。
+  // 版本探测超时归到这一类，旧文案「存在异常」把整屏名册染成红色，
+  // 用户会以为全线故障。真正的失败另有 binary_broken / network / quota 承担。
+  unknown: '未验证',
 };
 
 export function agentStatusViewOf(agent: {
   kind: AgentKind;
-  status: { availability: AgentAvailability; probeState?: AgentStatus['probeState']; lastCanary?: AgentStatus['lastCanary'] };
+  status: { availability: AgentAvailability; probeState?: AgentStatus['probeState']; lastCanary?: AgentStatus['lastCanary']; lastError?: string };
   /** P1：诊断事实（canary > 运行期 > 探测，服务端已合并）。非 ok 时优先于 availability 展示 */
   diagnostic?: Diagnostic;
 }): { key: string; label: string; color: string; dot: string; dotShape: StatusDotShape; labelKey?: string } {
@@ -927,18 +930,34 @@ export function agentStatusViewOf(agent: {
       labelKey: 'diag.checking',
     };
   }
+  /**
+   * 2026-11-15：缺 Key 单独一档。
+   *
+   * 它既不是「未登录」（用户没有可登录的账号，只有一个待填的配置项），
+   * 也不该落进 unknown 变成「未验证」。判断依据是原始失败文案——探测层
+   * 给这段文本归的是 unknown，UI 按文案细分成「待配置」，不改服务端契约。
+   */
+  const reasonText = `${agent.diagnostic?.detail ?? ''} ${agent.status.lastError ?? ''}`;
+  if (/未配置\s*API\s*Key|缺少\s*API\s*Key|API\s*Key\s*未配置/i.test(reasonText)) {
+    return {
+      ...AVAILABILITY_META['needs-auth'],
+      key: 'needs-config',
+      label: '待配置',
+      labelKey: 'diag.needs_config.label',
+    };
+  }
   // P1：诊断非 ok → 状态词与动作都以它为准（这是比探测更新的事实）。
   // 配色沿用既有档位语义：auth/quota/network/degraded/unknown 走 warn（needs-auth），
   // binary_broken 走「需修复」（needs-setup），not_installed 走灰（not-installed）。
   const diag = agent.diagnostic;
   if (diag && diag.class !== 'ok') {
-    const toneMap: Record<string, 'needs-auth' | 'needs-setup' | 'not-installed'> = {
+    const toneMap: Record<string, 'needs-auth' | 'needs-setup' | 'not-installed' | 'unknown'> = {
       auth_missing: 'needs-auth',
       auth_expired: 'needs-auth',
       quota: 'needs-auth',
       network: 'needs-auth',
       degraded: 'needs-auth',
-      unknown: 'needs-auth',
+      unknown: 'unknown',
       binary_broken: 'needs-setup',
       not_installed: 'not-installed',
     };

@@ -363,7 +363,7 @@ export class SdkAdapter implements AgentProvider {
       availability: 'needs-auth',
       installed: true,
       message: sessionInvalid
-        ? '本地登录态已失效（令牌过期或账号被顶替）：请在 WorkBuddy 桌面端重新登录，然后点「重新探测」'
+        ? '本地登录态已失效（令牌过期或账号被顶替）：点「去登录」重新授权，或先在桌面端重新登录再点「重新检测」'
         : message,
       ...(this.probeAuthUrl ? { authUrl: this.probeAuthUrl } : {}),
       ...(sessionInvalid ? { probeState: 'session-invalid' as const } : {}),
