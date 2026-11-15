@@ -288,15 +288,22 @@ ok(hasLine(code('src/utils/runTiming.ts'), /interface TimingGroupStats/), 'Timin
 ok(hasLine(code('src/utils/runTiming.ts'), /noContentCount/), '分组统计含无正文计数');
 ok(hasLine(code('src/utils/runTiming.ts'), /p50: number \| null/), 'p50 字段类型正确');
 ok(hasLine(smooth, /noteReveal\(Date\.now\(\) - firstTargetAtRef\.current\)/), 'useSmoothText 上报揭示延迟');
-ok(hasLine(messages, /data-msg-timing/), '消息头有首字分段出口');
-ok(hasLine(messages, /formatTimingTitle\(message\.timing\)/), 'hover 展示四段分解');
+/* 2026-11-15：消息头的「首字 xxxxms」已按用户要求下线（红框里那串数）。
+   埋点与观测出口保留（上面几条），但界面不再渲染 —— 这里钉**反向契约**，
+   免得下次又被当成「有用的诊断」顺手加回消息头。 */
+ok(!hasLine(messages, /data-msg-timing/), '消息头不再渲染首字分段（展示已取消）');
+ok(!hasLine(messages, /formatTimingTitle\(/), '消息头不再挂四段分解的 hover 文案');
 
 // configured / comingSoon 都是平级字段，不能挤进 models / agents 数组
 ok(hasLine(idx, /function comingSoonList\(\)/), 'comingSoonList 过滤已转正的 id');
 ok((idx.match(/comingSoon: comingSoonList\(\)/g) ?? []).length >= 2, '/api/agents 与 /probe 都下发平级 comingSoon');
 ok(hasLine(idx, /const configured = agentAcceptsModel\(agentId\)/), 'configured 归属二次过滤');
 ok((idx.match(/^\s+configured,$/gm) ?? []).length >= 3, 'models 路由三个返回分支都带平级 configured');
-ok(hasLine(idx, /selectable: false,/), '否定式：agent-config 只读档 selectable:false 未被放开');
+/* 2026-11-15：可切换性改由配置读取层声明（ZCode 不声明 ⇒ 缺省只读；
+   Kimi Code 声明 true 是因为它的 --model 真生效）。钉住「缺省 = false」，
+   别哪天把缺省改成 true 把只读清单放成假控件。 */
+ok(hasLine(idx, /selectable:\s*fromConfig\.selectable\s*\?\?\s*false,/),
+  '否定式：agent-config 缺省只读（selectable 缺省 false）');
 ok(hasLine(routing, /configuredLookup\?\.\(agentId, requested\)/), '白名单分支放行本机配置模型');
 ok(hasLine(routing, /setConfiguredModelLookup/), '查表是可注入的纯判定，不带文件系统副作用');
 // A213：App 层的选中归一化 effect 也必须放行 configured —— 否则弹窗层
