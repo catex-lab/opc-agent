@@ -7,6 +7,8 @@ import { Message, PermissionMode, Session, CustomAgent, ImageBlock } from '../ty
 import { push as pushPermission, markSessionEnded } from '../permissions/permissionStore';
 // C8：SSE 静默看门狗。后端心跳注释帧唤醒 read()；这里检测 60s 无任何帧并重连。
 import { createSilenceWatchdog } from '../lib/sse-watchdog';
+// F0-02②：SSE 分帧/解析与群聊共用一份，不再各写一遍。
+import { readSseStream } from '../lib/sse-parse';
 import { notifyRunsChanged } from './useBackgroundTasks';
 import {
   applyRunEvent,
@@ -730,8 +732,6 @@ export function useChat(options: UseChatOptions) {
         return;
       }
 
-      const decoder = new TextDecoder();
-
       /** A210：本轮首个正文增量到达前端的时刻（t3）。断线重放也走同一个
        *  handleEvent，所以这个变量按 send() 一轮一份，不放在 hook 级 state。 */
       let firstContentAt: number | null = null;
@@ -968,34 +968,10 @@ export function useChat(options: UseChatOptions) {
         },
       });
 
-      /** 读一条 SSE 流（按空行分帧，半行留在 buffer 里） */
-      const consume = async (resp: Response) => {
-        const reader = resp.body?.getReader();
-        // body 为 null（响应没有流可读）时必须抛出去。静默 return 会让外层
-        // catch 不触发，isStreaming 永远停在 true —— 气泡永久转圈、
-        // 控制台零报错，只能靠刷新恢复（2026-10-19 实测的缺陷）。
-        if (!reader) throw new Error('响应体不可读（resp.body 为 null），无法接收流式数据');
-        let buffer = '';
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          // 读到任何字节就算「连接活着」——心跳注释帧也在这里 refresh。
-          // 空 value 不算（不是一次真正的读），避免空流被误判为健康。
-          if (value && value.byteLength > 0) watchdog.touch();
-          buffer += decoder.decode(value, { stream: true });
-          const frames = buffer.split('\n\n');
-          buffer = frames.pop() ?? '';
-          for (const frame of frames) {
-            const line = frame.split('\n').find(l => l.startsWith('data: '));
-            if (!line) continue;
-            try {
-              handleEvent(JSON.parse(line.slice(6)));
-            } catch {
-              // 单帧坏掉不能拖垮整条流
-            }
-          }
-        }
-      };
+      /** 读一条 SSE 流（分帧/解析见 src/lib/sse-parse.ts，与群聊共用同一份） */
+      const consume = (resp: Response) =>
+        // 读到任何字节就算「连接活着」——心跳注释帧也在这里 refresh。
+        readSseStream(resp, handleEvent, { onChunk: () => watchdog.touch() });
 
       try {
         watchdog.start();

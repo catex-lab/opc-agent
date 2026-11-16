@@ -14,6 +14,8 @@ import {
   type RunEvent,
 } from '../../shared/blocks';
 import { api } from '../api';
+// F0-02②：SSE 分帧/解析与单聊共用一份，不再各写一遍。
+import { readSseStream } from '../lib/sse-parse';
 
 /**
  * 群聊消息流 hook。
@@ -293,32 +295,8 @@ function createEventStreamSession(opts: {
     }
   };
 
-  const decoder = new TextDecoder();
-
-  const consume = async (resp: Response) => {
-    const reader = resp.body?.getReader();
-    // 与 useChat 同一处缺陷：body 为 null 时静默 return 会让外层兜底
-    // （drain）照跑，但流里剩余内容全部丢失且无任何报错。抛出去至少让
-    // catch 打出错误。
-    if (!reader) throw new Error('响应体不可读（resp.body 为 null），无法接收流式数据');
-    let buffer = '';
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split('\n\n');
-      buffer = frames.pop() ?? '';
-      for (const frame of frames) {
-        const line = frame.split('\n').find(l => l.startsWith('data: '));
-        if (!line) continue;
-        try {
-          handleEvent(JSON.parse(line.slice(6)));
-        } catch {
-          // 单帧坏掉不拖垮整条流
-        }
-      }
-    }
-  };
+  /** 读一条 SSE 流（分帧/解析见 src/lib/sse-parse.ts，与单聊共用同一份） */
+  const consume = (resp: Response) => readSseStream(resp, handleEvent);
 
   /**
    * 带断线重连地消费：断了就把还在跑的 run 各带 seq 接回去（E5）。
