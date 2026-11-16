@@ -168,18 +168,21 @@ async function main() {
     // 引号无关：index.ts 用的是双引号，别把断言钉死在一种引号风格上
     ok(/import\s*\{\s*validateDirectory\s*\}\s*from\s*["']\.\/workspaceDir\.js["']/.test(srv), '契约：server 从 workspaceDir 引入校验');
 
+    // F0-02②：会话路由已迁 server/routes/sessions.ts，会话体的接线判据跟着搬。
+    const sessionsRoutes = read('server/routes/sessions.ts');
+
     // PATCH /api/sessions/:id：非空 cwd 先校验，400 说人话
-    const patchIdx = srv.indexOf('app.patch("/api/sessions/:sessionId"');
-    const patchBody = srv.slice(patchIdx, srv.indexOf('app.delete("/api/sessions/:sessionId"'));
+    const patchIdx = sessionsRoutes.indexOf('app.patch("/api/sessions/:sessionId"');
+    const patchBody = sessionsRoutes.slice(patchIdx, sessionsRoutes.indexOf('app.delete("/api/sessions/:sessionId"'));
     ok(patchBody.includes("validateDirectory(cwd) === 'not-found'"), '契约：PATCH 会话校验工作目录');
     ok(patchBody.includes('工作目录不存在'), '契约：PATCH 校验失败的报错说人话（不是裸 ENOENT）');
 
     // POST /api/sessions：同一把尺子
-    const postIdx = srv.indexOf('app.post("/api/sessions"');
-    const postBody = srv.slice(postIdx, patchIdx);
+    const postIdx = sessionsRoutes.indexOf('app.post("/api/sessions"');
+    const postBody = sessionsRoutes.slice(postIdx, patchIdx);
     ok(postBody.includes("validateDirectory(cwd) === 'not-found'"), '契约：建会话同样校验工作目录');
 
-    // POST /api/chat：开流之前校验 + 生效顺序
+    // POST /api/chat：开流之前校验 + 生效顺序（聊天路由仍在 index.ts）
     const chatIdx = srv.indexOf('app.post("/api/chat"');
     const chatBody = srv.slice(chatIdx, srv.indexOf('app.post("/api/group-chat"'));
     ok(chatBody.includes("validateDirectory(cwd) === 'not-found'"), '契约：/api/chat 在建会话/起流之前校验');
@@ -189,8 +192,8 @@ async function main() {
     );
 
     // 最近目录端点
-    ok(srv.includes('app.get("/api/recent-directories"'), '契约：GET /api/recent-directories 存在');
-    ok(srv.includes('db.getRecentDirectories()'), '契约：端点从 db.getRecentDirectories 取数');
+    ok(sessionsRoutes.includes('app.get("/api/recent-directories"'), '契约：GET /api/recent-directories 存在');
+    ok(sessionsRoutes.includes('db.getRecentDirectories()'), '契约：端点从 db.getRecentDirectories 取数');
 
     // db 口径
     const dbSrc = read('server/db.ts');
@@ -228,7 +231,12 @@ async function main() {
     ok(wsSrc.includes('export function dirName'), '契约：workspace.ts 导出 dirName');
 
     const badgeSrc = read('src/components/WorkspaceBadge.tsx');
-    ok(badgeSrc.includes("fetch('/api/recent-directories')"), '契约：徽标面板拉最近目录');
+    // 改尺子（2026-11-17）：F0-02② API 薄层把裸 fetch 收进 api.ts（1373dcd 起），
+    // 徽标的取数形态从 `fetch('/api/recent-directories')` 变成 `api.get(...)`。
+    ok(
+      badgeSrc.includes("api.get('/api/recent-directories')"),
+      '契约：徽标面板拉最近目录'
+    );
     ok(badgeSrc.includes('切换目录'), '契约：面板有「切换目录」');
     ok(badgeSrc.includes('在资源管理器中打开'), '契约：面板有「在资源管理器中打开」');
     ok(badgeSrc.includes('最近目录'), '契约：面板有「最近目录」一节');

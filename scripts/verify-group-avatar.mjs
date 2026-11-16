@@ -208,7 +208,10 @@ const isQuad = rows =>
 // ── S7：服务端登记 / GC 接线 ─────────────────────────────────────────
 {
   const storeSrc = read('server/avatar-store.ts');
+  // F0-02②：头像路由已迁 server/routes/avatars.ts，路由接线判据跟着搬
+  // （server/index.ts 只留 registerAvatarRoutes(app) 的调用）。
   const indexSrc = read('server/index.ts');
+  const avatarRoutesSrc = read('server/routes/avatars.ts');
   ok(
     /export function setGroupAvatarFile\(/.test(storeSrc) &&
       /export function clearGroupAvatarFile\(/.test(storeSrc),
@@ -219,16 +222,17 @@ const isQuad = rows =>
     'isFileReferenced 把群登记算进「还有没有人用」（共用图不被误删）'
   );
   ok(
-    /kind !== "user" && kind !== "agent" && kind !== "group"/.test(indexSrc),
+    /kind !== "user" && kind !== "agent" && kind !== "group"/.test(avatarRoutesSrc),
     'POST /api/avatars 接受 kind=group'
   );
   ok(
-    /app\.delete\("\/api\/avatars\/group\/:sessionId"/.test(indexSrc),
+    /app\.delete\("\/api\/avatars\/group\/:sessionId"/.test(avatarRoutesSrc) &&
+      /registerAvatarRoutes\(app\)/.test(indexSrc),
     'DELETE /api/avatars/group/:sessionId 存在'
   );
   ok(
-    /setGroupAvatarFile\(sessionId, file\)/.test(indexSrc) &&
-      /clearGroupAvatarFile\(req\.params\.sessionId\)/.test(indexSrc),
+    /setGroupAvatarFile\(sessionId, file\)/.test(avatarRoutesSrc) &&
+      /clearGroupAvatarFile\(req\.params\.sessionId\)/.test(avatarRoutesSrc),
     '上传登记引用、移除解除引用（GC 才有依据）'
   );
 }

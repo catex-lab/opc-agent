@@ -256,23 +256,29 @@ try {
 
 // ═══════════════════════ [3] 源码契约 ═══════════════════════
 group('3. 源码契约：三条写入路径收敛到同一把尺子');
-function srcContract(chat: string, helper: string) {
+function srcContract(chat: string, sessions: string, helper: string) {
+  // F0-02②：PATCH/POST /api/sessions 已迁 server/routes/sessions.ts——三条写入
+  // 路径的契约跨两个文件：/api/chat 在 index.ts，另两条在 routes/sessions.ts。
   return {
     helperImportsDb: hasLine(helper, /import \{ getOrCreateProject \} from '\.\/db\.js';/),
     helperGetOrCreate: hasLine(helper, /getOrCreateProject\(cwd\)/),
     helperGuardsEmpty: hasLine(helper, /typeof cwd === 'string' && cwd \?/),
     chatCall: hasLine(chat, /project_id: projectIdForCwd\(cwd\),/),
     chatImport: hasLine(chat, /import \{ projectIdForCwd \} from "\.\/project-ownership\.js";/),
-    patchCall: (chat.match(/updates\.project_id = projectIdForCwd\(cwd\);/g) ?? []).length === 1,
-    sessionsCall: hasLine(chat, /getOrCreateProject\(cwd\) : undefined/),
-    routeGuards: (chat.match(/validateDirectory\(cwd\) === 'not-found'/g) ?? []).length >= 3,
+    patchCall: (sessions.match(/updates\.project_id = projectIdForCwd\(cwd\);/g) ?? []).length === 1,
+    sessionsCall: hasLine(sessions, /getOrCreateProject\(cwd\) : undefined/),
+    routeGuards:
+      (chat.match(/validateDirectory\(cwd\) === 'not-found'/g) ?? []).length +
+        (sessions.match(/validateDirectory\(cwd\) === 'not-found'/g) ?? []).length >=
+      3,
     backfillSameSource: hasLine(code('server/db.ts'), /const project = getOrCreateProject\(row\.cwd\);/),
   };
 }
 type Contract = ReturnType<typeof srcContract>;
 const CHAT = code('server/index.ts');
+const SESSIONS = code('server/routes/sessions.ts');
 const HELPER = code('server/project-ownership.ts');
-const good = srcContract(CHAT, HELPER);
+const good = srcContract(CHAT, SESSIONS, HELPER);
 {
   const labels: Record<keyof Contract, string> = {
     helperImportsDb: '唯一入口复用 db.getOrCreateProject',
@@ -286,7 +292,7 @@ const good = srcContract(CHAT, HELPER);
     backfillSameSource: '★ 与启动回填共用同一个归一化/去重函数',
   };
   for (const k of Object.keys(good) as Array<keyof Contract>) ok(good[k], labels[k]);
-  ok(Object.values(good).every(Boolean) && !srcContract('', '').chatCall,
+  ok(Object.values(good).every(Boolean) && !srcContract('', '', '').chatCall,
     '肯定式：空源码下判据会红（不是恒绿摆设）');
 }
 
@@ -296,6 +302,7 @@ if (PROBE === 'no-chat-ownership') {
   // 退回 A220 之前的坏版本：/api/chat 建会话时干脆不写 project_id
   const bad = srcContract(
     CHAT.replace(/project_id: projectIdForCwd\(cwd\),/g, 'project_id: null,'),
+    SESSIONS,
     HELPER
   );
   ok(!bad.chatCall, '反向探针(no-chat-ownership)：「首条消息带 project_id」判据真的变红');

@@ -363,16 +363,21 @@ let aPids: number[] = [];
       elapsedMs >= 2 * INJECTED_TIMEOUT && elapsedMs < 15_000, `elapsed=${elapsedMs}ms`);
     say('A3', '收到 error 事件（且没有 init —— 会话没建出来）', types.includes('error') && !types.includes('init'), `types=${types.join(',')}`);
     say('A4', '文案含「已自动重启」（诚实说明做过自愈）', message.includes('已自动重启'), message.slice(0, 90));
-    say('A5', '文案含「重启 Hermes 桌面端」（唯一剩下的动作，可执行）', message.includes('重启 Hermes 桌面端'), message.slice(0, 90));
+    /* 改尺子（2026-11-17）：e1f6f3a 两处有意变更后本段一直失真（整链此前从未
+       跑到本段才暴露）——① 文案模板改为插 agent 名（`请重启 ${name} 桌面端`，
+       夹具名是 Fake Hermes）；② SESSION_NEW_RETRY_BUDGET 1→2（瞬态第二次重试
+       能过），持久超时时共拉起 3 个进程。 */
+    say('A5', '文案含「重启 Fake Hermes 桌面端」（唯一剩下的动作，可执行，带 agent 名）', message.includes('重启 Fake Hermes 桌面端'), message.slice(0, 90));
     say('A6', '文案不再是旧的一句死板「创建 ACP 会话失败」', !message.includes('创建 ACP 会话失败'), message.slice(0, 90));
-    say('A7', '自愈重建恰好发生一次（拉起 2 个进程）', aPids.length === 2, `launches=${aPids.length}`);
-    // 反向断言：预算耗尽后必须安静 —— 第三次进程绝不允许被拉起来
+    say('A7', '自愈重建共两次（SESSION_NEW_RETRY_BUDGET=2，拉起 3 个进程）', aPids.length === 3, `launches=${aPids.length}`);
+    // 反向断言：预算耗尽后必须安静 —— 第四个进程绝不允许被拉起来
     await sleep(2500);
-    say('A8', '报错后不再自动重建（2.5s 后仍是 2 个进程 = 预算 1）', readLaunches().length === 2, `launches=${readLaunches().length}`);
+    say('A8', '报错后不再自动重建（2.5s 后仍是 3 个进程 = 预算 2）', readLaunches().length === 3, `launches=${readLaunches().length}`);
     const dead1 = aPids[0] !== undefined && await waitPidDead(aPids[0]);
     const dead2 = aPids[1] !== undefined && await waitPidDead(aPids[1]);
+    const dead3 = aPids[2] !== undefined && await waitPidDead(aPids[2]);
     say('A9', '第一个进程（原连接）整棵树已被杀', dead1, `pid=${aPids[0] ?? 'N/A'} alive=${aPids[0] !== undefined ? pidAlive(aPids[0]) : 'N/A'}`);
-    say('A10', '第二个进程（重建的连接）也已被杀，不留挂死进程', dead2, `pid=${aPids[1] ?? 'N/A'} alive=${aPids[1] !== undefined ? pidAlive(aPids[1]) : 'N/A'}`);
+    say('A10', '第二、三个进程（重建的连接）也已被杀，不留挂死进程', dead2 && dead3, `pid=${aPids[1] ?? 'N/A'}/${aPids[2] ?? 'N/A'}`);
   } finally {
     // 补丁位还原（正常模式没有补丁，这里保证探针后跑也干净）
     PROTO.destroyConnection = ORIGINAL_DESTROY;
@@ -394,13 +399,13 @@ console.log('[B] 自愈后同一适配器换全新进程正常工作');
 
     say('B1', '收到 init/text/done（全新进程能正常建会话并回包）', types.includes('init') && types.includes('text') && types.includes('done'), `types=${types.join(',')}`);
     say('B2', '没有 error 事件', !types.includes('error'), errorMessage(events).slice(0, 80));
-    say('B3', '拉起的是全新进程（pid 与 [A] 的两个都不同）',
-      pids.length === 3 && pids[2] !== aPids[0] && pids[2] !== aPids[1], `pids=${pids.join(',')}`);
+    say('B3', '拉起的是全新进程（pid 与 [A] 的三个都不同）',
+      pids.length === 4 && pids[3] !== aPids[0] && pids[3] !== aPids[1] && pids[3] !== aPids[2], `pids=${pids.join(',')}`);
     say('B4', '文本内容来自新进程（hello）', text?.content === 'hello', `text=${String(text?.content)}`);
     const sessions = (bAdapter as unknown as { acpSessions: Map<string, string> }).acpSessions;
     const mapped = sessions.get('sess-ok2') ?? '';
     say('B5', '会话映射指向新进程的 sessionId（内嵌新 pid）',
-      mapped.includes(String(pids[2] ?? '')), `mapped=${mapped}`);
+      mapped.includes(String(pids[3] ?? '')), `mapped=${mapped}`);
   } finally {
     bAdapter?.dispose();
   }

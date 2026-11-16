@@ -212,7 +212,8 @@ async function main() {
   // ============ 5. 源码契约 ============
   {
     // —— 5a. 路由：根来自服务端，不来自请求 ——
-    const srv = read('server/index.ts');
+    // F0-02②：/api/fs/* 路由已迁 server/routes/sessions.ts，接线判据跟着搬。
+    const srv = read('server/routes/sessions.ts');
     ok(srv.includes('app.get("/api/fs/list"'), '契约：GET /api/fs/list 存在');
     ok(
       /import\s*\{\s*FS_ERROR_TEXT,\s*listDir/.test(srv) || /import\s*\{\s*listDir/.test(srv),
@@ -252,14 +253,29 @@ async function main() {
     ok(app.includes('const showWorkspace ='), '契约：App.tsx 计算 showWorkspace');
     const showWs = app.slice(app.indexOf('const showWorkspace ='), app.indexOf('const showWorkspace =') + 300);
     ok(showWs.includes("currentSession.kind !== 'group'"), '契约：群聊不渲染工作区（成员 cwd 各不相同）');
-    ok(showWs.includes('!compact'), '契约：窄屏单栏模式不渲染（300px 会挤垮聊天区）');
+    // 改尺子（2026-11-17）：92c5b5a（C2 窄窗工作区抽屉）把「窄屏不渲染」换成
+    // 「窄屏由面板自身切换抽屉形态」，showWorkspace 不再依赖 compact。
+    // 这四条原口径在该提交后一直失真（整链此前从未跑到本段才暴露）。
+    ok(
+      showWs.includes('workspaceOpen && !!currentSession'),
+      '契约：显示条件 = 开关 + 有会话（窄屏形态由面板自身负责，C2 抽屉）'
+    );
     ok(app.includes('<WorkspacePanel'), '契约：App.tsx 挂载 WorkspacePanel');
-    ok(app.includes('onToggleWorkspace={compact ? undefined : toggleWorkspace}'), '契约：窄屏不传开关（不摆假按钮）');
+    ok(
+      app.includes('onToggleWorkspace={toggleWorkspace}'),
+      '契约：开关常传（展开/收起入口由头部与面板栏头按状态分工，C2 抽屉）'
+    );
 
     const header = read('src/components/ChatHeader.tsx');
     ok(header.includes('onToggleWorkspace?: () => void'), '契约：ChatHeader 接收开关回调');
-    ok(header.includes('{onToggleWorkspace && ('), '契约：不传回调就不渲染按钮');
-    ok(header.includes('aria-pressed={!!workspaceOpen}'), '契约：开关有可访问状态');
+    ok(
+      header.includes('{onToggleWorkspace && !workspaceOpen && ('),
+      '契约：只在工作区收起时画展开钮（展开态的收起入口在面板栏头，不摆两处）'
+    );
+    ok(
+      header.includes('data-workspace-toggle="expand"') && header.includes('aria-label='),
+      '契约：展开钮有可达性标注（aria-label + 稳定测试锚点）'
+    );
   }
 
   fs.rmSync(tmp, { recursive: true, force: true });

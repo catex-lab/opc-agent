@@ -336,9 +336,16 @@ async function main() {
     const sseText = await sse.text();
     ok(sseText.includes(REPLY), '对话链路通：假端点的回复出现在 SSE 流里',
       sseText.includes(REPLY) ? '' : sseText.slice(0, 300));
-    ok(mock.seen.length === 1 && mock.seen[0].auth.includes('sk-test-1234567890'),
-      '请求带上了 Authorization: Bearer <Key>', mock.seen[0]?.auth);
-    ok(mock.seen[0]?.body?.includes('deepseek-chat'), '请求体带上了模型名');
+    /* 改尺子（2026-11-17，c091617 后失效）：canary 自动体检的门控改为「探测完成
+       才发真实 ping」（canary.ts scheduleAutoCanaries 的 probedAt 门）——未探测时
+       的 ping 快速失败、碰不到假端点，探测后的 ping 会**真的打进来**。所以本段
+       只钉「对话那一笔」：带 Key、带模型名、恰好一次；后台体检（prompt=ping）
+       是诚实体检的一部分，不再要求它不发生。 */
+    const chatHits = mock.seen.filter(s => String(s.body ?? '').includes('你好'));
+    ok(chatHits.length === 1 && chatHits[0].auth.includes('sk-test-1234567890'),
+      '对话请求带上了 Authorization: Bearer <Key>（恰好一次）',
+      `seen=${mock.seen.length} chat=${chatHits.length} auth=${chatHits[0]?.auth}`);
+    ok(chatHits[0]?.body?.includes('deepseek-chat'), '对话请求体带上了模型名');
 
     // ── 6. 校验失败路径 ────────────────────────────────────────
     const badUrl = await fetch(`${base}/api/agents/custom`, {

@@ -236,7 +236,8 @@ console.log('\n[8] 源码契约');
   ok(!/localStorage\s*\./.test(badge), '[契约] 工作区徽标不再调 localStorage 存忽略项');
   ok(!/opc_ignored_dirs/.test(badge), '[契约] 那个按端口分源的键已彻底移除');
 
-  const idx = fs.readFileSync(path.join(ROOT, 'server/index.ts'), 'utf8');
+  // F0-02②：最近目录端点已迁 server/routes/sessions.ts，接线判据跟着搬。
+  const idx = fs.readFileSync(path.join(ROOT, 'server/routes/sessions.ts'), 'utf8');
   ok(
     /recent-directories\/dismiss/.test(idx) && /recent-directories\/restore/.test(idx),
     '[契约] 忽略与恢复两个端点都接在服务端上'

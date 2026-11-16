@@ -471,8 +471,10 @@ section('[F] 源码契约：查表顺序、落库键来源、选择器条件渲�
     'store.answer 只在请求持久化时才把 persistAgent 放进请求体');
 
   const settingsSrc = src('../src/components/SettingsPage.tsx');
-  ok(/fetch\('\/api\/permission-grants'\)/.test(settingsSrc), '设置页真的在拉授权清单');
-  ok(/method: 'DELETE'/.test(settingsSrc) && /data-permission-revoke=/.test(settingsSrc),
+  // 改尺子（2026-11-17）：F0-02② API 薄层把裸 fetch 收进 api.ts（1373dcd），
+  // 设置页取数/撤销从 `fetch(...)`/`method:'DELETE'` 变成 `api.get(...)`/`api.delete(...)`。
+  ok(/api\.get\('\/api\/permission-grants'\)/.test(settingsSrc), '设置页真的在拉授权清单');
+  ok(/api\.delete\('\/api\/permission-grants'/.test(settingsSrc) && /data-permission-revoke=/.test(settingsSrc),
     '设置页真的在撤销（不是摆一颗没接线的按钮）');
 }
 

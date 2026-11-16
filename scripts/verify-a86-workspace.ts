@@ -63,7 +63,8 @@ function checkContracts() {
   // 只读定位不能破：这条是整个面板的安全边界
   ok(!/export function (write|remove|mkdir)/.test(fsSrc), '契约：fs.ts 仍然没有写/删/建目录');
 
-  const idx = read('server/index.ts');
+  // F0-02②：/api/fs/* 路由已迁 server/routes/sessions.ts，接线判据跟着搬。
+  const idx = read('server/routes/sessions.ts');
   ok(idx.includes('"/api/fs/read"'), '契约：注册 GET /api/fs/read');
   ok(idx.includes('"/api/fs/raw"'), '契约：注册 GET /api/fs/raw');
   ok(/kind !== "image"[\s\S]{0,80}415/.test(idx), '契约：/api/fs/raw 只放行图片（其余 415）');

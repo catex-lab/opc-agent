@@ -142,7 +142,8 @@ console.log('\n[2] 命令注入面：探测层 + 执行层各一道');
     '★ 反向探针：执行层恒放行 → 接线契约判红',
   );
   // 服务端不接受前端传命令字符串，命令只来自重新探测
-  const verifyRoute = read('server/index.ts');
+  // F0-02②：验证路由已迁 server/routes/verify.ts，接线判据跟着搬。
+  const verifyRoute = read('server/routes/verify.ts');
   ok(
     /detectVerifyCommands\(cwd\)/.test(verifyRoute) && /ids\.includes\(c\.id\)/.test(verifyRoute),
     '肯定式：/api/verify/run 只按 id 从探测结果取命令，不接受前端命令字符串',

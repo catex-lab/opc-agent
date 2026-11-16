@@ -25,7 +25,7 @@ OPC Agent — 随安装包分发的第三方组件许可清单
 
 ──────────────────────────────────────────────────────────────────────────────
 
-@agentclientprotocol/sdk 1.7.0
+@agentclientprotocol/sdk 1.9.0
   许可：Apache-2.0
   版权：（该包未随附独立版权行；包元数据 author：Zed Industries）
   来源：后端依赖（原样进 app.asar）
@@ -225,13 +225,12 @@ OPC Agent — 随安装包分发的第三方组件许可清单
   版权：Copyright (c) 2024 TDesign
   来源：前端打包（Vite 内联进 dist）
 
-@tencent-ai/agent-sdk 0.3.279
+@tencent-ai/agent-sdk 0.3.304
   许可：MIT
   版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
   来源：后端依赖（原样进 app.asar）
   内嵌子包（随父包一起进安装包，许可按各自的声明）：
-    @tencent-ai/codebuddy-code 2.167.0 —— 许可：SEE LICENSE IN README.md
-      ⚠️ 该子包声明「许可见 README.md」，但 README.md 未随包提供 —— 许可条款无法从包内查证
+    @tencent-ai/codebuddy-code 2.184.0 —— 许可：SEE LICENSE IN README.md
 
 @tootallnate/once 2.0.1
   许可：MIT

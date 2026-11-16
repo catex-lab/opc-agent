@@ -295,8 +295,10 @@ ok(!hasLine(messages, /data-msg-timing/), '消息头不再渲染首字分段（�
 ok(!hasLine(messages, /formatTimingTitle\(/), '消息头不再挂四段分解的 hover 文案');
 
 // configured / comingSoon 都是平级字段，不能挤进 models / agents 数组
-ok(hasLine(idx, /function comingSoonList\(\)/), 'comingSoonList 过滤已转正的 id');
-ok((idx.match(/comingSoon: comingSoonList\(\)/g) ?? []).length >= 2, '/api/agents 与 /probe 都下发平级 comingSoon');
+// F0-02②：名册路由与 comingSoonList 已迁 server/routes/agent-roster.ts，判据跟着搬。
+const rosterRoutes = code('server/routes/agent-roster.ts');
+ok(hasLine(rosterRoutes, /function comingSoonList\(\)/), 'comingSoonList 过滤已转正的 id');
+ok((rosterRoutes.match(/comingSoon: comingSoonList\(\)/g) ?? []).length >= 2, '/api/agents 与 /probe 都下发平级 comingSoon');
 ok(hasLine(idx, /const configured = agentAcceptsModel\(agentId\)/), 'configured 归属二次过滤');
 ok((idx.match(/^\s+configured,$/gm) ?? []).length >= 3, 'models 路由三个返回分支都带平级 configured');
 /* 2026-11-15：可切换性改由配置读取层声明（ZCode 不声明 ⇒ 缺省只读；

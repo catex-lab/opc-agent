@@ -574,10 +574,13 @@ async function main() {
     ok(/updates\.permission_mode !== undefined/.test(db), '[5] updateSession 认这一列');
 
     const api = read('server/index.ts');
+    // F0-02②：permissionModeOf 校验入口已随会话路由迁 server/routes/sessions.ts；
+    // 三处回落（聊天/群聊/工作流）仍在 index.ts。
+    const sessionRoutes = read('server/routes/sessions.ts');
     ok(/permissionMode \|\| session\.permission_mode \|\| 'default'/.test(api), '[5] 一对一：请求体 > 会话值 > default');
     const fallbackHits = (api.match(/permissionMode \|\| session\.permission_mode/g) ?? []).length;
     ok(fallbackHits === 3, '[5] 群聊与工作流同口径（三处回落，漏一条就是半修）', `命中 ${fallbackHits}`);
-    ok(/function permissionModeOf/.test(api), '[5] 合法性有单一校验入口（非法值 400）');
+    ok(/function permissionModeOf/.test(sessionRoutes), '[5] 合法性有单一校验入口（非法值 400）');
 
     const sessions = read('src/hooks/useSessions.ts');
     ok(/permission_mode \?\? undefined/.test(sessions), '[5] 前端从接口行里映射这一档（漏映射=刷新即丢）');

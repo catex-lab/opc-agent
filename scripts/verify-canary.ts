@@ -99,9 +99,13 @@ function contracts(mutate?: (src: string, file: string) => string): void {
       assert.match(S('server/agents/canary.ts'), /canaryEnabled === false/, '缺少开关判定');
     });
     check('GET /api/agents 必须触发自动补跑；手动端点必须存在', () => {
+      // F0-02②：名册路由已迁 server/routes/agent-roster.ts，接线判据跟着搬；
+      // index.ts 只留 registerAgentRosterRoutes(app) 的调用。
       const idx = S('server/index.ts');
-      assert.ok(idx.includes('scheduleAutoCanaries('), 'GET /api/agents 缺自动触发');
-      assert.ok(idx.includes('/api/agents/canary'), '缺手动端点');
+      const roster = S('server/routes/agent-roster.ts');
+      assert.ok(roster.includes('scheduleAutoCanaries('), 'GET /api/agents 缺自动触发');
+      assert.ok(roster.includes('/api/agents/canary'), '缺手动端点');
+      assert.ok(idx.includes('registerAgentRosterRoutes('), '名册路由接线缺失');
     });
   }
 }

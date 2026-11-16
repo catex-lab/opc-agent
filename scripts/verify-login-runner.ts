@@ -98,10 +98,13 @@ function contracts(mutate?: (src: string, file: string) => string): void {
       assert.match(S('server/agents/loginRunner.ts'), /shell:\s*false/);
     });
     check('三个端点齐备（start / state / stop）', () => {
+      // F0-02②：登录代管端点已迁 server/routes/agent-roster.ts，接线判据跟着搬。
       const idx = S('server/index.ts');
-      assert.ok(idx.includes('/api/agents/login-terminal/start'), '缺 start');
-      assert.ok(idx.includes('/api/agents/login-terminal/state'), '缺 state');
-      assert.ok(idx.includes('/api/agents/login-terminal/stop'), '缺 stop');
+      const roster = S('server/routes/agent-roster.ts');
+      assert.ok(roster.includes('/api/agents/login-terminal/start'), '缺 start');
+      assert.ok(roster.includes('/api/agents/login-terminal/state'), '缺 state');
+      assert.ok(roster.includes('/api/agents/login-terminal/stop'), '缺 stop');
+      assert.ok(idx.includes('registerAgentRosterRoutes('), '名册路由接线缺失');
     });
   }
 }

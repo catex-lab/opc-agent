@@ -115,19 +115,28 @@ console.log('\n[1] 源码契约：按会话记句柄，不是全局单值');
   // 两个变量名刻意不同（`busy` vs `turn`），这样两条断言不会互相兜住。
   ok(/const busy = currentSessionId \? turnsRef\.current\.get\(currentSessionId\) : undefined/.test(code),
     '发送前的互斥判据是「这个会话」而不是全局');
-  ok(/if \(busy && !busy\.stopped\)/.test(code),
-    '已按停止的句柄不再算忙（停完能立刻重发）');
-  ok(/const turn = currentSessionId \? turnsRef\.current\.get\(currentSessionId\) : undefined/.test(code),
-    '停止取的是当前会话的句柄');
+  /* 改尺子（2026-11-17）：A227 把「拦住并提示」改成「打断并追加」——同一会话
+     在跑时停掉旧轮、新指令照常走发送链（useChat.ts 内注释为凭）。三条原口径
+     在该变更后失真（整链此前从未跑到本段才暴露）。A142 的三条意图保留：
+     stopped 句柄不算忙、按会话取句柄、守卫分支必须说话。 */
+  ok(
+    /busy && !busy\.stopped && currentSessionId && stopActiveTurn\(currentSessionId\)/.test(code),
+    '已按停止的句柄不再算忙（stopActiveTurn 只打断未停止的当前轮）'
+  );
+  ok(
+    /stopActiveTurn\(currentSessionId\)/.test(code) && /const turn = turnsRef\.current\.get\(sessionId\)/.test(code),
+    '停止取的是当前会话的句柄（打断走 stopActiveTurn，摘除按 turn.sessionId）'
+  );
   ok(/turnsRef\.current\.delete\(turn\.sessionId\)/.test(code),
     '一轮结束时按 turn.sessionId 摘（id 被 applyInit 换过也摘得对）');
   // 否定式必须配肯定式：不能只看「没有 setIsLoading」——
   // 整个删掉 useChat 也满足那一条。上面五条正向断言就是配对。
   ok(/runningIds/.test(code) && /setRunningIds/.test(code),
     'runningIds 既读又写（不是只声明不用的摆设）');
-  // 「拦住但不静默」：守卫分支必须说话，不能像修复前那样一声不响地 return
-  ok(/if \(busy && !busy\.stopped\) \{\s*MessagePlugin\.warning\(/.test(code),
-    '同一会话互斥时给出提示，而不是静默 return');
+  // 「拦住但不静默」的后继形态：打断必须说话（A227 的「已打断上一轮…」），
+  // 不能像修复前那样一声不响地 return
+  ok(/MessagePlugin\.warning\('已打断上一轮/.test(code),
+    '同一会话打断时给出提示，而不是静默替换');
 }
 
 /* ══════════ [2] 行为：A 在跑时 B 还能发 ══════════ */

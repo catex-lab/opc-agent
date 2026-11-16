@@ -84,7 +84,11 @@ async function main() {
   delete process.env.OPC_SSE_HEARTBEAT_MS;
 
   // [7] 静态闸门：6 条 SSE 流端点都接了心跳（防「只修一条就是半修」）
-  const src = readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8');
+  // F0-02②：路由分区后调用点分散在 index.ts 与 server/routes/*，合并计数。
+  const src =
+    readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8') +
+    readFileSync(new URL('../server/routes/verify.ts', import.meta.url), 'utf8') +
+    readFileSync(new URL('../server/routes/image.ts', import.meta.url), 'utf8');
   const calls = (src.match(/startSseHeartbeat\(res\)/g) ?? []).length;
   ok(calls >= 6, '所有 SSE 端点都接了心跳（>=6 处调用）', `实际 ${calls} 处`);
   // 反向探针：如果从没调用过，上面断言必须变红

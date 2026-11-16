@@ -114,7 +114,8 @@ function checkContracts() {
   ok(view.includes('refreshCdpDescriptor'), '契约：browser-view 引入 CDP 刷新');
 
   // 服务端路由只能读文件，不能 import electron（浏览器开发态服务跑在纯 Node 里）
-  const server = read('server/index.ts');
+  // F0-02②：/api/browser/cdp 已迁 server/routes/sessions.ts，接线判据跟着搬。
+  const server = read('server/routes/sessions.ts');
   ok(server.includes('app.get("/api/browser/cdp"'), '契约：服务端暴露 /api/browser/cdp');
   ok(server.includes('fs.readFileSync(file, "utf8")'), '契约：服务端从文件读描述符（唯一真相）');
   const serverElectron = readdirSyncSafe('server').filter(f => /\.(ts|js)$/.test(f) &&
