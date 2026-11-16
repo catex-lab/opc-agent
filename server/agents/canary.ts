@@ -173,6 +173,11 @@ export function scheduleAutoCanaries(agentIds: string[]): void {
     if (inflight.has(id)) return false;
     const info = registry.get(id);
     if (!info) return false;
+    // 从未探测过的不自动 canary（2026-11-16 seg39 归因）：名册冷启动时探测
+    // 队列本身就带着 PATH 扫描 + 进程风暴，canary 的真实 ping 再叠一层——
+    // 还会顺带在 CLI send 路径里同步重扫一遍 PATH。探测结果回来后
+    // （probedAt Map 写入），下一轮名册轮询自然会触发 canary。
+    if (!registry.hasProbedResult(id)) return false;
     if (info.status.availability === 'not-installed' || info.status.availability === 'unsupported') {
       return false;
     }

@@ -649,6 +649,21 @@ class AgentRegistry {
   }
 
   /**
+   * 该 Agent 是否已经返回过至少一次**真实探测结果**。
+   *
+   * 与 `AgentStatus.probedAt`（字符串）不是一回事：`unknownStatus()` 给未探测
+   * 条目也填了时间戳，不能当「探过」的判据。这里的依据是 `probedAt` Map——
+   * 只有 probeTask 的真实结果（含超时后的真实回包）写入过才为 true。
+   *
+   * 用途：canary 自动触发的门（2026-11-16 seg39 归因）——未探测过的 Agent
+   * 不发真实 ping，否则 canary 会在探测窗口上再叠一层进程风暴 + send 路径
+   * 的同步 PATH 重扫。
+   */
+  hasProbedResult(id: string): boolean {
+    return this.probedAt.has(id);
+  }
+
+  /**
    * 若尚未探测过，就在后台起一轮。
    *
    * 为什么不 await：ACP 握手要 20 秒以上，把首次名册请求挂在那里，

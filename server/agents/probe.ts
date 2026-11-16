@@ -117,6 +117,44 @@ function isFile(p: string): boolean {
 }
 
 /**
+ * PATH 扫描的正向缓存（2026-11-16 seg39 归因）。
+ *
+ * 为什么缓存：一次全量扫描 = PATH 目录数 × PATHEXT 数量级的 statSync 连发，
+ * 是**一整段不可分割的同步阻塞**（本机 CPU 档案实测：探测窗口里 statSync+stat
+ * 占事件循环 ~30%，单段突发 1-3 秒；负载重时退化成多秒级卡顿）。而同一条命令
+ * 会在探测、canary 的 send 路径、模型目录刷新里被**反复**全量扫描。
+ *
+ * 命中缓存后只对已解析路径做**一次** statSync 复核 —— 几百次 stat 变一次。
+ *
+ * 两条边界（都不能破）：
+ * - **负向不缓存**：没找到就是没找到，不记 —— 新装的 Agent 必须能在下一轮
+ *   探测被发现，缓存 null 会把「装好了」吞掉。
+ * - **正向复核**：命中后 stat 一下缓存路径，二进制被删/移动 → 丢缓存、
+ *   全量重扫。「重新探测」在卸载场景下的语义不变。
+ */
+const exeScanCache = new Map<string, string>();
+
+function exeScanCacheKey(cmd: string, extraDirs: string[], extraExts: string[]): string {
+  return `${cmd}\u0000${extraDirs.join('\u0001')}\u0000${extraExts.join('\u0001')}`;
+}
+
+function findExecutableCached(
+  cmd: string,
+  extraDirs: string[],
+  extraExts: string[]
+): string | null {
+  const key = exeScanCacheKey(cmd, extraDirs, extraExts);
+  const hit = exeScanCache.get(key);
+  if (hit) {
+    if (isFile(hit)) return hit;
+    exeScanCache.delete(key);
+  }
+  const full = findOneExecutable(cmd, extraDirs, extraExts);
+  if (full) exeScanCache.set(key, full);
+  return full;
+}
+
+/**
  * 在 PATH 中查找可执行文件。
  * @param cmd 命令名或路径（传数组时按顺序找，第一个命中的用）
  * @param extraDirs 额外搜索目录（部分工具装在 PATH 之外，如 Hermes 的 bin）
@@ -130,7 +168,7 @@ export function findExecutable(
 ): string | null {
   const names = Array.isArray(cmd) ? cmd : [cmd];
   for (const name of names) {
-    const hit = findOneExecutable(name, extraDirs, extraExts);
+    const hit = findExecutableCached(name, extraDirs, extraExts);
     if (hit) return hit;
   }
   return null;
