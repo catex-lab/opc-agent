@@ -129,7 +129,7 @@ function cacheInvalidationContract(indexSrc: string, cacheSrc: string): boolean 
     /^\s*sdkModelsProbedAt = 0;/m.test(entry) &&
     /^\s*invalidateCatalog\(\);/m.test(entry);
   const realCatalogCall = /import\s*\{[^}]*invalidateCatalog[^}]*\}\s*from\s*["']\.\/agents\/modelCatalog\.js["']/.test(cache);
-  const imported = /import\s*\{[^}]*invalidateAllModelCaches[^}]*\}\s*from\s*["']\.\/model-cache\.js["']/.test(idx);
+  const imported = /import\s*\{[^}]*invalidateAllModelCaches[^}]*\}\s*from\s*["']\.{1,2}\/model-cache\.js["']/.test(idx);
   const everyRouteWired = CACHE_INVALIDATION_ROUTES.every(sig => {
     const body = routeBody(idx, sig);
     return body.length > 0 && /^\s*invalidateAllModelCaches\(/m.test(body);
@@ -582,6 +582,13 @@ function honestEmptySummary(catalogSrc: string): boolean {
   );
 
   const indexSrc = read('server/index.ts');
+  // F0-02②：模型清单 / 凭据三端点已迁到 server/routes/*，接线判据改在
+  // 「index + 分区文件」的合并源上跑 —— 否则路由一搬家，接线契约就整片假红。
+  const wiringSrc = [
+    indexSrc,
+    read('server/routes/model-catalog.ts'),
+    read('server/routes/agent-credentials.ts'),
+  ].join('\n');
   ok(
     indexSrc.includes('await registry.modelsFor('),
     '接线：/api/agents/:id/models 必须 await（漏了 await 会返回 Promise 序列化后的空对象）'
@@ -599,10 +606,10 @@ function honestEmptySummary(catalogSrc: string): boolean {
     '接口：默认模型 = 定义表里的（opencode）优先，其次是 CLI 自己声明的（codex 的 config.toml）'
   );
   const cacheSrc = read('server/model-cache.ts');
-  const idxCode = stripComments(indexSrc);
+  const idxCode = stripComments(wiringSrc);
   const cacheEntry = topLevelFunctionBody(stripComments(cacheSrc), /export function invalidateAllModelCaches\(/);
   ok(
-    cacheInvalidationContract(indexSrc, cacheSrc),
+    cacheInvalidationContract(wiringSrc, cacheSrc),
     '接线：保存/清除凭据后必须作废目录（否则填完 Key 要等 24 小时才看见新模型）',
     '四条变更路径必须都走统一入口，且入口要清干净 catalog + 三层 SDK 缓存'
   );
@@ -617,45 +624,46 @@ function honestEmptySummary(catalogSrc: string): boolean {
       /^\s*sdkModelsProbedAt = 0;/m.test(cacheEntry),
     '接线：统一入口必须同时清三层 SDK 缓存（清单 / 默认模型 / 取数时刻）'
   );
-  ok(/import\s*\{[^}]*invalidateAllModelCaches[^}]*\}\s*from\s*["']\.\/model-cache\.js["']/.test(idxCode),
-    '接线：index.ts 必须从 model-cache.js 导入统一入口');
+  ok(/import\s*\{[^}]*invalidateAllModelCaches[^}]*\}\s*from\s*["']\.{1,2}\/model-cache\.js["']/.test(idxCode),
+    '接线：index.ts / 分区路由必须从 model-cache.js 导入统一入口');
   for (const sig of CACHE_INVALIDATION_ROUTES) {
     ok(/^\s*invalidateAllModelCaches\(/m.test(routeBody(idxCode, sig)),
       `接线：${sig} 走统一失效入口（不是各清一半）`);
   }
   ok(!/^\s*invalidateCatalog\(/m.test(idxCode),
-    '接线：index.ts 不许绕过统一入口直接调 invalidateCatalog（会半失效）');
+    '接线：index.ts / 分区路由不许绕过统一入口直接调 invalidateCatalog（会半失效）');
 
   // ★ 反向探针：把实现逐项改坏，判据必须变红，否则这条绿是放水放出来的。
   const brokenPairs: Array<[string, string, string]> = [
-    ['统一入口不再作废 catalog', indexSrc,
+    ['统一入口不再作废 catalog', wiringSrc,
       cacheSrc.replace('  invalidateCatalog();', '  // 故意省略：半失效')],
-    ['统一入口不清 SDK 清单', indexSrc,
+    ['统一入口不清 SDK 清单', wiringSrc,
       cacheSrc.replace('  cachedModels = [];', '  cachedModels = cachedModels;')],
-    ['统一入口不清 SDK 取数时刻', indexSrc,
+    ['统一入口不清 SDK 取数时刻', wiringSrc,
       cacheSrc.replace('  sdkModelsProbedAt = 0;', '  sdkModelsProbedAt = sdkModelsProbedAt;')],
-    ['model-cache 没 import 真 invalidateCatalog', indexSrc,
+    ['model-cache 没 import 真 invalidateCatalog', wiringSrc,
       cacheSrc.replace('import { invalidateCatalog } from "./agents/modelCatalog.js";', '')],
-    ['index 没 import 统一入口', indexSrc.replace('  invalidateAllModelCaches,\n', ''), cacheSrc],
+    ['分区路由没 import 统一入口',
+      wiringSrc.replace(/import\s*\{[^}]*invalidateAllModelCaches[^}]*\}\s*from\s*["'][^"']*model-cache\.js["'];?/g, ''), cacheSrc],
     ['env 路径把调用注释掉（注释不能算接线）',
-      indexSrc.replace(
+      wiringSrc.replace(
         "  invalidateAllModelCaches('POST /api/env 环境变量变更');",
         "  // invalidateAllModelCaches('POST /api/env 环境变量变更');"
       ), cacheSrc],
     ['保存凭据绕过统一入口',
-      indexSrc.replace('invalidateAllModelCaches(`saveCredential(${agentId})`);', 'invalidateCatalog();'), cacheSrc],
+      wiringSrc.replace('invalidateAllModelCaches(`saveCredential(${agentId})`);', 'invalidateCatalog();'), cacheSrc],
     ['刷新路由被改名（少一条路径）',
-      indexSrc.replace('app.post("/api/model-catalog/refresh"', 'app.post("/api/model-catalog/refresh-disabled"'), cacheSrc],
+      wiringSrc.replace('app.post("/api/model-catalog/refresh"', 'app.post("/api/model-catalog/refresh-disabled"'), cacheSrc],
   ];
   // 探针自身也要自证：`String.replace` 找不到目标时会静默返回原文，
   // 那时「坏样本」其实是好样本，绿得毫无意义。
   ok(
-    brokenPairs.every(([, i, c]) => i !== indexSrc || c !== cacheSrc),
+    brokenPairs.every(([, i, c]) => i !== wiringSrc || c !== cacheSrc),
     '★ 反向探针有效性：8 份坏样本都真的改动过源码（replace 不许空转）'
   );
   const leaks = brokenPairs.filter(([, i, c]) => cacheInvalidationContract(i, c)).map(([label]) => label);
   ok(
-    cacheInvalidationContract(indexSrc, cacheSrc) && leaks.length === 0,
+    cacheInvalidationContract(wiringSrc, cacheSrc) && leaks.length === 0,
     '★ 反向探针：8 种半失效 / 注释冒充 / 绕过统一入口的坏实现都必须判红',
     `漏判：${leaks.join('、') || '无'}`
   );
@@ -773,12 +781,14 @@ function honestEmptySummary(catalogSrc: string): boolean {
   );
 
   const indexSrc = read('server/index.ts');
+  // F0-02②：两个模型清单路由已迁到 server/routes/model-catalog.ts。
+  const catalogRouteSrc = read('server/routes/model-catalog.ts');
   ok(
-    /app\.get\("\/api\/model-catalog"/.test(indexSrc),
+    /app\.get\("\/api\/model-catalog"/.test(catalogRouteSrc),
     '刷新：必须有 GET /api/model-catalog（读概况，不跑 CLI）'
   );
   ok(
-    /app\.post\("\/api\/model-catalog\/refresh"/.test(indexSrc),
+    /app\.post\("\/api\/model-catalog\/refresh"/.test(catalogRouteSrc),
     '刷新：必须有 POST /api/model-catalog/refresh'
   );
   ok(
@@ -787,9 +797,9 @@ function honestEmptySummary(catalogSrc: string): boolean {
   );
 
   // 抓 refresh 处理体：从 POST 路由到下一个 app. 定义为止
-  const refreshBody = indexSrc.slice(
-    indexSrc.indexOf('app.post("/api/model-catalog/refresh"'),
-    indexSrc.indexOf('app.post("/api/model-catalog/refresh"') + 1800
+  const refreshBody = catalogRouteSrc.slice(
+    catalogRouteSrc.indexOf('app.post("/api/model-catalog/refresh"'),
+    catalogRouteSrc.indexOf('app.post("/api/model-catalog/refresh"') + 1800
   );
   // `ed2e8da` 之后两套缓存的清理归统一入口：刷新路由必须调到它，且
   // `model-cache.ts` 里那个入口必须真清干净（不是只把函数名换掉）。
@@ -823,7 +833,7 @@ function honestEmptySummary(catalogSrc: string): boolean {
 
   const panelSrc = read('src/components/ModelCatalogSettings.tsx');
   ok(
-    panelSrc.includes("fetch('/api/model-catalog/refresh'") && panelSrc.includes("method: 'POST'"),
+    /api\.post\(\s*['"]\/api\/model-catalog\/refresh['"]/.test(panelSrc),
     '刷新：按钮必须真的 POST（长个按钮不算）'
   );
   ok(

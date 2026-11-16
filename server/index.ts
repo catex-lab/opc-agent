@@ -229,6 +229,10 @@ import { applyHits as extApplyHits, normalizeSkillBody } from "./extensions/norm
 import { bootKnowledgeBase } from "./kb/indexer.js";
 import { buildKbInjection } from "./kb/inject.js";
 import { registerKbRoutes } from "./kb/routes.js";
+// F0-02②：路由分区（绞杀者）。每区一个 register*Routes(app, deps)，
+// 依赖显式传入，避免把 index.ts 的模块级闭包偷偷带过去。
+import { registerModelCatalogRoutes } from "./routes/model-catalog.js";
+import { registerAgentCredentialRoutes } from "./routes/agent-credentials.js";
 import { buildMcpConfig, safeAgentId } from "./extensions/distribute.js";
 import { applyDrift as extApplyDrift, scanDrift as extScanDrift } from "./extensions/drift.js";
 import {
@@ -1816,182 +1820,17 @@ app.post("/api/agents/:agentId/capabilities/probe", async (req, res) => {
 });
 
 // ============= 模型清单（目录）状态与刷新 =============
-
-/**
- * 当前模型清单的概况：每个 Agent 枚举到几条 + 上次枚举完成时间。
- *
- * **不触发任何 CLI 子进程**：只读内存里的目录状态。设置页一打开就跑一遍
- * `qodercli`（7.5s）是不可接受的 —— 想真刷新是用户点按钮的动作。
- */
-app.get("/api/model-catalog", async (req, res) => {
-  try {
-    // 首次访问时把目录带起来（启动预热通常已经完成，这里几乎瞬时返回）
-    await loadCatalog();
-    res.json({
-      ...getCatalogSummary(),
-      // WorkBuddy 走 SDK，不在 catalog 里。0 表示「还没取过」，不是「没有模型」
-      workbuddyCount: cachedModelsGetter().length,
-    });
-  } catch (error: any) {
-    res.status(500).json({ error: error?.message || "读取模型清单失败" });
-  }
-});
-
-/**
- * 刷新模型清单（用户主动点）。
- *
- * 两套缓存都要作废，否则会刷新一半：
- *   - `modelCatalog` 的目录（opencode / qoder / codex）→ `invalidateCatalog()`
- *   - `cachedModels`（WorkBuddy 的 SDK 清单）→ 置空后重新问 SDK
- *
- * 会真的跑三个 CLI + 建一次 SDK 会话，实测 10~15s。前端必须给 loading，
- * 别让用户以为点了没反应。
- */
-app.post("/api/model-catalog/refresh", async (req, res) => {
-  const startedAt = Date.now();
-  try {
-    invalidateAllModelCaches('POST /api/model-catalog/refresh 用户手动刷新');
-
-    await loadCatalog(true);
-
-    // WorkBuddy 单独重取：它不在 catalog 里。失败不影响另外三个的结果，
-    // 如实回报错误，而不是把「没取到」显示成「0 个模型」。
-    let workbuddy: { count: number; error?: string } = { count: 0 };
-    try {
-      const sdk = await loadSdkModels(true);
-      workbuddy = { count: sdk.models.length };
-    } catch (e) {
-      workbuddy = { count: 0, error: (e as Error)?.message || String(e) };
-    }
-
-    const summary = getCatalogSummary();
-    const counts = Object.entries(summary.counts)
-      .map(([id, n]) => `${id}=${n}`)
-      .join(' ');
-    console.log(`[ModelCatalog] 用户手动刷新：${counts} workbuddy=${workbuddy.count}，耗时 ${Date.now() - startedAt}ms`);
-
-    res.json({
-      ...summary,
-      workbuddy,
-      tookMs: Date.now() - startedAt,
-    });
-  } catch (error: any) {
-    console.error("[ModelCatalog] 刷新失败:", error);
-    res.status(500).json({ error: error?.message || "刷新模型清单失败" });
-  }
+// F0-02②：已迁至 server/routes/model-catalog.ts。`cachedModels` 是可变引用、
+// `loadSdkModels` 是模块内闭包，两者用 deps 显式注入。
+registerModelCatalogRoutes(app, {
+  cachedModelCount: () => cachedModelsGetter().length,
+  loadSdkModels,
 });
 
 // ============= Agent 凭据（应用内登录）=============
+// F0-02②：已迁至 server/routes/agent-credentials.ts。
+registerAgentCredentialRoutes(app);
 
-/**
- * 列出可在应用内配置凭据的 Agent。
- *
- * 只返回「声明了 credential 的」——没声明的（走 OAuth / 登录态文件的）
- * 在这里列出来只会让用户填一个不生效的 Key。
- */
-app.get("/api/agent-credentials", (req, res) => {
-  try {
-    res.json({ credentials: listCredentials() });
-  } catch (error: any) {
-    console.error("[Credentials] list error:", error);
-    res.status(500).json({ error: error?.message || "读取凭据失败" });
-  }
-});
-
-/**
- * 保存凭据并**立刻重探该 Agent**。
- *
- * 不重探的话，用户填完 Key 界面上仍是「未登录」（探测结果有 5 分钟 TTL），
- * 会以为没保存成功 —— 而这条路径最需要的就是即时反馈。
- */
-app.post("/api/agent-credentials", async (req, res) => {
-  try {
-    const { agentId, key, baseUrl, name } = req.body ?? {};
-    if (typeof agentId !== 'string' || !agentId) {
-      return res.status(400).json({ error: "缺少 agentId" });
-    }
-    if (key !== undefined && typeof key !== 'string') {
-      return res.status(400).json({ error: "key 必须是字符串" });
-    }
-    if (baseUrl !== undefined && typeof baseUrl !== 'string') {
-      return res.status(400).json({ error: "baseUrl 必须是字符串" });
-    }
-    // #15：name 给了就是「另存为一个账号」。不传 = 改当前账号（老前端零改动）
-    if (name !== undefined && typeof name !== 'string') {
-      return res.status(400).json({ error: "name 必须是字符串" });
-    }
-
-    const credential = saveCredential(agentId, { key, baseUrl, name });
-    // 新 Key 可能让 `opencode models` 多出若干个 provider 的模型：
-    // 目录缓存必须跟着作废，否则用户填完 Key 还要等 24 小时才看见新模型。
-    // SDK 缓存也一起清：虽然 SDK 走 OAuth 不经这条路径，但从「凭据变更后
-    // 所有模型缓存都应该是干净的」这个不变量来看，统一失效更安全。
-    invalidateAllModelCaches(`saveCredential(${agentId})`);
-    const agent = await registry.probeOne(agentId, true);
-    res.json({ credential, agent });
-  } catch (error: any) {
-    console.error("[Credentials] save error:", error);
-    res.status(400).json({ error: error?.message || "保存凭据失败" });
-  }
-});
-
-// 清除某个 Agent 在应用内保存的凭据
-app.delete("/api/agent-credentials/:agentId", async (req, res) => {
-  try {
-    const credential = clearCredential(req.params.agentId);
-    if (!credential) return res.status(404).json({ error: "该 Agent 不支持应用内凭据" });
-    // 清掉 Key 后对应 provider 的模型会从 CLI 清单里消失，目录同样要重算
-    invalidateAllModelCaches(`clearCredential(${req.params.agentId})`);
-    const agent = await registry.probeOne(req.params.agentId, true);
-    res.json({ credential, agent });
-  } catch (error: any) {
-    console.error("[Credentials] clear error:", error);
-    res.status(500).json({ error: error?.message || "清除凭据失败" });
-  }
-});
-
-/* #15：多账号 profile。三个端点都只回掩码视图，明文 Key 绝不出现在响应里。 */
-
-app.get("/api/agent-credentials/:agentId/profiles", (req, res) => {
-  try {
-    const agentId = req.params.agentId;
-    if (!findDef(agentId)) return res.status(404).json({ error: "未知 Agent" });
-    res.json(listProfiles(agentId));
-  } catch (error: any) {
-    res.status(500).json({ error: error?.message || "读取账号列表失败" });
-  }
-});
-
-app.post("/api/agent-credentials/:agentId/switch", async (req, res) => {
-  try {
-    const agentId = req.params.agentId;
-    const name = req.body?.name;
-    if (typeof name !== 'string' || !name.trim()) {
-      return res.status(400).json({ error: "缺少 name" });
-    }
-    const credential = switchProfile(agentId, name);
-    // 换账号 = 换了可见的 provider / 模型，缓存必须一起作废（P1 统一失效入口）
-    invalidateAllModelCaches(`switchProfile(${agentId})`);
-    const agent = await registry.probeOne(agentId, true);
-    res.json({ credential, agent });
-  } catch (error: any) {
-    console.error("[Credentials] switch error:", error);
-    res.status(400).json({ error: error?.message || "切换账号失败" });
-  }
-});
-
-app.delete("/api/agent-credentials/:agentId/profiles/:name", async (req, res) => {
-  try {
-    const { agentId, name } = req.params;
-    const profiles = deleteProfile(agentId, name);
-    invalidateAllModelCaches(`deleteProfile(${agentId})`);
-    const agent = await registry.probeOne(agentId, true);
-    res.json({ profiles, agent });
-  } catch (error: any) {
-    console.error("[Credentials] delete profile error:", error);
-    res.status(400).json({ error: error?.message || "删除账号失败" });
-  }
-});
 
 // ============= 会话 API =============
 

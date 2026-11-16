@@ -42,8 +42,9 @@ const raw = () => JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
 /* ============= [1] 接线契约（含逐条反向探针） ============= */
 console.log('\n[1] 接线契约：三个端点 + 统一缓存失效 + 前端动作');
 {
+  // F0-02②：三个端点已迁到 server/routes/agent-credentials.ts，接线契约跟着搬。
   const FILES = {
-    index: 'server/index.ts',
+    routes: 'server/routes/agent-credentials.ts',
     editor: 'src/components/AgentCredentialEditor.tsx',
     store: 'server/agent-credentials.ts',
   } as const;
@@ -62,19 +63,19 @@ console.log('\n[1] 接线契约：三个端点 + 统一缓存失效 + 前端动�
 
   const contract = (f: Files) => ({
     saveName: /saveCredential\(agentId, \{[^}]*\bname\b/.test(
-      routeBody(f.index, 'app.post("/api/agent-credentials"')
+      routeBody(f.routes, 'app.post("/api/agent-credentials"')
     ),
     // 注意：不能只钉 `switchProfile(` —— 同一条路由里的日志字符串
     // `invalidateAllModelCaches(\`switchProfile(${agentId})\`)` 也含这串，
     // 把真正的调用删掉后正则照样绿（典型的假绿）。必须钉到实参形状。
     switchRoute:
-      /switchProfile\(agentId, name\)/.test(routeBody(f.index, 'app.post("/api/agent-credentials/:agentId/switch"')) &&
-      /invalidateAllModelCaches\(/.test(routeBody(f.index, 'app.post("/api/agent-credentials/:agentId/switch"')),
+      /switchProfile\(agentId, name\)/.test(routeBody(f.routes, 'app.post("/api/agent-credentials/:agentId/switch"')) &&
+      /invalidateAllModelCaches\(/.test(routeBody(f.routes, 'app.post("/api/agent-credentials/:agentId/switch"')),
     profilesRoute:
-      /listProfiles\(/.test(routeBody(f.index, 'app.get("/api/agent-credentials/:agentId/profiles"')),
+      /listProfiles\(/.test(routeBody(f.routes, 'app.get("/api/agent-credentials/:agentId/profiles"')),
     deleteRoute:
-      /deleteProfile\(agentId, name\)/.test(routeBody(f.index, 'app.delete("/api/agent-credentials/:agentId/profiles/:name"')) &&
-      /invalidateAllModelCaches\(/.test(routeBody(f.index, 'app.delete("/api/agent-credentials/:agentId/profiles/:name"')),
+      /deleteProfile\(agentId, name\)/.test(routeBody(f.routes, 'app.delete("/api/agent-credentials/:agentId/profiles/:name"')) &&
+      /invalidateAllModelCaches\(/.test(routeBody(f.routes, 'app.delete("/api/agent-credentials/:agentId/profiles/:name"')),
     maskedOnly: /mask\(key\)/.test(f.store) && /masked: mask\(/.test(f.store),
     frontend:
       /data-credential-profiles=/.test(f.editor) &&
@@ -88,10 +89,10 @@ console.log('\n[1] 接线契约：三个端点 + 统一缓存失效 + 前端动�
   for (const [k, v] of Object.entries(base)) ok(v, `[1] ${k} 接线成立（肯定式）`);
 
   const probes: Array<[keyof ReturnType<typeof contract>, keyof Files, string, string]> = [
-    ['saveName', 'index', ', name }', ' }'],
-    ['switchRoute', 'index', 'switchProfile(agentId, name)', 'listProfiles(agentId)'],
-    ['profilesRoute', 'index', 'res.json(listProfiles(agentId))', 'res.json({})'],
-    ['deleteRoute', 'index', 'deleteProfile(agentId, name)', 'listProfiles(agentId)'],
+    ['saveName', 'routes', ', name }', ' }'],
+    ['switchRoute', 'routes', 'switchProfile(agentId, name)', 'listProfiles(agentId)'],
+    ['profilesRoute', 'routes', 'res.json(listProfiles(agentId))', 'res.json({})'],
+    ['deleteRoute', 'routes', 'deleteProfile(agentId, name)', 'listProfiles(agentId)'],
     ['maskedOnly', 'store', 'masked: mask(key)', 'masked: key'],
     ['frontend', 'editor', 'data-credential-profiles=', 'data-removed='],
   ];
