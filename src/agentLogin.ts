@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation, type MessageKey } from './i18n';
+import { api } from './api';
 
 /**
  * A222：把「去登录」从「打开一个一次性死链接」升级成「跟一条活着的登录流对话」。
@@ -110,7 +111,7 @@ export function useAgentLogin(
   const poll = useCallback(async () => {
     if (!agentId) return;
     try {
-      const res = await fetch(
+      const res = await api.get(
         `/api/agents/${encodeURIComponent(agentId)}/login/status`,
         { cache: 'no-store' }
       );
@@ -146,10 +147,9 @@ export function useAgentLogin(
       setPhase('idle');
     };
     try {
-      const res = await fetch(
+      const res = await api.post(
         `/api/agents/${encodeURIComponent(agentId)}/login/start`,
         {
-          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: '{}',
         }

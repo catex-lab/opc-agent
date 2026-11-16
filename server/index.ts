@@ -398,6 +398,8 @@ import {
   _setSdkProbedAt,
   invalidateAllModelCaches,
 } from "./model-cache.js";
+// C8：SSE 静默心跳。独立文件，闸门可直接 import 函数本体验证。
+import { startSseHeartbeat } from "./sse-heartbeat.js";
 
 // cachedModels / sdkDefaultModel / sdkModelsProbedAt 现在是 model-cache.ts 导出的
 // `let` 变量。index.ts 里仍需要「读写同一份可变引用」—— 用 getter 转发，
@@ -3293,6 +3295,8 @@ app.post("/api/chat", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  // C8：静默期心跳，唤醒前端 reader 的重连看门狗（注释帧，前端不解析）
+  startSseHeartbeat(res);
 
   // 中止信号：客户端断开时通知适配器杀掉子进程
   //
@@ -4362,6 +4366,7 @@ app.get("/api/runs/:runId/stream", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  startSseHeartbeat(res);
 
   let closed = false;
   const write = (ev: RunEvent) => {
@@ -4515,6 +4520,7 @@ app.post("/api/group-chat", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  startSseHeartbeat(res);
 
   const sse = (payload: Record<string, unknown>) => {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -4751,6 +4757,7 @@ app.post("/api/workflow/run", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  startSseHeartbeat(res);
 
   const sse = (payload: Record<string, unknown>) => {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -5004,6 +5011,7 @@ app.post("/api/image", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  startSseHeartbeat(res);
 
   const ac = new AbortController();
   res.on('close', () => {
@@ -5220,6 +5228,7 @@ app.post("/api/verify/run", async (req, res) => {
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
   });
+  startSseHeartbeat(res);
   const send = (payload: unknown) => {
     if (res.writableEnded) return;
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -5459,6 +5468,24 @@ if (fs.existsSync(path.join(webDir, 'index.html'))) {
   console.log(`[Web] 未找到前端产物（${webDir}），仅提供 API —— 开发态由 Vite 托管前端`);
 }
 
+/**
+ * C1 / 绞杀者第 0 期：后端启动收敛到显式函数。
+ *
+ * import 本模块不再自启动 —— harness 可独立测试/重启；electron 主进程显式调用
+ * startServer()。直接执行本文件（npm run dev:server / tsx watch server/index.ts）
+ * 时由文件末尾的自启动守卫调用，行为与改造前完全一致。
+ *
+ * server 是模块级 live binding：electron/main.ts import 的 server 在 startServer()
+ * 赋值后即可见（ESM let 导出是活绑定）。
+ */
+export let server: ReturnType<typeof app.listen> | null = null;
+
+/** 启动 HTTP 服务 + 全部启动期副作用，返回 server。可重复调用（幂等：已监听则直接返回）。 */
+export function startServer() {
+  // 幂等：listen 是异步的，server 一创建就要挡住第二次调用，
+  // 不能等 listening=true（否则两次调用间隔内会 EADDRINUSE）。
+  if (server) return server;
+
 // 启动服务器
 //
 // ⚠️ **必须绑回环地址**，不能只写 `app.listen(PORT)`。
@@ -5503,8 +5530,11 @@ try {
 setCatalogModelLookup(isCatalogModel);
 ensureCatalogLoaded();
 
-const server = app.listen(PORT, HOST, () => {
-  const addr = server.address();
+server = app.listen(PORT, HOST, () => {
+  // 回调在 listen 成功后才触发，此时模块级 server 必已赋值；TS 闭包内不追值，
+  // 这里显式断言（startServer 内部，非 null）。
+  const srv = server!;
+  const addr = srv.address();
   const actualPort = typeof addr === 'object' && addr ? addr.port : PORT;
   console.log(`
 ╔════════════════════════════════════════════╗
@@ -5540,9 +5570,12 @@ const server = app.listen(PORT, HOST, () => {
     .catch(err => console.error('[Registry] 启动探测失败:', (err as Error).message));
 });
 
+  return server;
+}
+
 // 导出给 Electron 主进程用：主进程需要等 `listening` 事件拿到真实端口，
 // 再决定把窗口指向哪个地址。
-export { app, server };
+export { app };
 
 // 退出时回收 ACP 等长驻子进程，避免留下孤儿 Python 进程
 let shuttingDown = false;
@@ -5561,3 +5594,25 @@ function shutdown(signal: string) {
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+/**
+ * 自启动守卫：只在「直接执行本文件」时启动（dev:server / node server/index.ts）。
+ * 被 import（electron 主进程 / 闸门）时不自启动——由调用方显式 startServer()。
+ *
+ * ⚠️ CJS 兼容（build-electron.mjs 把本模块内联进 main.cjs，format:'cjs'）：
+ * esbuild 的 empty-import-meta 会把 `import.meta` 替换成 `{}`，此时
+ * `import.meta.url` 是 undefined。若直接 fileURLToPath(import.meta.url) 会在
+ * **模块加载期**抛 TypeError，拖垮打包态主进程（startServer 都还没机会跑）。
+ * 这里判字符串：CJS 里 url 不是 string → 跳过自启动（electron 已显式调用），
+ * 只留 ESM 直接运行路径（tsx watch server/index.ts）生效。
+ */
+import { fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
+{
+  const selfUrl = (import.meta as { url?: unknown }).url;
+  if (typeof selfUrl === 'string') {
+    const entry = process.argv[1] ? realpathSync(process.argv[1]) : '';
+    const self = realpathSync(fileURLToPath(selfUrl));
+    if (entry === self) startServer();
+  }
+}

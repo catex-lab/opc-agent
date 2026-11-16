@@ -6,6 +6,7 @@ import { useTranslation, type MessageKey } from '../i18n';
 import { describeProvenance, asProvenance } from '../../shared/provenance';
 import { emitCredentialsChanged, subscribeCredentialChanges } from '../lib/credentialEvents';
 import { InfoHint } from './InfoHint';
+import { api } from '../api';
 
 /**
  * 单个 Agent 的凭据编辑器（取 / 存 / 清 + 连通性 + 模型清单）。
@@ -121,7 +122,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/agent-credentials');
+      const res = await api.get('/api/agent-credentials');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const list: CredentialView[] = Array.isArray(data.credentials) ? data.credentials : [];
@@ -146,8 +147,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
     if (!item) return;
     setBusy('save');
     try {
-      const res = await fetch('/api/agent-credentials', {
-        method: 'POST',
+      const res = await api.post('/api/agent-credentials', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           agentId,
@@ -179,7 +179,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
     if (!item) return;
     setBusy('clear');
     try {
-      const res = await fetch(`/api/agent-credentials/${agentId}`, { method: 'DELETE' });
+      const res = await api.delete(`/api/agent-credentials/${agentId}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
       MessagePlugin.success(t('settings.credential.cleared', { name: item.name }));
@@ -199,7 +199,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
   const testConnectivity = async () => {
     setProbe({ loading: true });
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}?probe=1`);
+      const res = await api.get(`/api/agents/${encodeURIComponent(agentId)}?probe=1`);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
       const status = data?.agent?.status;
@@ -216,7 +216,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
   const fetchModels = async () => {
     setModels(prev => ({ ...prev, loading: true }));
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/models`);
+      const res = await api.get(`/api/agents/${encodeURIComponent(agentId)}/models`);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
       setModels({ loading: false, fetched: true, list: data.models ?? [], note: data.note });
@@ -229,7 +229,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
    *  但保存 / 校验 / 清除这些既有能力一点不少。 */
   const loadProfiles = useCallback(async () => {
     try {
-      const res = await fetch(
+      const res = await api.get(
         `/api/agent-credentials/${encodeURIComponent(agentId)}/profiles`
       );
       if (!res.ok) return;
@@ -267,8 +267,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
     }
     setProfileBusy('add');
     try {
-      const res = await fetch('/api/agent-credentials', {
-        method: 'POST',
+      const res = await api.post('/api/agent-credentials', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           agentId,
@@ -297,10 +296,9 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
     if (!name || name === profiles.active || profileBusy) return;
     setProfileBusy(name);
     try {
-      const res = await fetch(
+      const res = await api.post(
         `/api/agent-credentials/${encodeURIComponent(agentId)}/switch`,
         {
-          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name }),
         }
@@ -324,9 +322,8 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
     if (!name || profileBusy) return;
     setProfileBusy('delete');
     try {
-      const res = await fetch(
-        `/api/agent-credentials/${encodeURIComponent(agentId)}/profiles/${encodeURIComponent(name)}`,
-        { method: 'DELETE' }
+      const res = await api.delete(
+        `/api/agent-credentials/${encodeURIComponent(agentId)}/profiles/${encodeURIComponent(name)}`
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
@@ -349,9 +346,8 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
   const verifyNow = async () => {
     setVerification({ loading: true });
     try {
-      const res = await fetch(
-        `/api/agents/${encodeURIComponent(agentId)}/credential/verify`,
-        { method: 'POST' }
+      const res = await api.post(
+        `/api/agents/${encodeURIComponent(agentId)}/credential/verify`
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);

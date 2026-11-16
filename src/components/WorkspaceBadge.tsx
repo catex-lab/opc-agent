@@ -3,6 +3,7 @@ import { ChevronDown, FolderOpen, ExternalLink, Folder, FolderPlus, RotateCcw, X
 import { MENU_ITEM_CLASS } from './menuItem';
 import { pickDirectory, revealInFolder, dirName, hasNativeDialogs, createWorkspace } from '../workspace';
 import { useTranslation } from '../i18n';
+import { api } from '../api';
 
 interface WorkspaceBadgeProps {
   /** 当前会话的工作目录。undefined / 空 = 没指定，Agent 用后端进程目录 */
@@ -72,7 +73,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
   /** 拉一次最近目录。打开面板时拉、恢复之后也拉 —— 两处共用同一份口径 */
   const loadRecent = useCallback(async () => {
     try {
-      const r = await fetch('/api/recent-directories');
+      const r = await api.get('/api/recent-directories');
       const j = (r.ok ? await r.json() : {}) as {
         directories?: string[];
         dismissedCount?: number;
@@ -94,8 +95,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
     setDismissed(n => n + 1);
     setNotice(t('workspace.noticeIgnored'));
     try {
-      await fetch('/api/recent-directories/dismiss', {
-        method: 'POST',
+      await api.post('/api/recent-directories/dismiss', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: dir }),
       });
@@ -106,7 +106,7 @@ export function WorkspaceBadge({ cwd, onChange }: WorkspaceBadgeProps) {
 
   const handleRestoreAll = async () => {
     try {
-      const r = await fetch('/api/recent-directories/restore', { method: 'POST' });
+      const r = await api.post('/api/recent-directories/restore');
       const j = (r.ok ? await r.json() : {}) as { restored?: number };
       setNotice(j.restored ? t('workspace.noticeRestored', { n: j.restored }) : t('workspace.noticeNothingToRestore'));
     } catch {

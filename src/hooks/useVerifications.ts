@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { api } from '../api';
 
 export type VerifyStatus = 'pass' | 'fail' | 'timeout' | 'error';
 
@@ -35,7 +36,7 @@ export function useVerifications(sessionId: string | null | undefined) {
       return;
     }
     try {
-      const res = await fetch(`/api/verify/results?sessionId=${encodeURIComponent(sessionId)}`);
+      const res = await api.get(`/api/verify/results?sessionId=${encodeURIComponent(sessionId)}`);
       if (!res.ok) return;
       const data = (await res.json()) as { verifications?: VerificationRow[] };
       setRows(Array.isArray(data.verifications) ? data.verifications : []);

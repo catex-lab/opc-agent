@@ -30,6 +30,8 @@ import type { EventSource } from '../../shared/blocks.js';
 // P0 诊断分类学契约：运行期错误 → 诊断分类（纯函数，shared 侧）
 import { authDiagnosticFor, classifyErrorMessage, isAcpSessionTimeout } from '../../shared/diagnostics.js';
 import type { CanaryState } from '../../shared/diagnostics.js';
+// C3 / 1.1c：全通道首字护栏。包在 stream() 返回侧，外层兜底，不动适配器。
+import { withFirstTokenGuard } from './firstTokenGuardStream.js';
 import type {
   AgentDescriptor,
   AgentInfo,
@@ -770,11 +772,16 @@ class AgentRegistry {
     // 用前校验：每个会话第一次发消息时做一次（只读本地文件，不发网络请求）。
     // 失败会写回名册，界面上的绿点会在下一次刷新时撤回。
     this.validateCredentialOnce(id, provider, ctx.sessionId);
-    return provider.send({
+    const source = provider.send({
       ...ctx,
       systemPrompt: withUserIdentity(ctx.systemPrompt),
       answerLanguage: ctx.answerLanguage ?? loadAnswerLanguage(),
     });
+    // C3 / 1.1c：全通道首字护栏（外层兜底）。只守首字前，超时交给 turn-runner
+    // 的既有 catch/finish 发 error + run_end。OPC_REGISTRY_FIRST_TOKEN_GUARD=0
+    // 可整体关闭（回退=去掉这一层）；阈值沿用 FirstTokenGuard 的 120s 默认值。
+    if (process.env.OPC_REGISTRY_FIRST_TOKEN_GUARD === '0') return source;
+    return withFirstTokenGuard(source);
   }
 
   /**

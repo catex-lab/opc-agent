@@ -37,6 +37,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useTranslation, type MessageKey } from '../i18n';
+import { api } from '../api';
 
 type FileVerdict =
   | 'landed'
@@ -98,7 +99,7 @@ export function FileEvidencePanel({ sessionId, messageId, onStateChange }: FileE
     setError(null);
     try {
       const qs = new URLSearchParams({ sessionId, messageId });
-      const res = await fetch(`/api/files/evidence?${qs.toString()}`);
+      const res = await api.get(`/api/files/evidence?${qs.toString()}`);
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         setError(t('chat.evidence.checkFailed', { status: res.status, text: text ? `：${text.slice(0, 120)}` : '' }));

@@ -53,6 +53,7 @@ import {
   WORKSPACE_OPEN_URL_EVENT,
 } from './answer/linkRouter';
 import type { Message } from './types';
+import { api } from './api';
 
 /**
  * ChatPage 按需加载。
@@ -156,7 +157,7 @@ function AppContent() {
     setProjectsLoading(true);
     setProjectsError(null);
     try {
-      const r = await fetch('/api/projects');
+      const r = await api.get('/api/projects');
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `读取项目失败（${r.status}）`);
       const list: Project[] = (j.projects ?? []).map((p: any) => ({
@@ -525,7 +526,7 @@ function AppContent() {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(
+        const res = await api.get(
           `/api/agents/${encodeURIComponent(currentAgentId)}/models`
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -669,10 +670,9 @@ function AppContent() {
     ): Promise<{ ok: boolean; message?: string; verdict?: 'ok' | 'routed' | 'invalid' | 'unknown' }> => {
       if (!currentAgentId) return { ok: false, message: '当前没有绑定 Agent，无法标定' };
       try {
-        const res = await fetch(
+        const res = await api.post(
           `/api/agents/${encodeURIComponent(currentAgentId)}/models/probe`,
           {
-            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ models: [modelId] }),
           }
@@ -1090,8 +1090,7 @@ function AppContent() {
       dir = picked;
     }
     try {
-      const r = await fetch('/api/projects', {
-        method: 'POST',
+      const r = await api.post('/api/projects', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cwd: dir }),
       });
@@ -1135,8 +1134,7 @@ function AppContent() {
 
   const handleRenameProject = useCallback(async (project: Project, name: string) => {
     try {
-      const r = await fetch(`/api/projects/${project.id}`, {
-        method: 'PATCH',
+      const r = await api.patch(`/api/projects/${project.id}`, {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       });
@@ -1154,7 +1152,7 @@ function AppContent() {
 
   const handleDeleteProject = useCallback(async (project: Project) => {
     try {
-      const r = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' });
+      const r = await api.delete(`/api/projects/${project.id}`);
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         throw new Error(j?.error || '移除项目失败');
@@ -1184,8 +1182,7 @@ function AppContent() {
     async (message: Message) => {
       if (!currentSessionId) return;
       try {
-        const res = await fetch(`/api/sessions/${currentSessionId}/branch`, {
-          method: 'POST',
+        const res = await api.post(`/api/sessions/${currentSessionId}/branch`, {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messageId: message.id }),
         });
@@ -1296,8 +1293,7 @@ function AppContent() {
       });
 
       if (!target.isLocal) {
-        void fetch(`/api/sessions/${currentSessionId}`, {
-          method: 'PATCH',
+        void api.patch(`/api/sessions/${currentSessionId}`, {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ agentId }),
         });
@@ -1422,9 +1418,7 @@ function AppContent() {
   const handleDeleteCustomAgent = useCallback(
     async (agentId: string) => {
       try {
-        const res = await fetch(`/api/agents/custom/${encodeURIComponent(agentId)}`, {
-          method: 'DELETE',
-        });
+        const res = await api.delete(`/api/agents/custom/${encodeURIComponent(agentId)}`);
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           MessagePlugin.warning((data as { error?: string }).error || '删除失败');
@@ -1482,8 +1476,7 @@ function AppContent() {
     (mode: OrchestrationMode) => {
       if (!currentSessionId) return;
       updateSession(currentSessionId, { orchestration: mode });
-      void fetch(`/api/sessions/${currentSessionId}`, {
-        method: 'PATCH',
+      void api.patch(`/api/sessions/${currentSessionId}`, {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orchestration: mode }),
       }).catch(err => console.error('保存编排模式失败:', err));
@@ -1501,8 +1494,7 @@ function AppContent() {
     (agentIds: string[]) => {
       if (!currentSessionId) return;
       updateSession(currentSessionId, { agentIds });
-      void fetch(`/api/sessions/${currentSessionId}`, {
-        method: 'PATCH',
+      void api.patch(`/api/sessions/${currentSessionId}`, {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentIds }),
       }).catch(err => console.error('保存群成员失败:', err));
@@ -1526,8 +1518,7 @@ function AppContent() {
       updateSession(currentSessionId, { title });
       const isLocal = sessions.find(s => s.id === currentSessionId)?.isLocal;
       if (isLocal) return;
-      void fetch(`/api/sessions/${currentSessionId}`, {
-        method: 'PATCH',
+      void api.patch(`/api/sessions/${currentSessionId}`, {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),
       }).catch(err => console.error('保存群名失败:', err));
@@ -1982,8 +1973,7 @@ function AppContent() {
                           // 头像与状态立刻换人，不必等下一轮名册轮询。
                           onHandoff={async targetAgentId => {
                             try {
-                              const res = await fetch(`/api/sessions/${currentSession.id}/handoff`, {
-                                method: 'POST',
+                              const res = await api.post(`/api/sessions/${currentSession.id}/handoff`, {
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ targetAgentId }),
                               });

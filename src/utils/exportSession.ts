@@ -15,6 +15,8 @@
  * `exportSession()` 才负责 fetch 与触发下载。
  */
 
+import { api } from '../api';
+
 /** `GET /api/sessions/:id` 返回的 session 字段（这里只挑导出要用的） */
 export interface SessionExportMeta {
   id: string;
@@ -232,7 +234,7 @@ export async function exportSessionToMarkdown(
   sessionId: string,
   resolveName: AgentNameResolver = id => id
 ): Promise<{ fileName: string; chars: number }> {
-  const res = await fetch(`/api/sessions/${sessionId}`);
+  const res = await api.get(`/api/sessions/${sessionId}`);
   if (!res.ok) {
     throw new Error(`导出自会话失败（HTTP ${res.status}）`);
   }

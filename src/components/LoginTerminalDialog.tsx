@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import { Button } from 'tdesign-react';
 import { useTranslation, type MessageKey } from '../i18n';
 import type { RegisteredAgent } from '../types';
+import { api } from '../api';
 
 /**
  * 登录代管终端（P2）。
@@ -47,7 +48,7 @@ export function LoginTerminalDialog({ agent, onClose }: LoginTerminalDialogProps
   const closedRef = useRef(false);
 
   const stop = useCallback(() => {
-    void fetch('/api/agents/login-terminal/stop', { method: 'POST' }).catch(() => undefined);
+    void api.post('/api/agents/login-terminal/stop').catch(() => undefined);
   }, []);
 
   // 启动 + 轮询状态（输出/退出码）。退出后再多轮询几次，把「复检结论」收进来
@@ -56,7 +57,7 @@ export function LoginTerminalDialog({ agent, onClose }: LoginTerminalDialogProps
     let afterExitPolls = 0;
     const tick = async () => {
       try {
-        const r = await fetch('/api/agents/login-terminal/state');
+        const r = await api.get('/api/agents/login-terminal/state');
         const s = (await r.json()) as LoginState;
         if (cancelled) return;
         setOutput(s.output ?? '');
@@ -73,8 +74,7 @@ export function LoginTerminalDialog({ agent, onClose }: LoginTerminalDialogProps
       if (!cancelled) timer = setTimeout(tick, 600);
     };
     let timer = setTimeout(tick, 500);
-    void fetch('/api/agents/login-terminal/start', {
-      method: 'POST',
+    void api.post('/api/agents/login-terminal/start', {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agentId: agent.id }),
     })
@@ -100,8 +100,7 @@ export function LoginTerminalDialog({ agent, onClose }: LoginTerminalDialogProps
   const send = () => {
     const line = input.trim();
     if (!line) return;
-    void fetch('/api/agents/login-terminal/write', {
-      method: 'POST',
+    void api.post('/api/agents/login-terminal/write', {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data: line }),
     }).catch(() => undefined);

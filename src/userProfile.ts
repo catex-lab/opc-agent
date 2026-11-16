@@ -15,6 +15,7 @@
  */
 
 import { useSyncExternalStore } from 'react';
+import { api } from './api';
 
 export interface UserProfile {
   nickname: string;
@@ -105,7 +106,7 @@ export async function loadUserProfile(): Promise<UserProfile> {
   if (inflight) return inflight;
   inflight = (async () => {
     try {
-      const res = await fetch('/api/user-profile');
+      const res = await api.get('/api/user-profile');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       snapshot = {
@@ -131,8 +132,7 @@ export async function saveUserProfile(patch: Partial<UserProfile>): Promise<User
   snapshot = { ...snapshot, ...patch };
   emit();
   try {
-    const res = await fetch('/api/user-profile', {
-      method: 'PUT',
+    const res = await api.put('/api/user-profile', {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });

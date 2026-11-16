@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Dialog, Textarea, Button, MessagePlugin } from 'tdesign-react';
 import { Play, FileCode } from 'lucide-react';
+import { api } from '../api';
 
 /**
  * 动态工作流入口（A41）。
@@ -50,7 +51,7 @@ export function WorkflowDialog({
   useEffect(() => {
     if (!open || templateLoaded) return;
     let alive = true;
-    fetch('/api/workflow/template')
+    api.get('/api/workflow/template')
       .then(r => r.json())
       .then(j => {
         if (!alive) return;

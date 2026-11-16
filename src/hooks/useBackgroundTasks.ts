@@ -23,6 +23,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { api } from '../api';
 
 export interface BackgroundTask {
   runId: string;
@@ -50,7 +51,7 @@ export function useBackgroundTasks(currentSessionId?: string | null): Background
       if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const qs = currentSessionId ? `?exclude=${encodeURIComponent(currentSessionId)}` : '';
-        const res = await fetch(`/api/runs/active${qs}`);
+        const res = await api.get(`/api/runs/active${qs}`);
         if (!res.ok) throw new Error(String(res.status));
         const data = (await res.json()) as { runs?: BackgroundTask[] };
         if (alive) setTasks(Array.isArray(data?.runs) ? data.runs : []);

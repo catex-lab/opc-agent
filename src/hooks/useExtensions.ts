@@ -12,6 +12,7 @@ import type {
   ExtensionTargetSpec,
   ExtensionTargetState,
 } from '../types';
+import { api } from '../api';
 
 /**
  * 扩展库（Agent 技能 + MCP 服务）的数据 hook。
@@ -66,7 +67,7 @@ export function useExtensions() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/extensions');
+      const res = await api.get('/api/extensions');
       const data = await res.json().catch(() => ({}));
       if (seq !== seqRef.current) return;
       if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
@@ -99,7 +100,7 @@ export function useExtensions() {
     setImporting(true);
     setError(null);
     try {
-      const res = await fetch('/api/extensions/import', { method: 'POST' });
+      const res = await api.post('/api/extensions/import');
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
       const report = data as ExtensionImportReport;
@@ -121,9 +122,8 @@ export function useExtensions() {
   const remove = useCallback(
     async (kind: string, name: string): Promise<boolean> => {
       try {
-        const res = await fetch(
-          `/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`,
-          { method: 'DELETE' }
+        const res = await api.delete(
+          `/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`
         );
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -143,8 +143,7 @@ export function useExtensions() {
   const toggleEnabled = useCallback(
     async (kind: string, name: string, enabled: boolean): Promise<boolean> => {
       try {
-        const res = await fetch(`/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/enabled`, {
-          method: 'PATCH',
+        const res = await api.patch(`/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/enabled`, {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ enabled }),
         });
@@ -172,8 +171,7 @@ export function useExtensions() {
   const toggleKindEnabled = useCallback(
     async (kind: string, enabled: boolean): Promise<boolean> => {
       try {
-        const res = await fetch(`/api/extensions/${encodeURIComponent(kind)}/kind-enabled`, {
-          method: 'PATCH',
+        const res = await api.patch(`/api/extensions/${encodeURIComponent(kind)}/kind-enabled`, {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ enabled }),
         });
@@ -258,7 +256,7 @@ export function useExtensionDetail(kind: string | null, name: string | null) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await api.get(
         `/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`
       );
       const data = await res.json().catch(() => ({}));
@@ -329,7 +327,7 @@ export function useExtensionNormalize(kind: string | null, name: string | null) 
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await api.get(
         `/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/normalize`
       );
       const data = await res.json().catch(() => ({}));
@@ -359,10 +357,9 @@ export function useExtensionNormalize(kind: string | null, name: string | null) 
       setApplying(true);
       setError(null);
       try {
-        const res = await fetch(
+        const res = await api.post(
           `/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/normalize`,
           {
-            method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(accepted ? { accepted } : {}),
           }
@@ -386,9 +383,8 @@ export function useExtensionNormalize(kind: string | null, name: string | null) 
     setApplying(true);
     setError(null);
     try {
-      const res = await fetch(
-        `/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/revert-normalize`,
-        { method: 'POST' }
+      const res = await api.post(
+        `/api/extensions/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/revert-normalize`
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
@@ -440,7 +436,7 @@ export function useExtensionDrift() {
     const seq = ++seqRef.current;
     if (!silent) setLoading(true);
     try {
-      const res = await fetch('/api/extensions/drift');
+      const res = await api.get('/api/extensions/drift');
       const data = await res.json().catch(() => ({}));
       if (seq !== seqRef.current) return;
       if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
@@ -473,8 +469,7 @@ export function useExtensionDrift() {
       setApplying(true);
       setError(null);
       try {
-        const res = await fetch('/api/extensions/drift/apply', {
-          method: 'POST',
+        const res = await api.post('/api/extensions/drift/apply', {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ entries }),
         });

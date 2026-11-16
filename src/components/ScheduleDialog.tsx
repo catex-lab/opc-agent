@@ -4,6 +4,7 @@ import { CalendarClock, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { Button } from 'tdesign-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useTranslation, type MessageKey } from '../i18n';
+import { api } from '../api';
 
 /**
  * 定时任务管理对话框（A224）。
@@ -77,7 +78,7 @@ export function ScheduleDialog({ open, session, onClose }: ScheduleDialogProps) 
     if (!session) return;
     if (!silent) setLoading(true);
     try {
-      const r = await fetch(`/api/schedules?sessionId=${encodeURIComponent(session.id)}`);
+      const r = await api.get(`/api/schedules?sessionId=${encodeURIComponent(session.id)}`);
       const data = await r.json();
       setTasks(Array.isArray(data.tasks) ? data.tasks : []);
     } catch {
@@ -104,8 +105,7 @@ export function ScheduleDialog({ open, session, onClose }: ScheduleDialogProps) 
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const r = await fetch('/api/schedules/preview', {
-          method: 'POST',
+        const r = await api.post('/api/schedules/preview', {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cron }),
         });
@@ -126,8 +126,7 @@ export function ScheduleDialog({ open, session, onClose }: ScheduleDialogProps) 
     setSaving(true);
     setError('');
     try {
-      const r = await fetch('/api/schedules', {
-        method: 'POST',
+      const r = await api.post('/api/schedules', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: session.id, prompt, cron }),
       });
@@ -148,8 +147,7 @@ export function ScheduleDialog({ open, session, onClose }: ScheduleDialogProps) 
 
   const toggle = async (task: ScheduleTaskView) => {
     try {
-      await fetch(`/api/schedules/${task.id}`, {
-        method: 'PATCH',
+      await api.patch(`/api/schedules/${task.id}`, {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: !task.enabled }),
       });
@@ -162,7 +160,7 @@ export function ScheduleDialog({ open, session, onClose }: ScheduleDialogProps) 
   const doRemove = async () => {
     if (!removing) return;
     try {
-      await fetch(`/api/schedules/${removing.id}`, { method: 'DELETE' });
+      await api.delete(`/api/schedules/${removing.id}`);
       await load(true);
     } finally {
       setRemoving(null);

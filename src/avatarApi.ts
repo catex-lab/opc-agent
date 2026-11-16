@@ -7,6 +7,7 @@
  */
 
 import { loadUserProfile } from './userProfile';
+import { api } from './api';
 
 async function postAvatar(body: {
   kind: 'user' | 'agent' | 'group';
@@ -14,8 +15,7 @@ async function postAvatar(body: {
   sessionId?: string;
   dataUrl: string;
 }) {
-  const res = await fetch('/api/avatars', {
-    method: 'POST',
+  const res = await api.post('/api/avatars', {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
@@ -35,7 +35,7 @@ export async function uploadUserAvatar(dataUrl: string): Promise<string> {
 
 /** 移除用户头像：图片层清空，界面回到之前选的预设 */
 export async function removeUserAvatar(): Promise<void> {
-  const res = await fetch('/api/avatars', { method: 'DELETE' });
+  const res = await api.delete('/api/avatars');
   if (!res.ok) throw new Error(`移除头像失败（HTTP ${res.status}）`);
   await loadUserProfile();
 }
@@ -58,16 +58,12 @@ export async function uploadGroupAvatar(sessionId: string, dataUrl: string): Pro
 
 /** 移除群自定义头像：服务端解除引用登记并回收无人引用的文件 */
 export async function removeGroupAvatar(sessionId: string): Promise<void> {
-  const res = await fetch(`/api/avatars/group/${encodeURIComponent(sessionId)}`, {
-    method: 'DELETE',
-  });
+  const res = await api.delete(`/api/avatars/group/${encodeURIComponent(sessionId)}`);
   if (!res.ok) throw new Error(`移除头像失败（HTTP ${res.status}）`);
 }
 
 /** 恢复默认 Logo（只删映射，不动定义表） */
 export async function removeAgentLogo(agentId: string): Promise<void> {
-  const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/logo`, {
-    method: 'DELETE',
-  });
+  const res = await api.delete(`/api/agents/${encodeURIComponent(agentId)}/logo`);
   if (!res.ok) throw new Error(`恢复默认 Logo 失败（HTTP ${res.status}）`);
 }

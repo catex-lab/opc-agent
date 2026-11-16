@@ -210,6 +210,8 @@ export interface Message {
   thinking?: string;
   /** 该条消息的失败原因。有值时前端渲染为错误气泡 */
   error?: string;
+  /** C8：SSE 静默超时后的重连中提示（不是失败，转圈但给出人话说明） */
+  reconnecting?: boolean;
   /**
    * 失败分类（服务端按 recovery.ts 的口径盖章；本期只消费 'auth'）。
    *

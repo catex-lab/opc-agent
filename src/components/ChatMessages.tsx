@@ -25,6 +25,7 @@ import { formatUsage } from '../utils/formatUsage';
 import { stripEmoji } from '../utils/plainText';
 import { useTranslation } from '../i18n';
 import { useAgentLogin } from '../agentLogin';
+import { api } from '../api';
 
 /* ── 消息呈现（A33）─────────────────────────────────────────────────────
  *
@@ -146,10 +147,13 @@ function StreamStatus({
   startedAt,
   blocks,
   imageMode,
+  reconnecting,
 }: {
   startedAt?: number;
   blocks?: readonly Block[];
   imageMode?: boolean;
+  /** C8：SSE 静默超时后的重连中，覆盖阶段文案为人话提示 */
+  reconnecting?: boolean;
 }) {
   const { t } = useTranslation();
   const elapsed = useElapsed(startedAt, true);
@@ -158,7 +162,10 @@ function StreamStatus({
     .reverse()
     .find((b): b is ToolBlock => b.type === 'tool' && (b.status === 'running' || b.status === 'pending'))?.name;
   /** 与 shared/blocks 的 streamPhaseLabel 同一套判据，只把文案交给 i18n */
-  const label = imageMode
+  /** C8：重连中优先显示断线提示，不假装还在正常生成 */
+  const label = reconnecting
+    ? t('chat.status.reconnecting')
+    : imageMode
     ? t('chat.status.image')
     : activity === 'thinking'
       ? t('chat.status.thinking')
@@ -180,7 +187,8 @@ function StreamStatus({
          「它现在在干什么」，属于实时状态而不是脚注，11px 隔着半屏读不清。 */
       style={{ color: 'var(--td-text-color-secondary)', minHeight: 24 }}
       data-stream-status
-      data-stream-phase={imageMode ? 'image' : runActivity(blocks ?? [])}
+      data-reconnecting={reconnecting ? 'true' : undefined}
+      data-stream-phase={reconnecting ? 'reconnecting' : imageMode ? 'image' : runActivity(blocks ?? [])}
     >
       <span className="tc-live-dot" aria-hidden="true">
         <span className="tc-live-core" style={{ backgroundColor: 'var(--td-brand-color)' }} />
@@ -1126,8 +1134,7 @@ function AuthErrorActions({ agentId, authUrl }: { agentId?: string; authUrl?: st
     try {
       // 与通讯录「重新探测」同一个端点（POST /api/agents/:id/probe），
       // 但这里自己 fetch：结果只需要喂给这张卡，不动名册的协调器状态
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/probe`, {
-        method: 'POST',
+      const res = await api.post(`/api/agents/${encodeURIComponent(agentId)}/probe`, {
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       });
@@ -1462,6 +1469,7 @@ const MessageRow = memo(function MessageRow({
             startedAt={message.timestamp?.getTime()}
             blocks={message.blocks}
             imageMode={imageMode}
+            reconnecting={message.reconnecting}
           />
         )}
 

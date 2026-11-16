@@ -3,6 +3,7 @@ import { Model } from '../types';
 import { asProvenance, type Provenance } from '../../shared/provenance';
 import { bootPref } from '../prefs';
 import { subscribeCredentialChanges } from '../lib/credentialEvents';
+import { api } from '../api';
 
 const STORAGE_KEY = 'defaultModel';
 
@@ -21,7 +22,7 @@ export function useModels() {
 
   const fetchModels = useCallback(async () => {
     try {
-      const res = await fetch('/api/models');
+      const res = await api.get('/api/models');
       const data = await res.json();
       const list: Model[] = Array.isArray(data.models) ? data.models : [];
       setModels(list);

@@ -37,6 +37,7 @@ import { useGroupAvatar, useGroupAvatarImage } from '../sessionFlags';
 import { MENU_ITEM_CLASS } from './menuItem';
 import { agentStatusViewOf, diagnosticActionOf, type ComingSoonAgent, type RegisteredAgent, type Session } from '../types';
 import { useTranslation, type MessageKey } from '../i18n';
+import { api } from '../api';
 
 interface ContactsPanelProps {
   agents: RegisteredAgent[];
@@ -210,7 +211,7 @@ export function ContactsPanel({
   // 移除走确认框：删的是「联系人」，误触右键直接删没有后悔药。
   const removeCustomCli = async (id: string) => {
     try {
-      const r = await fetch(`/api/agents/custom-cli/${id}`, { method: 'DELETE' });
+      const r = await api.delete(`/api/agents/custom-cli/${id}`);
       if (!r.ok) {
         const data = await r.json().catch(() => ({}));
         console.error('[Contacts] 移除失败:', (data as { error?: string }).error);

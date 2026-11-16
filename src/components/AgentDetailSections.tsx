@@ -19,6 +19,7 @@ import {
   type AgentAccount,
   type RegisteredAgent,
 } from '../types';
+import { api } from '../api';
 
 /**
  * Agent 资料的信息区块 —— 资料页（AgentDetailPanel）与详情弹窗
@@ -948,7 +949,7 @@ function useAgentAccount(agentId: string): AgentAccount | null {
   useEffect(() => {
     let alive = true;
     setAccount(null);
-    fetch(`/api/agents/${encodeURIComponent(agentId)}/account`)
+    api.get(`/api/agents/${encodeURIComponent(agentId)}/account`)
       .then(res => (res.ok ? res.json() : null))
       .then((data: { account?: AgentAccount | null } | null) => {
         if (!alive) return;

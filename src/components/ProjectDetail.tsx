@@ -9,6 +9,7 @@ import type { Project, ProjectTask, ProjectTaskStatus, Session, RegisteredAgent 
 import { ConfirmDialog } from './ConfirmDialog';
 import { revealInFolder, hasNativeDialogs } from '../workspace';
 import { copyText } from '../clipboard';
+import { api } from '../api';
 
 interface ProjectDetailProps {
   project: Project;
@@ -145,7 +146,7 @@ export function ProjectDetail({
     setTasksLoading(true);
     setTasksError(null);
     try {
-      const r = await fetch(`/api/projects/${project.id}/tasks`);
+      const r = await api.get(`/api/projects/${project.id}/tasks`);
       const j = await r.json();
       // 更晚发起的请求已经在途 ⇒ 这份无论对错都过时了，丢弃。
       if (reqId !== tasksReqId.current) return;
@@ -178,9 +179,15 @@ export function ProjectDetail({
   const mutateTask = useCallback(
     async (path: string, init: RequestInit, fallback: string) => {
       try {
-        const r = await fetch(path, {
+        const { method, ...rest } = init;
+        const send =
+          method === 'PATCH' ? api.patch
+          : method === 'DELETE' ? api.delete
+          : method === 'POST' ? api.post
+          : api.get;
+        const r = await send(path, {
           headers: { 'Content-Type': 'application/json' },
-          ...init,
+          ...rest,
         });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));

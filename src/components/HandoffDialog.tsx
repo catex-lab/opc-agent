@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Search, Loader2, X } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { useTranslation, type MessageKey } from '../i18n';
+import { api } from '../api';
 
 /**
  * 跨 Agent 会话转交（A226）—— 选接手人的弹窗。
@@ -55,7 +56,7 @@ export function HandoffDialog({ open, currentAgentId, onClose, onHandoff }: Hand
     setError('');
     setKeyword('');
     let cancelled = false;
-    fetch('/api/agents')
+    api.get('/api/agents')
       .then(r => r.json())
       .then((data: { agents?: AgentOption[] }) => {
         if (cancelled) return;

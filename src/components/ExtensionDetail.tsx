@@ -20,6 +20,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { InfoHint } from './InfoHint';
 import { copyText } from '../clipboard';
 import { revealInFolder, hasNativeDialogs } from '../workspace';
+import { api } from '../api';
 
 interface ExtensionDetailProps {
   item: ExtensionListItem | null;
@@ -290,10 +291,9 @@ export function ExtensionDetail({
       const payload: Record<string, string> = item.kind === 'mcp'
         ? { configJson: draft }
         : { body: draft };
-      const res = await fetch(
+      const res = await api.put(
         `/api/extensions/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}`,
         {
-          method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         }
@@ -314,9 +314,8 @@ export function ExtensionDetail({
     if (!item) return;
     setRefreshing(true);
     try {
-      const res = await fetch(
-        `/api/extensions/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}/refresh`,
-        { method: 'POST' }
+      const res = await api.post(
+        `/api/extensions/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}/refresh`
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
@@ -342,9 +341,8 @@ export function ExtensionDetail({
   const acceptSource = async () => {
     if (!item) return;
     try {
-      const res = await fetch(
-        `/api/extensions/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}/accept-source`,
-        { method: 'POST' }
+      const res = await api.post(
+        `/api/extensions/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}/accept-source`
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);

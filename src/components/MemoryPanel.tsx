@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Textarea, MessagePlugin, Input, Select } from 'tdesign-react';
 import { InfoHint } from './InfoHint';
 import { useTranslation } from '../i18n';
+import { api } from '../api';
 
 /**
  * 记忆（A38）—— Hermes 式四层记忆的设置面板。
@@ -116,7 +117,7 @@ export function MemoryPanel() {
   const refresh = useCallback(async () => {
     try {
       const qs = projectPath ? `?cwd=${encodeURIComponent(projectPath)}` : '';
-      const r = await fetch(`/api/memory${qs}`);
+      const r = await api.get(`/api/memory${qs}`);
       const j = await r.json();
       setUser(j.user ?? '');
       setGlobalSkillCount((j.skills ?? []).length);
@@ -143,7 +144,7 @@ export function MemoryPanel() {
   useEffect(() => {
     void (async () => {
       try {
-        const r = await fetch('/api/projects');
+        const r = await api.get('/api/projects');
         const j = await r.json();
         setProjects(j.projects ?? []);
       } catch {
@@ -164,8 +165,7 @@ export function MemoryPanel() {
         which === 'core'
           ? { core, scope: isProject ? 'project' : 'global', cwd: isProject ? projectPath : undefined }
           : { user };
-      const r = await fetch('/api/memory', {
-        method: 'PUT',
+      const r = await api.put('/api/memory', {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -203,8 +203,7 @@ export function MemoryPanel() {
       return;
     }
     try {
-      const r = await fetch('/api/memory/search', {
-        method: 'POST',
+      const r = await api.post('/api/memory/search', {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           query,
@@ -223,7 +222,7 @@ export function MemoryPanel() {
 
   const openSkill = async (name: string) => {
     try {
-      const r = await fetch(`/api/memory/skills/${encodeURIComponent(name)}${scopeQs}`);
+      const r = await api.get(`/api/memory/skills/${encodeURIComponent(name)}${scopeQs}`);
       const j = await r.json();
       setDraft(j.body ?? '');
       setEditing(name);
@@ -235,8 +234,7 @@ export function MemoryPanel() {
   const saveSkill = async () => {
     if (!editing) return;
     try {
-      const r = await fetch(`/api/memory/skills/${encodeURIComponent(editing)}`, {
-        method: 'PUT',
+      const r = await api.put(`/api/memory/skills/${encodeURIComponent(editing)}`, {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ body: draft, cwd: projectPath || undefined }),
       });
@@ -252,7 +250,7 @@ export function MemoryPanel() {
 
   const removeSkill = async (name: string) => {
     try {
-      await fetch(`/api/memory/skills/${encodeURIComponent(name)}${scopeQs}`, { method: 'DELETE' });
+      await api.delete(`/api/memory/skills/${encodeURIComponent(name)}${scopeQs}`);
       MessagePlugin.success(t('settings.memory.deleted'));
       if (editing === name) setEditing(null);
       void refresh();

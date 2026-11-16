@@ -11,6 +11,7 @@ import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent } from '..
 import type { AgentProbeFeedback } from '../agentProbe';
 import { describeProbeFeedback } from '../agentProbe';
 import { useTranslation } from '../i18n';
+import { api } from '../api';
 
 interface AgentDetailPanelProps {
   agent: RegisteredAgent;
@@ -202,8 +203,7 @@ export function AgentDetailPanel({
                 onClick={() => {
                   const at = new Date().toISOString();
                   setCanaryArmedAt(at);
-                  void fetch('/api/agents/canary', {
-                    method: 'POST',
+                  void api.post('/api/agents/canary', {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ agentId: agent.id }),
                   })

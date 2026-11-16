@@ -22,7 +22,7 @@ import { once } from 'node:events';
 import { join, isAbsolute } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
-import { server } from '../server/index.js';
+import { startServer } from '../server/index.js';
 import { registry } from '../server/agents/registry.js';
 import { loadPrefs } from '../server/preferences.js';
 import { runHub } from '../server/run-hub.js';
@@ -37,6 +37,10 @@ import {
   setCdpAppUrls,
   currentCdpDescriptor,
 } from './cdp.js';
+
+// C1 / 绞杀者第 0 期：显式启动后端（import server/index 不再自启动）。
+// bootstrap.cjs 已在此前设好 OPC_DATA_DIR / PORT / OPC_WEB_DIR，顺序安全。
+const server = startServer()!;
 
 /**
  * 软件渲染逃生开关。

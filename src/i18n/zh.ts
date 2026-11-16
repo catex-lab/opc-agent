@@ -513,6 +513,7 @@ export const zh = {
   'chat.status.elapsed': '，用时 {n} 秒',
   'chat.status.image': '正在生成图像',
   'chat.status.processing': '正在处理',
+  'chat.status.reconnecting': '连接中断，正在重连…',
   'chat.status.thinking': '正在思考',
   'chat.status.writing': '正在生成',
   'chat.thinking.chars': '{n} 字',

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, MessagePlugin } from 'tdesign-react';
 import { RefreshCw } from 'lucide-react';
 import { useTranslation, type Translate } from '../i18n';
+import { api } from '../api';
 
 /**
  * 「模型清单」设置分区。
@@ -82,7 +83,7 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/model-catalog');
+      const res = await api.get('/api/model-catalog');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData((await res.json()) as CatalogSummary);
       setError(null);
@@ -100,7 +101,7 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
   const refresh = async () => {
     setRefreshing(true);
     try {
-      const res = await fetch('/api/model-catalog/refresh', { method: 'POST' });
+      const res = await api.post('/api/model-catalog/refresh');
       const json = (await res.json()) as CatalogSummary & { error?: string };
       if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
       setData(json);

@@ -3,6 +3,7 @@ import { Tag } from 'tdesign-react';
 import { Check, ChevronDown, KeyRound } from 'lucide-react';
 import { AgentCredentialEditor } from './AgentCredentialEditor';
 import { useTranslation } from '../i18n';
+import { api } from '../api';
 
 /**
  * 「Agent API Key」列表 —— 设置页的批量管理视图。
@@ -38,7 +39,7 @@ export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProp
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/agent-credentials');
+      const res = await api.get('/api/agent-credentials');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setList(Array.isArray(data.credentials) ? data.credentials : []);

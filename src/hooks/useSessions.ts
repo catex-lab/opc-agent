@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Session, Message, PermissionMode } from '../types';
+import { api } from '../api';
 
 const STORAGE_KEYS = {
   sessionModels: 'sessionModels',
@@ -68,7 +69,7 @@ export function useSessions() {
   // 从 API 加载会话列表
   const fetchSessions = useCallback(async () => {
     try {
-      const res = await fetch('/api/sessions');
+      const res = await api.get('/api/sessions');
       const data = await res.json();
       
       if (data.sessions) {
@@ -131,7 +132,7 @@ export function useSessions() {
     attemptedLoads.current.add(sessionId);
 
     try {
-      const res = await fetch(`/api/sessions/${sessionId}`);
+      const res = await api.get(`/api/sessions/${sessionId}`);
       // 尚未落库（404）或其它非 2xx：静默跳过，保留本地已有的消息。
       // **但要标记为已拉取** —— 否则界面会一直停在骨架屏上等一个永远
       // 不会来的响应（404 是「确实没有」而不是「还没到」）。
@@ -190,7 +191,7 @@ export function useSessions() {
   // 删除会话
   const deleteSession = useCallback(async (sessionId: string): Promise<string | null> => {
     try {
-      await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+      await api.delete(`/api/sessions/${sessionId}`);
 
       let navigateTo: string | null = null;
 
@@ -236,7 +237,7 @@ export function useSessions() {
   const clearSessionMessages = useCallback(
     async (sessionId: string): Promise<number> => {
       try {
-        const res = await fetch(`/api/sessions/${sessionId}/messages`, { method: 'DELETE' });
+        const res = await api.delete(`/api/sessions/${sessionId}/messages`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const deleted: number = typeof data.deleted === 'number' ? data.deleted : 0;
@@ -303,8 +304,7 @@ export function useSessions() {
       setSessions(p => p.map(s => (s.id === sessionId ? { ...s, pinned } : s)));
 
       try {
-        const res = await fetch(`/api/sessions/${sessionId}`, {
-          method: 'PATCH',
+        const res = await api.patch(`/api/sessions/${sessionId}`, {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ pinned }),
         });
@@ -337,8 +337,7 @@ export function useSessions() {
       if (target?.isLocal) return;
 
       try {
-        const res = await fetch(`/api/sessions/${sessionId}`, {
-          method: 'PATCH',
+        const res = await api.patch(`/api/sessions/${sessionId}`, {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ reasoningEffort: value || null }),
         });
@@ -373,8 +372,7 @@ export function useSessions() {
       if (target?.isLocal) return;
 
       try {
-        const res = await fetch(`/api/sessions/${sessionId}`, {
-          method: 'PATCH',
+        const res = await api.patch(`/api/sessions/${sessionId}`, {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ permissionMode: value }),
         });
@@ -413,8 +411,7 @@ export function useSessions() {
       if (target?.isLocal) return;
 
       try {
-        const res = await fetch(`/api/sessions/${sessionId}`, {
-          method: 'PATCH',
+        const res = await api.patch(`/api/sessions/${sessionId}`, {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cwd: value || null }),
         });

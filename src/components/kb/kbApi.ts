@@ -8,6 +8,7 @@ import type {
   KbStatus,
   KbToolPolicy,
 } from './types';
+import { api } from '../../api';
 
 interface ApiErrorBody {
   error?: string;
@@ -16,9 +17,16 @@ interface ApiErrorBody {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
+  const { method = 'GET', ...rest } = init ?? {};
+  const send =
+    method === 'POST' ? api.post :
+    method === 'PUT' ? api.put :
+    method === 'PATCH' ? api.patch :
+    method === 'DELETE' ? api.delete :
+    api.get;
+  const res = await send(url, {
     headers: { 'Content-Type': 'application/json' },
-    ...init,
+    ...rest,
   });
   if (!res.ok) {
     let body: ApiErrorBody = {};

@@ -6,6 +6,7 @@ import {
   reasonCodeOfKind,
   sortPendingPermissions,
 } from '../../shared/permissions';
+import { api } from '../api';
 
 /**
  * 待授权队列 —— A132，全局单一事实源。
@@ -187,8 +188,7 @@ export async function answer(
   let status = 0;
   let body: unknown = null;
   try {
-    const res = await fetch('/api/permission-response', {
-      method: 'POST',
+    const res = await api.post('/api/permission-response', {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         requestId,

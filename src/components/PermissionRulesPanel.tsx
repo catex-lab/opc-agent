@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Input, Select, MessagePlugin } from 'tdesign-react';
 import { Plus, Trash2 } from 'lucide-react';
 import { useTranslation, type MessageKey } from '../i18n';
+import { api } from '../api';
 
 /**
  * 权限门禁规则（A40）。
@@ -36,7 +37,7 @@ export function PermissionRulesPanel() {
 
   const refresh = useCallback(async () => {
     try {
-      const r = await fetch('/api/permission-rules');
+      const r = await api.get('/api/permission-rules');
       const j = await r.json();
       setRules(j.rules ?? []);
       setNote(j.note ?? '');
@@ -54,8 +55,7 @@ export function PermissionRulesPanel() {
   const save = async () => {
     setSaving(true);
     try {
-      const r = await fetch('/api/permission-rules', {
-        method: 'PUT',
+      const r = await api.put('/api/permission-rules', {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           rules: rules

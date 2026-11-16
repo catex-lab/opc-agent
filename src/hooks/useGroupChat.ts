@@ -13,6 +13,7 @@ import {
   type KbCitationRef,
   type RunEvent,
 } from '../../shared/blocks';
+import { api } from '../api';
 
 /**
  * 群聊消息流 hook。
@@ -334,7 +335,7 @@ function createEventStreamSession(opts: {
       for (const r of active) {
         const after = lastSeq.get(r.runId) ?? 0;
         if (after <= 0) continue;
-        const resumed = await fetch(`/api/runs/${r.runId}/stream?after=${after}`);
+        const resumed = await api.stream(`/api/runs/${r.runId}/stream?after=${after}`);
         if (resumed.ok) await consume(resumed);
       }
     }
@@ -367,7 +368,7 @@ function createEventStreamSession(opts: {
     stopped = true;
     for (const r of runs.values()) {
       if (!r.streaming) continue;
-      fetch(`/api/runs/${r.runId}/stop`, { method: 'POST' }).catch(() => {});
+      api.post(`/api/runs/${r.runId}/stop`).catch(() => {});
     }
     controller.abort();
     drain();
@@ -430,7 +431,7 @@ export function useGroupChat(options: UseGroupChatOptions) {
       streamRef.current = stream;
 
       try {
-        const response = await fetch('/api/group-chat', {
+        const response = await api.stream('/api/group-chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           // A122：停止要能掐掉这条流（否则气泡继续往下长字）
@@ -492,7 +493,7 @@ export function useGroupChat(options: UseGroupChatOptions) {
       streamRef.current = stream;
 
       try {
-        const response = await fetch('/api/workflow/run', {
+        const response = await api.stream('/api/workflow/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           // A122：与群聊同一个停止把手

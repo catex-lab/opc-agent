@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Check, Loader2, Play, Terminal, X } from 'lucide-react';
 import { Button } from 'tdesign-react';
 import { useTranslation, type MessageKey } from '../i18n';
+import { api } from '../api';
 
 /**
  * 手动添加本地 CLI Agent 的对话框（A223）。
@@ -77,7 +78,7 @@ export function AddCustomCliDialog({ open, editingId, onClose, onSaved }: AddCus
     setTrial({ running: false, result: null });
     if (editingId) {
       let cancelled = false;
-      fetch('/api/agents/custom-cli')
+      api.get('/api/agents/custom-cli')
         .then(r => r.json())
         .then((data: { agents?: Array<Record<string, unknown>> }) => {
           if (cancelled) return;
@@ -112,8 +113,7 @@ export function AddCustomCliDialog({ open, editingId, onClose, onSaved }: AddCus
     }
     setCheckState(s => ({ ...s, checking: true, error: '' }));
     try {
-      const r = await fetch('/api/agents/custom-cli/validate', {
-        method: 'POST',
+      const r = await api.post('/api/agents/custom-cli/validate', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, command, args: argsText, stdin, protocol, capabilities: caps }),
       });
@@ -136,8 +136,7 @@ export function AddCustomCliDialog({ open, editingId, onClose, onSaved }: AddCus
   const runTrial = async () => {
     setTrial({ running: true, result: null });
     try {
-      const r = await fetch('/api/agents/custom-cli/trial', {
-        method: 'POST',
+      const r = await api.post('/api/agents/custom-cli/trial', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, command, args: argsText, stdin, protocol, capabilities: caps }),
       });
@@ -160,11 +159,13 @@ export function AddCustomCliDialog({ open, editingId, onClose, onSaved }: AddCus
     try {
       const body = JSON.stringify({ name, command, args: argsText, stdin, protocol, capabilities: caps });
       const url = editingId ? `/api/agents/custom-cli/${editingId}` : '/api/agents/custom-cli';
-      const r = await fetch(url, {
-        method: editingId ? 'PATCH' : 'POST',
+      const init = {
         headers: { 'Content-Type': 'application/json' },
         body,
-      });
+      };
+      const r = editingId
+        ? await api.patch(url, init)
+        : await api.post(url, init);
       const data = await r.json();
       if (!r.ok) {
         setError(String(data.error ?? ''));

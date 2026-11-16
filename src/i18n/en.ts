@@ -516,6 +516,7 @@ export const en: Record<MessageKey, string> = {
   'chat.status.elapsed': ', {n}s elapsed',
   'chat.status.image': 'Generating image',
   'chat.status.processing': 'Working',
+  'chat.status.reconnecting': 'Connection lost, reconnecting…',
   'chat.status.thinking': 'Thinking',
   'chat.status.writing': 'Writing',
   'chat.thinking.chars': '{n} chars',

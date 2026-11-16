@@ -16,6 +16,7 @@ import { loadUrl } from '../browserPanel';
 import { takePendingWorkspaceUrl, WORKSPACE_OPEN_URL_EVENT } from '../answer/linkRouter';
 import { WorkspaceResizer } from './WorkspaceResizer';
 import { WorkspaceTerminal } from './WorkspaceTerminal';
+import { api } from '../api';
 
 /**
  * A77：右侧工作区面板。三个标签：文件（P1）/ 浏览器（P2）/ 终端（P4）。
@@ -307,7 +308,7 @@ export function WorkspacePanel({ sessionId, cwd, onClose, drawer = false }: Work
       setError(null);
       try {
         const qs = new URLSearchParams({ sessionId, path: target });
-        const res = await fetch(`/api/fs/list?${qs.toString()}`);
+        const res = await api.get(`/api/fs/list?${qs.toString()}`);
         const body = await res.json().catch(() => ({}));
         if (seq !== requestSeq.current) return;
         if (!res.ok) {
@@ -352,7 +353,7 @@ export function WorkspacePanel({ sessionId, cwd, onClose, drawer = false }: Work
     setPreview({ entry, data: null, loading: true, error: null });
     try {
       const qs = new URLSearchParams({ sessionId, path: entry.path });
-      const res = await fetch(`/api/fs/read?${qs.toString()}`);
+      const res = await api.get(`/api/fs/read?${qs.toString()}`);
       const body = await res.json().catch(() => ({}));
       if (seq !== previewSeq.current) return;
       if (!res.ok) {

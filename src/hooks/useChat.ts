@@ -5,6 +5,8 @@ import { Message, PermissionMode, Session, CustomAgent, ImageBlock } from '../ty
 // A132：答复口与待授权队列都收到全局 store 里，这里只负责把流事件喂进去。
 // 以前这里既攥单值 state、又自己 fetch 答复，导致并行会话后来的顶掉前一条。
 import { push as pushPermission, markSessionEnded } from '../permissions/permissionStore';
+// C8：SSE 静默看门狗。后端心跳注释帧唤醒 read()；这里检测 60s 无任何帧并重连。
+import { createSilenceWatchdog } from '../lib/sse-watchdog';
 import { notifyRunsChanged } from './useBackgroundTasks';
 import {
   applyRunEvent,
@@ -24,6 +26,7 @@ import {
   type ServerTimingMarks,
   type TimingSummary,
 } from '../utils/runTiming';
+import { api } from '../api';
 
 const STORAGE_KEYS = {
   draftInput: 'draftInput',
@@ -324,7 +327,7 @@ export function useChat(options: UseChatOptions) {
     if (turn.runId) {
       // fire-and-forget：按停止不该被一次网络往返拖住，界面要立刻收。
       // 失败也不管 —— 最坏退回到「断开宽限后中止」，仍然会停。
-      fetch(`/api/runs/${turn.runId}/stop`, { method: 'POST' }).catch(() => {});
+      api.post(`/api/runs/${turn.runId}/stop`).catch(() => {});
     }
     turn.controller.abort();
     // 第四段绳：SSE 一断，服务端 finish() 补发的 block_close 就到不了了。
@@ -616,7 +619,7 @@ export function useChat(options: UseChatOptions) {
     };
 
     try {
-      const response = await fetch(imageMode ? '/api/image' : '/api/chat', {
+      const response = await api.stream(imageMode ? '/api/image' : '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // A122：停止时掐掉这条流（生图端点同样受益：断开即中止）
@@ -809,6 +812,12 @@ export function useChat(options: UseChatOptions) {
 
       /** 把一条 SSE 事件应用到本地状态 */
       const handleEvent = (data: any) => {
+        // C8：重连后收到第一个真实事件 = 连接恢复，撤掉「正在重连」提示。
+        // 只在登记过提示时清一次，避免每个事件都 setState。
+        if (reconnectingShown) {
+          reconnectingShown = false;
+          patchAssistant({ reconnecting: false });
+        }
         if (imageMode) {
           if (data.type === 'init') {
             applyInit(data.sessionId, data.assistantMessageId, data.model);
@@ -842,7 +851,7 @@ export function useChat(options: UseChatOptions) {
                —— 这 20 秒里后台任务胶囊一直显示「1 个运行中」，正是「我明明停了，
                那边还在跑」的观感。runId 一到就补发一次，把 20 秒压到一次往返。 */
             if (turn.stopped && turn.runId) {
-              fetch(`/api/runs/${turn.runId}/stop`, { method: 'POST' }).catch(() => {});
+              api.post(`/api/runs/${turn.runId}/stop`).catch(() => {});
             }
             if (typeof data.seq === 'number') lastSeq = data.seq;
             applyInit(data.sessionId, data.messageId, data.model, data.modelEffective);
@@ -946,6 +955,19 @@ export function useChat(options: UseChatOptions) {
         }
       };
 
+      /** C8：静默看门狗。60s 无任何帧（含后端心跳）→ abort 走 seq 重连，不再永久转圈。 */
+      let silentReconnect = false;
+      /** 「正在重连」提示是否已经登记到 UI（收到首个事件时清一次） */
+      let reconnectingShown = false;
+      const watchdog = createSilenceWatchdog({
+        onSilent: () => {
+          silentReconnect = true;
+          // abort 让阻塞中的 reader.read() 抛错 → 落到下面的 catch 走重连。
+          // 不碰 turn.stopped：那是「用户主动停止」的专属标记，不能混淆。
+          controller.abort();
+        },
+      });
+
       /** 读一条 SSE 流（按空行分帧，半行留在 buffer 里） */
       const consume = async (resp: Response) => {
         const reader = resp.body?.getReader();
@@ -957,6 +979,9 @@ export function useChat(options: UseChatOptions) {
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
+          // 读到任何字节就算「连接活着」——心跳注释帧也在这里 refresh。
+          // 空 value 不算（不是一次真正的读），避免空流被误判为健康。
+          if (value && value.byteLength > 0) watchdog.touch();
           buffer += decoder.decode(value, { stream: true });
           const frames = buffer.split('\n\n');
           buffer = frames.pop() ?? '';
@@ -973,6 +998,7 @@ export function useChat(options: UseChatOptions) {
       };
 
       try {
+        watchdog.start();
         await consume(response);
       } catch (err) {
         // 用户点了停止：这条异常是**我们自己**造成的，绝不能走重连 ——
@@ -980,12 +1006,18 @@ export function useChat(options: UseChatOptions) {
         if (turn.stopped) throw err;
         // 断线重连（E5）：带着最后收到的 seq 接回去，不重发整轮
         if (runId && lastSeq > 0) {
-          const resumed = await fetch(`/api/runs/${runId}/stream?after=${lastSeq}`);
+          // C8：静默超时触发的重连给用户一句可见说明，不假装还在正常生成。
+          // 用不阻塞的方式挂到正在流的消息上；重连一旦读到帧（consume 里 touch）
+          // 就会由首个事件把状态覆盖掉。
+          if (silentReconnect) { reconnectingShown = true; patchAssistant({ reconnecting: true }); }
+          const resumed = await api.stream(`/api/runs/${runId}/stream?after=${lastSeq}`);
           if (!resumed.ok) throw err;
           await consume(resumed);
         } else {
           throw err;
         }
+      } finally {
+        watchdog.stop();
       }
 
     } catch (error) {

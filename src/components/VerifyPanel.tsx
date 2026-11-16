@@ -28,6 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, CircleDashed, Loader2, Play, XCircle } from 'lucide-react';
 import type { VerificationRow, VerifyStatus } from '../hooks/useVerifications';
 import { useTranslation, type MessageKey } from '../i18n';
+import { api } from '../api';
 
 interface VerifyCommand {
   id: string;
@@ -111,7 +112,7 @@ export function VerifyPanel({ sessionId, messageId, cwd, rows, onUpdated }: Veri
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/verify/commands?cwd=${encodeURIComponent(cwd)}`);
+        const res = await api.get(`/api/verify/commands?cwd=${encodeURIComponent(cwd)}`);
         if (!res.ok) {
           if (!cancelled) setDetectError(t('chat.verify.detectFailed', { status: res.status }));
           return;
@@ -169,7 +170,7 @@ export function VerifyPanel({ sessionId, messageId, cwd, rows, onUpdated }: Veri
     setExpanded(true);
 
     try {
-      const res = await fetch('/api/verify/run', {
+      const res = await api.stream('/api/verify/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -8,6 +8,7 @@ import {
   type ProviderDialect,
 } from '../../shared/providerUrl';
 import { useTranslation, type MessageKey } from '../i18n';
+import { api } from '../api';
 
 /**
  * 「自定义模型厂商」（A129）。
@@ -129,7 +130,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/agents/custom');
+      const res = await api.get('/api/agents/custom');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setList(Array.isArray(data.agents) ? data.agents : []);
@@ -243,8 +244,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
     setError(null);
     setFetchNote(null);
     try {
-      const res = await fetch('/api/agents/custom/models', {
-        method: 'POST',
+      const res = await api.post('/api/agents/custom/models', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(authBody()),
       });
@@ -275,8 +275,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
     setError(null);
     setTestResult(null);
     try {
-      const res = await fetch('/api/agents/custom/test', {
-        method: 'POST',
+      const res = await api.post('/api/agents/custom/test', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...authBody(), model: draft.models[0] }),
       });
@@ -295,20 +294,19 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
     setBusy('save');
     setError(null);
     try {
-      const res = await fetch(
-        draft.id ? `/api/agents/custom/${encodeURIComponent(draft.id)}` : '/api/agents/custom',
-        {
-          method: draft.id ? 'PATCH' : 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: draft.name.trim(),
-            baseUrl: draft.baseUrl.trim(),
-            dialect: draft.dialect,
-            models: draft.models,
-            ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
-          }),
-        }
-      );
+      const init = {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: draft.name.trim(),
+          baseUrl: draft.baseUrl.trim(),
+          dialect: draft.dialect,
+          models: draft.models,
+          ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
+        }),
+      };
+      const res = await (draft.id
+        ? api.patch(`/api/agents/custom/${encodeURIComponent(draft.id)}`, init)
+        : api.post('/api/agents/custom', init));
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
       MessagePlugin.success(draft.id ? t('settings.provider.updated') : t('settings.provider.added'));
@@ -326,7 +324,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
     setBusy(id);
     setError(null);
     try {
-      const res = await fetch(`/api/agents/custom/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const res = await api.delete(`/api/agents/custom/${encodeURIComponent(id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
       MessagePlugin.success(t('settings.provider.deleted'));

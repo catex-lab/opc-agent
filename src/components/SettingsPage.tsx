@@ -56,6 +56,7 @@ import {
   themeGlowSize,
   type GlowPrefs,
 } from '../uiPrefs';
+import { api } from '../api';
 
 interface SettingsPageProps {
   agents: CustomAgent[];
@@ -319,7 +320,7 @@ export function SettingsPage({
     setLoginStatus(prev => ({ ...prev, checking: true, error: undefined }));
     
     try {
-      const response = await fetch('/api/check-login');
+      const response = await api.get('/api/check-login');
       const data = await response.json();
       
       setLoginStatus({
@@ -352,8 +353,7 @@ export function SettingsPage({
     
     setSavingEnv(true);
     try {
-      const response = await fetch('/api/save-env-config', {
-        method: 'POST',
+      const response = await api.post('/api/save-env-config', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           apiKey: envConfig.apiKey.trim() || undefined,
@@ -2140,8 +2140,8 @@ function PermissionGrantsSection() {
   const refresh = useCallback(async () => {
     try {
       const [gr, ar] = await Promise.all([
-        fetch('/api/permission-grants').then(r => r.json()).catch(() => null),
-        fetch('/api/agents').then(r => r.json()).catch(() => null),
+        api.get('/api/permission-grants').then(r => r.json()).catch(() => null),
+        api.get('/api/agents').then(r => r.json()).catch(() => null),
       ]);
       setGrants(Array.isArray(gr?.grants) ? gr.grants : []);
       const list = Array.isArray(ar?.agents) ? ar.agents : [];
@@ -2165,8 +2165,7 @@ function PermissionGrantsSection() {
     const key = `${grant.agent_id}\u0000${grant.tool_name}`;
     setRevoking(key);
     try {
-      const r = await fetch('/api/permission-grants', {
-        method: 'DELETE',
+      const r = await api.delete('/api/permission-grants', {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ agentId: grant.agent_id, toolName: grant.tool_name }),
       });
@@ -2330,7 +2329,7 @@ function RemoteApprovalSection() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/notify/config')
+    api.get('/api/notify/config')
       .then(r => r.json())
       .then(d => {
         if (cancelled) return;
@@ -2349,8 +2348,7 @@ function RemoteApprovalSection() {
   const save = async (nextEnabled?: boolean) => {
     setSaving(true);
     try {
-      const r = await fetch('/api/notify/config', {
-        method: 'PUT',
+      const r = await api.put('/api/notify/config', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           kind,
@@ -2367,7 +2365,7 @@ function RemoteApprovalSection() {
       }
       setHasUrl(hasUrl || !!url.trim());
       setUrl('');
-      const cfg = await fetch('/api/notify/config').then(x => x.json());
+      const cfg = await api.get('/api/notify/config').then(x => x.json());
       setApprovalBase(cfg.approvalBase ?? null);
       return true;
     } finally {
@@ -2378,8 +2376,7 @@ function RemoteApprovalSection() {
   const test = async () => {
     setTesting(true);
     try {
-      const r = await fetch('/api/notify/test', {
-        method: 'POST',
+      const r = await api.post('/api/notify/test', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...(url.trim() ? { url: url.trim() } : {}), kind }),
       });

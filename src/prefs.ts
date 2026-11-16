@@ -31,6 +31,7 @@ import type { CloseBehavior } from '../shared/close-behavior';
 import type { LinkOpenMode } from './answer/linkRouter';
 import type { AnswerLanguage } from '../shared/answer-language';
 import type { InterfaceLanguage } from '../shared/interface-language';
+import { api } from './api';
 
 /** 与 `server/preferences.ts` 的 `Prefs` 一一对应（那边是事实来源） */
 export interface Prefs {
@@ -106,8 +107,7 @@ function flush(): void {
   if (!Object.keys(body).length) return;
   // keepalive：`pagehide` 时（用户关窗口）请求还在飞，不设这个会被取消，
   // 表现就是「最后一次拖动没存上」。
-  void fetch('/api/preferences', {
-    method: 'PATCH',
+  void api.patch('/api/preferences', {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     keepalive: true,

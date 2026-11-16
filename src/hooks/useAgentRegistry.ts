@@ -5,6 +5,7 @@ import {
   probeFeedbackFromResult,
   type AgentProbeFeedback,
 } from '../agentProbe';
+import { api } from '../api';
 
 /**
  * Agent 注册表 hook。
@@ -38,7 +39,7 @@ export function useAgentRegistry() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/agents');
+      const res = await api.get('/api/agents');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAgents(Array.isArray(data.agents) ? data.agents : []);
@@ -103,7 +104,7 @@ export function useAgentRegistry() {
     setProbing(true);
     setError(null);
     try {
-      const res = await fetch('/api/agents/probe', { method: 'POST' });
+      const res = await api.post('/api/agents/probe');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAgents(Array.isArray(data.agents) ? data.agents : []);
@@ -151,8 +152,7 @@ export function useAgentRegistry() {
    */
   const canaryAll = useCallback(async () => {
     try {
-      await fetch('/api/agents/canary', {
-        method: 'POST',
+      await api.post('/api/agents/canary', {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
