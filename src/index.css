@@ -4786,7 +4786,10 @@ html[data-opc-glass='1'] t-chat-sender {
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  padding: 2px 0;
+  /* 2026-11-15 排版收敛把孪生的 .tc-steps-bar 改成上下 4px 时漏了这一条
+     （verify:a102 [6] 实测 32/28 判红才暴露）。两条「消息底部状态行」
+     必须同高 —— 改 padding 只能成对改。 */
+  padding: 4px 0;
   /* 2026-10-30：与过程执行流统一（14px / 行高 1.7）。
      它紧贴在轨迹汇总行下面，两条「消息底部状态行」高度必须一样，
      否则一高一矮像两个系统的东西。 */
