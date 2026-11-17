@@ -234,7 +234,8 @@ function reverseProbes() {
 
   const projectorSrc = readSrc('server/agents/projector.ts');
   const turnSrc = readSrc('server/turn-runner.ts');
-  const chatSrc = readSrc('server/index.ts');
+  // F0-02③：/api/chat 触发点已随聊天区迁 routes/chat.ts
+  const chatSrc = readSrc('server/routes/chat.ts');
   const chatMsgSrc = readSrc('src/components/ChatMessages.tsx');
 
   // R1：删掉 errorKind 分类（连同 import 一起删，模拟「口径没接上」）
