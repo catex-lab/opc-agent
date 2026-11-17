@@ -43,6 +43,8 @@ console.log('\n[1] 接线契约：路由与前端四处刷新链路');
 {
   const FILES = {
     index: 'server/index.ts',
+    // F0-02③：/api/agents/:agentId/credential/verify 已迁 routes/custom-agents.ts
+    routes: 'server/routes/custom-agents.ts',
     verify: 'server/credential-verify.ts',
     bus: 'src/lib/credentialEvents.ts',
     useModels: 'src/hooks/useModels.ts',
@@ -59,8 +61,8 @@ console.log('\n[1] 接线契约：路由与前端四处刷新链路');
   /** 纯函数：给定一份源码副本，返回每条接线是否成立。 */
   const contract = (f: Files) => ({
     route:
-      /app\.post\("\/api\/agents\/:agentId\/credential\/verify"/.test(f.index) &&
-      /await verifyCredential\(/.test(f.index),
+      /app\.post\("\/api\/agents\/:agentId\/credential\/verify"/.test(f.routes) &&
+      /await verifyCredential\(/.test(f.routes),
     noClientUrl:
       /credentialSpecOf\(/.test(f.verify) &&
       /getRawCredential\(/.test(f.verify) &&
@@ -83,7 +85,7 @@ console.log('\n[1] 接线契约：路由与前端四处刷新链路');
 
   /** 反向探针：只把一条接线退回坏版本，那条必须变红，其余仍须全绿。 */
   const probes: Array<[keyof ReturnType<typeof contract>, keyof Files, string, string]> = [
-    ['route', 'index', 'await verifyCredential(agentId)', 'await probeAccount(agentId)'],
+    ['route', 'routes', 'await verifyCredential(agentId)', 'await probeAccount(agentId)'],
     ['noClientUrl', 'verify', 'getRawCredential(', '/* 故意不读凭据 */ getRawCredentialKey('],
     ['bus', 'bus', 'subscribeCredentialChanges', 'subscribeNothing'],
     ['useModels', 'useModels', 'subscribeCredentialChanges(', '/* 掉线 */ subscribeNothing('],
