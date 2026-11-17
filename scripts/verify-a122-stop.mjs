@@ -629,7 +629,8 @@ async function main() {
     const page = read('src/pages/ChatPage.tsx');
     ok(/isGroup \? group\.stopRun : onStop/.test(page), '[4] 群聊的停止接到群聊自己的把手（不再借用 1:1）');
 
-    const api = read('server/index.ts');
+    // F0-02③：停止路由与中止接线已随聊天区迁 routes/chat.ts，判据跟着搬。
+    const api = read('server/routes/chat.ts');
     ok(/app\.post\("\/api\/runs\/:runId\/stop"/.test(api), '[4] 后端注册了即时停止路由');
     const handlerHits = (api.match(/runHub\.setAbortHandler/g) ?? []).length;
     ok(handlerHits === 1, '[4] 一对一路由注册了中止动作', `命中 ${handlerHits}`);

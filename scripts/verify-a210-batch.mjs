@@ -256,7 +256,10 @@ ok(list.every(a => !retiredLine.includes(a.id)), '占位清单不复用 RETIRED_
 
 // ── 5. 源码契约：接线与隔离 ──────────────────────────────────────────────
 group('5. 源码契约（剥注释、锚行首）');
+// F0-02②③：/api/chat 与模型/自定义路由已迁 routes/*，聊天区判据跟着搬。
 const idx = code('server/index.ts');
+const chatRoutes = code('server/routes/chat.ts');
+const customRoutes = code('server/routes/custom-agents.ts');
 const blocks = code('shared/blocks.ts');
 const proj = code('server/agents/projector.ts');
 const routing = code('server/model-routing.ts');
@@ -268,10 +271,10 @@ const app = code('src/App.tsx');
 const contacts = code('src/components/ContactsPanel.tsx');
 const dialog = code('src/components/GetAgentsDialog.tsx');
 
-ok(hasLine(idx, /clientSentAt,/), '/api/chat 解构了 clientSentAt');
-ok(hasLine(idx, /beginRunTiming\(runId, clientSentAt\)/), 'runId 之后起一轮计时');
-ok(hasLine(idx, /if \(isFirstContentEvent\(event\)\) noteFirstContent\(runId\)/), 'writeEvent 记首个正文事件');
-ok((idx.match(/takeRunTiming\(runId\)/g) ?? []).length >= 2, '两个 finish 分支都取走时间戳（含早退）');
+ok(hasLine(chatRoutes, /clientSentAt,/), '/api/chat 解构了 clientSentAt');
+ok(hasLine(chatRoutes, /beginRunTiming\(runId, clientSentAt\)/), 'runId 之后起一轮计时');
+ok(hasLine(chatRoutes, /if \(isFirstContentEvent\(event\)\) noteFirstContent\(runId\)/), 'writeEvent 记首个正文事件');
+ok((chatRoutes.match(/takeRunTiming\(runId\)/g) ?? []).length >= 2, '两个 finish 分支都取走时间戳（含早退）');
 ok(hasLine(blocks, /timing\?: \{ t0: number; t1: number; t2: number \| null \}/), 'run_end 有 timing 可选字段');
 ok(hasLine(proj, /timing\?: \{ t0: number; t1: number; t2: number \| null \}/), 'projector.finish 第三参收 timing');
 ok(hasLine(proj, /\.\.\.\(timing \? \{ timing \} : \{\}\)/), 'timing 只在有值时挂到 run_end');
@@ -299,12 +302,12 @@ ok(!hasLine(messages, /formatTimingTitle\(/), '消息头不再挂四段分解的
 const rosterRoutes = code('server/routes/agent-roster.ts');
 ok(hasLine(rosterRoutes, /function comingSoonList\(\)/), 'comingSoonList 过滤已转正的 id');
 ok((rosterRoutes.match(/comingSoon: comingSoonList\(\)/g) ?? []).length >= 2, '/api/agents 与 /probe 都下发平级 comingSoon');
-ok(hasLine(idx, /const configured = agentAcceptsModel\(agentId\)/), 'configured 归属二次过滤');
-ok((idx.match(/^\s+configured,$/gm) ?? []).length >= 3, 'models 路由三个返回分支都带平级 configured');
+ok(hasLine(customRoutes, /const configured = agentAcceptsModel\(agentId\)/), 'configured 归属二次过滤');
+ok((customRoutes.match(/^\s+configured,$/gm) ?? []).length >= 3, 'models 路由三个返回分支都带平级 configured');
 /* 2026-11-15：可切换性改由配置读取层声明（ZCode 不声明 ⇒ 缺省只读；
    Kimi Code 声明 true 是因为它的 --model 真生效）。钉住「缺省 = false」，
    别哪天把缺省改成 true 把只读清单放成假控件。 */
-ok(hasLine(idx, /selectable:\s*fromConfig\.selectable\s*\?\?\s*false,/),
+ok(hasLine(customRoutes, /selectable:\s*fromConfig\.selectable\s*\?\?\s*false,/),
   '否定式：agent-config 缺省只读（selectable 缺省 false）');
 ok(hasLine(routing, /configuredLookup\?\.\(agentId, requested\)/), '白名单分支放行本机配置模型');
 ok(hasLine(routing, /setConfiguredModelLookup/), '查表是可注入的纯判定，不带文件系统副作用');

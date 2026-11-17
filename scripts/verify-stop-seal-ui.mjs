@@ -315,7 +315,8 @@ console.log('\n[3] 源码契约');
   const shared = fs.readFileSync(join(ROOT, 'shared/blocks.ts'), 'utf8');
   ok(/export function sealOpenBlocks/.test(shared), '[3] 收口逻辑是 shared 纯函数（前后端同源）');
 
-  const idx = fs.readFileSync(join(ROOT, 'server/index.ts'), 'utf8');
+  // F0-02③：/api/chat 已随聊天区迁 routes/chat.ts，判据跟着搬。
+  const idx = fs.readFileSync(join(ROOT, 'server/routes/chat.ts'), 'utf8');
   const earlyIdx = idx.slice(idx.indexOf('if (!stream)'), idx.indexOf('if (!stream)') + 900);
   ok(/writeEvents\(early\.closes\)/.test(earlyIdx), '[3] /api/chat 早退分支补发 closes');
   ok(!/writeEvent\(projector\.finish\('error'\)\.end\)/.test(earlyIdx), '[3] 早退分支不再只发 .end');
