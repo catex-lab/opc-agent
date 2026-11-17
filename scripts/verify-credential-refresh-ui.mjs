@@ -225,11 +225,13 @@ try {
   // C 也会跟着刷新 —— 那说明 A 的绿是假的。只有成功分支里的事件才该触发刷新。
   const C = await openModal('C');
   let cSavePosts = 0;
+  let cSaveFulfilled = false;
   await C.page.route(u => u.pathname === '/api/agent-credentials', async route => {
     if (route.request().method() !== 'POST') return route.continue();
     cSavePosts++;
     await route
       .fulfill({ status: 400, contentType: 'application/json', body: json({ error: 'fixture: 拒绝保存' }) })
+      .then(() => { cSaveFulfilled = true; })
       .catch(() => {});
   });
 
@@ -308,6 +310,9 @@ try {
   await C.page.getByRole('button', { name: '保存' }).click();
   const rejected = await waitUntil(() => cSavePosts === 1, 15000);
   ok(rejected, '[4] C 的保存请求确实发出并被拒（反例成立）', `posts=${cSavePosts}`);
+  // 等 400 响应真正回到前端（链环境慢时请求到达 ≠ 响应已落地——
+  // 乐观更新会短暂显示「已配置」，[6] 的成功态断言会先于回滚读到中间态）
+  await waitUntil(() => cSaveFulfilled, 15000);
 
   // 给对照组与 A 同样的等待窗口，再判 B / C 是否仍然静止
   await sleep(1800);
