@@ -142,7 +142,8 @@ console.log('\n[1] 入口与路由（源码级）');
   ok(/key: 'extensions'/.test(nav), 'NavRail 有第 4 个入口（扩展）');
   ok(/<Route path="\/extensions"/.test(app), '路由 /extensions 存在');
   ok(/<Route path="\/extensions\/:extKind\/:extName"/.test(app), '路由 /extensions/:extKind/:extName 存在');
-  ok(/parseExtKind/.test(fs.readFileSync(path.join(ROOT, 'server', 'index.ts'), 'utf8')), '服务端有 kind 白名单（非法值 400）');
+  // F0-02③：扩展分发路由已迁 routes/chat.ts
+  ok(/parseExtKind/.test(fs.readFileSync(path.join(ROOT, 'server', 'routes', 'chat.ts'), 'utf8')), '服务端有 kind 白名单（非法值 400）');
 }
 
 // ── 假环境 ─────────────────────────────────────────────────────────────
