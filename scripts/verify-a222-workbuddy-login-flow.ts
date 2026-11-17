@@ -227,10 +227,11 @@ interface Files {
   index: string; sdk: string; loginFlow: string; serverTypes: string;
   types: string; chatHeader: string; zh: string; en: string;
   agentLogin: string; chatMessages: string; detail: string;
-  registryHook: string; indexCss: string; settings: string; settingsCss: string;
+  registryHook: string; indexCss: string; settings: string; settingsCss: string; custom: string;
 }
 const REAL: Files = {
   index: code('server/index.ts'),
+  custom: code('server/routes/custom-agents.ts'),
   sdk: code('server/agents/adapters/sdk.ts'),
   loginFlow: code('server/agents/loginFlow.ts'),
   serverTypes: code('server/agents/types.ts'),
@@ -248,9 +249,9 @@ const REAL: Files = {
 };
 
 function contract(f: Files) {
-  const indexStart = f.index.indexOf('app.post("/api/agents/:agentId/login/start"');
-  const indexStatus = f.index.indexOf('app.get("/api/agents/:agentId/login/status"');
-  const indexGeneric = f.index.indexOf('app.get("/api/agents/:agentId"');
+  const indexStart = f.custom.indexOf('app.post("/api/agents/:agentId/login/start"');
+  const indexStatus = f.custom.indexOf('app.get("/api/agents/:agentId/login/status"');
+  const indexGeneric = f.custom.indexOf('app.get("/api/agents/:agentId"');
   return {
     // 查登录的 GET 不许再起一条 300 秒登录流
     checkLoginYield:
@@ -275,7 +276,8 @@ function contract(f: Files) {
       /invalidateWorkbuddyProfile\(\)/.test(hookBody(f.index)),
     loginRoutes:
       indexStart >= 0 && indexStatus > indexStart && indexGeneric > indexStatus &&
-      /agent\.kind !== "sdk"/.test(f.index),
+      // F0-02②：/api/agents/:agentId 详情路由已迁 routes/custom-agents.ts
+      /agent\.kind !== "sdk"/.test(f.custom),
     // 状态词分层
     sessionWord:
       /'session-invalid'/.test(f.serverTypes) &&
