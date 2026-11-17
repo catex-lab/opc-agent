@@ -93,7 +93,8 @@ const MUTATIONS: Record<string, { file: string; apply: (src: string) => string; 
   },
   // 坏形态④：转交摘要读出不清空（每轮重复注入）
   'no-handoff-clear': {
-    file: 'server/index.ts',
+    // F0-02③：摘要消费已迁 routes/chat.ts，变异体跟着改文件
+    file: 'server/routes/chat.ts',
     apply: src => src.replace('db.updateSession(session.id, { handoff_context: null });', '/* probe: no clear */'),
     expect: 'A226 一次性摘要契约',
   },
@@ -143,7 +144,8 @@ function contractChecks(mutate?: (src: string, file: string) => string): void {
       assert.ok(src.includes("'missed'") && src.includes('running.has(task.id)'));
     });
     check('A225 群聊路由：汇合在 finally（编排抛错也要收检出）', () => {
-      assert.match(S('server/index.ts'), /finally \{\n[\s\S]*?mergeWorktree/);
+      // F0-02③：群聊路由已迁 routes/chat.ts
+      assert.match(S('server/routes/chat.ts'), /finally \{\n[\s\S]*?mergeWorktree/);
     });
     check('A227 打断追加：旧轮 finally 不得无条件摘掉新轮的把手', () => {
       assert.match(S('src/hooks/useChat.ts'), /turnsRef\.current\.get\(turn\.sessionId\) === turn/);
