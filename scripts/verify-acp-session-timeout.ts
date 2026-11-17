@@ -126,6 +126,11 @@ function readLaunches(): number[] {
     .filter(pid => pid > 0);
 }
 function resetLaunches(): void {
+  // 链环境下前一段残留的 Fake ACP 子进程可能还没被树杀干净——
+  // 若只清文件，旧进程在 reset 之后才写自己的 launches 行，会污染下一段计数
+  //（实测 S3 绿但 A7 偶发 +1，独立跑 4 连绿、全链偶发红）。
+  // 先确保上一批进程全部退出，再清文件。
+  killAllLaunched();
   fs.writeFileSync(launchesPath, '', 'utf8');
 }
 
