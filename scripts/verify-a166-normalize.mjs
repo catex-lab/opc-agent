@@ -96,7 +96,8 @@ function resolveChrome() {
 // ══════════════ [1] 源码接线 ══════════════
 console.log('\n[1] 源码接线');
 {
-  const idx = fs.readFileSync(path.join(ROOT, 'server', 'index.ts'), 'utf8');
+  // F0-02③：扩展归一化路由已迁 routes/chat.ts
+  const idx = fs.readFileSync(path.join(ROOT, 'server', 'routes', 'chat.ts'), 'utf8');
   const norm = fs.readFileSync(path.join(ROOT, 'server', 'extensions', 'normalize.ts'), 'utf8');
   const dist = fs.readFileSync(path.join(ROOT, 'server', 'extensions', 'distribute.ts'), 'utf8');
   const defs = fs.readFileSync(path.join(ROOT, 'server', 'agents', 'definitions.ts'), 'utf8');
