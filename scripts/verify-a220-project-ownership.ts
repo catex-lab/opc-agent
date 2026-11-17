@@ -264,7 +264,7 @@ function srcContract(chat: string, sessions: string, helper: string) {
     helperGetOrCreate: hasLine(helper, /getOrCreateProject\(cwd\)/),
     helperGuardsEmpty: hasLine(helper, /typeof cwd === 'string' && cwd \?/),
     chatCall: hasLine(chat, /project_id: projectIdForCwd\(cwd\),/),
-    chatImport: hasLine(chat, /import \{ projectIdForCwd \} from "\.\/project-ownership\.js";/),
+    chatImport: hasLine(chat, /import \{ projectIdForCwd \} from ["']\.\.?\/project-ownership\.js["'];/),
     patchCall: (sessions.match(/updates\.project_id = projectIdForCwd\(cwd\);/g) ?? []).length === 1,
     sessionsCall: hasLine(sessions, /getOrCreateProject\(cwd\) : undefined/),
     routeGuards:
@@ -275,7 +275,8 @@ function srcContract(chat: string, sessions: string, helper: string) {
   };
 }
 type Contract = ReturnType<typeof srcContract>;
-const CHAT = code('server/index.ts');
+// F0-02③：/api/chat 也已迁 routes/chat.ts——三条写入路径横跨 index.ts（chat 在 routes/chat.ts）
+const CHAT = code('server/routes/chat.ts');
 const SESSIONS = code('server/routes/sessions.ts');
 const HELPER = code('server/project-ownership.ts');
 const good = srcContract(CHAT, SESSIONS, HELPER);
