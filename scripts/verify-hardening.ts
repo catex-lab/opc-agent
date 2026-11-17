@@ -16,7 +16,7 @@
 // 必须先于所有 server/** import：把 OPC_DATA_DIR 指向临时目录，绝不触碰真实 data/
 import './lib/temp-data-dir.js';
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -60,7 +60,14 @@ console.log('\n[1] 日志脱敏：服务端内部值不许明文入日志');
   ok(!redacted.includes('ONE_TIME_STATE') && !redacted.includes('SECRET_CODE'), '★ OAuth state / code 被丢掉');
   ok(!redactUrl('不是合法 URL 的敏感串 ABCDEFGH').includes('不是合法 URL'), '非法 URL 退化为指纹，不原样回显');
 
+  // F0-02②③：路由已全部迁出 server/routes/*，敏感日志点分散在 index.ts 与
+  // 各路由文件——契约按「服务端全部源码」执行，不再只查 index.ts。
   const indexSrc = read('server/index.ts');
+  const routesSrc = readdirSync(path.join(ROOT, 'server/routes'))
+    .filter(f => f.endsWith('.ts'))
+    .map(f => read(`server/routes/${f}`))
+    .join('\n');
+  const serverSrc = indexSrc + '\n' + routesSrc;
   /** 不变量：凡是引用了敏感变量的日志行，必须过脱敏函数；且至少有三处调用点。 */
   const logRedactionContract = (src: string): boolean => {
     const code = stripComments(src);
@@ -72,7 +79,7 @@ console.log('\n[1] 日志脱敏：服务端内部值不许明文入日志');
     if (sensitive.some(l => /,\s*authState\.authUrl\s*\)/.test(l))) return false;
     return true;
   };
-  ok(logRedactionContract(indexSrc), '★ index.ts 三处敏感日志全部走 redactSecret / redactUrl');
+  ok(logRedactionContract(serverSrc), '★ 服务端敏感日志全部走 redactSecret / redactUrl（≥3 处）');
   ok(/from ["']\.\/log-redact\.js["']/.test(indexSrc), 'index.ts 确实导入了脱敏模块（肯定式）');
   ok(
     !logRedactionContract(indexSrc.replace('redactSecret(resumeToken)', 'resumeToken')),
