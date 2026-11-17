@@ -244,7 +244,8 @@ function srcContract(sdk: string, types: string, chat: string, runner: string) {
 type Contract = ReturnType<typeof srcContract>;
 const SRC = code('server/agents/adapters/sdk.ts');
 const TYPES = code('server/agents/types.ts');
-const CHAT = code('server/index.ts');
+// F0-02③：/api/chat 轮次恢复契约已迁 routes/chat.ts
+const CHAT = code('server/routes/chat.ts');
 const RUNNER = code('server/turn-runner.ts');
 const good = srcContract(SRC, TYPES, CHAT, RUNNER);
 {

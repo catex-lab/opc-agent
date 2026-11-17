@@ -470,7 +470,9 @@ group('7. 源码契约：剥注释 + 锚行首 + 反向探针');
   const code = (rel: string) => stripComments(read(rel));
   const hasLine = (src: string, re: RegExp) => src.split('\n').some(l => re.test(l));
 
-  const idx = code('server/index.ts');
+  // F0-02③：workbuddy-profiles 路由已迁 routes/custom-agents.ts；
+// configuredCache 重置仍留在 index.ts（deps 注入）——契约按两文件拼合执行。
+  const idx = code('server/index.ts') + code('server/routes/custom-agents.ts');
   const profile = code('server/agents/wbProductProfile.ts');
   const routing = code('server/model-routing.ts');
   const settings = code('src/components/SettingsPage.tsx');

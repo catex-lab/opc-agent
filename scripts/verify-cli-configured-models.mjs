@@ -236,7 +236,8 @@ const popup = rd('src/components/ModelSelectPopup.tsx');
 const chatInput = rd('src/components/ChatInput.tsx');
 const chatPage = rd('src/pages/ChatPage.tsx');
 const types = rd('src/types.ts');
-const serverIndex = rd('server/index.ts');
+// F0-02③：agent-config 模型路由已迁 routes/custom-agents.ts
+const serverIndex = rd('server/routes/custom-agents.ts') + rd('server/index.ts');
 
 ok(/Array\.isArray\(data\.configured\)/.test(app), '[6] App 读取平级字段 data.configured 并 Array.isArray 校验');
 ok(/agentIds\.includes\(currentAgentId\)/.test(app), '[6] App 按当前 Agent 过滤 configured');
@@ -258,7 +259,7 @@ ok(obSlice.includes('setOpenSelect(null)') && obSlice.includes('onModelChange(v)
 
 // ── [7] 反向断言：没动只读档 ─────────────────────────────────────────────
 console.log('\n[7] 反向断言：agent-config 只读档仍在');
-ok(serverIndex.includes('selectable: false'), '[7] server/index.ts 里 selectable: false 仍在（没放开只读档）');
+ok(serverIndex.includes('selectable: false'), '[7] 服务端 selectable: false 仍在（没放开只读档）');
 
 cleanup();
 console.log(`\n=== ${pass}/${pass + fail} 通过 ===`);

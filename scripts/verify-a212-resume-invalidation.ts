@@ -253,11 +253,12 @@ eq(invalidateAgentResumeTokens('opencode'), 0, '重复执行幂等（0 行）');
 eq(invalidateAgentResumeTokens('nonexistent-agent'), 0, '不存在的 Agent → 0 行');
 
 // [8] 源码契约：三个调用点 + 发送路径先对账再取令牌
-group('[8] 源码契约（index.ts 调用点）');
-const indexSrc = fs.readFileSync(
-  fileURLToPath(new URL('../server/index.ts', import.meta.url)),
-  'utf8'
-);
+group('[8] 源码契约（调用点）');
+// F0-02③：发送路径迁 routes/chat.ts、rebind 迁 routes/custom-agents.ts；启动调用点在 index.ts。
+const indexSrc =
+  fs.readFileSync(fileURLToPath(new URL('../server/index.ts', import.meta.url)), 'utf8') +
+  fs.readFileSync(fileURLToPath(new URL('../server/routes/chat.ts', import.meta.url)), 'utf8') +
+  fs.readFileSync(fileURLToPath(new URL('../server/routes/custom-agents.ts', import.meta.url)), 'utf8');
 ok(
   indexSrc.includes(
     "const wbEpoch = agentId === 'workbuddy' ? reconcileWorkbuddyResumeTokens() : null;"
