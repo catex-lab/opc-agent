@@ -22,6 +22,8 @@
 
 import type { Diagnostic, DiagnosticClass } from '../../shared/diagnostics.js';
 import { classifyErrorMessage, authDiagnosticFor, isAcpSessionTimeout } from '../../shared/diagnostics.js';
+// H-04：SDK 预算与首字护栏对齐（shared/timing.ts 集中登记）
+import { FIRST_TOKEN_TIMEOUT_DEFAULT_MS } from '../../shared/timing.js';
 import { registry } from './registry.js';
 import { loadPrefs } from '../preferences.js';
 
@@ -34,7 +36,8 @@ const AUTO_CONCURRENCY = 2;
 function budgetFor(kind: string): number {
   switch (kind) {
     case 'sdk':
-      return 120_000;
+      // H-04：显式对齐首字护栏默认值（shared/timing.ts）——护栏调参时这里跟着走
+      return FIRST_TOKEN_TIMEOUT_DEFAULT_MS;
     case 'acp':
       return 45_000;
     case 'http':

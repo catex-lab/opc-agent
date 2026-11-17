@@ -32,10 +32,15 @@
 /** 首字超时的哨兵。用 unique symbol 而不是字符串，杜绝和真实事件撞形 */
 export const FIRST_TOKEN_TIMEOUT = Symbol('opc-first-token-timeout');
 
+// H-04：默认值/下限已搬 shared/timing.ts（canary SDK 预算与之显式对齐）。
+import { FIRST_TOKEN_TIMEOUT_DEFAULT_MS, FIRST_TOKEN_TIMEOUT_FLOOR_MS } from '../../../shared/timing.js';
+
 /** 环境变量覆盖（秒级调参用）；下限 15s，默认 120s */
 export function resolveFirstTokenTimeoutMs(): number {
   const raw = Number(process.env.OPC_SDK_FIRST_TOKEN_TIMEOUT_MS ?? '');
-  return Number.isFinite(raw) && raw > 0 ? Math.max(15_000, raw) : 120_000;
+  return Number.isFinite(raw) && raw > 0
+    ? Math.max(FIRST_TOKEN_TIMEOUT_FLOOR_MS, raw)
+    : FIRST_TOKEN_TIMEOUT_DEFAULT_MS;
 }
 
 export function firstTokenTimeoutMessage(ms: number): string {

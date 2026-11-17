@@ -18,8 +18,11 @@ export interface HeartbeatWritable {
   destroyed?: boolean;
 }
 
+// H-04：常量已搬 shared/timing.ts（护栏四件套跨端耦合集中登记）；re-export 保持闸门兼容。
+import { DEFAULT_HEARTBEAT_MS } from '../shared/timing.js';
+export { DEFAULT_HEARTBEAT_MS };
+
 export const HEARTBEAT_FRAME = ': heartbeat\n\n';
-export const DEFAULT_HEARTBEAT_MS = 20_000;
 
 /**
  * 启动心跳，返回 stop()（幂等）。res 的 'close'/'finish' 也会自动清理。

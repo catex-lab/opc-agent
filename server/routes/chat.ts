@@ -12,6 +12,7 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import * as db from '../db.js';
 import { startSseHeartbeat } from '../sse-heartbeat.js';
+import { REATTACH_GRACE_MS } from '../../shared/timing.js';
 import {
   BUILTIN_NOTE,
   PERMISSION_RULES_PATH,
@@ -865,8 +866,9 @@ app.post("/api/chat", async (req, res) => {
    * 以前客户端一断就立刻杀子进程 —— 于是「网络抖一下」等于「这次回答作废」。
    * 现在留 20 秒：前端可以用 `GET /api/runs/:id/stream?after=N` 接回来，
    * 期间事件一直进 runHub 的缓冲。宽限期内没人接才真的中止。
+   * H-04：宽限值已搬 shared/timing.ts（REATTACH_GRACE_MS），群聊/工作流两处
+   * 内联 20_000 也统一引用它——登记册「同语义不同形态」冲突项。
    */
-  const REATTACH_GRACE_MS = 20_000;
   res.on('close', () => {
     if (res.writableEnded) return;
     clientGone = true;
@@ -2092,7 +2094,7 @@ app.post("/api/group-chat", async (req, res) => {
       console.log(`[GroupChat] 重连窗口结束，中止 ${members.length} 个成员`);
       ac.abort();
       for (const id of members) registry.abort(id, session!.id);
-    }, 20_000);
+    }, REATTACH_GRACE_MS);
     timer.unref?.();
   });
 
@@ -2325,7 +2327,7 @@ app.post("/api/workflow/run", async (req, res) => {
       console.log('[Workflow] 重连窗口结束，中止');
       ac.abort();
       for (const id of members) registry.abort(id, session.id);
-    }, 20_000);
+    }, REATTACH_GRACE_MS);
     timer.unref?.();
   });
 

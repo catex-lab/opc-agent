@@ -16,8 +16,9 @@
  *  - 一旦触发 onSilent，进入 latched 状态，不再重复触发（重连由调用方负责）。
  */
 
-export const SILENCE_TIMEOUT_MS = 60_000;
-export const DEFAULT_CHECK_INTERVAL_MS = 5_000;
+// H-04：常量已搬 shared/timing.ts（护栏四件套跨端耦合集中登记）；re-export 保持闸门兼容。
+import { DEFAULT_CHECK_INTERVAL_MS, SILENCE_TIMEOUT_MS } from '../../shared/timing.js';
+export { DEFAULT_CHECK_INTERVAL_MS, SILENCE_TIMEOUT_MS };
 
 export interface WatchdogOptions {
   onSilent: () => void;
