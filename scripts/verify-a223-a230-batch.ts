@@ -125,7 +125,8 @@ function contractChecks(mutate?: (src: string, file: string) => string): void {
   }
   if (!probe || probe === 'no-handoff-clear') {
     check('A226 一次性摘要契约：交接摘要消费后必须清空', () => {
-      assert.match(S('server/index.ts'), /handoff_context: null/, '读出后必须置 null');
+      // F0-02③：/api/chat 摘要消费已迁 routes/chat.ts
+      assert.match(S('server/routes/chat.ts'), /handoff_context: null/, '读出后必须置 null');
     });
   }
   if (!probe || probe === 'no-once-token') {
