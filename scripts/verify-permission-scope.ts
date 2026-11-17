@@ -434,7 +434,8 @@ section('[F] 源码契约：查表顺序、落库键来源、选择器条件渲�
     'removeGrant 失效缓存');
 
   // F5 路由：落库键必须来自服务端元数据 —— **不信前端**。
-  const indexSrc = src('../server/index.ts');
+  // F0-02③：权限应答与授权清单路由已随聊天区迁 routes/chat.ts，判据跟着搬。
+  const indexSrc = src('../server/routes/chat.ts');
   ok(/app\.get\("\/api\/permission-grants"/.test(indexSrc), 'GET /api/permission-grants 路由在');
   ok(/app\.delete\("\/api\/permission-grants"/.test(indexSrc), 'DELETE /api/permission-grants 路由在');
   ok(/parsed\.persistAgent/.test(indexSrc) && /takePendingPermissionMeta\(requestId\.trim\(\)\)/.test(indexSrc),
