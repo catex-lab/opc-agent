@@ -95,7 +95,8 @@ function stripComments(src: string): string {
 section('1 源码接线');
 const driftSrc = fs.readFileSync(path.join(process.cwd(), 'server', 'extensions', 'drift.ts'), 'utf8');
 const importSrc = fs.readFileSync(path.join(process.cwd(), 'server', 'extensions', 'import.ts'), 'utf8');
-const indexSrc = stripComments(fs.readFileSync(path.join(process.cwd(), 'server', 'index.ts'), 'utf8'));
+// F0-02③：扩展路由已迁 routes/chat.ts
+const indexSrc = stripComments(fs.readFileSync(path.join(process.cwd(), 'server', 'routes', 'chat.ts'), 'utf8'));
 const panelSrc = stripComments(
   fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'ExtensionPanel.tsx'), 'utf8')
 );
