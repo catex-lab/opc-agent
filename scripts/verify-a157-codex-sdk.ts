@@ -127,7 +127,8 @@ console.log('\n[2] 源码契约：无假审批 / 续接不传沙箱 / 映射复�
   /* 权限档变更必须新建线程：resume 沿用创建时的 sandbox，改档后续接
      会让「界面选的权限」与「实际沙箱」静默错配。所以创建时记档、续接前比对，
      不一致就丢令牌。这里钉住 chat 路由里的两条实现契约。 */
-  const chat = codeLines(read('server/index.ts'));
+  // F0-02③：/api/chat 权限档/续接逻辑已迁 routes/chat.ts
+  const chat = codeLines(read('server/routes/chat.ts'));
   ok(chat.some(l => l.includes('sdk_thread_permission') && l.includes('effectivePermissionMode')),
     '★ 续接前比对线程创建时的权限档');
   ok(chat.some(l => l.includes('权限档变更')) && chat.some(l => l.includes('resumeToken = null')),
