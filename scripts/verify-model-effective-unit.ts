@@ -128,7 +128,8 @@ console.log('\n[5] 源码契约：三处接线不许被拆回去');
   ok(/modelEffective\?: string/.test(proj), 'RunMeta 声明了 modelEffective');
   ok(/modelEffective: this\.meta\.modelEffective/.test(proj), 'run_start 真的把盖章值写进事件');
 
-  const idx = read('server/index.ts');
+  // F0-02③：/api/chat 已迁 routes/chat.ts，判据跟着搬。
+  const idx = read('server/routes/chat.ts');
   ok(/modelEffective: selectedModel \?\? ''/.test(idx), '★ /api/chat 用 resolvedModel 盖章（不是原始请求值）');
   ok(/resolveStoredModelForAgent\(/.test(idx), '/api/chat 仍走同一把模型解析尺子');
 
