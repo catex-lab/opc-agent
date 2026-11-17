@@ -289,7 +289,8 @@ async function testPendingReplies() {
 
 // ============= 9. 源码契约：不再硬编码两个 Agent =============
 {
-  const indexSrc = fs.readFileSync(path.join(process.cwd(), 'server', 'index.ts'), 'utf8');
+  // F0-02③：权限应答路由已随聊天区迁 routes/chat.ts，判据跟着搬。
+  const indexSrc = fs.readFileSync(path.join(process.cwd(), 'server', 'routes', 'chat.ts'), 'utf8');
   ok(
     indexSrc.includes('resolvePermissionAnywhere'),
     '权限应答路由向注册表全量查找，而不是只认两个 agent'
