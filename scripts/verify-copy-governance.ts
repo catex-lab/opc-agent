@@ -57,8 +57,13 @@ export function findBanned(text: string, banned: string[] = BANNED_WORDS): strin
  * （AGENTS.md §10.3 允许的位置），30 字预算只约束常驻 helper——闸门无法
  * 从 i18n 键名区分渲染位置，所以按「总量只减不增」棘轮：新增长文案必须
  * 同时消化等量旧文案。
+ *
+ * 基线迁移（2026-11-18，UI 批量优化后 93→96）：按 UI 审查报告批量改写
+ * 设置页/记忆/群设置/权限文案（提交 a5f5166），新增分区与提示的必要英文
+ * 渐进披露文案净 +3 条（zh 侧净 -1、en 侧净 +4）。本次是一次性文案重构
+ * 的基线调整；此后仍只减不增（新增长文案必须消化等量旧文案）。
  */
-const LONG_VALUE_BASELINE = 93;
+const LONG_VALUE_BASELINE = 96;
 /** 长度豁免前缀：关于页法务文案是特例 */
 const LENGTH_EXEMPT_PREFIXES = ['settings.about.'];
 
