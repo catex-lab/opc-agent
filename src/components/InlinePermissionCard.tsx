@@ -12,8 +12,9 @@ import { PermissionRequest } from '../types';
 import type { PermissionOption } from '../types';
 
 /**
- * A132：组件本体 `InlinePermissionCard` 已不再被渲染（审批改走右下角浮层，
- * 见 `PermissionDock.tsx`）。按 AGENTS §6「不得删除已有文件」不删。
+ * A132：组件本体 `InlinePermissionCard` 已不再被渲染（A132 曾把审批搬到右下角
+ * 浮层；2026-11-18 内嵌化后审批卡由 `PermissionCard` 承担、长在消息流里，
+ * 挂载点见 `PermissionDock.tsx`）。按 AGENTS §6「不得删除已有文件」不删。
  *
  * `TOOL_CONFIG` / `getToolConfig` / `RISK_BADGE` / `FALLBACK_OPTIONS` 四个映射
  * 被 `PermissionCard` 复用 —— 同一个工具在气泡里和审批卡上必须是同一个颜色、

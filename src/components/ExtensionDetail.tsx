@@ -40,6 +40,13 @@ interface ExtensionDetailProps {
   agents?: RegisteredAgent[];
   loading: boolean;
   error: string | null;
+  /**
+   * S5-1（审查报告）：左侧列表是否还有条目。
+   * 零条目时右栏的空态不能再写「选一个扩展」（没得选），改说前瞻引导
+   * 「导入后，点一条扩展……」；有条目时维持原来的「选一个扩展」。
+   * 不传按「有条目」处理（老调用点）。
+   */
+  hasItems?: boolean;
   onReload: () => void;
   /** 返回列表。只在窄屏单栏模式传 */
   onBack?: () => void;
@@ -126,6 +133,7 @@ export function ExtensionDetail({
   agents,
   loading,
   error,
+  hasItems = true,
   onReload,
   onBack,
   onSaved,
@@ -377,12 +385,22 @@ export function ExtensionDetail({
   if (!item) {
     return (
       <Shell dataAttr="data-ext-detail-empty">
-        <p className="text-body-lg" style={{ color: 'var(--td-text-color-secondary)' }}>
-          选一个扩展
-        </p>
-        <p className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          左侧点一条，这里会显示它的来源、能力矩阵与正文
-        </p>
+        {/* S5-1：零条目时「选一个扩展」是死引导（左侧一条都没有，没得选），
+            改说前瞻引导；有条目时维持原话。 */}
+        {hasItems ? (
+          <>
+            <p className="text-body-lg" style={{ color: 'var(--td-text-color-secondary)' }}>
+              选一个扩展
+            </p>
+            <p className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+              左侧点一条，这里会显示它的来源、能力矩阵与正文
+            </p>
+          </>
+        ) : (
+          <p className="text-body" style={{ color: 'var(--td-text-color-secondary)' }}>
+            导入后，点一条扩展，这里会显示它的来源、能力矩阵与正文
+          </p>
+        )}
       </Shell>
     );
   }

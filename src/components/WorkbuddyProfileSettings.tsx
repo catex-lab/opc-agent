@@ -154,6 +154,10 @@ export function WorkbuddyProfileSettings({ onChanged }: WorkbuddyProfileSettings
   }
 
   const detectedCount = state.profiles.filter(p => p.detected).length;
+  // T5-4：账号空态。keyblob 是登录态文件 —— 一个都没有时条块里只有
+  // 目录元数据，对用户来说等于「没有账号」，与其渲染几行没人能看懂的
+  // 目录行，不如给一句占位 + 一条行动指引。
+  const hasAccount = state.profiles.some(p => !!p.keyblobAt);
 
   return (
     <div className="space-y-3" data-workbuddy-profile-section>
@@ -183,8 +187,10 @@ export function WorkbuddyProfileSettings({ onChanged }: WorkbuddyProfileSettings
         {state.reason}
       </div>
 
-      {/* 诚实降级 / 漂移：只有真的发生了才渲染，空状态不画一个恒绿的框 */}
-      {state.fallback && (
+      {/* 诚实降级 / 漂移：只有真的发生了才渲染，空状态不画一个恒绿的框。
+          T5-4：fallback 文案改为行动指引（「去桌面端登录一次，然后点重新检测」）；
+          没有任何账号时同一行指引也成立，一并显示。 */}
+      {(state.fallback || !hasAccount) && (
         <p className="text-xs leading-5" style={{ color: 'var(--td-warning-color)' }} data-wb-fallback>
           {t('settings.wbProfile.fallback')}
         </p>
@@ -203,7 +209,17 @@ export function WorkbuddyProfileSettings({ onChanged }: WorkbuddyProfileSettings
           border: '1px solid var(--tc-edge)',
         }}
       >
-        {state.profiles.map((p, i) => {
+        {/* T5-4：没有任何登录态时显示占位文案，不再渲染空条块 */}
+        {!hasAccount ? (
+          <div
+            className="px-3 py-2.5 text-xs leading-5"
+            style={{ color: 'var(--td-text-color-secondary)' }}
+            data-wb-no-account
+          >
+            {t('settings.wbProfile.noAccount')}
+          </div>
+        ) : (
+          state.profiles.map((p, i) => {
           const active = p.id === state.activeId;
           return (
             <div
@@ -281,7 +297,8 @@ export function WorkbuddyProfileSettings({ onChanged }: WorkbuddyProfileSettings
               </button>
             </div>
           );
-        })}
+          })
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -306,12 +323,20 @@ export function WorkbuddyProfileSettings({ onChanged }: WorkbuddyProfileSettings
             ? t('settings.wbProfile.refreshing')
             : t('settings.wbProfile.refresh')}
         </button>
-        <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          {t('settings.wbProfile.autoNote')}
-        </span>
       </div>
 
-      {/* 切换会 dispose 整个会话池 —— 先把代价说清楚，别让用户以为只是换了个标签 */}
+      {/* T5-5：跟随说明移到「自动选择」一行的正下方，不再挤在按钮行里 ——
+          按钮行放按钮，说明另起一行，扫读顺序是「动作 → 何时会变 → 改动的代价」。 */}
+      <p
+        className="text-xs leading-5"
+        style={{ color: 'var(--td-text-color-placeholder)' }}
+        data-wb-auto-note
+      >
+        {t('settings.wbProfile.autoNote')}
+      </p>
+
+      {/* 切换会 dispose 整个会话池 —— 先把代价说清楚，别让用户以为只是换了个标签。
+          T5-5：版本区的警告压到最底（跟随说明之后），与效果图一致。 */}
       <p
         className="text-xs leading-5"
         style={{ color: 'var(--td-text-color-placeholder)' }}

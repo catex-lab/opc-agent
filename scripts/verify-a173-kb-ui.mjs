@@ -824,14 +824,15 @@ try {
       titleInfo.fullName.includes('产品与研发协作群'),
       `群聊 ${width}px：群名截断后仍可读回全名（title）`
     );
+    // S2-2（审查报告）：群名与成员信息合并为「群名（N 人 · M 在线）」。
     ok(
-      titleInfo.text.includes('（5）'),
+      titleInfo.text.includes('（5 人'),
       `群聊 ${width}px：成员数未被挤掉`,
-      titleInfo.text.slice(-8)
+      titleInfo.text.slice(-10)
     );
     // textContent 里有不算数：必须真的落在 h1 的框内，不能被 overflow 裁掉。
     const countInfo = await page.locator('.chat-row h1').evaluate(el => {
-      const count = Array.from(el.querySelectorAll('span')).find(s => /（\d+）/.test(s.textContent || ''));
+      const count = Array.from(el.querySelectorAll('span')).find(s => /（\d+ 人/.test(s.textContent || ''));
       if (!count) return null;
       const rect = count.getBoundingClientRect();
       return { width: rect.width, right: rect.right, boxRight: el.getBoundingClientRect().right };

@@ -38,6 +38,8 @@ import {
 } from '../sessionFlags';
 import { useAgentRemarks, setAgentRemark } from '../agentRemarks';
 import { countFor, usePermissionSnapshot } from '../permissions/permissionStore';
+import { permissionWaitingDetail } from './PermissionCard';
+import { useTranslation } from '../i18n';
 import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent, type Session } from '../types';
 
 const LAST_READ_KEY = 'opc:lastRead';
@@ -121,9 +123,12 @@ export function ConversationList({
   const lastRead = useMemo(() => readLastReadMap(), [sessions, currentSessionId]);
   /** 免打扰 / 手动标记未读（本地标记，见 sessionFlags.ts） */
   const flags = useSessionFlags();
+  const { t } = useTranslation();
   // A132：「等授权」角标。**必须调这个 hook** —— `countFor()` 只是普通函数，
   // 光调它组件不会订阅 store，角标会永久停在旧值（切走会话前是 0 就永远是 0）。
-  usePermissionSnapshot();
+  // 2026-11-18（P-5）：预览也吃同一份快照 —— 有待授权的会话不再显示「还没有消息」，
+  // 改为「等待授权：{工具} {命令/路径}」，切走的会话正卡在哪一步一眼可见。
+  const permissionItems = usePermissionSnapshot().items;
   /** Agent 备注（本地别名，见 agentRemarks.ts） */
   const remarks = useAgentRemarks();
   /** 正在改备注的那一行（null = 没开弹窗） */
@@ -157,7 +162,15 @@ export function ConversationList({
           session.kind === 'group'
             ? flags[session.id]?.remark || session.title || memberNames.join('、') || '群聊'
             : remarks[session.agentId ?? ''] || agent?.name || session.title || '新对话';
-        const preview = lastMessage?.content?.trim() || '还没有消息';
+        // P-5：这条会话有挂着等人批的授权吗？取先到的那条（与审批卡「先来先批」
+        // 同一顺序），预览写成「等待授权：编辑文件 demo-shop/README.md」——
+        // 角标说「要你动手」，预览说「动什么」。没有待授权才回落到消息预览。
+        const waiting = permissionItems
+          .filter(it => it.sessionId === session.id && it.state === 'pending')
+          .sort((a, b) => a.receivedAt - b.receivedAt)[0];
+        const preview = waiting
+          ? t('permission.list.waiting', { detail: permissionWaitingDetail(waiting.request) })
+          : lastMessage?.content?.trim() || '还没有消息';
 
         const muted = !!flags[session.id]?.muted;
         const readAt = lastRead[session.id];
@@ -184,7 +197,7 @@ export function ConversationList({
         if (pinA !== pinB) return pinB - pinA;
         return b.lastAt.getTime() - a.lastAt.getTime();
       });
-  }, [sessions, getAgent, lastRead, currentSessionId, keyword, flags, remarks]);
+  }, [sessions, getAgent, lastRead, currentSessionId, keyword, flags, remarks, permissionItems, t]);
 
   return (
     <div

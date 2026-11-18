@@ -186,8 +186,9 @@ await page.waitForTimeout(2000);
 // ── [1] 群聊头部 ────────────────────────────────────────────────────
 console.log('\n[1] 群聊头部');
 check('标题显示群名', await page.locator('text=Hermes、OpenCode').count() > 0);
-check('群名后带人数「（2）」', /（2）/.test(await page.evaluate(DEEP_TEXT)));
-check('徽标显示「2 在线」', /2 在线/.test(await page.evaluate(DEEP_TEXT)));
+// S2-2（审查报告）：群名与成员信息合并为「群名（2 人 · 2 在线）」一处说完，
+// 不再「（2）」+ 右侧「● 2 在线」两处分述。
+check('群名后带「（2 人 · 2 在线）」', /（2 人 · 2 在线）/.test(await page.evaluate(DEEP_TEXT)));
 check('编排模式入口显示「分派」', await page.locator('text=分派').count() > 0);
 check('副标题含模式说明', /主控 Agent 判断该谁做/.test(await page.evaluate(DEEP_TEXT)));
 const h1 = await page.locator('h1').first().evaluate(el => {

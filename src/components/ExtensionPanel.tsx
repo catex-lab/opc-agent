@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Boxes, Download, RefreshCw, Search, Sparkles, Plug, ShieldAlert, Pencil } from 'lucide-react';
 import { ExtensionSwitch } from './ExtensionSwitch';
+import { EmptyState } from './EmptyState';
 import { InfoHint, type InfoHintItem } from './InfoHint';
 import {
   EXT_DRIFT_LABEL,
@@ -504,28 +505,20 @@ export function ExtensionPanel({
           </div>
         ) : total === 0 ? (
           /* 空态必须说清「这些条目从哪来」。用户第一反应会是「怎么装」，
-             而这里的正确答案是「装在你自己的 Agent 里，然后点导入」。 */
-          <div className="px-3 py-8 text-center" data-ext-empty>
-            <Boxes size={28} className="mx-auto mb-2" style={{ color: 'var(--td-text-color-placeholder)' }} />
-            <p className="text-body" style={{ color: 'var(--td-text-color-secondary)' }}>
-              还没有导入任何扩展
-            </p>
-            <p className="mt-1 text-caption leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              这一栏读的是你本机各家 Agent 已有的技能与 MCP，
-              <br />
-              不往它们的目录里写任何东西。
-            </p>
-            <button
-              type="button"
-              onClick={onImport}
-              disabled={importing}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-body transition-colors hover:bg-[var(--tc-hover-chrome)] disabled:opacity-60"
-              style={{ color: 'var(--td-brand-color)', border: '1px solid var(--tc-edge)' }}
-              data-ext-empty-import
-            >
-              <Download size={14} />
-              {importing ? '正在扫描…' : '从本机 Agent 导入'}
-            </button>
+             而这里的正确答案是「装在你自己的 Agent 里，然后点导入」。
+             S5-1 / 共性 3：改用统一 EmptyState 组件并垂直居中；
+             S5-2：按钮文案与顶栏统一为「导入」，指向同一个动作 ——
+             同一件事在一个应用里只有一种说法。 */
+          <div className="flex min-h-full items-center justify-center" data-ext-empty>
+            <EmptyState
+              icon={Boxes}
+              title="还没有导入任何扩展"
+              description="这一栏读的是你本机各家 Agent 已有的技能与 MCP，不往它们的目录里写任何东西。"
+              action={importing ? '正在扫描…' : '导入'}
+              actionIcon={Download}
+              actionDisabled={importing}
+              onAction={onImport}
+            />
           </div>
         ) : visible.length === 0 ? (
           /* 搜出空态要给出口（A139 的同一条教训）：只写「没有匹配」的话，

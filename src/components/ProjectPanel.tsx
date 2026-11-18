@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { FolderKanban, Plus, RefreshCw, Search, FolderOpen, Check, X } from 'lucide-react';
+import { EmptyState } from './EmptyState';
 import type { Project } from '../types';
 import { hasNativeDialogs } from '../workspace';
 
@@ -204,24 +205,20 @@ export function ProjectPanel({
           <p className="px-3 py-6 text-body" style={{ color: 'var(--td-text-color-placeholder)' }}>正在读取项目…</p>
         ) : projects.length === 0 ? (
           /* 空态：说清「项目是怎么来的」，否则用户会以为要先「新建项目」再聊天。
-             实际是「取或建」—— 选一个目录就是建项目。 */
-          <div className="px-3 py-8 text-center" data-project-empty>
-            <FolderKanban size={28} className="mx-auto mb-2" style={{ color: 'var(--td-text-color-placeholder)' }} />
-            <p className="text-body" style={{ color: 'var(--td-text-color-secondary)' }}>还没有项目</p>
-            <p className="mt-1 text-caption leading-5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              项目就是「干过活的目录」。<br />
-              选一个目录，它下面已有的会话会归到一起。
-            </p>
-            <button
-              type="button"
-              onClick={startAdd}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-body transition-colors hover:bg-[var(--tc-hover-chrome)]"
-              style={{ color: 'var(--td-brand-color)', border: '1px solid var(--tc-edge)' }}
-              data-project-empty-add
-            >
-              <FolderOpen size={14} />
-              {native ? '选择目录' : '输入目录路径'}
-            </button>
+             实际是「取或建」—— 选一个目录就是建项目。
+             S4-1 / 共性 3：改用统一 EmptyState 组件并在栏内垂直居中；
+             S4-2：按钮与引导统一动词「选择目录」（原「输入目录路径」）。
+             浏览器开发态没有原生对话框，点它会展开下方那条手输表单，
+             表单自己的 placeholder 会交代要填什么。 */
+          <div className="flex min-h-full items-center justify-center" data-project-empty>
+            <EmptyState
+              icon={FolderKanban}
+              title="还没有项目"
+              description="项目就是「干过活的目录」。选一个目录，它下面的会话会归到一起。"
+              action="选择目录"
+              actionIcon={FolderOpen}
+              onAction={startAdd}
+            />
           </div>
         ) : visible.length === 0 ? (
           /* 搜出空态要给出口（A139）：原来只有一句「没有匹配」，用户得自己

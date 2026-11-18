@@ -3188,25 +3188,31 @@ html[data-opc-glass='1'].dark .t-button--variant-base.t-button--theme-primary:ho
   background-color: var(--td-bg-color-component-hover) !important;
 }
 
-/* ===== 审批卡的四档按钮（P4） =====
+/* ===== 审批卡的操作按钮（P-2，2026-11-18 一次点击改造） =====
  *
  * 为什么必须带 !important + 专属类：上面 `variant-base` / `variant-text`
  * 两条规则用 !important 把按钮统一压成中性灰（A124 的「全站只有一种主按钮」
- * 语言）。审批卡是**例外**，它的颜色本身携带语义：
- *   允许 = 成功色实心 · 拒绝 = 危险色文字 · 「始终」两档 = 同色描边。
+ * 语言）。审批卡的拒绝类按钮**例外**——危险色文字本身携带语义：
+ *   拒绝 = 危险色文字 · 「始终拒绝」= 同色描边。
  *
  * 内联 style 压不过 !important（A116 实测过），所以收敛到这里，用
  * 同权重但位置在后、且作用域限定 `.tc-permission-option` 的规则覆盖。
  * 离开审批卡，其它按钮仍走上面的中性规则 —— 这不是全局改皮肤。
  *
- * 数值是设计常量：字号 12px / 字重 500 / 圆角 6px / 间距由组件 gap-2=8px。
+ * 几何（原 24 高 / 12px 字号的「刻意 24 档」随两步决策一起退役）：
+ * 2026-11-18 起决策按钮是这张卡的提交级动作，走 A124 的 32 档令牌
+ * （高 --tc-btn-height / 字号 --tc-btn-font = --text-body-lg 14px，
+ * 满足 P-2「13.5px 起，用 DESIGN-SYSTEM 档位」—— 8 档里没有 13.5，
+ * 取其上的按钮文字档，不新造第九档）。间距由组件的 gap-2=8px。
  * verify-a128-permission-ui.mjs 会在浏览器里逐项量，被现有样式带跑就红。 */
 .tc-permission-option.t-button--variant-base,
 .tc-permission-option.t-button--variant-outline,
 .tc-permission-option.t-button--variant-text {
-  font-size: 12px !important;
+  height: var(--tc-btn-height) !important;
+  padding: 0 var(--tc-btn-pad-x) !important;
+  font-size: var(--tc-btn-font) !important;
   font-weight: 500 !important;
-  border-radius: 6px !important;
+  border-radius: var(--td-radius-default) !important;
 }
 
 .tc-permission-option[data-permission-kind='reject_once'],
@@ -3226,6 +3232,9 @@ html[data-opc-glass='1'].dark .t-button--variant-base.t-button--theme-primary:ho
   background-color: var(--td-error-color-1) !important;
 }
 
+/* 兜底路径的 allow 档（目录没有双 allow 档时的原样按钮：CLI 两档 / ACP 单
+   always / 无 options）保留颜色语义：绿 = 允许，与拒绝的红对照。
+   三个合成动作按钮带 data-permission-action，下面一组把它盖成中性描边。 */
 .tc-permission-option[data-permission-kind='allow_once'] {
   color: #fff !important;
   background-color: var(--td-success-color) !important;
@@ -3243,32 +3252,32 @@ html[data-opc-glass='1'].dark .t-button--variant-base.t-button--theme-primary:ho
   border-color: var(--td-success-color) !important;
 }
 
-/* ===== A132 审批浮层 Dock =====
+/* 三个一次点击动作（仅本次允许 / 本会话允许 / 永久允许）：效果稿 16 号图是
+   无默认选中的中性描边档 —— 摆默认选中等于替用户预支决定，颜色也不再
+   抢戏（「永久」这颗的重量写在 title 的边界说明里，不靠描红）。 */
+.tc-permission-option[data-permission-action] {
+  color: var(--td-text-color-primary) !important;
+  background-color: transparent !important;
+  border-color: var(--td-component-stroke) !important;
+}
+
+.tc-permission-option[data-permission-action]:hover:not(:disabled) {
+  background-color: var(--tc-fill-hover) !important;
+}
+
+/* ===== 审批卡容器（2026-11-18 内嵌化，原 A132 右下角浮层退役） =====
  *
- * 三条纪律一起满足（AGENTS.md「浮层的可读性不能靠 backdrop-filter」A27）：
- *   1. 底色走 `--tc-overlay-surface`，它已含 `--opc-overlay-alpha`（下限 0.9），
- *      **不写内联 backgroundColor** —— 内联会盖掉 `.tc-glass` 的底（ContactsPanel 就这么漏过）；
- *   2. 同时带 `backdrop-filter`，但**不假设它生效**：可读性只由底色 alpha 保证；
- *   3. 类名挂上 `.tc-glass`，由 `scripts/verify-overlay.mjs` 量有效 alpha ≥ 0.88。
- *
- * 落点右下角是 A130 的**已批豁免**：A130「居中固定」约束模态弹窗，不约束非模态
- * 常驻浮层。Dock 不提供拖拽（A130 的拖拽禁令照守，`verify:a124-button-spec` 的
- * 「src 里没有任何弹窗再接拖拽」契约因此仍然绿）。
- */
+ * 形态：消息流里的一张卡（挂 ChatMessages 的消息列末尾、输入框上方），
+ * 与消息列同宽、随内容滚动 —— 输入框完整可见，正是 P-1 要的效果。
+ * 原浮层的 fixed / z-index / 玻璃三件套全部不再适用：内嵌卡不是 overlay，
+ * 可读性走四档表面 —— 底色 `--tc-surface-raised`（深色比内容面亮一档），
+ * 边界 `--tc-edge`（浅色下与内容面同色，DESIGN-SYSTEM 1.4 的「边界保险」
+ * 正是这场景）。不再挂 .tc-glass，`verify:overlay` 的 alpha 量测自然不再含它。 */
 .tc-permission-dock {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 55;
-  width: 360px;
-  max-width: calc(100vw - 32px);
-  /* 边框只保留宽度/样式，颜色交给 .tc-glass 的 --tc-glass-border；
-     不写 box-shadow —— Dock 是非模态浮层，不是「整屏唯一的主角」，
-     不吃 .tc-dialog 的双 inset 加厚，直接继承 .tc-glass 三件套
-     （实色描边 + 扁影子的旧 TDesign 覆盖已删，玻璃语言与弹窗一致）。 */
   border-radius: var(--td-radius-large);
-  border: 1px solid var(--tc-glass-border);
-  overflow: hidden;
+  border: 1px solid var(--tc-edge);
+  background-color: var(--tc-surface-raised);
+  padding: 12px 16px;
 }
 
 /* 命令整段可读：默认最多 4 行，超出交给「展开全部」，不再 truncate 成省略号。

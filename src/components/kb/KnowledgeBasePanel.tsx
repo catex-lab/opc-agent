@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, ChevronDown, Database, Lock, RotateCcw, Search, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Database, Lock, RotateCcw, Search, X } from 'lucide-react';
 import type {
   KbBackfillResult,
   KbScope,
@@ -382,14 +382,13 @@ export function KnowledgeBasePanel({
       >
         <header className="kb-head">
           <div className="kb-head-main">
-            <span className="kb-kicker">
-              <Database size={14} strokeWidth={1.5} aria-hidden="true" />
-              跨 Agent 知识库
-            </span>
-            <h2 className="kb-title" id="kb-panel-title">检索与索引</h2>
-            <p className="kb-sub">
-              {sessionTitle || (sessionId ? `会话 ${sessionId.slice(0, 8)}` : '当前会话')}
-            </p>
+            {/* S6-1（审查报告）：标题原来堆了三层 —— kicker「跨 Agent 知识库」+
+                大标题「检索与索引」+ 副标题「会话名」，而「检索」一词在下面的
+                分区里又出现一次。现在只留一行「知识库 · 会话名」，面板定位
+                与对象一眼可读。aria-labelledby 指向的 id 保持不变。 */}
+            <h2 className="kb-title" id="kb-panel-title">
+              知识库 · {sessionTitle || (sessionId ? `会话 ${sessionId.slice(0, 8)}` : '当前会话')}
+            </h2>
           </div>
           <button type="button" className="kb-icon-btn" onClick={onClose} aria-label="关闭知识库">
             <X size={16} strokeWidth={1.5} aria-hidden="true" />
@@ -508,56 +507,67 @@ export function KnowledgeBasePanel({
                 ) : null}
               </section>
 
-              <div className="kb-stats" data-kb-stats>
-                <div className="kb-stat" data-kb-stat="chunks">
-                  <span className="kb-stat-label">已索引切片</span>
-                  <span className="kb-stat-value">{status.chunkCount.toLocaleString('zh-CN')}</span>
+              {/* S6-1（续）：「检索」与「索引管理」拆成面板内两个分区。
+                  S6-2（审查报告）：未建索引时 5 格统计条几乎全是 0/—，
+                  夹在检索框与空态卡之间没有信息量 —— 隐藏它，只留空态卡 +
+                  「先建索引」；索引建成后再显示。 */}
+              <section className="kb-section" data-kb-index-section>
+                <div className="kb-section-head">
+                  <h3 className="kb-section-title">索引管理</h3>
                 </div>
-                <div className="kb-stat" data-kb-stat="size">
-                  <span className="kb-stat-label">索引体积</span>
-                  <span className="kb-stat-value">{formatBytes(status.sizeBytes)}</span>
-                </div>
-                <div className="kb-stat" data-kb-stat="last">
-                  <span className="kb-stat-label">最近索引</span>
-                  <span
-                    className="kb-stat-value"
-                    title={formatTime(status.lastBackfillAt)}
-                  >
-                    {formatShortTime(status.lastBackfillAt)}
-                  </span>
-                </div>
-                <div className="kb-stat" data-kb-stat="scope">
-                  <span className="kb-stat-label">范围策略</span>
-                  <span className="kb-stat-value">{KB_SCOPE_LABEL[scope]}</span>
-                </div>
-                <div className="kb-stat" data-kb-stat="enabled">
-                  <span className="kb-stat-label">运行状态</span>
-                  <span className="kb-stat-value">
-                    {sessionDisabled ? '本会话已停' : status.initialized ? '已启用' : '未建索引'}
-                  </span>
-                </div>
-              </div>
-
-              {notIndexed ? (
-                <div className="kb-empty" data-kb-empty>
-                  <Database size={20} strokeWidth={1.5} aria-hidden="true" />
-                  <div>
-                    <h3 className="kb-empty-title">还没有建立索引</h3>
-                    <p className="kb-empty-text">
-                      先回填近 90 天的对话生成第一批切片。索引只保存脱敏后的摘要，不会改动聊天记录。
-                    </p>
-                    <button
-                      type="button"
-                      className="kb-btn kb-btn-primary"
-                      data-kb-empty-action
-                      disabled={!!busy}
-                      onClick={() => void runBackfill('recent')}
-                    >
-                      {busy === 'recent' ? '正在建索引…' : '先建索引'}
-                    </button>
+                {!notIndexed && (
+                  <div className="kb-stats" data-kb-stats>
+                    <div className="kb-stat" data-kb-stat="chunks">
+                      <span className="kb-stat-label">已索引切片</span>
+                      <span className="kb-stat-value">{status.chunkCount.toLocaleString('zh-CN')}</span>
+                    </div>
+                    <div className="kb-stat" data-kb-stat="size">
+                      <span className="kb-stat-label">索引体积</span>
+                      <span className="kb-stat-value">{formatBytes(status.sizeBytes)}</span>
+                    </div>
+                    <div className="kb-stat" data-kb-stat="last">
+                      <span className="kb-stat-label">最近索引</span>
+                      <span
+                        className="kb-stat-value"
+                        title={formatTime(status.lastBackfillAt)}
+                      >
+                        {formatShortTime(status.lastBackfillAt)}
+                      </span>
+                    </div>
+                    <div className="kb-stat" data-kb-stat="scope">
+                      <span className="kb-stat-label">范围策略</span>
+                      <span className="kb-stat-value">{KB_SCOPE_LABEL[scope]}</span>
+                    </div>
+                    <div className="kb-stat" data-kb-stat="enabled">
+                      <span className="kb-stat-label">运行状态</span>
+                      <span className="kb-stat-value">
+                        {sessionDisabled ? '本会话已停' : status.initialized ? '已启用' : '未建索引'}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              ) : null}
+                )}
+
+                {notIndexed ? (
+                  <div className="kb-empty" data-kb-empty>
+                    <Database size={20} strokeWidth={1.5} aria-hidden="true" />
+                    <div>
+                      <h3 className="kb-empty-title">还没有建立索引</h3>
+                      <p className="kb-empty-text">
+                        先回填近 90 天的对话生成第一批切片。索引只保存脱敏后的摘要，不会改动聊天记录。
+                      </p>
+                      <button
+                        type="button"
+                        className="kb-btn kb-btn-primary"
+                        data-kb-empty-action
+                        disabled={!!busy}
+                        onClick={() => void runBackfill('recent')}
+                      >
+                        {busy === 'recent' ? '正在建索引…' : '先建索引'}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </section>
 
               {/* 操作反馈放在折叠区之外：空态「先建索引」等入口即使设置分组
                   收起，也要能看到结果，不能把回复藏进未展开的分组里。 */}
@@ -589,9 +599,16 @@ export function KnowledgeBasePanel({
                   aria-controls="kb-settings-body"
                   onClick={() => setSettingsOpen(value => !value)}
                 >
+                  {/* S6-4（审查报告）：底部原来把 4 个设置项压缩成一行摘要
+                      （「范围 · 本会话 · 主动检索 · 回填与重建」），读不出点开
+                      是什么。改成「知识库设置 ›」单入口 —— 收起时右向箭头
+                      （与「进详情」同一语言），点开后 4 项各成一行。 */}
                   <h3 className="kb-section-title">知识库设置</h3>
-                  <span className="kb-settings-toggle-desc">范围 · 本会话 · 主动检索 · 回填与重建</span>
-                  <ChevronDown className="kb-settings-chev" size={16} strokeWidth={1.5} aria-hidden="true" />
+                  {settingsOpen ? (
+                    <ChevronDown className="kb-settings-chev" size={16} strokeWidth={1.5} aria-hidden="true" />
+                  ) : (
+                    <ChevronRight className="kb-settings-chev" size={16} strokeWidth={1.5} aria-hidden="true" />
+                  )}
                 </button>
                 {settingsOpen ? (
                   <div className="kb-settings-body" id="kb-settings-body" data-kb-settings-body>

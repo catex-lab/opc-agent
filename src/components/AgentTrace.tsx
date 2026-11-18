@@ -55,7 +55,8 @@ import {
 import type { Block } from '../../shared/blocks';
 import {
   buildDiffHunks,
-  formatHandledDuration,
+  // S1-2：formatHandledDuration 不再在组件里调用（工具行耗时只删显示）——
+  // 从 import 中移除，避免留一个误导后来者的未用引用。
   formatStepDuration,
   summarizeTrace,
   type TraceDiff,
@@ -697,8 +698,9 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
 
   const running = rows.some(i => !isNarration(i) && i.status === 'running');
   const stepCount = steps.filter(i => i.kind === 'tool').length;
+  // S1-2：总耗时只保留头部那一个（「已处理 32 秒」）。摘要条不再重复展示
+  // 工具耗时；totalMs 若将来要在别处呈现，计算仍在此处（埋点不动）。
   const totalMs = steps.reduce((s, i) => s + (i.durationMs ?? 0), 0);
-  const durationText = formatHandledDuration(totalMs);
   /** 收拢后摘要条要能交代「最后一步没等到结果」 */
   const unreturned = hasUnreturnedResult(steps);
 
@@ -819,7 +821,10 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
             <span className="tc-diff-del">-{summary.diff.removed}</span>
           </span>
         )}
-        {durationText && <span className="tc-trace-meta">{t('chat.trace.toolDuration', { duration: durationText })}</span>}
+        {/* S1-2（审查报告）：「工具 20.0s」与头部「已处理 32 秒」两个耗时口径
+            并存，关系（包含/并列）读不出 —— 工具行的耗时只删**显示**，埋点
+            与 totalMs 的计算保留（下一行仍要靠它做归一），界面只留头部那一个
+            总耗时。 */}
       </div>
 
       {showBody && (

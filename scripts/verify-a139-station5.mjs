@@ -7,7 +7,8 @@
  * 无主次」、A136 的「正文 13px」、P0-2 的「令牌形同虚设」）。所以这一站
  * 先跑只读探针（`.tmp/probe-station5.mjs`），量出来的结论是：
  *
- *   已达标：弹窗 880×600 固定、矮窗口退到 552 且底部按钮仍完整可见、
+ *   已达标：弹窗固定（A139 时 880×600；C-1 收窄后 720×600，矮窗口退到
+ *          100vh-48 且底部按钮仍完整可见）、
  *          成员行 52px 整行可点、不可用成员带状态词、项目路径已用次级样式、
  *          任务空态有输入入口、移除确认说清了影响范围（不删目录/记忆）。
  *   真缺口：① 项目路径只能靠悬停看全、**没有任何复制入口**；
@@ -329,8 +330,10 @@ console.log('\n[6] 回归：这一站本来就达标的部分');
   const { ctx, page } = await newPage();
   await openNewGroup(page);
   const dialog = await page.locator('[data-new-group-dialog]').boundingBox();
-  ok(Math.round(dialog.width) === 880 && Math.round(dialog.height) === 600,
-    '弹窗尺寸仍是 880×600（没被这轮改动带跑）', `${Math.round(dialog.width)}x${Math.round(dialog.height)}`);
+  // C-1（ui-review 24/25 号图）：880×600 收至 min(720, 100vw-48) × min(600, 100vh-48)。
+  // 本闸门视口 1440×900 → 实测 720×600。
+  ok(Math.round(dialog.width) === 720 && Math.round(dialog.height) === 600,
+    '弹窗尺寸仍是 720×600（C-1 收窄后；没被后续改动带跑）', `${Math.round(dialog.width)}x${Math.round(dialog.height)}`);
 
   const rowH = await page.locator('[data-new-group-agent]').first().evaluate(el => el.getBoundingClientRect().height);
   ok(rowH >= 44, '成员行仍是整行可点（≥44px）', `${rowH}px`);
@@ -355,7 +358,8 @@ console.log('\n[7] 源码契约');
   ok(/1500/.test(detail), '复位定时器写的是 1500ms');
   ok(/typeof|navigator\.clipboard/.test(clip), 'clipboard 工具确实优先用 clipboard API');
   ok(/execCommand/.test(clip), 'clipboard 工具保留了 execCommand 兜底');
-  ok(/selected\.length === 0 \? '先勾选至少 1 名 AGENT'/.test(group), '禁用态 title 与条件同源');
+  // C 系 i18n：title 文案进 zh/en 键表（newGroup.submitHint），同源条件不变
+  ok(/selected\.length === 0 \? t\('newGroup\.submitHint'\)/.test(group), '禁用态 title 与条件同源');
 }
 
 await browser.close();

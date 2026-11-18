@@ -50,6 +50,14 @@
  * `UpdateCard` 的状态机一行没碰（只加了一层 CSS 外框）。
  * 眉标文案仍保持「隐私 / 支持 / 官方入口」三条精确值 —— verify:a141
  * 按这三个文本找带图标的眉标，改字会红。
+ *
+ * ── 2026-11-18 T8 重排（拆「关于 / 隐私」两组）──────────────────
+ * 效果图 14 的口径：关于（版本 / 更新 / 支持 / 入口 / 法务）在前，
+ * 隐私整组挪到页尾，组间通栏分割线 + 组标题（「关于」用 tc-section-title；
+ * 隐私组的标题由带图标的「隐私」眉标承担 —— a141 按眉标文案定位，不能拆）。
+ * 身份焦点区加了组标题，所以 hero 外面多包了一层 div：a141 断言「hero 是
+ * 其父元素的第一个子节点」，组标题必须在 hero 的父元素之外。
+ * 版本号缺失时（浏览器开发态）如实显示「开发版」徽标，不再露出「v—」（T8-3）。
  */
 import { useEffect, useState } from 'react';
 import {
@@ -113,6 +121,24 @@ const PRIVACY: Array<{ titleKey: MessageKey; bodyKey: MessageKey }> = [
     bodyKey: 'settings.about.privacy3Body', // secret-scan:ignore
   },
 ];
+
+/**
+ * T8-1（UI 优化 2026-11-18）：组间通栏分割线。
+ *
+ * 与 SettingsPage 的 GroupDivider（T3-1 引入）同款 —— 不直接 import 是因为
+ * SettingsPage 也 import 了本文件，反向引会成环。线的颜色同样走 --tc-divider
+ * （A25 起为透明，只留占位），组的边界实际由间距 + 组标题表达。
+ */
+function AboutGroupDivider() {
+  return (
+    <div
+      role="separator"
+      aria-hidden
+      className="my-6"
+      style={{ borderTop: '1px solid var(--tc-divider)' }}
+    />
+  );
+}
 
 /**
  * 外部入口。
@@ -189,40 +215,162 @@ export default function AboutPanel() {
 
   return (
     <div className="tc-about-v3">
-      {/* ── ① 身份：首屏唯一焦点 ──────────────────────────────────
-          v3：名称 + 版本 + 一句定位句；Electron / Node / 平台不再是并排的
-          四项技术参数，收进「构建信息」details（报 issue 时展开复制即可）。
-          `data-about-version-line` 与 `data-about-runtime` 锚点原位保留。 */}
-      <header className="tc-about-hero" data-about-version-line>
-        <div className="tc-about-tile">
-          <img src={appIcon} alt="" />
-        </div>
-        <div className="tc-about-name">
-          {info?.name || 'OPC Agent'}
-          <span className="tc-about-ver">v{info?.version || '—'}</span>
-        </div>
-        <p className="tc-about-tagline">{t('settings.about.tagline')}</p>
-        <details className="tc-about-build-details" data-about-build-details>
-          <summary>
-            {t('settings.about.buildInfo')}
-            <ChevronDown size={14} className="tc-about-build-caret" />
-          </summary>
-          <div className="tc-about-build-grid">
-            <span className="tc-about-build" data-about-runtime>{buildLine}</span>
-          </div>
-        </details>
-      </header>
+      {/* ── T8-1（UI 优化 2026-11-18）：拆「关于 / 隐私」两组 ──────────
+          关于（版本 / 更新 / 支持 / 入口 / 法务）在前，隐私整组挪到页尾，
+          组间通栏分割线。组标题用 tc-section-title（与外观 / 登录配置的
+          分组标题同款）；隐私组的组标题由带图标的「隐私」眉标承担
+          （verify:a141 按这三条眉标文案 + 图标定位，不能改名拆掉）。 */}
+      <h2 className="tc-section-title">{t('settings.about.groupAbout')}</h2>
 
-      {/* ── ② 状态卡：唯一主操作 ──────────────────────────────────
-          检查/下载/重启的状态机完全由 UpdateCard 管，这里只加一层外框，
-          不碰它的逻辑与内部 DOM（verify:a171 / a138 靠那些锚点定位）。 */}
-      <div className="tc-about-status-wrap">
-        <UpdateCard />
+      {/* 内层包一层的理由：verify:a141 断言「身份焦点是其父元素的第一个
+          子节点」—— 组标题必须在 hero 的父元素之外。 */}
+      <div>
+        {/* ── ① 身份：首屏唯一焦点 ──────────────────────────────
+            v3：名称 + 版本 + 一句定位句；Electron / Node / 平台不再是并排的
+            四项技术参数，收进「构建信息」details（报 issue 时展开复制即可）。
+            T8-3：版本号缺失（浏览器开发态拿不到桥）时如实显示「开发版」，
+            不再露出「v—」。`data-about-version-line` 与 `data-about-runtime`
+            锚点原位保留。 */}
+        <header className="tc-about-hero" data-about-version-line>
+          <div className="tc-about-tile">
+            <img src={appIcon} alt="" />
+          </div>
+          <div className="tc-about-name">
+            {info?.name || 'OPC Agent'}
+            <span className="tc-about-ver">
+              {info?.version ? `v${info.version}` : t('settings.about.devBadge')}
+            </span>
+          </div>
+          <p className="tc-about-tagline">{t('settings.about.tagline')}</p>
+          <details className="tc-about-build-details" data-about-build-details>
+            <summary>
+              {t('settings.about.buildInfo')}
+              <ChevronDown size={14} className="tc-about-build-caret" />
+            </summary>
+            <div className="tc-about-build-grid">
+              <span className="tc-about-build" data-about-runtime>{buildLine}</span>
+            </div>
+          </details>
+        </header>
+
+        {/* ── ② 状态卡：唯一主操作 ──────────────────────────────
+            检查/下载/重启的状态机完全由 UpdateCard 管，这里只加一层外框，
+            不碰它的逻辑与内部 DOM（verify:a171 / a138 靠那些锚点定位）。 */}
+        <div className="tc-about-status-wrap">
+          <UpdateCard />
+        </div>
+
+        {/* ── ④ 附录层：支持（点星改次要按钮，不抢主操作） ─────
+            T8-2：删掉与隐私卡 3 重复的「不收费/不投放广告/不收集数据」
+            前缀，支持段只留一句。`data-about-star` 与 `data-about-star-cta`
+            锚点保留。 */}
+        <section className="tc-about-zone tc-about-star-zone" data-about-star>
+          <div className="tc-about-eyebrow">
+            <Star aria-hidden="true" />
+            {t('settings.about.support')}
+          </div>
+          {/* 一句话、不折行（不插 <br>）：断在中间会让后半句读起来像
+              另一条独立声明。宽度不够时按容器自然换行。 */}
+          <p className="tc-about-quiet">
+            {t('settings.about.starLead')}
+            <b>{t('settings.about.starStrong')}</b>
+            {t('settings.about.starSuffix')}
+          </p>
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="tc-btn-secondary"
+            style={{ textDecoration: 'none' }}
+            data-about-star-cta
+          >
+            <Star size={14} />
+            {t('settings.about.starCta')}
+          </a>
+        </section>
+
+        {/* ── ④ 附录层：官方入口（列表行） ───────────────────── */}
+        <section className="tc-about-zone">
+          <div className="tc-about-eyebrow">
+            <ExternalLink aria-hidden="true" />
+            {t('settings.about.links')}
+          </div>
+          <div className="tc-about-rows">
+            {LINKS.map(({ key, href, labelKey, hintKey, Icon }) => (
+              <a
+                key={key}
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                className="tc-about-row"
+                data-about-link={key}
+              >
+                <Icon className="tc-about-row-lead" />
+                <span className="tc-about-row-label">{t(labelKey)}</span>
+                <span className="tc-about-row-meta">{t(hintKey)}</span>
+                <ChevronRight className="tc-about-row-go" />
+              </a>
+            ))}
+
+            <a
+              href={ISSUE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="tc-about-row"
+              data-about-feedback
+            >
+              <MessageSquare className="tc-about-row-lead" />
+              <span className="tc-about-row-label">{t('settings.about.feedbackLabel')}</span>
+              <span className="tc-about-row-meta">{t('settings.about.feedbackHint')}</span>
+              <ChevronRight className="tc-about-row-go" />
+            </a>
+          </div>
+        </section>
+
+        {/* ── ⑤ 附录层：法务 + 许可（默认折叠） ──────────────────
+            verify:a141 用 textContent 读清单（折叠时 innerText 为空），
+            并在截图前显式 `el.open = true` —— 折叠不会让法务断言失灵。 */}
+        <section className="tc-about-zone tc-about-zone--appendix">
+          <p className="tc-about-legal">
+            {t('settings.about.legalPrefix')}
+            <b>MIT</b>
+            {t('settings.about.legalSuffix')}
+          </p>
+
+          {/* 用原生 <details>：这里不需要状态，也不需要 TDesign 的折叠面板 ——
+              多引一个组件只为一次展开，成本比收益高。 */}
+          <details className="tc-about-lic" data-about-licenses>
+            <summary>
+              <Package size={14} />
+              {t('settings.about.licenses')}
+              <span className="tc-about-count">{t('settings.about.componentCount', { n: THIRD_PARTY.length })}</span>
+              <span className="tc-about-caret">
+                <ChevronDown size={14} />
+              </span>
+            </summary>
+
+            <div className="tc-about-lic-grid">
+              {THIRD_PARTY.map(item => (
+                <div key={item.name} className="tc-about-lic-item">
+                  <span className="tc-about-lic-name">{item.name}</span>
+                  <span className="tc-about-lic-tag">{item.licenseKey ? t(item.licenseKey) : item.license}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* 不写死组件数量：依赖一变数字就过期。以清单文件为准。 */}
+            <p className="tc-about-lic-note">
+              {t('settings.about.licenseNote')}
+            </p>
+          </details>
+          <p className="tc-about-foot">Copyright © 2026 catex-lab · OPC Agent</p>
+        </section>
       </div>
 
-      {/* ── ③ 信任层：一句主承诺 + 三条常驻要点 ──────────────────
+      {/* ── 隐私组（T8-1 整组挪到页尾）──────────────────────────
           用户确认（2026-11-04）：合规文案必须一眼可见，不装进 ⓘ、
-          不做页签、不加开关。v3 只是把三张并排小卡改成纵向要点列表。 */}
+          不做页签、不加开关。眉标「隐私」+ 主承诺 + 三条纵向要点。 */}
+      <AboutGroupDivider />
       <section className="tc-about-zone tc-about-zone--privacy" data-about-privacy>
         <div className="tc-about-eyebrow">
           <ShieldCheck />
@@ -244,110 +392,7 @@ export default function AboutPanel() {
           })}
         </div>
       </section>
-
-      {/* ── ④ 附录层：支持（点星改次要按钮，不抢主操作） ─────────
-          `data-about-star` 与 `data-about-star-cta` 锚点保留。 */}
-      <section className="tc-about-zone tc-about-star-zone" data-about-star>
-        <div className="tc-about-eyebrow">
-          <Star aria-hidden="true" />
-          {t('settings.about.support')}
-        </div>
-        {/* 一句话、不折行（不插 <br>）：两句话是同一段注脚，断在中间会让
-            第二句读起来像另一条独立声明。宽度不够时按容器自然换行。 */}
-        <p className="tc-about-quiet">
-          {t('settings.about.starPrefix')}
-          <b>{t('settings.about.starStrong')}</b>
-          {t('settings.about.starSuffix')}
-        </p>
-        <a
-          href={REPO_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="tc-btn-secondary"
-          style={{ textDecoration: 'none' }}
-          data-about-star-cta
-        >
-          <Star size={14} />
-          {t('settings.about.starCta')}
-        </a>
-      </section>
-
-      {/* ── ④ 附录层：官方入口（列表行） ───────────────────────── */}
-      <section className="tc-about-zone">
-        <div className="tc-about-eyebrow">
-          <ExternalLink aria-hidden="true" />
-          {t('settings.about.links')}
-        </div>
-        <div className="tc-about-rows">
-          {LINKS.map(({ key, href, labelKey, hintKey, Icon }) => (
-            <a
-              key={key}
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              className="tc-about-row"
-              data-about-link={key}
-            >
-              <Icon className="tc-about-row-lead" />
-              <span className="tc-about-row-label">{t(labelKey)}</span>
-              <span className="tc-about-row-meta">{t(hintKey)}</span>
-              <ChevronRight className="tc-about-row-go" />
-            </a>
-          ))}
-
-          <a
-            href={ISSUE_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="tc-about-row"
-            data-about-feedback
-          >
-            <MessageSquare className="tc-about-row-lead" />
-            <span className="tc-about-row-label">{t('settings.about.feedbackLabel')}</span>
-            <span className="tc-about-row-meta">{t('settings.about.feedbackHint')}</span>
-            <ChevronRight className="tc-about-row-go" />
-          </a>
-        </div>
-      </section>
-
-      {/* ── ⑤ 附录层：法务 + 许可（默认折叠） ────────────────────
-          verify:a141 用 textContent 读清单（折叠时 innerText 为空），
-          并在截图前显式 `el.open = true` —— 折叠不会让法务断言失灵。 */}
-      <section className="tc-about-zone tc-about-zone--appendix">
-        <p className="tc-about-legal">
-          {t('settings.about.legalPrefix')}
-          <b>MIT</b>
-          {t('settings.about.legalSuffix')}
-        </p>
-
-        {/* 用原生 <details>：这里不需要状态，也不需要 TDesign 的折叠面板 ——
-            多引一个组件只为了一次展开，成本比收益高。 */}
-        <details className="tc-about-lic" data-about-licenses>
-          <summary>
-            <Package size={14} />
-            {t('settings.about.licenses')}
-            <span className="tc-about-count">{t('settings.about.componentCount', { n: THIRD_PARTY.length })}</span>
-            <span className="tc-about-caret">
-              <ChevronDown size={14} />
-            </span>
-          </summary>
-
-          <div className="tc-about-lic-grid">
-            {THIRD_PARTY.map(item => (
-              <div key={item.name} className="tc-about-lic-item">
-                <span className="tc-about-lic-name">{item.name}</span>
-                <span className="tc-about-lic-tag">{item.licenseKey ? t(item.licenseKey) : item.license}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* 不写死组件数量：依赖一变数字就过期。以清单文件为准。 */}
-          <p className="tc-about-lic-note">
-            {t('settings.about.licenseNote')}
-          </p>
-        </details>
-        <p className="tc-about-foot">Copyright © 2026 catex-lab · OPC Agent</p>
-      </section>
     </div>
   );
 }
+

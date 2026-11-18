@@ -1,18 +1,16 @@
 /**
- * 授权范围选择器（2026-11-12 变体 A）浏览器打靶。
+ * 授权范围（2026-11-18 一次点击形态）浏览器打靶。
  *
- * 为什么必须真开浏览器：选择器是 Dock 卡片的一部分，渲染在 createPortal
- * 的 React 树之外；「默认选中仅本次」「选中 1.5px 品牌描边」「确认文案随
- * 范围变化」「设置页的授权行随撤销消失」全部是布局/渲染事实，只看源码
- * 证明不了用户看得见。断言用真实鼠标坐标 + elementFromPoint 自证落点。
+ * 为什么必须真开浏览器：审批卡长在消息流里；「三个动作只在双 allow 档都在时
+ * 渲染」「无默认选中」「「永久允许」一次点击就带 persistAgent」「设置页的授权行
+ * 随撤销消失」全部是布局/渲染/网络事实，只看源码证明不了用户点得动。
  *
  * 夹具矩阵：
- *   [1] 选择器条件渲染 —— SDK 四档画；CLI 两档不画（协议只有 allow/deny，
- *       不画假档位）；ACP 单 always 档不画（三段缺「仅本次」的真档位）；
- *   [2] 选中态：真实坐标点「本会话」段 → aria-checked 迁移 + 选中样式；
- *   [3] 确认文案随动 + 「该 Agent 永久」的边界说明只在该档出现；
- *   [4] 答复链路：选「该 Agent 永久」→ 确认 → 请求体带 persistAgent:true；
- *       Enter 快捷键按当前选中范围答复；
+ *   [1] 条件渲染 —— SDK 四档画三个动作；CLI 两档不画（协议只有 allow/deny，
+ *       不画假档位）；ACP 单 always 档不画（缺「仅本次」的真档位）；
+ *   [2] 无默认选中（P-2）：radiogroup 退役，动作是原生按钮，键盘 Enter 直触发；
+ *   [3] 「永久允许」的持久化边界说明挂在按钮 title（可撤销 + 门禁仍在）；
+ *   [4] 答复链路：点「永久允许」→ 请求体带 persistAgent:true；键盘激活同体；
  *   [5] 设置→权限管理：持久授权行出现、撤销即消失、空态与边界说明如实；
  *   [6] 控制台无错误。
  *
@@ -188,8 +186,8 @@ async function sendMessage(page) {
   await page.waitForTimeout(250);
 }
 
-// ============= [1] 选择器条件渲染：目录决定档位，不画假段 =============
-console.log('\n[1] 选择器只在三段都有真档位时渲染');
+// ============= [1] 动作按钮条件渲染：目录决定档位，不画假档 =============
+console.log('\n[1] 三个一次点击动作只在双 allow 档都有真档位时渲染');
 {
   // SDK 四档 → 画
   {
@@ -198,21 +196,21 @@ console.log('\n[1] 选择器只在三段都有真档位时渲染');
     await page.waitForTimeout(900);
     await sendMessage(page);
     eq(
-      await page.locator('[data-permission-scope-option]').count(), 3,
-      'SDK 四档 → 三段选择器渲染'
+      await page.locator('[data-permission-action]').count(), 3,
+      'SDK 四档 → 仅本次 / 本会话 / 永久 三个动作渲染'
     );
     await page.screenshot({ path: join(OUT, 'scope-selector.png'), fullPage: false });
     await ctx.close();
   }
-  // CLI 两档 → 不画（协议只有 allow/deny，「该 Agent 永久」无从产生）
+  // CLI 两档 → 不画（协议只有 allow/deny，「永久」无从产生）
   {
     const { ctx, page } = await newPage([permissionEvent({ requestId: 'cli1', options: CLI_OPTIONS, risk: undefined })]);
     await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
     await page.waitForTimeout(900);
     await sendMessage(page);
     eq(
-      await page.locator('[data-permission-scope]').count(), 0,
-      'CLI 两档 → 不画选择器（不画假档位，效果稿注释①）'
+      await page.locator('[data-permission-action]').count(), 0,
+      'CLI 两档 → 不画动作按钮（不画假档位，效果稿注释①）'
     );
     eq(
       await page.evaluate(() => [...document.querySelectorAll('[data-permission-option]')].map(b => b.textContent.trim())),
@@ -221,95 +219,77 @@ console.log('\n[1] 选择器只在三段都有真档位时渲染');
     );
     await ctx.close();
   }
-  // ACP 单 always 档 → 不画（缺「仅本次」的真档位，段位会是假的）
+  // ACP 单 always 档 → 不画（缺「仅本次」的真档位，动作会是假的）
   {
     const { ctx, page } = await newPage([permissionEvent({ requestId: 'acp1', options: ACP_SINGLE_ALWAYS, risk: 'safe', expiresAt: undefined })]);
     await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
     await page.waitForTimeout(900);
     await sendMessage(page);
     eq(
-      await page.locator('[data-permission-scope]').count(), 0,
-      'ACP 单 always 档 → 不画选择器（缺一档就不摆三段）'
+      await page.locator('[data-permission-action]').count(), 0,
+      'ACP 单 always 档 → 不画动作按钮（缺一档就不摆三颗）'
+    );
+    eq(
+      await page.evaluate(() => [...document.querySelectorAll('[data-permission-option]')].map(b => b.textContent.trim())),
+      ['允许'],
+      'ACP 目录原样渲染它的那一档（服务端给几档画几档）'
     );
     await ctx.close();
   }
 }
 
-// ============= [2] 选中态：真实坐标点击 + 样式自证 =============
-console.log('\n[2] 点「本会话」段：aria-checked 迁移、选中样式可量测');
+// ============= [2] 无默认选中：没有预选态，动作就是普通可聚焦按钮 =============
+console.log('\n[2] 无默认选中（P-2）：radiogroup 退役，按钮原生聚焦 + Enter 直触发');
 {
-  const { ctx, page } = await newPage([permissionEvent()]);
+  const { ctx, page, posts } = await newPage([permissionEvent()]);
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(900);
   await sendMessage(page);
 
-  // 真实鼠标坐标 + elementFromPoint 自证这一下确实点在段上
-  const seg = page.locator('[data-permission-scope-option="session"]');
-  const box = await seg.boundingBox();
-  const cx = box.x + box.width / 2;
-  const cy = box.y + box.height / 2;
-  const probe = await page.evaluate(
-    ([x, y]) => {
-      const el = document.elementFromPoint(x, y);
-      return { hit: el?.getAttribute?.('data-permission-scope-option') ?? null, tag: el?.tagName ?? '' };
-    },
-    [cx, cy]
-  );
-  eq(probe.hit, 'session', `自证坐标 (${Math.round(cx)}, ${Math.round(cy)}) 落在「本会话」段上`);
-  await page.mouse.click(cx, cy);
-  await page.waitForTimeout(200);
-
   const state = await page.evaluate(() => ({
-    checked: [...document.querySelectorAll('[data-permission-scope-option]')].map(
-      el => el.getAttribute('aria-checked')
-    ),
-    focusable: [...document.querySelectorAll('[data-permission-scope-option]')].map(
-      el => el.getAttribute('tabindex')
-    ),
-    styles: [...document.querySelectorAll('[data-permission-scope-option]')].map(el => {
-      const cs = getComputedStyle(el);
-      return { borderColor: cs.borderTopColor, bg: cs.backgroundColor };
-    }),
+    radiogroup: document.querySelectorAll('[data-permission-card] [role="radiogroup"]').length,
+    checked: document.querySelectorAll('[data-permission-card] [aria-checked]').length,
+    actions: [...document.querySelectorAll('[data-permission-action]')].map(el => ({
+      tag: el.tagName,
+      label: el.textContent.trim(),
+    })),
   }));
-  eq(state.checked, ['false', 'true', 'false'], 'aria-checked 迁移到「本会话」');
-  eq(state.focusable, ['-1', '0', '-1'], 'roving tabindex 跟着选中段走');
-  ok(
-    state.styles[1].borderColor !== state.styles[0].borderColor && state.styles[1].bg !== state.styles[0].bg,
-    '选中段与未选中段的描边色、底色可区分（不是只靠 aria）',
-    `选中边 ${state.styles[1].borderColor} / 未选中边 ${state.styles[0].borderColor}；选中底 ${state.styles[1].bg}`
-  );
+  eq(state.radiogroup, 0, 'radiogroup 选择器退役（两步决策不再存在）');
+  eq(state.checked, 0, '无默认选中：卡片里没有任何 aria-checked 预选态');
+  eq(state.actions.map(a => a.tag), ['BUTTON', 'BUTTON', 'BUTTON'], '三个动作是原生按钮（Tab 可达）');
+  eq(state.actions.map(a => a.label), ['仅本次允许', '本会话允许', '永久允许'], '动作文案与效果稿一致');
+
+  // 键盘路径：焦点落在「仅本次允许」上按 Enter，原生按钮激活 → 答复 allow_once。
+  // 文档级快捷键必须让路（焦点在卡片内时不重复发）。
+  await page.locator('[data-permission-action="once"]').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(400);
+  eq(posts.length, 1, '焦点在动作按钮上按 Enter 只发一次答复');
+  eq(posts[0]?.optionId, 'allow_once', 'Enter 触发的是焦点所在的「仅本次允许」档');
+
   await page.screenshot({ path: join(OUT, 'scope-selected-session.png'), fullPage: false });
   await ctx.close();
 }
 
-// ============= [3] 确认文案随动 + 边界说明只在该档出现 =============
-console.log('\n[3] 确认文案随范围变化；「该 Agent 永久」才出现持久化说明');
+// ============= [3] 持久化边界说明挂在「永久允许」的 title 上 =============
+console.log('\n[3] 「永久允许」的 title 写明边界：可撤销 + 门禁仍在');
 {
   const { ctx, page } = await newPage([permissionEvent()]);
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(900);
   await sendMessage(page);
 
-  const labelOf = () => page.locator('[data-permission-confirm="1"]').innerText();
-  eq((await labelOf()).trim(), '允许', '默认（仅本次）→ 允许');
-  eq(await page.locator('[data-permission-scope-hint]').count(), 0, '默认不画持久化说明');
-
-  await page.locator('[data-permission-scope-option="session"]').click();
-  await page.waitForTimeout(120);
-  eq((await labelOf()).trim(), '允许（本会话）', '本会话 → 允许（本会话）');
-  eq(await page.locator('[data-permission-scope-hint]').count(), 0, '本会话档不画持久化说明');
-
-  await page.locator('[data-permission-scope-option="agent"]').click();
-  await page.waitForTimeout(120);
-  eq((await labelOf()).trim(), '允许（该 Agent 永久）', '该 Agent 永久 → 允许（该 Agent 永久）');
-  const hint = await page.locator('[data-permission-scope-hint]').innerText();
-  ok(/撤销/.test(hint) && /门禁/.test(hint), '说明写明两件事：可在设置撤销 + 高危仍被门禁拦', hint);
+  // 两步流程退役后没有「选中后再说明」的位置：悬停 title 是唯一承载点
+  eq(await page.locator('[data-permission-scope-hint]').count(), 0, '不再渲染常驻边界说明行');
+  const hint = await page.locator('[data-permission-action="agent"]').getAttribute('title');
+  ok(/撤销/.test(hint ?? '') && /门禁/.test(hint ?? ''),
+    'title 写明两件事：可在设置撤销 + 高危仍被门禁拦', hint ?? '');
   await page.screenshot({ path: join(OUT, 'scope-agent-hint.png'), fullPage: false });
   await ctx.close();
 }
 
 // ============= [4] 答复链路：persistAgent 真的进了请求体 =============
-console.log('\n[4] 选「该 Agent 永久」→ 确认与 Enter 都带 persistAgent:true');
+console.log('\n[4] 点「永久允许」→ 一次点击直接带 persistAgent:true（鼠标与键盘同体）');
 {
   {
     const { ctx, page, posts } = await newPage([permissionEvent()]);
@@ -317,9 +297,7 @@ console.log('\n[4] 选「该 Agent 永久」→ 确认与 Enter 都带 persistAg
     await page.waitForTimeout(900);
     await sendMessage(page);
 
-    await page.locator('[data-permission-scope-option="agent"]').click();
-    await page.waitForTimeout(120);
-    await page.locator('[data-permission-confirm="1"]').click();
+    await page.locator('[data-permission-action="agent"]').click();
     await page.waitForTimeout(400);
 
     eq(posts.length, 1, '只发一条答复');
@@ -330,30 +308,20 @@ console.log('\n[4] 选「该 Agent 永久」→ 确认与 Enter 都带 persistAg
     );
     await ctx.close();
   }
-  // Enter 快捷键按当前选中范围答复（Dock 层共享同一份 scope 状态）。
-  // 键盘切段必须先验 —— 答复之后卡片就摘了，没有「再按一次」的机会。
+  // 键盘同体：Tab 到「永久允许」再按 Enter，与鼠标点击发同一个请求体 ——
+  // 这是一次显式聚焦后的激活，不是文档级快捷键替用户选了最重的一档。
   {
     const { ctx, page, posts } = await newPage([permissionEvent()]);
     await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
     await page.waitForTimeout(900);
     await sendMessage(page);
 
-    // 键盘切段：焦点在选中段上按 ArrowRight 应迁到下一段（radiogroup 语义）
-    await page.locator('[data-permission-scope-option="once"]').focus();
-    await page.keyboard.press('ArrowRight');
-    await page.waitForTimeout(150);
-    const checked = await page.evaluate(() =>
-      [...document.querySelectorAll('[data-permission-scope-option]')].map(el => el.getAttribute('aria-checked'))
-    );
-    eq(checked, ['false', 'true', 'false'], 'ArrowRight 把选中迁到「本会话」（radiogroup 键盘语义）');
-
-    // 然后选「该 Agent 永久」→ Enter：按选中范围答复
-    await page.locator('[data-permission-scope-option="agent"]').click();
-    await page.waitForTimeout(120);
+    await page.locator('[data-permission-action="agent"]').focus();
     await page.keyboard.press('Enter');
     await page.waitForTimeout(400);
-    eq(posts[0]?.persistAgent, true, 'Enter 按选中范围答复（不是写死的 allow_once）');
-    eq(posts[0]?.optionId, 'allow_always', 'Enter 回传 allow_always 档');
+    eq(posts.length, 1, '键盘激活也只发一次答复');
+    eq(posts[0]?.persistAgent, true, '键盘激活「永久允许」同样带 persistAgent:true');
+    eq(posts[0]?.optionId, 'allow_always', '回传 allow_always 档');
     await ctx.close();
   }
 }
@@ -431,7 +399,7 @@ console.log('\n[6] 控制台');
 await browser.close();
 server.close();
 
-console.log(`\n授权范围选择器（变体 A）：${checks.total - failures.length}/${checks.total} 通过`);
+console.log(`\n授权范围（一次点击形态）：${checks.total - failures.length}/${checks.total} 通过`);
 if (failures.length) {
   console.log('失败项：');
   for (const f of failures) console.log(`  · ${f}`);

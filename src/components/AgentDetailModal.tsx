@@ -5,11 +5,26 @@ import { AgentAvatar } from './AgentAvatar';
 import { StatusDot } from './StatusDot';
 import { AgentDetailSections } from './AgentDetailSections';
 import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent } from '../types';
+import { useTranslation } from '../i18n';
 
 interface AgentDetailModalProps {
   agent: RegisteredAgent | undefined;
   open: boolean;
   onClose: () => void;
+  /**
+   * D2-3（ui-review 26 号图）：底部操作区。三个入口都是**可选**回调 ——
+   * 不传就不渲染对应按钮（A141：不给永远不会生效的控件），弹窗保持
+   * 原来的纯只读形态。
+   *
+   * ⚠️ 当前两个渲染点（ChatPage / ChatHeader）都还没接这些回调 ——
+   * 接线涉及视图系文件，见 ui 优化回报的待确认项。
+   */
+  /** 发消息（主按钮）。与资料页 `AgentDetailPanel.onStartChat` 同一语义 */
+  onStartChat?: (agentId: string) => void;
+  /** 真实检测（次级按钮）。与资料页 canary 手动触发同一语义 */
+  onVerify?: (agentId: string) => void;
+  /** 查看完整资料（文字链）：跳通讯录资料页 */
+  onViewProfile?: (agentId: string) => void;
 }
 
 /**
@@ -34,10 +49,29 @@ interface AgentDetailModalProps {
  *
  * ## 内容与会话页共用
  *
- * 信息区块来自 AgentDetailSections（资料页也用同一份），只有头部与容器
- * 是弹窗自己的。
+ * 信息区块来自 AgentDetailSections（资料页也用同一份），只有头部、容器
+ * 与底部操作区是弹窗自己的。
+ *
+ * ## D2-1~D2-3（ui-review 26 号图）
+ *
+ *   · 宽度 760 → 540：760 只装 3 行信息 + 3 个标签 + 1 行介绍，下半部
+ *     40% 空白；540 与内容量匹配。
+ *   · 头部状态与资料页同一口径：探测 ready 但从未真实检测（lastCanary
+ *     为空）时显示灰色「未验证」徽标，不再写「在线」（D1-1 / 共性 4；
+ *     判定与 AgentDetailSections 的基本信息行完全一致）。
+ *   · 底部加操作区：左「查看完整资料」文字链 +「真实检测」次级，
+ *     右「发消息」主按钮 —— 不再是只能关掉的纯只读弹窗。回调都没传时
+ *     整条操作区不渲染。
  */
-export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps) {
+export function AgentDetailModal({
+  agent,
+  open,
+  onClose,
+  onStartChat,
+  onVerify,
+  onViewProfile,
+}: AgentDetailModalProps) {
+  const { t } = useTranslation();
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -66,6 +100,14 @@ export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps
   if (!open || !agent) return null;
 
   const meta = agentStatusViewOf(agent);
+  const canChat = agent.status.availability === 'ready';
+  /**
+   * D1-1 / 共性 4：探测说 ready 但从未跑过真实检测 —— 状态降为「未验证」
+   * （灰），不写「在线」。与 AgentDetailSections 的「状态」行同一判定，
+   * 弹窗与资料页口径必须一致。
+   */
+  const unverifiedReady = canChat && !agent.status.lastCanary;
+  const hasActions = !!(onStartChat || onVerify || onViewProfile);
 
   return createPortal(
     <div
@@ -80,7 +122,7 @@ export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps
         role="dialog"
         aria-modal="true"
         aria-labelledby="tc-agent-detail-title"
-        className="tc-dialog tc-pop-in flex max-h-full w-full max-w-[760px] flex-col overflow-hidden rounded-2xl"
+        className="tc-dialog tc-pop-in flex max-h-full w-full max-w-[540px] flex-col overflow-hidden rounded-2xl"
       >
         {/* 卡头：头像 + 名字 + 状态 + 关闭。固定不滚，滚的是下面的信息区 */}
         <div
@@ -104,25 +146,48 @@ export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps
             >
               {agent.name}
             </h2>
-            <div className="mt-1 flex items-center gap-1.5 text-secondary">
-              <StatusDot color={meta.dot} shape={meta.dotShape} size={6} statusLabel={meta.label} />
-              <span style={{ color: meta.color }}>{availabilityLabelOf(agent)}</span>
-              {agent.vendor && (
+            {unverifiedReady ? (
+              <div className="mt-1 flex min-w-0 items-center gap-1.5 text-secondary">
                 <span
-                  className="truncate"
-                  style={{ color: 'var(--td-text-color-placeholder)' }}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-caption"
+                  style={{
+                    color: 'var(--td-text-color-secondary)',
+                    backgroundColor: 'var(--td-bg-color-component)',
+                  }}
+                  data-agent-detail-unverified
                 >
-                  · {agent.vendor}
+                  <StatusDot
+                    color="var(--td-text-color-placeholder)"
+                    shape="hollow"
+                    size={6}
+                    statusLabel={t('agentDetail.unverified')}
+                  />
+                  {t('agentDetail.unverified')}
                 </span>
-              )}
-            </div>
+                {agent.vendor && (
+                  <span className="truncate" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                    · {agent.vendor}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="mt-1 flex items-center gap-1.5 text-secondary">
+                <StatusDot color={meta.dot} shape={meta.dotShape} size={6} statusLabel={meta.label} />
+                <span style={{ color: meta.color }}>{availabilityLabelOf(agent)}</span>
+                {agent.vendor && (
+                  <span className="truncate" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                    · {agent.vendor}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <button
             ref={closeRef}
             type="button"
             onClick={onClose}
-            title="关闭"
-            aria-label="关闭"
+            title={t('agentDetail.close')}
+            aria-label={t('agentDetail.close')}
             className="tc-icon-btn -mr-1 -mt-1 h-8 w-8 shrink-0"
             style={{ color: 'var(--td-text-color-secondary)' }}
           >
@@ -135,6 +200,52 @@ export function AgentDetailModal({ agent, open, onClose }: AgentDetailModalProps
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
           <AgentDetailSections agent={agent} />
         </div>
+
+        {/* 底部操作区（D2-3）：「查看完整资料」（文字链）+「真实检测」（次级）在左，
+            「发消息」（主）在右。三个回调都缺席时不渲染 —— 弹窗退回纯只读，
+            不摆看起来能点其实没反应的假控件（A141）。 */}
+        {hasActions && (
+          <div
+            className="flex shrink-0 items-center gap-2.5 px-5 py-3.5"
+            style={{ borderTop: '1px solid var(--tc-divider)' }}
+            data-agent-detail-actions
+          >
+            {onViewProfile && (
+              <button
+                type="button"
+                onClick={() => onViewProfile(agent.id)}
+                className="rounded text-body underline-offset-2 transition-colors hover:underline"
+                style={{ color: 'var(--td-text-color-secondary)' }}
+                data-agent-detail-profile
+              >
+                {t('agentDetail.viewProfile')}
+              </button>
+            )}
+            {onVerify && (
+              <button
+                type="button"
+                onClick={() => onVerify(agent.id)}
+                className="tc-btn-secondary"
+                data-agent-detail-verify
+              >
+                {t('canary.run')}
+              </button>
+            )}
+            {onStartChat && (
+              <button
+                type="button"
+                onClick={() => onStartChat(agent.id)}
+                disabled={!canChat}
+                title={canChat ? undefined : t('agentDetail.cannotChat')}
+                className="tc-btn-brand ml-auto"
+                data-agent-detail-start-chat
+              >
+                {/* 与资料页同一口径：不可对话时按钮文字直接说原因 */}
+                {canChat ? t('agentDetail.sendMessage') : t('agentDetail.cannotChat')}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>,
     document.body

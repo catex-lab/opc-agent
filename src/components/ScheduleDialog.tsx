@@ -190,7 +190,11 @@ export function ScheduleDialog({ open, session, onClose }: ScheduleDialogProps) 
         aria-modal="true"
         aria-label={t('sched.title')}
         data-schedule-dialog
-        className="tc-dialog flex max-h-[min(680px,100%)] w-[min(600px,100%)] flex-col overflow-hidden rounded-2xl"
+        /* C-8（ui-review 27 号图）：宽度 600 → 480。空态只有标题、两行说明、
+           一个按钮、一行脚注，600 宽大半是留白；新建表单（两个 32 高字段 +
+           3 行 textarea）在 480 里也放得下，所以整弹窗统一 480，不按内容
+           切换宽度（A138：尺寸不许跟内容走）。 */
+        className="tc-dialog flex max-h-[min(680px,100%)] w-[min(480px,100%)] flex-col overflow-hidden rounded-2xl"
       >
         <div
           className="flex h-[72px] shrink-0 items-center justify-between px-5"

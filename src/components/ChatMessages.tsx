@@ -26,6 +26,7 @@ import { stripEmoji } from '../utils/plainText';
 import { useTranslation } from '../i18n';
 import { useAgentLogin } from '../agentLogin';
 import { api } from '../api';
+import { PermissionDock } from './PermissionDock';
 
 /* ── 消息呈现（A33）─────────────────────────────────────────────────────
  *
@@ -45,6 +46,28 @@ function useElapsed(startedAt: number | undefined, active: boolean): number | nu
   }, [active]);
   if (!startedAt) return null;
   return Math.max(0, Math.round((now - startedAt) / 1000));
+}
+
+/**
+ * S2-4 / S1-2：本轮总耗时按**界面语言**格式化 —— 中文统一
+ * 「32 秒 / 1 分 36 秒 / 2 小时 5 分钟」（单聊与群聊同一函数，见审查报告
+ * S2-4「全应用统一为中文格式」），英文沿用 shared/trace 的 32.0s / 1m36s。
+ * 数据源与埋点不动（shared/trace.formatHandledDuration 仍归它管，
+ * 服务端 skill-distill 也用同一份），这里只做显示层的换算。
+ */
+function formatHandledDurationText(ms: number | undefined, locale: 'zh' | 'en'): string | null {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return null;
+  if (locale !== 'zh') return formatHandledDuration(ms);
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total} 秒`;
+  if (total < 3600) {
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return s ? `${m} 分 ${s} 秒` : `${m} 分钟`;
+  }
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  return m ? `${h} 小时 ${m} 分钟` : `${h} 小时`;
 }
 
 /**
@@ -404,6 +427,10 @@ function MessageActions({
       <button
         type="button"
         className="tc-act-btn"
+        /* S1-3（审查报告）：默认色从 placeholder 档提到 secondary 档 ——
+           原来 4 个浅灰图标不悬停几乎看不见。悬停加深由 .tc-act-btn:hover
+           的底色承担（index.css），这里只提默认一档。 */
+        style={{ color: 'var(--td-text-color-secondary)' }}
         title={t('chat.action.copyAnswer')}
         aria-label={t('chat.action.copyAnswer')}
         onClick={() => copy(text, t('chat.copy.done'))}
@@ -414,6 +441,7 @@ function MessageActions({
         <button
           type="button"
           className="tc-act-btn"
+          style={{ color: 'var(--td-text-color-secondary)' }}
           title={t('chat.action.regenerate')}
           aria-label={t('chat.action.regenerate')}
           onClick={onRegenerate}
@@ -424,6 +452,7 @@ function MessageActions({
       <button
         type="button"
         className="tc-act-btn"
+        style={{ color: 'var(--td-text-color-secondary)' }}
         title={t('chat.action.shareTitle')}
         aria-label={t('chat.action.share')}
         onClick={() => copy(shareText, t('chat.copy.shareDone'))}
@@ -434,6 +463,7 @@ function MessageActions({
         <button
           type="button"
           className="tc-act-btn"
+          style={{ color: 'var(--td-text-color-secondary)' }}
           title={t('chat.action.branchTitle')}
           aria-label={t('chat.action.branch')}
           onClick={onBranch}
@@ -507,6 +537,7 @@ function UserMessageActions({
       <button
         type="button"
         className="tc-act-btn"
+        style={{ color: 'var(--td-text-color-secondary)' }}
         title={t('chat.action.copyMessage')}
         aria-label={t('chat.action.copyMessage')}
         data-user-action="copy"
@@ -518,6 +549,7 @@ function UserMessageActions({
         <button
           type="button"
           className="tc-act-btn"
+          style={{ color: 'var(--td-text-color-secondary)' }}
           title={t('chat.action.editTitle')}
           aria-label={t('chat.action.edit')}
           data-user-action="edit"
@@ -529,6 +561,7 @@ function UserMessageActions({
       <button
         type="button"
         className="tc-act-btn"
+        style={{ color: 'var(--td-text-color-secondary)' }}
         title={t('chat.action.shareMessage')}
         aria-label={t('chat.action.share')}
         data-user-action="share"
@@ -1267,7 +1300,7 @@ const MessageRow = memo(function MessageRow({
   onRegenerate,
   onBranch,
 }: MessageRowProps) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   // 编排叙述行：不套气泡外壳，直接居中一行
   if (message.note) return <>{renderNoteRow(message)}</>;
 
@@ -1418,14 +1451,18 @@ const MessageRow = memo(function MessageRow({
           {/* A36：本轮总耗时。参考图把它放在头部右端（「已处理 47m42s」）——
               它描述的是**这一轮**，不是某一步，放在步骤里反而会被误读成单步耗时。
               流式中不显示：那一刻还没跑完，写死一个不断变大的数会和下面
-              状态行的秒数打架。 */}
-          {!msgIsImage && !message.isStreaming && formatHandledDuration(message.durationMs) && (
+              状态行的秒数打架。
+              S2-4（审查报告）：中文界面统一「已处理 1 分 36 秒 / 32 秒」格式
+              （单聊与群聊同一函数），英文沿用 1m36s。 */}
+          {!msgIsImage && !message.isStreaming && formatHandledDurationText(message.durationMs, locale) && (
             <span
               className="ml-auto shrink-0 text-caption tabular-nums"
               style={{ color: 'var(--td-text-color-placeholder)' }}
               data-msg-duration
             >
-              {t('chat.msg.handled', { duration: formatHandledDuration(message.durationMs) ?? '' })}
+              {t('chat.msg.handled', {
+                duration: formatHandledDurationText(message.durationMs, locale) ?? '',
+              })}
             </span>
           )}
         </div>
@@ -1590,6 +1627,11 @@ interface ChatMessagesProps {
   /** 当前会话 id：后台任务轮询要把它排除掉（眼前这一轮不算「后台」） */
   currentSessionId?: string | null;
   /**
+   * 当前会话显示名：审批卡卡头「{name} 请求」一行用它（2026-11-18 内嵌化，
+   * 卡片回到消息流里，见下方 PermissionDock 挂载点的说明）。
+   */
+  sessionTitle?: string;
+  /**
    * 会话绑定的工作目录（A97）。验证面板据此探测「这个项目能跑哪些检查」；
    * 不传时面板只显示「会话未绑定工作目录」，不会给出一个跑不了的按钮。
    */
@@ -1612,6 +1654,7 @@ export function ChatMessages({
   onEditMessage,
   onOpenSession,
   currentSessionId,
+  sessionTitle,
   sessionCwd,
 }: ChatMessagesProps) {
   const { t } = useTranslation();
@@ -2304,10 +2347,13 @@ export function ChatMessages({
         />
       ))}
       
-      {/* 审批卡不再挂在这里（A132）：它已搬到 App 层的 PermissionDock。
-          原因不是「换个位置好看」，而是消息流末尾这个槽位会随会话卸载 ——
-          切走会话时那张卡就消失了，可服务端那条流还在等答复。 */}
-      
+      {/* 审批卡回到消息流（2026-11-18 内嵌化，ui-review P-1）：原右下角浮层
+          盖住输入框、抢走视线，现在卡在消息列末尾、输入框上方，整列同宽。
+          数据仍来自全局 permissionStore（队列 / 归属 / 送达判定在那边）；
+          切走的会话由列表角标 + 「等待授权」预览承接（见 PermissionDock
+          头注释），不是把卡还挂回 props 透传的老路。 */}
+      <PermissionDock currentSessionId={currentSessionId ?? null} sessionLabel={sessionTitle} />
+
       <div ref={messagesEndRef} />
       {/* 后台任务胶囊（A36）：整条列表只挂一颗 —— 每条消息都挂的话，
           同一个数字会在屏幕上重复十遍。放在消息末尾、输入框上方，

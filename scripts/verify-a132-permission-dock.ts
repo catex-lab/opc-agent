@@ -58,7 +58,7 @@ eq(pickOptionByKind([OPT('r1', 'reject_once', '拒绝')], 'allow'), undefined,
 eq(pickOptionByKind([], 'reject'), undefined, '空目录时 Del 也不发');
 
 section('[3] remainingMs / formatCountdown：缺省就是缺省，不伪造倒计时');
-eq(remainingMs(undefined, 1_000), null, 'ACP 没有 expiresAt → null，UI 画「无超时」');
+eq(remainingMs(undefined, 1_000), null, 'ACP 没有 expiresAt → null，UI 画「等待你的决定」（不伪造倒计时）');
 eq(remainingMs(60_000, 1_000), 59_000, '有值时给真实剩余');
 eq(remainingMs(1_000, 5_000), 0, '过期不出现负数');
 eq(formatCountdown(277_000), '4:37', '4 分 37 秒');
@@ -159,17 +159,20 @@ eq(store.getSnapshot().items.map(i => i.request.requestId), ['r1', 'r3'],
 eq(store.getSnapshot().items.filter(i => i.request.sessionId === 'S1' && i.state === 'pending').length, 0,
   'S1 不再留僵尸 pending 卡');
 
-section('[7] 源码契约：槽位真的换掉了，不是两套并存');
+section('[7] 源码契约：卡片只有一个数据源，挂载点在消息流里（2026-11-18 内嵌化）');
 const uc = src('../src/hooks/useChat.ts');
 const ugc = src('../src/hooks/useGroupChat.ts');
 ok(!/useState<PermissionRequest \| null>/.test(uc), 'useChat 不再自持单值 state');
 ok(!/useState<PermissionRequest \| null>/.test(ugc), 'useGroupChat 同上（两份重复翻译已合并）');
 ok(/permissionStore/.test(uc) && /permissionStore/.test(ugc), '两条流都接进同一个 store');
 const cm = src('../src/components/ChatMessages.tsx');
-ok(!/<InlinePermissionCard/.test(cm), '审批卡不再渲染在消息流末尾');
-ok(!/permissionRequest/.test(cm), 'ChatMessages 连 props 都不收这个字段（三层透传已删）');
+// 2026-11-18（ui-review P-1）：审批卡**回到消息流里**——原右下角浮层盖住输入框，
+// 内嵌卡长在消息列末尾、输入框上方。这里钉两件事：挂载点在 ChatMessages、
+// 且仍然只吃 store（不允许 props 透传的老路还魂）。
+ok(/<PermissionDock/.test(cm), '审批卡宿主挂在消息流里（ChatMessages 内嵌，输入框完整可见）');
+ok(!/permissionRequest/.test(cm), 'ChatMessages 连 props 都不收这个字段（三层透传不复活）');
 const app = src('../src/App.tsx');
-ok(/<PermissionDock/.test(app), 'Dock 挂在 App 层（不随会话卸载）');
+ok(!/<PermissionDock/.test(app), 'App 层不再挂浮层（内嵌化后 body 浮层退役）');
 // 反向探针：旧兜底不许被删——allow/deny 是协议下限
 ok(/FALLBACK_OPTIONS/.test(src('../src/components/PermissionCard.tsx')), 'PermissionCard 仍用两档兜底');
 // 「答复只有一个出口」：两条流都不许再自己 fetch /api/permission-response
@@ -190,7 +193,7 @@ ok(/ipcMain\.on\('opc:permission-notify'/.test(main), '主进程有权限通知�
 // 红线：通知里带 buttons = 脱离应用、没看清完整命令就能点「允许」= 免密授权
 ok(!/new Notification\([\s\S]{0,400}?buttons/.test(main), '通知**不带 buttons**（免密批准是红线）');
 ok(/flashFrame\(true\)/.test(main), '未聚焦时闪任务栏');
-ok(/isFocused\(\)/.test(main), '前台时不再弹系统横幅（只弹 Dock）');
+ok(/isFocused\(\)/.test(main), '前台时不再弹系统横幅（审批卡在应用内可见）');
 const pre = src('../electron/preload.cjs');
 ok(/notifyPermission/.test(pre) && /onPermissionFocus/.test(pre), 'preload 双向桥都在');
 ok(!/ipcRenderer\.(invoke|send)\('opc:permission-response/.test(pre), '答复不走桌面壳（仍留在应用内）');

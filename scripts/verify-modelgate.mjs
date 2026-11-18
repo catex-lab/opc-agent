@@ -211,9 +211,10 @@ console.log('\n[2b] 模型浮层规格（标题栏 / 行内 ✓ / 底部通栏�
   check('选中行标了 aria-selected', (await selected.first().getAttribute('aria-selected')) === 'true');
 
   // 规格 4：底部通栏「添加模型」，且是钉在底边的（不在列表滚动区里）
+  // M-3（审查报告）：文案带上去向「（去设置）」—— 点的是「设置 → 模型清单」刷新枚举。
   const add = pop.locator('[data-model-popup-add]');
   check('底部有「添加模型」通栏按钮', (await add.count()) === 1);
-  check('按钮文案是「添加模型」', (await add.innerText()).trim() === '添加模型');
+  check('按钮文案是「添加模型（去设置）」', (await add.innerText()).trim() === '添加模型（去设置）');
   const addBox = await add.boundingBox();
   const listBox = await pop.locator('[data-model-popup-list]').boundingBox();
   check(

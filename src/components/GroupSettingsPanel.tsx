@@ -8,6 +8,7 @@ import { AvatarCropDialog } from './AvatarCropDialog';
 import { ScheduleDialog } from './ScheduleDialog';
 import { removeGroupAvatar, uploadGroupAvatar } from '../avatarApi';
 import { useAgentRemarks } from '../agentRemarks';
+import { useOverflowY } from '../hooks/useOverflowY';
 import {
   groupNickname,
   groupRemark,
@@ -22,8 +23,8 @@ import {
   type NotifyMode,
 } from '../sessionFlags';
 import { GroupAvatar, AvatarPickerGrid, groupAvatarMembersOf } from './UserAvatar';
-import { useTranslation } from '../i18n';
-import type { RegisteredAgent } from '../types';
+import { useTranslation, type MessageKey } from '../i18n';
+import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent } from '../types';
 
 /**
  * 群聊设置面板 —— 群聊头部「⋯」的落点（P7）。
@@ -47,11 +48,11 @@ import type { RegisteredAgent } from '../types';
  * 输入框会被盖掉一截，而右边的成员栏一开却会把输入框挤窄 —— 同是右栏，
  * 两种行为。现在的做法：
  *   · 面板由 ChatPage 渲染成会话区的**兄弟节点**（不再是 portal），
- *     宽度取 `--tc-member-panel-width`，与成员栏完全同宽；
+ *     宽度取 PANEL_WIDTH（G-1：260px；成员栏仍是 236 —— 两者不同时渲染）；
  *   · 因为同在会话区那一行 flex 里，顶边/底边天然与成员栏对齐，
  *     不需要再算「标题栏 + 头部」那两个令牌；
- *   · 宽度 0 → 236 做进退场，左边的会话与输入框跟着一起收放；
- *   · 打开面板时成员栏不渲染（同一块位置只放一个右栏，避免两条 236 并排）。
+ *   · 宽度 0 → 260 做进退场，左边的会话与输入框跟着一起收放；
+ *   · 打开面板时成员栏不渲染（同一块位置只放一个右栏，避免两条右栏并排）。
  *
  * ## 高度与群成员侧栏完全一致（2026-10-18 反馈，现已由布局保证）
  *
@@ -87,26 +88,34 @@ import type { RegisteredAgent } from '../types';
  */
 
 /**
- * 面板宽度 —— 与群成员栏同值（`--tc-member-panel-width` = 236px）。
+ * 面板宽度（G-1，ui-review 17 号图）：236 → 260。
  *
- * 组件内部一律走 CSS 变量，这个常量只给「需要数值断言」的脚本和将来的
- * 窄屏适配用；**不要**在 JSX 里写死它，否则改令牌时这里不会跟着变。
+ * 原来与群成员栏共用 `--tc-member-panel-width`（236px），但 8 组内容在
+ * 236px 里塞不下、底部「定时任务」被裁一半。加宽到 260 同时把内容区
+ * 改成滚动 + 底部钉住定时任务。成员栏（GroupMemberPanel）保持 236 不动
+ * —— 两者不同时渲染（打开设置面板时成员栏不出现），不是一个令牌的
+ * 两个消费者。
+ *
+ * 这个常量是宽度的唯一真源（wrapper 与 aside 都引用它）；导出
+ * `GROUP_SETTINGS_WIDTH` 给需要数值断言的脚本。
  */
-const PANEL_WIDTH = 236;
-/** 群消息设置的三档（截图里的下拉选项）。「正常提醒」由免打扰开关表达，不进下拉 */
+const PANEL_WIDTH = 260;
 /**
  * 群消息设置的四档。**四档必须齐全**：
  *
  * `notifyMode` 是四种状态（normal / muted / assistant / blocked），而下拉是它
  * 唯一完整的展示面。漏掉 'normal' 那一档的后果不是「少一项」，而是
  * `find(o => o.mode === notify)` 返回 undefined、掉到兜底文案 ——
- * 用户其实在正常收消息，界面却写着「不提醒」。这与「免打扰开关」也会对不上。
+ * 用户其实在正常收消息，界面却写着「不提醒」。
+ *
+ * G-2（ui-review）：「消息免打扰」开关已删 —— 它与这个下拉共用
+ * `notifyMode`，是同一状态的两个控件；四档齐的下拉是唯一入口。
  */
-const NOTIFY_OPTIONS: Array<{ mode: NotifyMode; label: string }> = [
-  { mode: 'normal', label: '接收消息并提醒' },
-  { mode: 'muted', label: '接收消息但不提醒' },
-  { mode: 'assistant', label: '收进群助手且不提醒' },
-  { mode: 'blocked', label: '屏蔽群消息' },
+const NOTIFY_OPTIONS: Array<{ mode: NotifyMode; labelKey: MessageKey }> = [
+  { mode: 'normal', labelKey: 'groupSettings.notifyNormal' },
+  { mode: 'muted', labelKey: 'groupSettings.notifyMuted' },
+  { mode: 'assistant', labelKey: 'groupSettings.notifyAssistant' },
+  { mode: 'blocked', labelKey: 'groupSettings.notifyBlocked' },
 ];
 
 interface GroupSettingsPanelProps {
@@ -150,6 +159,9 @@ export function GroupSettingsPanel({
   const wrapRef = useRef<HTMLDivElement>(null);
   /** Agent 备注：成员格子里显示备注优先（与通讯录、消息列表同一套规则） */
   const remarks = useAgentRemarks();
+  // G-1：内容区改成滚动后，溢出要给「还有更多」的信号（A134 硬规矩：
+  // Windows 的 overlay 滚动条静止时不画，被硬切的一行字读起来像渲染坏了）
+  const { ref: scrollRef, overflowing: contentOverflowing } = useOverflowY<HTMLDivElement>();
 
   // 「我在本群的昵称 / 群聊备注」：点一下变成输入框，回车或失焦保存
   const [editingNickname, setEditingNickname] = useState(false);
@@ -344,13 +356,14 @@ export function GroupSettingsPanel({
     setNotifyOpen(false);
   };
 
-  const notifyLabel = NOTIFY_OPTIONS.find(o => o.mode === notify)?.label ?? '接收消息并提醒';
-  const muted = notify !== 'normal';
+  const notifyLabel = t(
+    NOTIFY_OPTIONS.find(o => o.mode === notify)?.labelKey ?? 'groupSettings.notifyNormal'
+  );
 
   return (
     <div
       ref={wrapRef}
-      // 宽度 = 群成员栏（`--tc-member-panel-width`），并且**参与布局**：
+      // 宽度 = PANEL_WIDTH（G-1：260px），并且**参与布局**：
       // 面板一开，消息区与输入框跟着收窄，和右侧成员栏是完全一样的响应行为。
       //
       // 早先是 portal + `fixed`，压在会话之上 —— 结果输入框被面板盖掉一截
@@ -358,12 +371,12 @@ export function GroupSettingsPanel({
       // 「盖住」这件事从根上不存在了。
       //
       // 窄屏（< lg）成员栏本身是隐藏的，此时退回覆盖式：`absolute` 贴右缘，
-      // 不把本来就不宽的消息区再挤掉 236px。
+      // 不把本来就不宽的消息区再挤掉 260px。
       className="absolute inset-y-0 right-0 z-50 shrink-0 overflow-hidden transition-[width] duration-200 ease-out lg:relative lg:inset-y-auto lg:right-auto lg:z-auto"
       style={{
         // 用宽度做进场/退场：宽度会推着左边的会话一起收放，
         // 比 translate 更贴「这一栏打开了」的语义（translate 会先留一块空白）。
-        width: shown ? 'var(--tc-member-panel-width)' : 0,
+        width: shown ? PANEL_WIDTH : 0,
         pointerEvents: shown ? 'auto' : 'none',
       }}
       data-group-settings
@@ -373,9 +386,10 @@ export function GroupSettingsPanel({
         role="dialog"
         // 没有蒙层、也不拦背景点击 —— 所以不是 aria-modal（那会让读屏
         // 把面板以外的一切都当成不可用，与实际的交互模型不符）
-        aria-label="群聊设置"
-        className="tc-glass absolute inset-y-0 right-0 flex w-[var(--tc-member-panel-width)] flex-col overflow-hidden shadow-popup"
+        aria-label={t('groupSettings.panelAria')}
+        className="tc-glass absolute inset-y-0 right-0 flex flex-col overflow-hidden shadow-popup"
         style={{
+          width: PANEL_WIDTH,
           borderLeft: '1px solid var(--tc-split)',
           // A48（反馈）：这一栏要**直角**。
           //
@@ -406,8 +420,8 @@ export function GroupSettingsPanel({
             ref={closeRef}
             type="button"
             onClick={onClose}
-            title="关闭"
-            aria-label="关闭群聊设置"
+            title={t('groupSettings.close')}
+            aria-label={t('groupSettings.closeAria')}
             className="tc-icon-btn h-7 w-7 shrink-0"
             style={{ color: 'var(--td-text-color-secondary)' }}
           >
@@ -415,11 +429,15 @@ export function GroupSettingsPanel({
           </button>
         </div>
 
-        {/* 内容区做成 flex 列：底部操作行要靠 `mt-auto` 顶到面板底边
-            （内容不足一屏时也不会浮在中间）。见下面 sticky 那段的注释。
-            `[&>*]:shrink-0` 是必须的 —— flex 列默认会压缩子项来「塞进」
-            容器，那样内容就永远不溢出、也就没有滚动条了。 */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto [&>*]:shrink-0">
+        {/* 内容区做成 flex 列：底部「定时任务」已钉到面板底边的固定栏（G-1），
+            这块滚动区自己管剩下的所有内容。`[&>*]:shrink-0` 是必须的 ——
+            flex 列默认会压缩子项来「塞进」容器，那样内容就永远不溢出、
+            也就没有滚动条了。溢出时挂 `.tc-scroll-fade`（A134 硬规矩）。 */}
+        <div
+          ref={scrollRef}
+          className="tc-scroll-fade flex min-h-0 flex-1 flex-col overflow-y-auto [&>*]:shrink-0"
+          data-fade={contentOverflowing ? '1' : undefined}
+        >
           {/* ── 群头像（A115；2026-11-12 加自定义图片与成员拼贴；2026-11-14 重排）──
               放在最前面：它是这个群的「脸」，比任何一项设置都更该被看见。
               重排（用户反馈：解释文字冗余、上传后裁切弹层在窄栏里显示不全）：
@@ -430,7 +448,7 @@ export function GroupSettingsPanel({
                 （有自定义图 → 移除图片；只有预设 → 恢复默认拼贴）。
               · 裁切弹层 portal 到 body（见 AvatarCropDialog 顶部说明）——
                 fixed 在玻璃拟态祖先里会被困住，这是显示不全的根因。 */}
-          <Section label="群头像" />
+          <Section label={t('groupSettings.avatar')} />
           <div className="px-4 pb-3" data-group-avatar-section>
             <AvatarCropDialog
               file={cropFile}
@@ -499,14 +517,15 @@ export function GroupSettingsPanel({
                   </span>
                 </button>
               </div>
-              {/* 两个动作等宽横排，与头像同宽对齐 */}
-              <div className="mt-3 flex gap-2">
+              {/* G-4（ui-review）：两个动作上下堆叠全宽 —— 236→260 加宽了，
+                  但横排在窄栏里仍然拥挤，竖排后每个按钮都有完整的可点宽度 */}
+              <div className="mt-3 flex flex-col gap-2">
                 <button
                   type="button"
                   onClick={() => imageInputRef.current?.click()}
                   disabled={uploadingImage}
                   data-group-avatar-upload
-                  className="tc-btn-brand flex-1"
+                  className="tc-btn-brand w-full"
                 >
                   {uploadingImage ? t('groupAvatar.uploading') : t('groupAvatar.upload')}
                 </button>
@@ -515,7 +534,7 @@ export function GroupSettingsPanel({
                   onClick={() => setAvatarPickerOpen(v => !v)}
                   aria-expanded={avatarPickerOpen}
                   data-group-avatar-toggle
-                  className="tc-btn-secondary flex-1"
+                  className="tc-btn-secondary w-full"
                 >
                   {t('groupAvatar.usePreset')}
                 </button>
@@ -575,25 +594,29 @@ export function GroupSettingsPanel({
               没有理由让用户在某一处「悬停没反应」。
 
               A30（反馈）：成员后面要有「邀请」和「移出」。
-                · 邀请 = 格子末尾那颗虚线「+」格（成员区的通行形态），
-                  点开在下方就地展开候选名单；
-                · 移出 = 每格头像右上角的 ×。**常驻可见但低对比**（40%），
-                  悬停该格才变实 —— 与右侧成员栏的「悬停才出现」不同：
+                · 邀请 = 成员列表末尾的虚线「+ 邀请成员」行（G-3 竖排后
+                  与成员行同形），点开在下方就地展开候选名单；
+                · 移出 = 每行头像右上角的 ×。**常驻可见但低对比**（40%），
+                  悬停该行才变实 —— 与右侧成员栏的「悬停才出现」不同：
                   这一页是用户专门来「管理成员」的地方，藏起来会让人以为
                   没有这个功能（反馈原话就是「增加移出按钮」）。
                   最后一位成员的 × 禁用（空群发不出消息）。 */}
-          <Section label="群聊成员" count={members.length} />
-          <div className="grid grid-cols-5 gap-y-3 px-4 pb-3" data-group-members>
+          <Section label={t('groupSettings.members')} count={members.length} />
+          {/* G-3（ui-review）：成员改竖排列表 —— 横排格子里名字截成「Clau…」，
+              看不出是谁。每行「头像 + 全名 + 状态」，头像悬停仍有名片，
+              移出 × 仍挂在头像角上（常驻低对比、悬停变实）。 */}
+          <div className="flex flex-col px-4 pb-3" data-group-members>
             {members.map(m => {
               const lastOne = members.length <= 1;
+              const mMeta = agentStatusViewOf(m);
               return (
                 <div
                   key={m.id}
-                  className="group/member flex flex-col items-center gap-1"
+                  className="group/member flex items-center gap-2.5 rounded-lg px-1 py-1.5"
                   title={m.name}
                   data-settings-member={m.id}
                 >
-                  <div className="relative">
+                  <div className="relative shrink-0">
                     <AgentHoverCard agent={m}>
                       <AgentAvatar
                         id={m.id}
@@ -609,8 +632,16 @@ export function GroupSettingsPanel({
                       type="button"
                       disabled={lastOne}
                       onClick={() => removeMember(m.id)}
-                      title={lastOne ? '至少保留一位成员' : `将 ${remarks[m.id] || m.name} 移出群聊`}
-                      aria-label={lastOne ? '至少保留一位成员' : `将 ${remarks[m.id] || m.name} 移出群聊`}
+                      title={
+                        lastOne
+                          ? t('groupSettings.lastMember')
+                          : t('groupSettings.removeMember', { name: remarks[m.id] || m.name })
+                      }
+                      aria-label={
+                        lastOne
+                          ? t('groupSettings.lastMember')
+                          : t('groupSettings.removeMember', { name: remarks[m.id] || m.name })
+                      }
                       data-settings-remove-member={m.id}
                       className="absolute -right-1.5 -top-1.5 flex h-[18px] w-[18px] items-center justify-center rounded-full opacity-40 shadow-card transition-opacity focus-visible:opacity-100 group-hover/member:opacity-100 hover:!opacity-100 disabled:cursor-not-allowed disabled:opacity-0"
                       style={{
@@ -626,44 +657,56 @@ export function GroupSettingsPanel({
                       <UserMinus size={10} />
                     </button>
                   </div>
-                  <span
-                    className="w-full truncate px-0.5 text-center text-caption"
-                    style={{ color: 'var(--td-text-color-secondary)' }}
-                  >
-                    {remarks[m.id] || m.name}
-                  </span>
+                  <div className="min-w-0 flex-1">
+                    {/* 全名：竖排之后不再截断 */}
+                    <span
+                      className="block truncate text-body"
+                      style={{ color: 'var(--td-text-color-primary)' }}
+                    >
+                      {remarks[m.id] || m.name}
+                    </span>
+                    {/* 状态词与通讯录/资料页同一口径（labelKey 优先） */}
+                    <span
+                      className="block truncate text-caption"
+                      style={{ color: mMeta.color }}
+                    >
+                      {mMeta.labelKey ? t(mMeta.labelKey as never) : availabilityLabelOf(m)}
+                    </span>
+                  </div>
                 </div>
               );
             })}
 
-            {/* 邀请格：与成员格同宽同高，只是圆形换成虚线边 */}
-            <div className="flex flex-col items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setInviteOpen(v => !v)}
-                aria-expanded={inviteOpen}
-                aria-label="邀请成员"
-                title="邀请成员"
-                data-settings-invite-toggle
-                className="flex items-center justify-center rounded-full transition-colors"
+            {/* 邀请行：与成员行同高同形，圆标换成虚线边（G-3 竖排后的落点） */}
+            <button
+              type="button"
+              onClick={() => setInviteOpen(v => !v)}
+              aria-expanded={inviteOpen}
+              aria-label={t('groupSettings.inviteAria')}
+              title={t('groupSettings.inviteAria')}
+              data-settings-invite-toggle
+              className="flex items-center gap-2.5 rounded-lg px-1 py-1.5 text-left transition-colors"
+            >
+              <span
+                className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full transition-colors"
                 /* A75：底色不写内联（理由同 GroupMemberPanel 的邀请按钮），
                    三态交给 index.css 的 [data-settings-invite-toggle] 规则。 */
                 style={{
-                  width: 34,
-                  height: 34,
                   border: '1px dashed var(--td-component-stroke)',
                   color: inviteOpen ? 'var(--td-brand-color)' : 'var(--td-text-color-placeholder)',
                 }}
               >
                 <UserPlus size={15} />
-              </button>
-              <span
-                className="w-full truncate px-0.5 text-center text-caption"
-                style={{ color: 'var(--td-text-color-placeholder)' }}
-              >
-                邀请
               </span>
-            </div>
+              <span
+                className="text-body"
+                style={{
+                  color: inviteOpen ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)',
+                }}
+              >
+                {t('groupSettings.inviteAria')}
+              </span>
+            </button>
           </div>
 
           {/* 候选名单：就地展开，跟着内容滚（见 inviteOpen 的注释） */}
@@ -677,7 +720,7 @@ export function GroupSettingsPanel({
                     color: 'var(--td-text-color-placeholder)',
                   }}
                 >
-                  所有 Agent 都已在群内
+                  {t('groupSettings.allInGroup')}
                 </div>
               ) : (
                 <div
@@ -717,13 +760,13 @@ export function GroupSettingsPanel({
                           className="shrink-0 text-caption"
                           style={{ color: 'var(--td-text-color-placeholder)' }}
                         >
-                          {a.status.message?.slice(0, 6) || '未就绪'}
+                          {a.status.message?.slice(0, 6) || t('groupSettings.notReady')}
                         </span>
                       )}
                       <button
                         type="button"
                         onClick={() => addMember(a.id)}
-                        aria-label={`邀请 ${a.name}`}
+                        aria-label={t('groupSettings.inviteOne', { name: a.name })}
                         className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-caption transition-colors"
                         style={{
                           color: 'var(--td-brand-color)',
@@ -731,7 +774,7 @@ export function GroupSettingsPanel({
                         }}
                       >
                         <Plus size={11} />
-                        邀请
+                        {t('groupSettings.invite')}
                       </button>
                     </div>
                   ))}
@@ -742,8 +785,8 @@ export function GroupSettingsPanel({
 
           <Divider />
 
-          {/* ── 我在本群的昵称 ── */}
-          <Section label="我在本群的昵称" />
+          {/* ── 我在本群的昵称（G-5：下方加说明小字，与「群聊备注」区分开）── */}
+          <Section label={t('groupSettings.nickname')} />
           <div className="px-4 pb-4">
             {editingNickname ? (
               <input
@@ -761,8 +804,8 @@ export function GroupSettingsPanel({
                   }
                 }}
                 onBlur={() => saveNickname(true)}
-                aria-label="我在本群的昵称"
-                placeholder="填写昵称"
+                aria-label={t('groupSettings.nickname')}
+                placeholder={t('groupSettings.nicknamePlaceholder')}
                 className="w-full rounded-lg px-3 py-2 text-body outline-none"
                 style={{
                   backgroundColor: 'var(--tc-surface-raised)',
@@ -781,13 +824,16 @@ export function GroupSettingsPanel({
                   color: nickname ? 'var(--td-text-color-primary)' : 'var(--td-text-color-placeholder)',
                 }}
               >
-                {nickname || '填写昵称'}
+                {nickname || t('groupSettings.nicknamePlaceholder')}
               </button>
             )}
+            {/* G-5：一行小字说明可见范围 —— 昵称与备注原来只有 placeholder，
+                用户分不清两者差在哪 */}
+            <p className="tc-hint mt-1.5">{t('groupSettings.nicknameHint')}</p>
           </div>
 
           {/* ── 群聊备注 ── */}
-          <Section label="群聊备注" />
+          <Section label={t('groupSettings.remark')} />
           <div className="px-4 pb-4">
             {editingRemark ? (
               <input
@@ -805,8 +851,8 @@ export function GroupSettingsPanel({
                   }
                 }}
                 onBlur={() => saveRemark(true)}
-                aria-label="群聊备注"
-                placeholder="填写备注"
+                aria-label={t('groupSettings.remark')}
+                placeholder={t('groupSettings.remarkPlaceholder')}
                 className="w-full rounded-lg px-3 py-2 text-body outline-none"
                 style={{
                   backgroundColor: 'var(--tc-surface-raised)',
@@ -825,34 +871,31 @@ export function GroupSettingsPanel({
                   color: remark ? 'var(--td-text-color-primary)' : 'var(--td-text-color-placeholder)',
                 }}
               >
-                {remark || '填写备注'}
+                {remark || t('groupSettings.remarkPlaceholder')}
               </button>
             )}
+            <p className="tc-hint mt-1.5">{t('groupSettings.remarkHint')}</p>
           </div>
 
           <Divider />
 
-          {/* ── 置顶 / 免打扰 两个开关 ── */}
+          {/* ── 置顶开关 ──
+              G-2（ui-review）：「消息免打扰」开关已删 —— 它与下面的
+              「群消息设置」下拉共用 notifyMode，是同一状态的两个控件，
+              改一处另一处跟着变。四档齐的下拉是唯一入口。 */}
           <ToggleRow
-            label="设为置顶"
+            label={t('groupSettings.pin')}
             checked={pinned}
             onToggle={() => sessionId && onTogglePin(!pinned)}
           />
-          <ToggleRow
-            label="消息免打扰"
-            checked={muted}
-            onToggle={() =>
-              sessionId && switchNotify(muted ? 'normal' : 'muted')
-            }
-          />
 
-          {/* ── 群消息设置（三档下拉）──
-              与上面的免打扰开关共用 notifyMode：开关是两档快捷方式，
-              下拉是完整设置。收进群助手/屏蔽只有下拉能给 —— 一个布尔
-              开关表达不了四种状态，硬表达就会出现「开关说不提醒、实际已屏蔽」。 */}
+          {/* ── 群消息设置（四档下拉）──
+              notifyMode 的唯一完整展示面。收进群助手/屏蔽只有下拉能给 ——
+              一个布尔开关表达不了四种状态，硬表达就会出现
+              「开关说不提醒、实际已屏蔽」。 */}
           <div className="px-4 py-3">
             <div className="mb-2 text-body" style={{ color: 'var(--td-text-color-primary)' }}>
-              群消息设置
+              {t('groupSettings.notifyTitle')}
             </div>
             <div ref={notifyRef} className="relative">
               <button
@@ -904,7 +947,7 @@ export function GroupSettingsPanel({
                             : { color: 'var(--td-text-color-primary)' }
                         }
                       >
-                        {opt.label}
+                        {t(opt.labelKey)}
                         {active && <Check size={14} style={{ color: 'var(--td-brand-color)' }} />}
                       </button>
                     );
@@ -912,28 +955,6 @@ export function GroupSettingsPanel({
                 </div>
               )}
             </div>
-          </div>
-
-          <Divider />
-
-          {/* ── 定时任务（A224）──
-              群排班是与「置顶 / 免打扰」同层的会话配置，放中性区；
-              与危险操作（删记录 / 退群）之间用一条 Divider 隔开 ——
-              往下翻到危险区之前，先能路过它。 */}
-          <div className="px-4 pb-4 pt-3" data-group-schedule-section>
-            <button
-              type="button"
-              onClick={() => setScheduleOpen(true)}
-              data-group-schedule
-              className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-body transition-colors"
-              style={{
-                color: 'var(--td-text-color-primary)',
-                border: '1px solid var(--tc-edge-strong)',
-              }}
-            >
-              <CalendarClock size={15} />
-              {t('chat.schedule')}
-            </button>
           </div>
 
           <Divider />
@@ -969,7 +990,7 @@ export function GroupSettingsPanel({
               }}
             >
               <Trash2 size={15} />
-              删除聊天记录
+              {t('groupSettings.clearHistory')}
             </button>
             <button
               type="button"
@@ -982,9 +1003,31 @@ export function GroupSettingsPanel({
               }}
             >
               <LogOut size={15} />
-              退出群聊
+              {t('groupSettings.exitGroup')}
             </button>
           </div>
+        </div>
+
+        {/* ── 定时任务：钉在底部固定栏（G-1）──
+            群排班是与「置顶 / 免打扰」同层的会话配置。原来它是滚动内容的一员，
+            内容一溢出就被裁一半（236px 窄栏 + 8 组内容的直接后果）。
+            它只有一个入口动作、且是这页除关闭外唯一「跳出面板」的动作 ——
+            钉在底部永远完整可见。危险操作（删记录 / 退群）仍留在滚动区深处，
+            「不能被顺手点到」的取舍（2026-10-20 反馈）不变。 */}
+        <div
+          className="shrink-0 px-4 pb-4 pt-3"
+          style={{ borderTop: '1px solid var(--tc-divider)' }}
+          data-group-schedule-section
+        >
+          <button
+            type="button"
+            onClick={() => setScheduleOpen(true)}
+            data-group-schedule
+            className="tc-btn-secondary w-full"
+          >
+            <CalendarClock size={15} />
+            {t('chat.schedule')}
+          </button>
         </div>
       </aside>
 
@@ -1001,8 +1044,8 @@ export function GroupSettingsPanel({
           退出群聊是全红实心 —— 档位要比删除记录更高 */}
       <ConfirmDialog
         open={confirmClear}
-        title="删除聊天记录"
-        confirmText="删除"
+        title={t('groupSettings.clearHistory')}
+        confirmText={t('groupSettings.confirmDelete')}
         danger
         onConfirm={() => {
           setConfirmClear(false);
@@ -1010,14 +1053,13 @@ export function GroupSettingsPanel({
         }}
         onCancel={() => setConfirmClear(false)}
       >
-        将清空这个群的全部消息，记录不可恢复。群本身、成员和场景绑定都会保留，
-        清空后还能继续发消息。
+        {t('groupSettings.clearDesc')}
       </ConfirmDialog>
 
       <ConfirmDialog
         open={confirmExit}
-        title="退出群聊"
-        confirmText="退出"
+        title={t('groupSettings.exitGroup')}
+        confirmText={t('groupSettings.confirmExit')}
         danger
         onConfirm={() => {
           setConfirmExit(false);
@@ -1025,8 +1067,7 @@ export function GroupSettingsPanel({
         }}
         onCancel={() => setConfirmExit(false)}
       >
-        退出后这个群会从消息列表消失，聊天记录不可恢复。群成员会回到通讯录，
-        不会失去 Agent 本身。
+        {t('groupSettings.exitDesc')}
       </ConfirmDialog>
     </div>
   );

@@ -37,8 +37,9 @@ import { ModelCatalogSettings } from './ModelCatalogSettings';
 import { MemoryPanel } from './MemoryPanel';
 import { PermissionRulesPanel } from './PermissionRulesPanel';
 import { ProfilePanel } from './ProfilePanel';
+import { LoginTerminalDialog } from './LoginTerminalDialog';
 import AboutPanel from './AboutPanel';
-import { CustomAgent, PermissionMode, ThemePreference } from '../types';
+import { CustomAgent, PermissionMode, ThemePreference, RegisteredAgent } from '../types';
 import {
   TRANSPARENCY_DEFAULT,
   TRANSPARENCY_MAX,
@@ -258,7 +259,41 @@ const PRESET_TEMPLATES: Array<{
   },
 ];
 
-export function SettingsPage({ 
+/**
+ * T5-3：「打开登录终端」的目标条目。
+ *
+ * 登录代管终端按 agentId 找定义表里的 `login` 命令（server/agents/loginRunner.ts）。
+ * `workbuddy` 目前没有已核实的 CLI 登录命令（定义表只有 opencode 收录了 login），
+ * 点开后终端会如实显示服务端返回的错误，而不是装作登录可用。
+ * 这里只提供名册同构的最小条目——对话框本身只消费 `agent.id`。
+ */
+const WORKBUDDY_TERMINAL_AGENT: RegisteredAgent = {
+  id: 'workbuddy',
+  name: 'WorkBuddy',
+  kind: 'sdk',
+  capabilities: [],
+  status: { availability: 'unknown', installed: false, probedAt: '' },
+};
+
+/**
+ * T3-1 / T4-1 / T5-1：组间通栏分割线。
+ *
+ * 拆组后「组与组的边界」不能再靠留白猜——效果图里是一条通栏细线 +
+ * 下一组的组标题。颜色走导航同款 --tc-divider（比控件轮廓 --tc-edge-strong
+ * 低一档：它分隔的是内容块，不是控件）。
+ */
+function GroupDivider() {
+  return (
+    <div
+      role="separator"
+      aria-hidden
+      className="my-6"
+      style={{ borderTop: '1px solid var(--tc-divider)' }}
+    />
+  );
+}
+
+export function SettingsPage({
   agents, 
   onAdd, 
   onUpdate, 
@@ -287,6 +322,9 @@ export function SettingsPage({
     isLoggedIn: false,
     checking: true,
   });
+
+  // T5-3：登录代管终端。非 null 时渲染对话框并自动拉起该 Agent 的登录命令。
+  const [loginTerminalAgent, setLoginTerminalAgent] = useState<RegisteredAgent | null>(null);
 
   /**
    * A137：右侧内容区装不下时底边渐隐。
@@ -694,26 +732,35 @@ export function SettingsPage({
             紧挨着「记忆」：两者都是「跨会话的行为配置」，区别是
             记忆喂给模型，门禁管着模型**能不能动手**。
             2026-11-12 变体 A 追加「权限管理」：持久授权可查可撤销 ——
-            「永久允许」一旦落库，必须有开关，否则就是一个没有开关的放大器。 */}
+            「永久允许」一旦落库，必须有开关，否则就是一个没有开关的放大器。
+            T3-1（P0）：拆为三个职责区（自定义规则 / 持久授权 / 通知渠道配置），
+            组间通栏分割线 + 组标题；规则文件路径挪到分区页脚（T3-2）。 */}
         {section === 'permission' && (
           <>
             <PermissionRulesPanel />
+            <GroupDivider />
             <PermissionGrantsSection />
+            <GroupDivider />
             {/* A228：远程审批。管的是同一件事的「人不在场」那一半 ——
                 门禁决策仍走本机，这里只是把请求递到手机上 */}
             <RemoteApprovalSection />
+            {/* T3-2：规则文件路径从按钮行挪到分区页脚小字 */}
+            <p className="tc-hint" data-permission-footer style={{ marginTop: 24 }}>
+              {t('settings.permission.footerNote')}
+            </p>
           </>
         )}
 
         {/* ── 外观 ────────────────────────────────────────────────
             放在最前面：它是唯一一个「一进来就该看到」的设置，
             而且不依赖任何后端数据 —— 就算登录检查还在转圈，
-            用户也已经能把界面调成自己喜欢的深浅色。 */}
+            用户也已经能把界面调成自己喜欢的深浅色。
+            T1-1：内容区大标题取消（弹窗标题 + 导航选中态已足够）。
+            T4-1：退一步方案 —— 区内拆「界面 / 窗口行为」两个分组，
+            通栏分割线 + 组标题，不再从头滚到尾找不到边界。 */}
         {section === 'appearance' && (
         <div>
-          {/* 分区标题只做文字：参考图里「外观」与主标签同档（14px），
-              靠上方留白分段、下方只留 12px 接内容。样式见 settings-select.css。 */}
-          <h2 className="opc-settings-section-title">{t('settings.appearance.title')}</h2>
+          <h2 className="tc-section-title">{t('settings.appearance.groupInterface')}</h2>
 
           {/* 语言区两项紧挨着（语义独立：一个管界面文案，一个管 Agent 回答正文）。
               界面语言排在前面：它决定这一页其余文案的语言，属于「先选语言再调外观」
@@ -738,16 +785,30 @@ export function SettingsPage({
                   // 那行字只是把「跟随系统」四个字又解释了一遍。
                   // 需要时悬停仍能看到（title）。
                   title={t(hintKey)}
-                  className="flex items-center gap-3 rounded-lg p-3 text-left transition-all"
+                  className="relative flex items-center gap-3 rounded-lg p-3 text-left transition-all"
                   style={{
                     // 选中态用品牌色描边 + 淡底，不用实心填充：
                     // 三张卡片并排，填实心会让视觉重心全压在被选中的那张上。
                     backgroundColor: selected ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-component)',
                     // A37：描边 1.5px → 1px（需求「选中按钮后的描边调整细一些」）。
                     // 1.5px 在 100% 不透明时像一圈实线，1px 才是「选中提示」的分量。
+                    // 两态都占 1px（未选中透明），选中/切换时卡片不跳。
                     border: `1px solid ${selected ? 'var(--td-brand-color)' : 'transparent'}`,
                   }}
                 >
+                  {/* T4-5：选中主题卡加对勾角标。A37 的用户反馈把描边压到了 1px，
+                      单靠 1px 描边 + 淡底在效果图口径下不够「一眼选中」——
+                      角标把选中态抬回来，描边维持 1px 不与 A37 打架。 */}
+                  {selected && (
+                    <span
+                      className="absolute -right-1.5 -top-1.5 flex h-[18px] w-[18px] items-center justify-center rounded-full"
+                      style={{ backgroundColor: 'var(--td-brand-color)', color: '#fff' }}
+                      data-theme-check
+                      aria-hidden
+                    >
+                      <Check size={11} />
+                    </span>
+                  )}
                   {/* 图标盒：三枚本来就是 lucide 的线性图标（Sun / Moon / Monitor，
                       路径 fill:none、stroke 2 → 18px 下有效描边 1.5px）。看起来「实心」
                       的是外面那圈 36×36 色块：选中态品牌色实心 + 反色图标，白色笔画
@@ -770,11 +831,15 @@ export function SettingsPage({
             })}
           </div>
 
-          {/* A35：三个滑杆 + 一个统一的「恢复默认」。
+          {/* A35：三个滑杆 + 一个统一的「还原」（T4-4 改文案）。
               原来这里是 <TransparencySlider /> 与 <GlowSettings /> 各写一行，
               两个组件各自管自己的复位入口（透明度靠双击、光斑靠一颗小链接），
               用户找不到「一起还原」的办法。 */}
           <AppearanceSliders />
+
+          <GroupDivider />
+
+          <h2 className="tc-section-title">{t('settings.appearance.groupWindow')}</h2>
 
           <CloseBehaviorSetting />
 
@@ -782,43 +847,18 @@ export function SettingsPage({
         </div>
         )}
 
-        {/* ── 登录配置 ──────────────────────────────────────────── */}
+        {/* ── 登录配置 ────────────────────────────────────────────
+            T1-1：内容区大标题取消。T5-1（P0）：去掉「方式 N」编号，改两组
+            「WorkBuddy 登录 / 其他 Agent 凭据」，组间通栏分割线 + 组标题。
+            T5-6：标题右侧不再单设「刷新」—— 登录态在进分区时自动检查，
+            WorkBuddy 产品版本区自带的「重新检测」负责手动复检。 */}
         {section === 'login' && (
         <div>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 
-                className="text-lg font-medium"
-                style={{ color: 'var(--td-text-color-primary)' }}
-              >
-                {t('settings.login.title')}
-              </h2>
-            </div>
-            <Button
-              /* 参考图的「刷新」是**次级描边按钮**：与主按钮同排，但图标/文字小一档、
-                  整体略矮。量图（1.5× 截图）后换算：按钮 105×46px → 70×30.7 CSS px，
-                  图标 19px → 13px、文字 18px → 12px、左右内边距 18px → 12px，圆角对齐
-                 我们 6px 档。尺寸落在 settings-select.css 的 .opc-refresh-login，
-                  描边沿用全局 outline 的 --td-component-stroke 低对比档。 */
-              variant="outline"
-              className="opc-refresh-login"
-              icon={<RefreshCw size={13} />}
-              onClick={checkLoginStatus}
-              loading={loginStatus.checking}
-              aria-label={t('settings.login.refresh')}
-              /* A116（反馈）：「暗色模式下，图标、文字使用亮白色，不要灰色，
-                 例如刷新按钮图标及文案」。
-                 ⚠️ 全局 `.t-button--variant-outline { color: ... !important }`
-                 已经把 color 钉在 primary 档，内联 style 压不过 !important，
-                 所以这里不再写内联色值，避免误导后来的人。 */
-              data-refresh-login
-            >
-              {t('settings.login.refresh')}
-            </Button>
-          </div>
-          
-          {/* 当前状态 */}
-          <div className="flex items-center gap-3 mb-6">
+          {/* T5-1 组一：WorkBuddy 登录 */}
+          <h2 className="tc-section-title">{t('settings.login.groupWorkbuddy')}</h2>
+
+          {/* 当前状态（T5-2：状态行带上对象名「WorkBuddy」，不再是一句悬空的「未登录」） */}
+          <div className="mb-2 flex items-center gap-3">
             {loginStatus.checking ? (
               <>
                 <Loading size="small" />
@@ -833,13 +873,13 @@ export function SettingsPage({
                   style={{ color: 'var(--td-success-color)' }}
                 />
                 <span style={{ color: 'var(--td-text-color-primary)' }}>
-                  {t('settings.login.detected')}
+                  {t('settings.login.statusLine', { status: t('settings.login.detected') })}
                 </span>
                 <Tag size="small" variant="outline">
                   {loginStatus.method === 'env' ? t('settings.login.methodEnv') : t('settings.login.methodCli')}
                 </Tag>
                 {loginStatus.method === 'env' && loginStatus.apiKey && (
-                  <span 
+                  <span
                     className="text-sm font-mono"
                     style={{ color: 'var(--td-text-color-secondary)' }}
                   >
@@ -854,12 +894,16 @@ export function SettingsPage({
                   style={{ color: 'var(--td-text-color-placeholder)' }}
                 />
                 <span style={{ color: 'var(--td-text-color-secondary)' }}>
-                  {t('settings.login.notLoggedIn')}
+                  {t('settings.login.statusLine', { status: t('settings.login.notLoggedIn') })}
                 </span>
               </>
             )}
           </div>
-          
+          {/* T5-2：其余 Agent 的登录态各有凭据行，这里只留一行摘要指向下方凭据组 */}
+          <p className="tc-hint mb-6" data-login-others-summary>
+            {t('settings.login.othersSummary')}
+          </p>
+
           {/* 环境变量配置 */}
           <div className="mb-6">
             {/* A115（需求「设置页的菜单文字高亮、提高对比度」）：
@@ -871,7 +915,7 @@ export function SettingsPage({
             >
               {t('settings.login.method1')}
             </h3>
-            
+
             {showEnvConfig ? (
               <div className="space-y-3">
                 {/* A137：这 4 个字段是**表单**（带 label、两列网格、要往里填东西），
@@ -881,7 +925,7 @@ export function SettingsPage({
                     列表行内的圆形「编辑/删除」不动（那是行内动作，24 是对的）。 */}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
-                    <label 
+                    <label
                       className="text-xs block mb-1"
                       style={{ color: 'var(--td-text-color-placeholder)' }}
                     >
@@ -895,7 +939,7 @@ export function SettingsPage({
                     />
                   </div>
                   <div>
-                    <label 
+                    <label
                       className="text-xs block mb-1"
                       style={{ color: 'var(--td-text-color-placeholder)' }}
                     >
@@ -909,7 +953,7 @@ export function SettingsPage({
                     />
                   </div>
                   <div>
-                    <label 
+                    <label
                       className="text-xs block mb-1"
                       style={{ color: 'var(--td-text-color-placeholder)' }}
                     >
@@ -927,7 +971,7 @@ export function SettingsPage({
                     />
                   </div>
                   <div>
-                    <label 
+                    <label
                       className="text-xs block mb-1"
                       style={{ color: 'var(--td-text-color-placeholder)' }}
                     >
@@ -941,15 +985,15 @@ export function SettingsPage({
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button 
-                    theme="primary" 
+                  <Button
+                    theme="primary"
                     onClick={saveEnvConfig}
                     loading={savingEnv}
                   >
                     {t('settings.login.save')}
                   </Button>
-                  <Button 
-                    variant="text" 
+                  <Button
+                    variant="text"
                     onClick={() => {
                       setShowEnvConfig(false);
                       setEnvConfig({ apiKey: '', authToken: '', internetEnv: '', baseUrl: '' });
@@ -957,7 +1001,7 @@ export function SettingsPage({
                   >
                     {t('settings.common.cancel')}
                   </Button>
-                  <span 
+                  <span
                     className="text-xs"
                     style={{ color: 'var(--td-text-color-placeholder)' }}
                   >
@@ -966,18 +1010,18 @@ export function SettingsPage({
                 </div>
               </div>
             ) : (
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => setShowEnvConfig(true)}
               >
                 {t('settings.login.configureEnv')}
               </Button>
             )}
           </div>
-          
-          {/* CLI 登录 */}
+
+          {/* CLI 登录（T5-3：加「打开登录终端」主按钮；文档链接降为次级文字链） */}
           <div>
-            {/* A115：同「方式一」，子标题提到 primary 提高对比度 */}
+            {/* A115：同「环境变量」，子标题提到 primary 提高对比度 */}
             <h3
               className="text-sm font-medium mb-3"
               style={{ color: 'var(--td-text-color-primary)' }}
@@ -985,28 +1029,37 @@ export function SettingsPage({
               {t('settings.login.method2')}
             </h3>
             <div className="flex items-center gap-3">
-              <code 
+              <code
                 className="px-3 py-1.5 rounded text-sm"
-                style={{ 
+                style={{
                   backgroundColor: 'var(--td-bg-color-component)',
                   color: 'var(--td-text-color-primary)'
                 }}
               >
                 codebuddy
               </code>
-              <Link 
-                href="https://www.codebuddy.ai/docs/zh/cli/settings" 
+              <Link
+                href="https://www.codebuddy.ai/docs/zh/cli/settings"
                 target="_blank"
-                theme="primary"
+                theme="default"
                 size="small"
               >
                 {t('settings.login.viewDocs')}
               </Link>
             </div>
+            <div className="mt-3">
+              <Button
+                theme="primary"
+                onClick={() => setLoginTerminalAgent(WORKBUDDY_TERMINAL_AGENT)}
+                data-open-login-terminal
+              >
+                {t('settings.login.openTerminal')}
+              </Button>
+            </div>
           </div>
-          
+
           {loginStatus.error && !loginStatus.isLoggedIn && (
-            <div 
+            <div
               className="text-xs mt-4"
               style={{ color: 'var(--td-text-color-placeholder)' }}
             >
@@ -1014,18 +1067,12 @@ export function SettingsPage({
             </div>
           )}
 
-          {/* ── Agent API Key（A30）─────────────────────────────────
-              上面两节管的是 WorkBuddy（CodeBuddy SDK）。豆包 / Gemini / Kimi
-              走的是各自的 Key，之前**只能靠进程环境变量** —— 打包版用户
-              根本没有「设置环境变量」这个动作，于是名册上永远是「未登录」。
-              这一节把那条路补上：填完即落盘、即重探。 */}
           {/* ── WorkBuddy 产品版本（A211）────────────────────────────
               官方把国内版 / 国际版安装程序合并后，活跃数据根会在
               .workbuddy 与 .workbuddy-ai 之间换；应用仍读旧目录就是 401，
               而「在桌面端重新登录」只刷新新目录，构成无效循环。
-              放在「登录配置」最上面：它是排查登录问题的第一站，也是
-              恢复话术指向的落点。挂在已有分区里，不新增分区 ——
-              A138 那套「切分区三维不许变」的几何闸门量的是分区序列。 */}
+              它是排查登录问题的第一站，也是恢复话术指向的落点。
+              T5-1：归入组一「WorkBuddy 登录」。 */}
           <div className="mt-8" data-workbuddy-profile-section>
             <h3
               className="mb-3 flex items-center gap-1.5 text-sm font-medium"
@@ -1040,7 +1087,17 @@ export function SettingsPage({
             <WorkbuddyProfileSettings onChanged={onCredentialsSaved} />
           </div>
 
-          <div className="mt-8" data-agent-credentials-section>
+          <GroupDivider />
+
+          {/* T5-1 组二：其他 Agent 凭据 */}
+          <h2 className="tc-section-title">{t('settings.login.groupOthers')}</h2>
+
+          {/* ── Agent API Key（A30）─────────────────────────────────
+              上面两节管的是 WorkBuddy（CodeBuddy SDK）。豆包 / Gemini / Kimi
+              走的是各自的 Key，之前**只能靠进程环境变量** —— 打包版用户
+              根本没有「设置环境变量」这个动作，于是名册上永远是「未登录」。
+              这一节把那条路补上：填完即落盘、即重探。 */}
+          <div className="mt-6" data-agent-credentials-section>
             <h3
               className="mb-3 flex items-center gap-1.5 text-sm font-medium"
               style={{ color: 'var(--td-text-color-primary)' }}
@@ -1051,6 +1108,9 @@ export function SettingsPage({
                 text={t('settings.login.method3Hint')}
               />
             </h3>
+            {/* NOTES（11 号图）：该区在无凭据行时没有任何控件，说明改为常驻可见，
+                避免组标题下面直接是空的。 */}
+            <p className="tc-hint mb-3">{t('settings.login.method3Hint')}</p>
             <AgentCredentialSettings onSaved={onCredentialsSaved} />
           </div>
 
@@ -1070,43 +1130,48 @@ export function SettingsPage({
               />
             </h3>
             <ProviderSettings onChanged={onCredentialsSaved} autoOpen={autoOpenProvider} />
+            {/* T5-7：第二个入口（通讯录右上角 ＋）也交代一句，别让人以为入口只有这里 */}
+            <p className="tc-hint mt-2" data-provider-add-hint>
+              {t('settings.login.providerAddHint')}
+            </p>
           </div>
+
+          {/* T5-3：登录代管终端。进程退出后服务端自动复检，这里再刷一次
+              顶部的 WorkBuddy 登录状态行，让「未登录 → 已登录」立刻可见。 */}
+          {loginTerminalAgent && (
+            <LoginTerminalDialog
+              agent={loginTerminalAgent}
+              onClose={() => {
+                setLoginTerminalAgent(null);
+                void checkLoginStatus();
+              }}
+            />
+          )}
         </div>
         )}
 
         {/* ── 模型清单 ────────────────────────────────────────────
             模型菜单是运行时枚举出来的（CLI / SDK），缓存 24 小时。这一节把
             「枚举到几条、上次什么时候、从哪来」摆出来，并给一个手动刷新 ——
-            否则用户碰到「官方上新了但菜单里没有」时完全没有抓手。 */}
+            否则用户碰到「官方上新了但菜单里没有」时完全没有抓手。
+            T1-1：内容区大标题取消；原挂在标题旁的 ⓘ 说明降为表格下方一行小字。 */}
         {section === 'models' && (
         <div>
-          <div className="mb-4">
-            <h2
-              className="flex items-center gap-1.5 text-lg font-medium"
-              style={{ color: 'var(--td-text-color-primary)' }}
-            >
-              {t('settings.models.title')}
-              <InfoHint
-                label={t('settings.models.hintLabel')}
-                text={t('settings.models.hint')}
-              />
-            </h2>
-          </div>
           <ModelCatalogSettings onRefreshed={onModelsRefreshed} />
+          <p className="tc-hint" style={{ marginTop: 12 }}>{t('settings.models.hint')}</p>
         </div>
         )}
 
-        {/* ── 助手人设（A129 改名：原「自定义 Agent」与通讯录里的自建厂商同名） */}
+        {/* ── 自定义助手（T7-1 改名：原「助手人设」，更早叫「自定义 Agent」） */}
         {section === 'agents' && (
         <div>
-          <div className="mb-4">
-            <h2
-              className="text-lg font-medium"
-              style={{ color: 'var(--td-text-color-primary)' }}
-            >
-              {t('settings.agents.title')}
-            </h2>
-          </div>
+          {/* T7-1：区顶 1 行区分说明 —— 与通讯录里「本机安装的 Agent」划清边界 */}
+          <p
+            className="text-sm"
+            style={{ color: 'var(--td-text-color-secondary)', marginBottom: 16 }}
+          >
+            {t('settings.agents.intro')}
+          </p>
 
           <div className="space-y-6">
               {/* 创建/编辑表单 */}
@@ -1219,17 +1284,25 @@ export function SettingsPage({
                 </div>
               ) : (
                 <>
-                  {/* 快速模板 */}
+                  {/* 快速模板。
+                      T7-2（UI 优化 2026-11-18）：模板卡补一行描述小字 + 右侧
+                      「使用模板」—— 描述原是「选哪个」的决策依据，却只藏在
+                      悬停 title 里；描述取自原悬停文案（settings.agents.template.*Desc）。
+                      点击行为不变：整卡可点，直接进表单预填，「使用模板」只是
+                      把这件事说出口。区说明见上方 intro；这里再区分一下
+                      「模板（起点）」与「我的 Agent（成品）」。 */}
                   <div>
-                    <h4 className="text-sm font-medium mb-3" style={{ color: 'var(--td-text-color-secondary)' }}>
+                    <h4 className="text-sm font-medium mb-1" style={{ color: 'var(--td-text-color-secondary)' }}>
                       {t('settings.agents.quickCreate')}
                     </h4>
+                    <p className="tc-hint mb-3">{t('settings.agents.quickCreateHint')}</p>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       {PRESET_TEMPLATES.map(template => {
                         const Icon = getIconComponent(template.icon);
                         return (
-                          <div 
-                            key={template.nameKey} 
+                          <div
+                            key={template.nameKey}
+                            data-agent-template
                             // A37：内置助手不再用彩色块（需求「不要彩色填充」）。
                             // 四个模板各一个高饱和色块，一屏看下来像四条色带，
                             // 而它们只是「快捷入口」—— 真正的身份色属于用户自己
@@ -1248,11 +1321,26 @@ export function SettingsPage({
                             >
                               <Icon size={18} />
                             </div>
+                            <div className="min-w-0 flex-1">
+                              <div
+                                className="truncate font-medium"
+                                style={{ color: 'var(--td-text-color-primary)' }}
+                              >
+                                {t(template.nameKey)}
+                              </div>
+                              {/* T7-2：描述常驻可见（原仅悬停 title） */}
+                              <div
+                                className="truncate text-caption"
+                                style={{ color: 'var(--td-text-color-secondary)' }}
+                              >
+                                {t(template.descKey)}
+                              </div>
+                            </div>
                             <span
-                              className="min-w-0 flex-1 truncate font-medium"
-                              style={{ color: 'var(--td-text-color-primary)' }}
+                              className="shrink-0 text-caption"
+                              style={{ color: 'var(--td-text-color-secondary)' }}
                             >
-                              {t(template.nameKey)}
+                              {t('settings.agents.useTemplate')}
                             </span>
                           </div>
                         );
@@ -1407,7 +1495,12 @@ function CloseBehaviorSetting() {
   const current = options.find(option => option.value === behavior) ?? options[0];
 
   return (
-    <div className="opc-enum-setting" data-close-behavior-setting>
+    <div
+      className="opc-enum-setting"
+      data-close-behavior-setting
+      // T4-1：本行是「窗口行为」组的第一行，组标题下不再画行分隔线（效果图口径）。
+      style={{ borderTop: 'none' }}
+    >
       {/* 标题与下拉同一行：标题占左侧、下拉用 margin-left:auto 贴该行右边缘，
           右边缘就是分组内容宽度的右边界，和上面的主题卡、下面的说明文字同一条线。 */}
       <div className="opc-enum-setting__row">
@@ -1560,7 +1653,12 @@ function InterfaceLanguageSetting() {
   const current = options.find(option => option.value === language) ?? options[0];
 
   return (
-    <div className="opc-enum-setting" data-interface-language-setting>
+    <div
+      className="opc-enum-setting"
+      data-interface-language-setting
+      // T4-1：本行是「界面」组的第一行，组标题下不再画行分隔线（效果图口径）。
+      style={{ borderTop: 'none' }}
+    >
       <div className="opc-enum-setting__row">
         <div className="opc-enum-setting__text">
           <div className="opc-enum-setting__title">
@@ -1575,6 +1673,11 @@ function InterfaceLanguageSetting() {
               note={current.hint}
             />
           </div>
+          {/* T4-2：语言区加常驻 1 行小字 —— 「界面语言 / 回答语言」两项并排时
+              用户分不清谁管谁，一句话划清边界。 */}
+          <p className="tc-hint" style={{ marginTop: 2 }}>
+            {t('settings.interfaceLanguage.hintShort')}
+          </p>
         </div>
         <EnumSelect
           id="opc-interface-language"
@@ -1649,6 +1752,10 @@ function AnswerLanguageSetting() {
               note={current.hint}
             />
           </div>
+          {/* T4-2：常驻 1 行小字，与「界面语言」的说明同一口径 */}
+          <p className="tc-hint" style={{ marginTop: 2 }}>
+            {t('settings.answerLanguage.hintShort')}
+          </p>
         </div>
         <EnumSelect
           id="opc-answer-language"
@@ -1807,7 +1914,9 @@ function TransparencySlider({ resetToken = 0 }: { resetToken?: number }) {
           不能用 justify-between 摆三个 —— 它会把中间项放到整行正中（50%），
           而默认刻度在 28%，两者必然对不上（用户报的「28% 的文案位置在中间，
           不匹配」）。所以第三个标签用绝对定位 + 负半宽居中，left 复用
-          轨道那套 posOf()，刻度挪了文案就跟着挪，不会各写一份公式。 */}
+          轨道那套 posOf()，刻度挪了文案就跟着挪，不会各写一份公式。
+          T4-3：刻度文案带出百分比（「默认 · 28%」）—— 只写「默认」时
+          用户得拖过去对齐才知道默认是多大。 */}
       <div className="relative mt-1 flex justify-between text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
         <span>{t('settings.transparency.opaque')}</span>
         <span>{t('settings.transparency.frosted')}</span>
@@ -1816,7 +1925,7 @@ function TransparencySlider({ resetToken = 0 }: { resetToken?: number }) {
           style={{ left: posOf(TRANSPARENCY_DEFAULT) }}
           data-transparency-default-label
         >
-          {t('settings.transparency.default')}
+          {t('settings.transparency.defaultPercent', { n: TRANSPARENCY_DEFAULT })}
         </span>
       </div>
     </div>
@@ -2392,9 +2501,8 @@ function RemoteApprovalSection() {
 
   return (
     <section data-remote-approval>
-      <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--td-text-color-primary)' }}>
-        {t('settings.remote.title')}
-      </h3>
+      {/* T3-1：组三标题与「自定义规则 / 持久授权」同一刻度（tc-section-title） */}
+      <h2 className="tc-section-title">{t('settings.remote.title')}</h2>
       <p className="tc-hint" style={{ marginBottom: 12 }}>
         {t('settings.remote.desc')}
       </p>
@@ -2450,8 +2558,18 @@ function RemoteApprovalSection() {
           className="h-9 w-full rounded-lg px-3 font-mono text-body outline-none"
           style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-primary)' }}
         />
-        <p className="tc-hint" style={{ marginTop: 4 }}>
-          {t('settings.remote.externalBaseHint', { base: approvalBase ?? t('settings.remote.externalBaseNone') })}
+        <p
+          className="tc-hint"
+          style={{ marginTop: 4 }}
+          data-remote-base-status
+        >
+          {/* T3-6：hint 拆两行。第一行是状态（基址找到了没有），第二行是
+              「手机怎么才能打开链接」的行动指引 —— 一句话塞两件事时，
+              用户找不到自己要的那半句。 */}
+          {t('settings.remote.baseStatus', { base: approvalBase ?? t('settings.remote.externalBaseNone') })}
+        </p>
+        <p className="tc-hint" style={{ marginTop: 2 }} data-remote-base-guide>
+          {t('settings.remote.baseGuide')}
         </p>
       </div>
 

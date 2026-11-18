@@ -34,6 +34,9 @@ const MIME = {
 const AGENTS = [
   { id: 'workbuddy', name: 'WorkBuddy', vendor: '腾讯', kind: 'sdk', icon: 'workbuddy', color: '#0EC8A9', description: '通用编码与自动化助手', capabilities: ['chat', 'code'], status: { availability: 'ready', version: '2.4.1' }, permissionSupport: { enforced: ['default', 'acceptEdits', 'plan', 'bypassPermissions'] } },
   { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', kind: 'cli', icon: 'claude', color: '#D97757', description: '擅长长上下文重构', capabilities: ['chat', 'code'], status: { availability: 'needs-auth', version: '1.0.44' }, permissionSupport: { enforced: ['default', 'acceptEdits', 'plan', 'bypassPermissions'] } },
+  // S3-2 后「未登录」与「在线」同为实心点（只以颜色区分），空心环的样本
+  // 需要一个非在线也非未登录的条目来承担 —— 未安装。
+  { id: 'opencode', name: 'OpenCode', vendor: '开源', kind: 'cli', icon: 'opencode', color: '#111111', description: '本机 CLI 聚合', capabilities: ['chat', 'code'], status: { availability: 'not-installed', version: '' }, permissionSupport: { enforced: ['default'] } },
 ];
 const MODELS = [{ modelId: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', description: '均衡' }];
 const SESSIONS = [
@@ -197,9 +200,13 @@ console.log('\n[1] 状态圆点：不描边');
    * B1 改了这里的期望（原「所有圆点都没有描边 / 底色不透明」→ 按形状分档）：
    *
    *   原期望：`dots.every(border === '0px')` + `dots.every(bg 是 rgb)`
-   *   新期望：在线 = 实心（无描边、不透明底色，A25 的结论原样保留）；
-   *           非在线 = 空心环（1.5px 描边、透明底色）
-   *   依据：B1 要求「状态只靠形状区分」，实心 / 空心是这件事唯一的载体。
+   *   B1 期望：在线 = 实心（无描边、不透明底色，A25 的结论原样保留）；
+   *            非在线 = 空心环（1.5px 描边、透明底色）
+   *   S3-2 再改（审查报告）：「未登录」与「在线」是两套视觉语言（空心 vs 实心）
+   *   被点名统一 —— 同为实心点，只以颜色区分（绿 / 橙）。「能不能用」不靠
+   *   形状单独承载：A134 起每一行都带状态词，文字是比形状更可靠的通道。
+   *
+   *   现期望：在线 / 未登录 = 实心（不透明底色）；其余 = 空心环。
    *         白描边（A25 删掉的那圈）仍然没有回来 —— 空心环用的是语义色，
    *         不是用来「切开背景」的白圈。几何（正圆、落在头像外）不变。
    */
@@ -207,8 +214,8 @@ console.log('\n[1] 状态圆点：不描边');
   const hollow = dots.filter(d => d.shape === 'hollow');
   ok(solid.length > 0 && hollow.length > 0, 'B1：两种形状都出现在界面上', `实心 ${solid.length} / 空心 ${hollow.length}`);
   ok(
-    dots.every(d => (d.status === '在线') === (d.shape === 'solid')),
-    'B1：在线 = 实心，非在线 = 空心（形状与状态一一对应）',
+    dots.every(d => (d.status === '在线' || d.status === '未登录') === (d.shape === 'solid')),
+    'B1 + S3-2：在线/未登录 = 实心，其余 = 空心',
     dots.map(d => `${d.status}:${d.shape}`).join(' | ')
   );
   ok(

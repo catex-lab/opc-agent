@@ -976,6 +976,18 @@
     padding: 0 8px;
   }
 
+  /* S1-1 的反向配套：工作区开关在宽行下带「工作区」文字标签（见
+     ChatHeader），行宽不足 1024 时同样退化为纯图标（title / aria-label
+     保留）—— 与知识库入口同一条降级规则，两颗按钮的节奏一致。 */
+  .chat-row [data-workspace-toggle-label] {
+    display: none;
+  }
+
+  .chat-row [data-workspace-toggle='expand'] {
+    width: 32px;
+    padding: 0;
+  }
+
   /* 工作区 chip 退化为「目录名 + 图标」：先让掉右侧的展开箭头。
      目录名本身已经交代这是什么，箭头只是「能换目录」的装饰提示，
      点 summary 依然能展开。 */

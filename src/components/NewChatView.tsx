@@ -107,17 +107,20 @@ export function NewChatView({
           </p>
         </div>
 
-        {/* 场景（P4）：选一个场景会预置提示词、推荐 Agent 与权限模式 */}
-        <div className="mb-6">
-          <div className="flex items-baseline justify-between mb-3">
-            <label className="block text-body-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-              {t('chat.new.scenario')}
-            </label>
-            <span className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              {selectedScenario ? t('chat.new.scenarioSelectedHint') : t('chat.new.scenarioOptionalHint')}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {/* 场景（P4）：选一个场景会预置提示词、推荐 Agent 与权限模式。
+              N-2（审查报告）：场景卡固定两列 —— 三列会把卡片压窄、描述断成
+              两截，效果稿也是两列排布。场景 id 是行为键（shared/scenarios.ts
+              的契约），数量与合并不在本批动，只改版式与文案（N-3/N-4）。 */}
+          <div className="mb-6">
+            <div className="flex items-baseline justify-between mb-3">
+              <label className="block text-body-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+                {t('chat.new.scenario')}
+              </label>
+              <span className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                {selectedScenario ? t('chat.new.scenarioSelectedHint') : t('chat.new.scenarioOptionalHint')}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
             {scenarios.map(s => {
               const isSelected = s.id === selectedScenarioId;
               const Icon = SCENARIO_ICONS[s.icon];

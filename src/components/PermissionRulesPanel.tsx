@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Input, Select, MessagePlugin } from 'tdesign-react';
 import { Plus, Trash2 } from 'lucide-react';
 import { useTranslation, type MessageKey } from '../i18n';
+import { InfoHint } from './InfoHint';
 import { api } from '../api';
 
 /**
@@ -11,6 +12,10 @@ import { api } from '../api';
  * `server/agents/permission-gate.ts`，内置分类器改不了，这里只能追加。
  * 边界要说清：只对 SDK（WorkBuddy）类 Agent 生效 —— CLI/ACP 的工具调用
  * 发生在人家的 harness 里，我们拦不到，UI 上如实标注。
+ *
+ * T3-1（P0）：本面板是权限分区三组里的**第一组「自定义规则」**。
+ * 机制说明缩成一行 intro，deny/scope 全文收进 ⓘ（T3-2/T3-3）；
+ * 「保存」在无改动时渲染为禁用态（T3-4）。
  */
 
 interface PermissionRule {
@@ -34,6 +39,12 @@ export function PermissionRulesPanel() {
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  /**
+   * T3-4：上次保存（或本次载入）时服务端返回的规则快照。
+   * 与当前编辑内容逐字节对比，得出「有没有改动」—— 保存按钮只在真的
+   * 改过的时候才可点，否则它是一颗会引发误导的假按钮。
+   */
+  const [snapshot, setSnapshot] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -41,6 +52,7 @@ export function PermissionRulesPanel() {
       const j = await r.json();
       setRules(j.rules ?? []);
       setNote(j.note ?? '');
+      setSnapshot(JSON.stringify(j.rules ?? []));
     } catch {
       MessagePlugin.error(t('settings.permission.loadFailed'));
     } finally {
@@ -71,6 +83,7 @@ export function PermissionRulesPanel() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || t('settings.permission.saveFailedShort'));
       setRules(j.rules ?? []);
+      setSnapshot(JSON.stringify(j.rules ?? []));
       MessagePlugin.success(t('settings.permission.saved'));
     } catch (e) {
       MessagePlugin.error((e as Error).message);
@@ -82,40 +95,28 @@ export function PermissionRulesPanel() {
   const patch = (i: number, p: Partial<PermissionRule>) =>
     setRules(prev => prev.map((r, idx) => (idx === i ? { ...r, ...p } : r)));
 
-  const dirty = !loading;
+  // T3-4：无规则、无改动 → 禁用。快照在首次载入成功前是 null，同样按禁用处理。
+  const dirty = !loading && snapshot !== null && JSON.stringify(rules) !== snapshot;
+
+  // T3-3：机制说明收进 ⓘ。服务端附言（note）存在时并入同一段，不再单独占一行。
+  const introDetail = `${t('settings.permission.introDetail')}${note ? ` ${note}` : ''}`;
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="mb-1 text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-          {t('settings.permission.title')}
-        </h2>
+    <div className="space-y-4" data-permission-rules-panel>
+      {/* T3-2：三段机制说明缩成一行 intro；全文（deny 优先级 + 适用范围 + 服务端附言）
+          收进同一枚 ⓘ —— 这些是「第一次配置才需要」的背景，不值得常驻占四行。 */}
+      <div className="flex items-start gap-1.5">
         <p className="text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>
-          {t('settings.permission.introPrefix')}
-          <code>rm -rf /</code>
-          {t('settings.permission.introSuffix')}
+          {t('settings.permission.intro')}
         </p>
+        <InfoHint
+          label={t('settings.common.about', { label: t('settings.permission.title') })}
+          text={introDetail}
+        />
       </div>
 
-      <div
-        className="rounded-lg p-3 text-sm"
-        style={{
-          backgroundColor: 'var(--td-bg-color-container)',
-          color: 'var(--td-text-color-secondary)',
-        }}
-      >
-        <p>
-          {t('settings.permission.denyPrefix')}
-          <strong>{t('settings.permission.denyStrong')}</strong>
-          {t('settings.permission.denySuffix')}
-          {note ? ` ${note}` : ''}
-        </p>
-        <p className="mt-2">
-          {t('settings.permission.scopePrefix')}
-          <code>--permission-mode</code>
-          {t('settings.permission.scopeSuffix')}
-        </p>
-      </div>
+      {/* T3-1：组一标题。分区内容区不再有大标题（T1-1），组标题就是本组的第一行。 */}
+      <h2 className="tc-section-title">{t('settings.permission.groupRules')}</h2>
 
       <div className="space-y-3">
         {rules.length === 0 && !loading && (
@@ -179,12 +180,11 @@ export function PermissionRulesPanel() {
         >
           {t('settings.permission.add')}
         </Button>
+        {/* T3-4：保存是「提交改动」的动作，没改动时禁用 —— 与效果图一致，
+            也避免用户在没改任何东西时误点一遍全量写盘。 */}
         <Button theme="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>
           {t('settings.permission.save')}
         </Button>
-        <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          {t('settings.permission.footerNote')}
-        </span>
       </div>
     </div>
   );

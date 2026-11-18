@@ -209,7 +209,10 @@ console.log('\n[2] 代码块：A55 后按钮精简');
     const bar = document.querySelector('[data-steps-bar]');
     return bar?.querySelector('.tc-trace-meta')?.textContent?.trim() ?? null;
   });
-  ok(barMeta === '工具 3.2s', 'D2：总耗时在摘要条上并带「工具」前缀（1200ms 步骤 + 2000ms 思考）', String(barMeta));
+  // S1-2（审查报告）：摘要条上的「工具 3.2s」与头部「已处理 …」两套口径并存
+  //（包含 / 并列读不出）—— 工具行耗时只删**显示**（埋点保留），全页只留
+  // 头部一个总耗时。这里反证摘要条不再挂耗时。
+  ok(barMeta === null, 'D2：摘要条不再重复显示耗时（只留头部总耗时）', String(barMeta));
 
   // A159：代码块右上角复制按钮背景透明。
   // 按钮在 `t-chat-md-content` 的 shadow DOM 里，且 **悬停代码块时才创建**

@@ -451,21 +451,27 @@ section('[F] 源码契约：查表顺序、落库键来源、选择器条件渲�
   ok(/recordPendingPermissionMeta\(/.test(projSrc) && /agentId: this\.meta\.agentId/.test(projSrc),
     'permission_request 经过投影器时登记落库元数据（单聊/群聊/工作流的唯一收口）');
 
-  // F7 前端：选择器条件渲染 + 锚点 + 文案随动 + 答复链路。
+  // F7 前端：一次点击的动作按钮 + 锚点 + 答复链路（2026-11-18 一次点击改造，
+  // ui-review P-2；原三段选择器 + 确认按钮的两步决策退役）。
   const cardSrc = src('../src/components/PermissionCard.tsx');
   ok(/allowOnce && allowAlways/.test(cardSrc),
-    '选择器只在三段都有真档位时渲染（CLI 两档 / ACP 单 always 档不画假段位）');
-  ok(/data-permission-scope-option=/.test(cardSrc) && /data-permission-scope\b/.test(cardSrc),
-    '选择器挂 data 锚点（闸门定位用）');
-  ok(/role="radiogroup"/.test(cardSrc) && /aria-checked=/.test(cardSrc) && /ArrowRight/.test(cardSrc),
-    'radiogroup 语义 + 方向键切换（a11y 档）');
-  ok(/data-permission-option=\{confirmOption\.id\}/.test(cardSrc) && /persistAgent: true/.test(cardSrc),
-    '确认按钮锚定当前选中档，选「该 Agent 永久」时答复带 persistAgent');
-  ok(/permission\.scope\.confirmOnce/.test(cardSrc)
-    && /permission\.scope\.confirmSession/.test(cardSrc)
-    && /permission\.scope\.confirmAgent/.test(cardSrc),
-    '确认文案随范围变化（三档三个 key）');
-  ok(/data-permission-scope-hint/.test(cardSrc), '「该 Agent 永久」的边界说明挂在按钮行下方');
+    '三个 allow 动作只在双 allow 档都有真档位时渲染（CLI 两档 / ACP 单 always 档不画假档位）');
+  ok(/data-permission-action="once"/.test(cardSrc)
+    && /data-permission-action="session"/.test(cardSrc)
+    && /data-permission-action="agent"/.test(cardSrc),
+    '三个动作按钮挂 data-permission-action 锚点（闸门定位用）');
+  ok(/data-permission-option=\{allowAlways\.id\}/.test(cardSrc),
+    '动作按钮仍锚定服务端选项 id（适配器据此精确回选）');
+  ok(/persistAgent: true/.test(cardSrc),
+    '「永久允许」= allow_always + persistAgent:true（服务端在答复里一并落库，不新增第四种 kind）');
+  ok(/permission\.action\.once/.test(cardSrc)
+    && /permission\.action\.session/.test(cardSrc)
+    && /permission\.action\.agent/.test(cardSrc),
+    '动作文案三档三个 key（i18n 单源）');
+  ok(!/role="radiogroup"/.test(cardSrc) && !/aria-checked/.test(cardSrc),
+    '无默认选中的预选态（radiogroup / aria-checked 不再出现在审批卡里）');
+  ok(/permission\.scope\.agentHint/.test(cardSrc),
+    '「永久允许」的持久化边界说明挂在按钮 title（可撤销 + 门禁仍在）');
 
   const storeSrc = src('../src/permissions/permissionStore.ts');
   ok(/opts\?\.persistAgent \? \{ persistAgent: true \}/.test(storeSrc),

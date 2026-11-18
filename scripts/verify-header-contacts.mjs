@@ -399,11 +399,11 @@ const gHeader = page.locator('main header').first();
 const gBox = await gHeader.boundingBox();
 ok(!!gBox && gBox.height >= 46 && gBox.height <= 58, '群聊头部同样约 52px', gBox ? `h=${Math.round(gBox.height)}` : '无 box');
 ok((await gHeader.locator('img').count()) >= 2, '成员头像堆叠在位（群聊的识别信息）');
-// 人数直接跟在群名后面（QQ 的「群名（N）」），在线数单独一个徽标
+// S2-2（审查报告）：群名与成员信息合并为「群名（2 人 · 2 在线）」一处说完，
+// 不再「（2）」+ 右侧「● 2 在线」两处分述。
 {
   const text = await gHeader.innerText();
-  ok(text.includes('（2）'), '群名后带人数「（2）」', text.replace(/\n/g, ' ').slice(0, 60));
-  ok(text.includes('2 在线'), '在线人数徽标在位', text.replace(/\n/g, ' ').slice(0, 60));
+  ok(text.includes('（2 人 · 2 在线）'), '群名后带「（2 人 · 2 在线）」', text.replace(/\n/g, ' ').slice(0, 60));
 }
 // 编排模式选择器：当前模式标签（如「分派」）显示在头部操作区。
 // 注意：不要在全头部用 getByText('分派') —— 关闭的 ModePicker 下拉里也含
@@ -425,8 +425,8 @@ ok((await page.getByText('好友管理器').count()) === 0, '没有「好友管�
 ok((await page.getByText('新朋友', { exact: true }).count()) === 0, '没有「新朋友」行');
 ok((await page.getByText('新群聊', { exact: true }).count()) === 0, '没有「新群聊」行');
 
-// 搜索胶囊：存在 + 全圆角
-const search = page.getByPlaceholder('搜索 AGENT、群聊');
+// 搜索胶囊：存在 + 全圆角（S3-4：文案统一「Agent / 群聊」，不再全大写 AGENT）
+const search = page.getByPlaceholder('搜索 Agent、群聊');
 ok((await search.count()) === 1, '有顶部搜索框');
 {
   const radius = await search.evaluate(el => {
@@ -457,7 +457,8 @@ ok((await tabs.count()) === 2, '恰好两个 Tab（AGENT / 群聊）', `count=${
     }))
   );
   const [a, g] = styles;
-  ok(a.text === 'AGENT' && g.text === '群聊', 'Tab 文案（A72：联系人 → AGENT）', styles.map(s => s.text).join(' | '));
+  // S3-4（审查报告）：Tab 统一为「Agent / 群聊」（首字母大写，与正文一致）。
+  ok(a.text === 'Agent' && g.text === '群聊', 'Tab 文案（A72：联系人 → AGENT；S3-4：Agent / 群聊）', styles.map(s => s.text).join(' | '));
   ok(a.border !== 'rgba(0, 0, 0, 0)' && a.width === '2px', '激活 Tab 有品牌色下划线', `${a.border} ${a.width}`);
   ok(g.border === 'rgba(0, 0, 0, 0)', '未激活 Tab 下划线透明');
   ok(a.color !== g.color, '激活/未激活文字颜色有区分');

@@ -104,7 +104,10 @@ export function ProfilePanel() {
       </div>
 
       {/* 头像 + 昵称一行：左边一颗大头像，右边昵称输入框。
-          不用卡片包起来 —— 这个分区只有两项，包卡片会显得很空。 */}
+          不用卡片包起来 —— 这个分区只有两项，包卡片会显得很空。
+          T1-2（UI 优化 2026-11-18）：换头像的入口不再拆两处 —— 左栏只留
+          大头像预览与「这就是 Agent 看到的你」，「上传图片」移到右侧预设
+          网格下方（同一组内，越相关越靠近）。 */}
       <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
         <div className="flex flex-col items-center gap-2">
           <UserAvatar
@@ -114,50 +117,6 @@ export function ProfilePanel() {
             size={72}
           />
           <span className="tc-hint">{t('settings.profile.avatarSeenHint')}</span>
-          {/* A160：上传本地图片。图片是覆盖层，移除后回到下面的预设 */}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="tc-btn-secondary"
-              disabled={uploadingAvatar}
-              data-user-avatar-upload
-              onClick={() => fileInputRef.current?.click()}
-            >
-              {uploadingAvatar ? t('settings.profile.uploading') : t('settings.profile.uploadImage')}
-            </button>
-            {profile.avatarImage && (
-              <button
-                type="button"
-                className="text-caption underline"
-                style={{ color: 'var(--td-text-color-placeholder)' }}
-                data-user-avatar-remove
-                onClick={() => {
-                  void removeUserAvatar().catch(err =>
-                    MessagePlugin.error(
-                      t('settings.profile.avatarRemoveFailed', {
-                        error: err instanceof Error ? err.message : String(err),
-                      })
-                    )
-                  );
-                }}
-              >
-                {t('settings.profile.removeImage')}
-              </button>
-            )}
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            data-user-avatar-file
-            onChange={e => {
-              const f = e.target.files?.[0] ?? null;
-              // 清空 value：同一张图再选一次也要能触发 onChange
-              e.target.value = '';
-              if (f) setCropFile(f);
-            }}
-          />
         </div>
 
         <div className="min-w-0 flex-1 space-y-4">
@@ -204,6 +163,16 @@ export function ProfilePanel() {
                  聚焦时没有任何反馈（outline-none 把 TDesign 默认环也杀了）。 */
               className="tc-input w-full px-3 py-2 text-body"
             />
+            {/* T1-3（UI 优化 2026-11-18）：硬约束「最多 24 字」从 ⓘ 里挪出来
+                做成输入框下方常驻小字，右侧配实时字数（0 / 24）。原来用户
+                超长输入时才被 slice 截断，事前没有任何提示。ⓘ 里只留
+                「下一轮起 Agent 可直接称呼你」这条它独有的信息。 */}
+            <div className="mt-1 flex items-center justify-between">
+              <span className="tc-hint">{t('settings.profile.nicknameMax')}</span>
+              <span className="tc-hint tabular-nums">
+                {draft.length} / 24
+              </span>
+            </div>
           </div>
 
           <div>
@@ -228,6 +197,51 @@ export function ProfilePanel() {
                   )
                 )
               }
+            />
+            {/* T1-2：上传入口归到预设网格下方（同一组）。图片是覆盖层，
+                移除后回到上面的预设。 */}
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                className="tc-btn-secondary"
+                disabled={uploadingAvatar}
+                data-user-avatar-upload
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {uploadingAvatar ? t('settings.profile.uploading') : t('settings.profile.uploadImage')}
+              </button>
+              {profile.avatarImage && (
+                <button
+                  type="button"
+                  className="text-caption underline"
+                  style={{ color: 'var(--td-text-color-placeholder)' }}
+                  data-user-avatar-remove
+                  onClick={() => {
+                    void removeUserAvatar().catch(err =>
+                      MessagePlugin.error(
+                        t('settings.profile.avatarRemoveFailed', {
+                          error: err instanceof Error ? err.message : String(err),
+                        })
+                      )
+                    );
+                  }}
+                >
+                  {t('settings.profile.removeImage')}
+                </button>
+              )}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              data-user-avatar-file
+              onChange={e => {
+                const f = e.target.files?.[0] ?? null;
+                // 清空 value：同一张图再选一次也要能触发 onChange
+                e.target.value = '';
+                if (f) setCropFile(f);
+              }}
             />
           </div>
         </div>

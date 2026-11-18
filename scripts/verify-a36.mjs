@@ -218,7 +218,7 @@ async function newPage() {
 }
 
 // ============= [1] 头部总耗时 =============
-console.log('\n[1] 头部「已处理 47m42s」');
+console.log('\n[1] 头部「已处理 47 分 42 秒」');
 {
   const { ctx, page } = await newPage();
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
@@ -226,7 +226,9 @@ console.log('\n[1] 头部「已处理 47m42s」');
 
   const dur = await page.locator('[data-msg-duration]').first().textContent().catch(() => null);
   ok(!!dur, '头部有总耗时', dur ?? '缺失');
-  ok((dur ?? '').includes('已处理 47m42s'), '分钟进位正确（47m42s，不是 2862.4s）', dur ?? '');
+  // S2-4（审查报告）：中文界面统一「47 分 42 秒」格式（原 47m42s）；
+  // 分钟进位的断言口径不变 —— 47m42s 的数值仍是 2862.4s。
+  ok((dur ?? '').includes('已处理 47 分 42 秒'), '分钟进位正确（47 分 42 秒，不是 2862.4s）', dur ?? '');
   const header = await page.locator('[data-msg-header]').first().innerText();
   ok(header.includes('已处理'), '耗时在消息头部那一行里', header.replace(/\n/g, ' '));
   await ctx.close();
@@ -271,11 +273,12 @@ console.log('\n[2] 完成态默认收起，点开才出现步骤');
   ok(summary.includes('结果未回传'), '句尾给结论（最后一步没回传 → 结果未回传，不谎称成功）', summary);
   ok(!summary.includes('、') && !summary.includes('：'), '不再是「动词、动词：文件」的清单结构', summary);
 
-  // ---- D2：总耗时挂在摘要条上，带「工具」前缀 ----
-  // 四个工具步 600 + 100 + 3000 + 300，加上开头那段思考 3000ms = 7000ms → 7.0s
-  // （嵌套在 t3 下面的思考归父级，不再单独累加）
-  const totalMeta = (await page.locator('[data-steps-bar] .tc-trace-meta').first().textContent()) ?? '';
-  ok(totalMeta.trim() === '工具 7.0s', '摘要条耗时带「工具」前缀', totalMeta.trim());
+  // ---- D2：摘要条不再重复显示耗时（S1-2，审查报告）----
+  // 头部已有总耗时「已处理 …」，摘要条上的「工具 7.0s」与它两套口径并存
+  // （包含/并列读不出），已从显示层删除；埋点（totalMs 计算）保留。
+  // 这里反证摘要条里不再出现任何耗时文案 —— 出现了就是回归。
+  const barText = (await page.locator('[data-steps-bar]').first().innerText()) ?? '';
+  ok(!/工具\s*[\d.]+s|[\d.]+s\s*$/.test(barText.replace(/\n/g, ' ')), '摘要条不再显示「工具 7.0s」这类耗时', barText.replace(/\n/g, ' '));
 
   // ---- [4] 步骤行 ----
   const steps = await page.evaluate(() => {

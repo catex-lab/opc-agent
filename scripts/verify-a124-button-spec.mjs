@@ -531,7 +531,9 @@ async function main() {
         return {
           avatarDots,
           inlineDots,
-          hasTextStatus: /在线|未登录|缺 Key|需修复|未安装/.test(dlg ? dlg.innerText : ''),
+          // D1-1（审查报告）：探测 ready 但从未真实检测的条目，状态词改为
+          // 「未验证」（不再声称「在线」），所以这一组可读状态词要把它算上。
+          hasTextStatus: /在线|未登录|缺 Key|需修复|未安装|未验证/.test(dlg ? dlg.innerText : ''),
         };
       });
       detail = { ...detail, ...inner };

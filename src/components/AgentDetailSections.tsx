@@ -82,6 +82,14 @@ export function AgentDetailSections({
     .filter((c): c is { key: typeof c.key; meta: NonNullable<typeof c.meta> } => !!c.meta);
 
   /**
+   * D1-1：探测说 ready 但从未跑过真实检测（lastCanary 为空）——
+   * 状态显示降为「未验证」，不再声称「在线」。与 AgentDetailPanel
+   * 顶部徽标同一判定，两处口径必须一致（弹窗版共用本组件，随之统一）。
+   */
+  const unverifiedReady =
+    agent.status.availability === 'ready' && !agent.status.lastCanary;
+
+  /**
    * 账号与权益（A152）。按需拉 `/api/agents/:id/account`，不塞进名册接口 ——
    * 这份数据要读每个 Agent 的凭据/配置文件，不该跟着 30 秒一次的名册刷新走。
    *
@@ -207,68 +215,84 @@ export function AgentDetailSections({
 
   return (
     <>
-      {/* 基本信息 */}
+      {/* 基本信息。D1-2（审查报告）：原来的「重新探测」是一整行操作，
+          夹在状态 / 版本 / 接入方式三行信息表中间 —— 信息卡里混操作行，
+          读的时候容易把它当成又一条字段。现在按钮移到卡头右侧
+          （探测反馈仍然在卡下方给一行，只有真有反馈时才出现）。 */}
       <section className="mt-6 first:mt-0">
-        <h3 className="tc-section-title mb-2">基本信息</h3>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h3 className="tc-section-title">基本信息</h3>
+          {onReprobe && (
+            <button
+              type="button"
+              className="tc-btn-secondary shrink-0"
+              onClick={() => onReprobe(agent.id)}
+              disabled={probing}
+              aria-busy={probing}
+              data-agent-reprobe
+              title="只探测当前条目，其他 Agent 的状态与时间戳保持不变"
+            >
+              {probing ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <RefreshCw size={14} />
+              )}
+              {probing ? '探测中…' : '重新探测'}
+            </button>
+          )}
+        </div>
         <div className={`tc-detail-rows overflow-hidden ${CARD}`} style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
           <DetailRow
             label="状态"
             // 状态词永远在第一位：A177/A178 要求「探测超时」不能被
             // 探测消息里的 "Request timeout" 原话盖过去，更不能显示成「未登录」
             value={
-              agent.status.message
-                ? `${availabilityLabelOf(agent)} · ${agent.status.message}`
-                : availabilityLabelOf(agent)
+              unverifiedReady
+                ? '未验证'
+                : agent.status.message
+                  ? `${availabilityLabelOf(agent)} · ${agent.status.message}`
+                  : availabilityLabelOf(agent)
             }
           />
+          {/* D1-1（审查报告）：探测说 ready 但从未真实检测过 → 基本信息的
+              「状态」行同步为「未验证」，与页面顶部的灰色徽标同一口径
+              （原话：状态显示必须与验证程度一致）。 */}
+          {unverifiedReady && (
+            <DetailRow
+              label="真实检测"
+              value={
+                <span style={{ color: 'var(--td-text-color-placeholder)' }}>
+                  还没做过真实检测 —— 状态仅供参考，点右上角「真实检测」核对
+                </span>
+              }
+            />
+          )}
           {/* 每个非 ready 的 Agent 都给一句「怎么恢复」：401/403 去重登、
               429 是额度/限流、ENOENT 是没装好。文案由后端按 id 下发，
               前端不做猜测（自建 Agent 也有兜底话术）。 */}
           {agent.status.availability !== 'ready' && agent.recoveryHint && (
             <DetailRow label="怎么恢复" value={agent.recoveryHint} />
           )}
-          {/* A177：单 Agent 重新探测。放在状态行下面而不是页脚：
-              用户是看到「状态不对」才想重探，入口贴着状态最近；
-              同时这里离「获取」「凭据配置」都只有一屏，修完凭据可以立刻验。 */}
-          {onReprobe && (
+          {/* A177 探测反馈：按钮已上移到卡头，反馈结果仍贴在卡下方 ——
+              只在「正在探测 / 有反馈」时出现，空闲时不占一行。 */}
+          {onReprobe && (probing || probeFeedback) && (
             <div
-              className={`${ROW_X} ${ROW_Y} flex items-start justify-between gap-3 border-t`}
+              className={`${ROW_X} ${ROW_Y} border-t`}
               style={{ borderColor: 'var(--tc-edge)' }}
               data-agent-probe-row
             >
-              <div className="min-w-0">
-                <div className="text-body" style={{ color: 'var(--td-text-color-secondary)' }}>
-                  重新探测这一个 Agent
-                </div>
-                <div
-                  className="mt-0.5 text-secondary break-words"
-                  style={{ color: 'var(--td-text-color-placeholder)' }}
-                  data-agent-probe-result
-                  data-agent-probe-state={
-                    probing ? 'probing' : probeFeedback?.state === 'done' ? 'done' : 'idle'
-                  }
-                >
-                  {probing
-                    ? describeProbeFeedback({ state: 'probing' })
-                    : describeProbeFeedback(probeFeedback) ||
-                      '只探测当前条目，其他 Agent 的状态与时间戳保持不变'}
-                </div>
-              </div>
-              <button
-                type="button"
-                className="tc-btn-secondary shrink-0"
-                onClick={() => onReprobe(agent.id)}
-                disabled={probing}
-                aria-busy={probing}
-                data-agent-reprobe
+              <div
+                className="text-secondary break-words"
+                style={{ color: 'var(--td-text-color-placeholder)' }}
+                data-agent-probe-result
+                data-agent-probe-state={
+                  probing ? 'probing' : probeFeedback?.state === 'done' ? 'done' : 'idle'
+                }
               >
-                {probing ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <RefreshCw size={14} />
-                )}
-                {probing ? '探测中…' : '重新探测'}
-              </button>
+                {probing
+                  ? describeProbeFeedback({ state: 'probing' })
+                  : describeProbeFeedback(probeFeedback) || ''}
+              </div>
             </div>
           )}
           {/* 需要登录时给一个一键入口。

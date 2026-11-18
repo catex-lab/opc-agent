@@ -285,12 +285,16 @@ for (const dark of [true, false]) {
   console.log(`\n[3] ${tag}主题：刷新按钮 / 权限图标 / Agent 正文 必须是 primary 档`);
   const { ctx, page, errors } = await newPage({ dark });
 
-  // ── 刷新按钮（设置 → 登录配置）────────────────────────────────────
+  // ── 登录区的描边按钮（设置 → 登录配置）──────────────────────────
+  // T5-6（UI 优化 2026-11-18）：登录配置不再单设「刷新」按钮（效果图 11 号图；
+  // 登录态进分区自动检查 + WorkBuddy 版本区有「重新检测」）。
+  // A116 的对比度诉求改落在同档的描边按钮「配置环境变量」上——
+  // 与旧「刷新」同为 variant=outline（文案色被全局 outline 规则钉在 primary 档）。
   await page.goto(base + '/settings?section=login', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1500);
 
   const refresh = await page.evaluate(PRIMARY_PROBE).then(primary => page.evaluate(p => {
-    const btn = [...document.querySelectorAll('button')].find(b => /刷新/.test(b.textContent || ''));
+    const btn = [...document.querySelectorAll('button')].find(b => /配置环境变量/.test(b.textContent || ''));
     if (!btn) return { missing: true };
     const cs = getComputedStyle(btn);
     const svg = btn.querySelector('svg');
@@ -311,13 +315,13 @@ for (const dark of [true, false]) {
     };
   }, primary));
 
-  ok(!refresh.missing, `${tag}：找到「刷新」按钮`);
+  ok(!refresh.missing, `${tag}：找到「配置环境变量」描边按钮`);
   if (!refresh.missing) {
-    ok(refresh.color === refresh.primary, `${tag}：刷新文案走 primary（亮白/近黑）`,
+    ok(refresh.color === refresh.primary, `${tag}：描边按钮文案走 primary（亮白/近黑）`,
       `${refresh.color} vs primary ${refresh.primary}`);
     ok(refresh.svgColor === null || refresh.svgColor === refresh.primary,
-      `${tag}：刷新图标与文案同色`, `${refresh.svgColor}`);
-    ok(contrast(refresh.color, refresh.bg) >= 4.5, `${tag}：刷新按钮对比度 ≥ 4.5:1`,
+      `${tag}：描边按钮图标与文案同色`, `${refresh.svgColor}`);
+    ok(contrast(refresh.color, refresh.bg) >= 4.5, `${tag}：描边按钮对比度 ≥ 4.5:1`,
       `${contrast(refresh.color, refresh.bg).toFixed(2)}:1（底 ${refresh.bg}）`);
   }
   // 深色那张正是用户截图 1 的场景（登录配置 + 右上角刷新），留档便于肉眼比对

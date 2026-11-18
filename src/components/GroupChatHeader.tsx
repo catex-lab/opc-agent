@@ -108,6 +108,13 @@ export function GroupChatHeader({
   /** 正在就地改群名 */
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  /**
+   * S2-1（审查报告）：点禁用态「隔离」时弹出的原因浮层。
+   * 禁用原因原来只藏在 title 悬停里（A08/A17：禁用原因属于必要反馈），
+   * 触屏 / 不悬停的用户永远看不到。现在点一下就给一行原因 +「去绑定」入口。
+   */
+  const [isolateHintOpen, setIsolateHintOpen] = useState(false);
+  const isolateHintRef = useRef<HTMLDivElement>(null);
   // A225：并行隔离开关（sessionFlags 本机偏好，随每轮请求下发）
   const worktreeOn = useGroupWorktree(sessionId);
   /**
@@ -125,6 +132,16 @@ export function GroupChatHeader({
     settledRef.current = false;
     setEditing(true);
   };
+
+  // S2-1：原因浮层的点外关闭（与 ModePicker 的 outside-click 同一手法）
+  useEffect(() => {
+    if (!isolateHintOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!isolateHintRef.current?.contains(e.target as Node)) setIsolateHintOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [isolateHintOpen]);
 
   const settleRename = (save: boolean) => {
     if (settledRef.current) return;
@@ -171,8 +188,9 @@ export function GroupChatHeader({
           onMemberClick={onShowAgentDetail}
         />
       }
-      // 群名后面直接带人数（「群名（N）」），比单独一个徽标更容易一眼读到。
-      // 群名本身是个按钮：点一下就地改名（见 onRename 的注释）。
+      // 群名后面直接带人数与在线数（S2-2 / 审查报告：「群名（2 人 · 2 在线）」
+      // 一处说完，不再「（2）」+ 右侧「● 2 在线」两处分述）。群名本身是个
+      // 按钮：点一下就地改名（见 onRename 的注释）。
       title={
         editing ? (
           <input
@@ -211,12 +229,14 @@ export function GroupChatHeader({
                 h1 自带 truncate，这里再套一层只为挂 title —— 与单聊头部一致。 */}
             <span className="min-w-0 truncate" title={title}>{title}</span>
             <span
-              className="shrink-0 text-body font-normal"
+              data-chat-status
+              className="shrink-0 whitespace-nowrap text-body font-normal"
               style={{ color: 'var(--td-text-color-placeholder)' }}
+              title={`${onlineCount} 个成员在线`}
             >
               {/* 一个模板字符串而不是 `（{n}）`：后者会拆成三个文本节点，
                   取 innerText 时变成「（ 2 ）」，对断言和读屏都更糟 */}
-              {`（${members.length}）`}
+              {`（${members.length} 人 · ${onlineCount} 在线）`}
             </span>
             {/* 铅笔只在悬停时出现：常驻的话，52px 的头部会多出一个
                 看起来能点的图标，而它其实是「点群名」这个动作的注解 */}
@@ -227,25 +247,6 @@ export function GroupChatHeader({
             />
           </button>
         )
-      }
-      badge={
-        /* A84：这里原来铺一层 `--tc-hover-chrome`，一颗「N 人在线」的灰胶囊。
-           它只是状态读数，不是可点的东西，常驻底色让它看起来像一枚按钮。
-           去掉底后是小圆点 + 文字，与单聊栏头那个「在线」读数同一形态。 */
-        <span
-          // 与单聊「在线」徽标同规：状态是读数，宽度再紧也不参与压缩、
-          // 不许折行。折成「2 / 在线」两行时，52px 的单行头部直接破功。
-          data-chat-status
-          className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 py-[1px] text-caption"
-          style={{ color: 'var(--td-text-color-secondary)' }}
-          title={`${onlineCount} 个成员在线`}
-        >
-          <span
-            className="h-1.5 w-1.5 flex-none rounded-full"
-            style={{ backgroundColor: onlineCount > 0 ? '#00A870' : '#C6C6C6' }}
-          />
-          {onlineCount} 在线
-        </span>
       }
       actions={
         <>
@@ -268,36 +269,75 @@ export function GroupChatHeader({
 
           {/* A225：并行隔离开关。与工作流按钮同规格；选中态与 ModePicker 同档
               （品牌色浅底）。开关状态在 sessionFlags（本机偏好），随请求下发。
-              不满足条件（没绑 git 目录）时置灰 + 说明，不做点了没反应的假控件。 */}
-          <button
-            type="button"
-            onClick={() => {
-              if (sessionId && worktreeAvailable) setGroupWorktree(sessionId, !worktreeOn);
-            }}
-            disabled={!worktreeAvailable}
-            aria-pressed={worktreeOn}
-            data-chat-worktree
-            title={
-              worktreeAvailable
-                ? worktreeOn
-                  ? '并行隔离已开：本轮每个成员在独立检出中执行，结束后汇合'
-                  : '并行隔离已关：各成员在共享目录执行'
-                : '先在群里绑定一个 git 仓库目录，才能开启并行隔离'
-            }
-            aria-label="并行隔离"
-            className="flex h-8 items-center gap-1 rounded-lg px-2 text-xs transition-colors"
-            style={{
-              backgroundColor: worktreeOn ? 'var(--td-brand-color-light)' : undefined,
-              color: worktreeOn
-                ? 'var(--td-brand-color)'
-                : 'var(--td-text-color-secondary)',
-              opacity: worktreeAvailable ? 1 : 0.45,
-              cursor: worktreeAvailable ? 'pointer' : 'not-allowed',
-            }}
-          >
-            <GitBranch size={14} />
-            隔离
-          </button>
+              不满足条件（没绑 git 目录）时置灰 —— S2-1（审查报告）：置灰的
+              原因原来只藏在 title 悬停里，点了没反应也没解释；现在点击禁用态
+              会弹出 1 行原因 +「去绑定」入口（下方浮层）。按钮本身保持可点
+              （点=说明原因），用 aria-disabled 语义标记不可用。 */}
+          <div className="relative" ref={isolateHintRef}>
+            <button
+              type="button"
+              onClick={() => {
+                if (sessionId && worktreeAvailable) {
+                  setIsolateHintOpen(false);
+                  setGroupWorktree(sessionId, !worktreeOn);
+                } else {
+                  setIsolateHintOpen(v => !v);
+                }
+              }}
+              aria-disabled={!worktreeAvailable}
+              aria-pressed={worktreeAvailable ? worktreeOn : undefined}
+              aria-expanded={!worktreeAvailable ? isolateHintOpen : undefined}
+              data-chat-worktree
+              data-chat-worktree-available={worktreeAvailable ? '1' : '0'}
+              title={
+                worktreeAvailable
+                  ? worktreeOn
+                    ? '并行隔离已开：本轮每个成员在独立检出中执行，结束后汇合'
+                    : '并行隔离已关：各成员在共享目录执行'
+                  : '先在群里绑定一个 git 仓库目录，才能开启并行隔离'
+              }
+              aria-label="并行隔离"
+              className="flex h-8 items-center gap-1 rounded-lg px-2 text-xs transition-colors hover:bg-[var(--tc-fill-hover)]"
+              style={{
+                backgroundColor: worktreeOn ? 'var(--td-brand-color-light)' : undefined,
+                color: worktreeOn
+                  ? 'var(--td-brand-color)'
+                  : 'var(--td-text-color-secondary)',
+                opacity: worktreeAvailable ? 1 : 0.45,
+                cursor: worktreeAvailable ? 'pointer' : 'not-allowed',
+              }}
+            >
+              <GitBranch size={14} />
+              隔离
+            </button>
+            {isolateHintOpen && !worktreeAvailable && (
+              /* 单行原因浮层：锚定在「隔离」下方。工作流 / 分派的首次使用
+                  副说明也走同一 pattern（静态引导，见效果图 02 的 NOTES）。 */
+              <div
+                data-chat-worktree-hint
+                role="status"
+                className="tc-glass tc-pop-in absolute right-0 top-full z-30 mt-1 flex w-[300px] items-center gap-2 rounded-xl px-3 py-2 shadow-popup"
+              >
+                <span className="min-w-0 flex-1 text-caption leading-4" style={{ color: 'var(--td-text-color-secondary)' }}>
+                  先在群里绑定一个 git 仓库目录，才能开启并行隔离。
+                </span>
+                {onSettingsOpenChange && (
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-md px-1.5 py-0.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                    style={{ color: 'var(--td-brand-color)' }}
+                    data-chat-worktree-bind
+                    onClick={() => {
+                      setIsolateHintOpen(false);
+                      onSettingsOpenChange(true);
+                    }}
+                  >
+                    去绑定
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* 编排模式切换：群聊的核心控制，放在头部操作区 */}
           <div className="relative">

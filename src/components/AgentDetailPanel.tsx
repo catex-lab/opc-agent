@@ -1,4 +1,4 @@
-import { ChevronLeft, MessageSquarePlus, Trash2 } from 'lucide-react';
+import { ChevronLeft, MessageSquarePlus, Pencil, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { MessagePlugin } from 'tdesign-react';
 import { AgentAvatar } from './AgentAvatar';
@@ -73,6 +73,14 @@ export function AgentDetailPanel({
   const avail = agent.status.availability;
   const meta = agentStatusViewOf(agent);
   const canChat = avail === 'ready';
+  /**
+   * D1-1（审查报告）：「在线」与「还没做过真实检测」自相矛盾 ——
+   * 在线是未经验证的在线。从未跑过真实检测（lastCanary 为空）时，
+   * 即便探测说它 ready，状态也只写「未验证」（灰），不写「在线」（绿）；
+   * 点过「真实检测」之后才回到绿点「在线」。不是 ready 的条目
+   * （未登录 / 未安装…）状态词本来就诚实，不需要这层覆盖。
+   */
+  const unverifiedReady = canChat && !agent.status.lastCanary;
   // A114：自建 Agent 才有删除。内置条目是编译进应用的，删了也回不来。
   const canDelete = !!agent.custom && !!onDeleteCustom;
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -141,20 +149,53 @@ export function AgentDetailPanel({
         <div className="mx-auto w-full max-w-[760px] px-4 pb-8 pt-3 sm:px-6" data-agent-detail-col>
           {/* 头部：头像 / 名称 / 状态 */}
           <div className="flex flex-col items-center text-center">
-            <AgentAvatar
-              id={agent.id}
-              name={agent.name}
-              icon={agent.icon}
-              src={agent.logoUrl}
-              color={agent.color}
-              availability={avail}
-              /* A124（需求）：详情页头像不再挂右下角状态点。
-                 这颗点与下面那行「● 在线」说的是同一件事，同屏两个状态码
-                 只会让人怀疑两者会不会不一致 —— 保留带文字的那一个。
-                 列表 / 名片 / 头部那些小头像仍然带点（那里没有文字状态行）。 */
-              showStatus={false}
-              size={80}
-            />
+            {/* D1-4（审查报告）：「更换 Logo」原来是一条夹在状态与基本信息
+                之间的文字链，位置随意。改成头像右下角的编辑角标按钮 ——
+                「改这张图」的动作长在图上。上传流程不变（角标 → 裁剪 → 上传）。 */}
+            <div className="relative">
+              <AgentAvatar
+                id={agent.id}
+                name={agent.name}
+                icon={agent.icon}
+                src={agent.logoUrl}
+                color={agent.color}
+                availability={avail}
+                /* A124（需求）：详情页头像不再挂右下角状态点。
+                   这颗点与下面那行「● 在线」说的是同一件事，同屏两个状态码
+                   只会让人怀疑两者会不会不一致 —— 保留带文字的那一个。
+                   列表 / 名片 / 头部那些小头像仍然带点（那里没有文字状态行）。 */
+                showStatus={false}
+                size={80}
+              />
+              <button
+                type="button"
+                title={uploadingLogo ? '上传中…' : '更换 Logo'}
+                aria-label={uploadingLogo ? '上传中…' : '更换 Logo'}
+                disabled={uploadingLogo}
+                data-agent-logo-upload
+                onClick={() => logoInputRef.current?.click()}
+                className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border transition-colors hover:bg-[var(--tc-hover-chrome)] disabled:opacity-60"
+                style={{
+                  backgroundColor: 'var(--tc-surface-content)',
+                  borderColor: 'var(--tc-edge-strong)',
+                  color: 'var(--td-text-color-secondary)',
+                }}
+              >
+                <Pencil size={13} />
+              </button>
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                data-agent-logo-file
+                onChange={e => {
+                  const f = e.target.files?.[0] ?? null;
+                  e.target.value = '';
+                  if (f) setCropFile(f);
+                }}
+              />
+            </div>
             <h2
               className="mt-4 text-title-lg font-semibold"
               style={{ color: 'var(--td-text-color-primary)' }}
@@ -166,11 +207,31 @@ export function AgentDetailPanel({
                 {agent.vendor}
               </p>
             )}
-            <div className="mt-2 flex items-center gap-1.5 text-body" style={{ color: meta.color }}>
-              <StatusDot color={meta.dot} shape={meta.dotShape} size={8} statusLabel={meta.label} />
-              {/* P1：状态词以诊断事实为准（labelKey 优先），与通讯录同一口径 */}
-              {meta.labelKey ? t(meta.labelKey as never) : availabilityLabelOf(agent)}
-            </div>
+            {/* D1-1：从未真实检测过时状态写「未验证」（灰），不写「在线」（绿） */}
+            {unverifiedReady ? (
+              <div
+                className="mt-2 flex items-center gap-1.5 rounded-full px-2 py-0.5 text-caption"
+                style={{
+                  color: 'var(--td-text-color-secondary)',
+                  backgroundColor: 'var(--td-bg-color-component)',
+                }}
+                data-agent-verify-badge="unverified"
+              >
+                <StatusDot
+                  color="var(--td-text-color-placeholder)"
+                  shape="hollow"
+                  size={8}
+                  statusLabel="未验证"
+                />
+                未验证
+              </div>
+            ) : (
+              <div className="mt-2 flex items-center gap-1.5 text-body" style={{ color: meta.color }}>
+                <StatusDot color={meta.dot} shape={meta.dotShape} size={8} statusLabel={meta.label} />
+                {/* P1：状态词以诊断事实为准（labelKey 优先），与通讯录同一口径 */}
+                {meta.labelKey ? t(meta.labelKey as never) : availabilityLabelOf(agent)}
+              </div>
+            )}
             {/* P1：真实检测——上次时间 + 手动触发。这是名册状态的唯一可信源 */}
             <div className="mt-2 flex items-center justify-center gap-2 text-caption" data-agent-canary>
               <span style={{ color: 'var(--td-text-color-placeholder)' }}>
@@ -214,52 +275,52 @@ export function AgentDetailPanel({
                 {canaryArmed ? t('canary.running') : t('canary.run')}
               </button>
             </div>
-            {/* A160：头像入口只在资料页（用户确认的交互位置）。
-                上传是叠加在 icon 之上的覆盖层；「恢复默认」只删映射，
-                不改定义表，所以内置条目也能随时回到官方 logo。 */}
-            <div className="mt-2 flex items-center gap-3 text-secondary">
+            {/* A160：「恢复默认」只删映射，不改定义表，内置条目也能随时回到
+                官方 logo。D1-4 后它不再与「更换 Logo」并排 —— 上传入口已
+                收进头像角标，这里只留这条低调的文字链（有自定义图才出现）。 */}
+            {agent.logoUrl && (
               <button
                 type="button"
-                className="underline"
-                style={{ color: 'var(--td-brand-color)' }}
-                disabled={uploadingLogo}
-                data-agent-logo-upload
-                onClick={() => logoInputRef.current?.click()}
-              >
-                {uploadingLogo ? '上传中…' : '更换 Logo'}
-              </button>
-              {agent.logoUrl && (
-                <button
-                  type="button"
-                  className="underline"
-                  style={{ color: 'var(--td-text-color-placeholder)' }}
-                  data-agent-logo-reset
-                  onClick={() => {
-                    void removeAgentLogo(agent.id)
-                      .then(() => onAvatarChanged?.())
-                      .catch(err =>
-                        MessagePlugin.error(
-                          `恢复默认 Logo 失败：${err instanceof Error ? err.message : String(err)}`
-                        )
-                      );
-                  }}
-                >
-                  恢复默认
-                </button>
-              )}
-              <input
-                ref={logoInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                className="hidden"
-                data-agent-logo-file
-                onChange={e => {
-                  const f = e.target.files?.[0] ?? null;
-                  e.target.value = '';
-                  if (f) setCropFile(f);
+                className="mt-1.5 text-caption underline underline-offset-2"
+                style={{ color: 'var(--td-text-color-placeholder)' }}
+                data-agent-logo-reset
+                onClick={() => {
+                  void removeAgentLogo(agent.id)
+                    .then(() => onAvatarChanged?.())
+                    .catch(err =>
+                      MessagePlugin.error(
+                        `恢复默认 Logo 失败：${err instanceof Error ? err.message : String(err)}`
+                      )
+                    );
                 }}
-              />
-            </div>
+              >
+                恢复默认
+              </button>
+            )}
+            {/* D1-3（审查报告）：「发消息」原来是独占一条底栏的黑按钮，
+                视觉重量比整页任何资料块都大 —— 而这一页的主任务是「看资料」。
+                改成资料区下方的次级描边按钮；不可对话时保持禁用 + 原因句。
+                data-start-chat 锚点不变。 */}
+            <button
+              type="button"
+              disabled={!canChat}
+              onClick={() => onStartChat(agent.id)}
+              className="tc-btn-secondary mt-4"
+              data-start-chat
+            >
+              <MessageSquarePlus size={16} />
+              {canChat ? '发消息' : '当前不可对话'}
+            </button>
+            {!canChat && (
+              <p
+                className="mt-2 max-w-[420px] text-center text-secondary"
+                style={{ color: 'var(--td-text-color-placeholder)' }}
+              >
+                {agent.status.message
+                  ? `${availabilityLabelOf(agent)} · ${agent.status.message}`
+                  : `${availabilityLabelOf(agent)} · 需要先完成登录或修复`}
+              </p>
+            )}
           </div>
 
           {/* 信息区块与「聊天页 ⋯ → Agent 详情」弹窗共用同一份内容，
@@ -272,60 +333,14 @@ export function AgentDetailPanel({
             probeFeedback={probeFeedback}
             onOpenCredential={onOpenCredential}
           />
-        </div>
-      </div>
-
-      {/* 底部主操作：固定在页脚，滚动时不会跑掉。
-          内层与正文同宽同列 —— 正文是 760px 居中的信息列，按钮如果铺满
-          整条页脚（1440 窗口下约 1030px），会出现「一根巨长的蓝条托着一个
-          窄栏」的割裂感。页脚底色仍然整条铺满，只把按钮收进同一列。 */}
-      <div
-        className="shrink-0 py-4"
-        style={{
-          backgroundColor: 'var(--td-bg-color-container)',
-          borderTop: '1px solid var(--tc-divider)',
-        }}
-      >
-        {/* 内层补上 px-6，与正文列的内边距一致 —— 否则按钮会比上面的卡片
-            左右各宽 24px，看着像没对齐 */}
-        <div className="mx-auto w-full max-w-[760px] px-4 sm:px-6">
-          {/* A45（反馈）：「发消息」原来 `w-full` 铺满 760px 的信息列，
-              1440 窗口下是一根 500 多像素的实心长条，比整页任何一块内容都
-              抢眼 —— 它只是一个动作按钮，不该占一行的宽度。
-              改成按内容自适应、整行居中：宽度跟着「图标 + 四个字」走，
-              高度从 py-2.5 收到 py-2，与页脚其他次级按钮同一档。
-              外层 flex 是因为 `.tc-btn-brand` 是 inline-flex，
-              直接写 mx-auto 对 inline 级元素不生效。 */}
-          <div className="flex justify-center">
-            <button
-              type="button"
-              disabled={!canChat}
-              onClick={() => onStartChat(agent.id)}
-              className="tc-btn-brand"
-              data-start-chat
-            >
-              <MessageSquarePlus size={16} />
-              {canChat ? '发消息' : '当前不可对话'}
-            </button>
-          </div>
-          {/* 状态原因优先用探测结果自带的 message —— 它已经写清了「去哪儿修」
-              （例如「请在设置 → 登录配置 → Agent API Key 填入 …」）。
-              早先这里无条件在后面拼一句「· 需要先完成登录或修复」，与
-              message 里的话重复，读起来像结巴。只有当探测没给 message 时
-              才退回这句通用说明。 */}
-          {!canChat && (
-            <p className="mt-2 text-center text-secondary" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              {agent.status.message
-                ? `${availabilityLabelOf(agent)} · ${agent.status.message}`
-                : `${availabilityLabelOf(agent)} · 需要先完成登录或修复`}
-            </p>
-          )}
 
           {/* A114：删除自建 Agent。两步确认（点一次出确认条，再点一次才真删）——
               删除不可恢复，而它紧挨着「发消息」，误触一次就没了太容易。
-              删掉的只是定义与 Key，**不会**动这个 Agent 参与过的会话记录。 */}
+              删掉的只是定义与 Key，**不会**动这个 Agent 参与过的会话记录。
+              D1-3 后页脚整条撤掉，这块收进正文信息列的末尾（低频且危险，
+              放在所有资料读完后正好）。 */}
           {canDelete && (
-            <div className="mt-3 flex justify-center">
+            <div className="mt-6 flex justify-center">
               {confirmDelete ? (
                 <div
                   className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-secondary"
@@ -363,8 +378,6 @@ export function AgentDetailPanel({
                   style={{ color: 'var(--td-text-color-placeholder)' }}
                   data-custom-delete
                 >
-                  {/* A115：13 → 14。与页脚「发消息」的 16 只差一档，
-                      原来 13 是这一页唯一一个奇数尺寸 */}
                   <Trash2 size={14} />
                   删除这个自建 Agent
                 </button>
@@ -373,6 +386,7 @@ export function AgentDetailPanel({
           )}
         </div>
       </div>
+
       {/* P2：登录代管终端（portal 到 body，DOM 位置无关；退出后自动 canary 复检） */}
       {loginOpen && agent.login && (
         <LoginTerminalDialog agent={agent} onClose={() => setLoginOpen(false)} />

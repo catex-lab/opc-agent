@@ -39,12 +39,13 @@ import { ProjectDetail } from './components/ProjectDetail';
 import { ExtensionPanel } from './components/ExtensionPanel';
 import { ExtensionDetail } from './components/ExtensionDetail';
 import { SidebarResizer } from './components/SidebarResizer';
+import { EmptyState } from './components/EmptyState';
+import { MessagesSquare, Search } from 'lucide-react';
 import { pickDirectory } from './workspace';
 import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { ChatHeader } from './components/ChatHeader';
 import { WorkspacePanel } from './components/WorkspacePanel';
 import { SettingsPage } from './components/SettingsPage';
-import { PermissionDock } from './components/PermissionDock';
 import { setSessionTitleResolver } from './permissions/permissionStore';
 import { bootPref, pushPrefs } from './prefs';
 import {
@@ -189,6 +190,11 @@ function AppContent() {
    * 会退到上一个 Agent 的资料页，而不是离开通讯录。
    */
   const [detailAgentId, setDetailAgentId] = useState<string | null>(null);
+  // E-2 / 共性 3：通讯录搜索词与「无匹配」标记的真源上移到 App ——
+  // 右侧空态（E-2）要能说「没有匹配的 Agent」并提供「清除搜索」出口，
+  // 而搜索框在左栏的 ContactsPanel 里。词与标记都由 ContactsPanel 回传。
+  const [contactsKeyword, setContactsKeyword] = useState('');
+  const [contactsNoMatch, setContactsNoMatch] = useState(false);
 
   /* ── A164：扩展（Agent 技能 + MCP 服务）──────────────────────────────
    *
@@ -1834,6 +1840,9 @@ function AppContent() {
                 compact={compact}
                 onOpenCredential={handleOpenCredential}
                 onAddProvider={handleAddProvider}
+                keyword={contactsKeyword}
+                onKeywordChange={setContactsKeyword}
+                onNoMatchChange={setContactsNoMatch}
               />
             ))}
 
@@ -1867,7 +1876,9 @@ function AppContent() {
                     />
                   ) : (
                     /* 项目栏但一个都没选中：列表栏已经在说「还没有项目」，
-                       这里只交代一句「右边是什么」，不留一整块纯白。 */
+                       这里只交代一句「右边是什么」，不留一整块纯白。
+                       S4-1（审查报告）：零项目时右栏不再重复一遍空态，
+                       只留一句前瞻引导；有项目后这句话换回「选一个项目」。 */
                     <div
                       className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-2"
                       style={{
@@ -1877,13 +1888,13 @@ function AppContent() {
                       data-project-detail-empty
                     >
                       <p className="text-body-lg" style={{ color: 'var(--td-text-color-secondary)' }}>
-                        {projects.length === 0 ? '还没有项目' : '选一个项目'}
+                        {projects.length === 0 ? '选一个目录后，这里会显示它的会话' : '选一个项目'}
                       </p>
-                      <p className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                        {projects.length === 0
-                          ? '从左侧「+」选一个目录，它下面的会话会归到一起'
-                          : '左侧点一个项目，这里会显示它的记忆与全部会话'}
-                      </p>
+                      {projects.length > 0 && (
+                        <p className="text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                          左侧点一个项目，这里会显示它的记忆与全部会话
+                        </p>
+                      )}
                     </div>
                   )
                 ) : nav === 'extensions' ? (
@@ -1899,6 +1910,9 @@ function AppContent() {
                     agents={registry.agents}
                     loading={extDetail.loading}
                     error={extDetail.error}
+                    /* S5-1：零条目时右栏不再说「选一个扩展」（左侧一条都没有，
+                       没得选），改说前瞻引导。列表是否有货由这里递下去。 */
+                    hasItems={ext.items.length > 0}
                     onReload={() => void reloadExtDetail()}
                     onBack={compact ? handleBackToExtensions : undefined}
                     onSaved={() => void reloadExtList()}
@@ -1955,6 +1969,15 @@ function AppContent() {
                           agent={currentAgent}
                           fallbackTitle={currentSession.title || '新对话'}
                           isLoading={isLoading}
+                          // N-1（审查报告）：新建会话页顶栏不再预选 Agent ——
+                          // 空壳会话虽然建时就绑了默认 Agent，但用户还没选，
+                          // 顶栏顶着「Codex ● 在线」而正文却说「选择一个 Agent」，
+                          // 自相矛盾。只改**初始显示态**（消息仍为空时显示「新会话」），
+                          // 不改选择逻辑：首条消息发出后恢复正常头部。
+                          isNewChatShell={
+                            isMessagesLoaded(currentSession.id) &&
+                            currentSession.messages.length === 0
+                          }
                           scenario={currentScenario}
                           // A63：工作区徽标（方案二）。群聊有自己的头部，
                           // 那里不放工作区 —— 群成员各有各的 cwd，单个徽标
@@ -2074,7 +2097,22 @@ function AppContent() {
                     )}
                   </div>
                 ) : (
-                  <EmptyState onGoContacts={() => setNav('contacts')} nav={nav} />
+                  <MainEmptyState
+                    onGoContacts={() => setNav('contacts')}
+                    nav={nav}
+                    contactsNoMatch={contactsNoMatch}
+                    onClearContactsSearch={() => setContactsKeyword('')}
+                    onStartChat={
+                      registry.agents.some(a => a.status.availability === 'ready')
+                        ? () => {
+                            const first = registry.agents.find(
+                              a => a.status.availability === 'ready'
+                            );
+                            if (first) handleStartChatWith(first.id);
+                          }
+                        : undefined
+                    }
+                  />
                 )}
               </main>
           ) : null}
@@ -2153,26 +2191,59 @@ function AppContent() {
           </div>
         )}
 
-        {/* A132 审批浮层：挂在 App 层而不是会话页 —— 它必须**不随会话卸载**。
-            会话切走了，服务端那条流还在等答复，卡片跟着消失等于把人晾死。
-            自己 createPortal 到 body，所以放在这层不影响布局。 */}
-        <PermissionDock
-          currentSessionId={currentSessionId}
-          titleOf={id => sessions.find(s => s.id === id)?.title || '未知会话'}
-        />
+        {/* 审批卡已内嵌进消息流（2026-11-18，ui-review P-1）：不再在 App 层挂
+            浮层。数据源仍是全局 permissionStore，挂载点见 ChatMessages 里的
+            PermissionDock；切走的会话由列表角标与「等待授权」预览提醒。 */}
       </div>
     </div>
   );
 }
 
 /** 未选中会话时的空态 */
-function EmptyState({
+function MainEmptyState({
   onGoContacts,
   nav,
+  contactsNoMatch,
+  onClearContactsSearch,
+  onStartChat,
 }: {
   onGoContacts: () => void;
   nav: NavKey;
+  /** E-2：通讯录搜索无结果 —— 右侧要换成「没有匹配的 Agent」空态，
+      不再说与事实矛盾的「从左侧选一个 Agent 开始对话」。 */
+  contactsNoMatch?: boolean;
+  onClearContactsSearch?: () => void;
+  /** S3-1：「发起会话」主按钮（开始与第一个就绪 Agent 的会话） */
+  onStartChat?: () => void;
 }) {
+  if (nav === 'contacts') {
+    if (contactsNoMatch) {
+      return (
+        <div className="flex min-w-0 flex-1 items-center justify-center">
+          <EmptyState
+            icon={Search}
+            title="没有匹配的 Agent"
+            description="试试换个关键词，或清除搜索查看全部"
+            action="清除搜索"
+            onAction={onClearContactsSearch}
+          />
+        </div>
+      );
+    }
+    return (
+      <div className="flex min-w-0 flex-1 items-center justify-center">
+        {/* S3-1 / 共性 3：右侧空白改用统一空态组件（图标 + 标题 + 一行说明 +
+            「发起会话」主按钮），与项目 / 扩展 / 搜索无结果同一结构。 */}
+        <EmptyState
+          icon={MessagesSquare}
+          title="从左侧选一个 Agent 开始对话"
+          description="也可以点右上角 + 发起群聊，把几个 Agent 拉到一起干活"
+          action={onStartChat ? '发起会话' : undefined}
+          onAction={onStartChat}
+        />
+      </div>
+    );
+  }
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-4 text-center sm:px-8">
       {/* A37：需求「右侧区域仅保留标题和打开通讯录组件」。
@@ -2180,19 +2251,17 @@ function EmptyState({
           那段话在通讯录页也会出现（那边讲的是同一件事），
           两处都说等于都没说清；而这块区域本来就只是「空」，不需要装饰。 */}
       <h3 className="text-title font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-        {nav === 'contacts' ? '从左侧选一个 Agent 开始对话' : '选择一个会话，或发起新会话'}
+        选择一个会话，或发起新会话
       </h3>
-      {nav === 'chats' && (
-        <button
-          type="button"
-          onClick={onGoContacts}
-          className="tc-btn-brand mt-5"
-        >
-          {/* A37：去掉行尾的「→」。按钮本身有底色和圆角，已经明确是「可点」，
-              再挂一个箭头是重复的指示。 */}
-          打开通讯录
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={onGoContacts}
+        className="tc-btn-brand mt-5"
+      >
+        {/* A37：去掉行尾的「→」。按钮本身有底色和圆角，已经明确是「可点」，
+            再挂一个箭头是重复的指示。 */}
+        打开通讯录
+      </button>
     </div>
   );
 }

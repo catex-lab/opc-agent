@@ -169,7 +169,8 @@ ok((await memberPanel.count()) === 1, '展开后群聊右侧有成员栏');
 }
 {
   const gHeaderText = await page.locator('main header').first().innerText();
-  ok(gHeaderText.includes('（3）'), '群名后显示人数「（3）」', gHeaderText.replace(/\n/g, ' ').slice(0, 40));
+  // S2-2（审查报告）：群名与成员信息合并为「群名（N 人 · M 在线）」一处说完。
+  ok(gHeaderText.includes('（3 人'), '群名后显示人数（群名（N 人 · M 在线））', gHeaderText.replace(/\n/g, ' ').slice(0, 40));
   ok(gHeaderText.includes('2 在线'), '头部显示在线人数');
 }
 // 成员栏里悬停也能出名片
@@ -301,7 +302,7 @@ ok(
 console.log('\n[5] 通讯录：搜索框 + 右侧添加 + 两个 Tab');
 await page.locator('nav button[aria-label="通讯录"]').click();
 await page.waitForTimeout(700);
-ok((await page.getByPlaceholder('搜索 AGENT、群聊').count()) === 1, '搜索框在位');
+ok((await page.getByPlaceholder('搜索 Agent、群聊').count()) === 1, '搜索框在位');
 // ⚠️ 必须 exact：`+` 菜单里有一项叫「添加模型厂商」，而 getByRole 的 name 是**子串匹配**，
 // 菜单一展开（下面第 311 行要再点一次关掉它）就会同时命中两个，抛 strict mode violation。
 // 这不是选择器写得松，是「添加」这个词被两处共用 —— 所以两处都必须精确。
@@ -314,7 +315,7 @@ await shot('qq-contacts-add');
 await page.getByRole('button', { name: '添加', exact: true }).click();
 {
   const labels = await page.getByRole('tab').evaluateAll(els => els.map(e => e.textContent.trim()));
-  ok(labels.join('|') === 'AGENT|群聊', 'Tab = AGENT / 群聊（A72：联系人 → AGENT）', labels.join(' | '));
+  ok(labels.join('|') === 'Agent|群聊', 'Tab = Agent / 群聊（S3-4：首字母大写）', labels.join(' | '));
 }
 
 // ============= [6] 视觉令牌 =============

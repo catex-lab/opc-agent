@@ -250,7 +250,8 @@ console.log('\n[2] 分区导航：只剩图标 + 标签');
     models: '模型清单',
     // A137：A129 改名（自定义 Agent → 助手人设）。上一行注释说「两处都要改」，
     // 但 A129 那次两处都漏了 —— 说明「靠注释提醒」不管用，只能靠链真的跑起来才会发现。
-    agents: '助手人设',
+    // T7-1（UI 优化 2026-11-18）：随效果图 07~14 全量再度改名「自定义助手」。
+    agents: '自定义助手',
     about: '关于与隐私',
   };
   ok(nav.length === Object.keys(LABELS).length, `${Object.keys(LABELS).length} 个分区都在`, String(nav.length));
@@ -362,7 +363,11 @@ console.log('\n[5] 自定义 Agent：去小字');
   ok(!text.includes('创建和管理自定义 Agent'), '标题下的说明已删');
   ok(!text.includes('专门处理重构与代码审查'), 'agent 卡片里没有描述小字');
   ok(text.includes('我的代码助手'), 'agent 名称还在');
-  ok(!text.includes('专注于编程和代码相关任务'), '内置助手的描述小字也去掉了');
+  // T7-2（UI 优化 2026-11-18）：模板卡描述从悬停 title 挪为常驻小字 —— 判据随
+  // 13 号效果图翻转：描述必须在（原 A37 断言「描述也去掉了」）。「我的 Agent」
+  // 列表行仍无描述小字（上一条断言继续钉住）。
+  ok(text.includes('专注于编程和代码相关任务'), '模板卡描述小字常驻可见（T7-2，原 A37 只留悬停）');
+  ok(text.includes('使用模板'), '模板卡右侧有「使用模板」入口（T7-2）');
 
   // ── [6] 创建按钮 ──
   const btn = await page.evaluate(() => {
@@ -381,24 +386,27 @@ console.log('\n[5] 自定义 Agent：去小字');
   });
   ok(!!btn, '存在创建按钮');
   if (btn) {
-    ok(btn.text === '创建 Agent', '文案是「创建 Agent」', btn.text);
+    // T7-1（UI 优化 2026-11-18）：文案随分区改名，A37 的尺寸/描边断言不受影响。
+    ok(btn.text === '新建自定义助手', '文案是「新建自定义助手」（T7-1，原「创建 Agent」）', btn.text);
     ok(btn.borderStyle !== 'dashed', '不再是虚线描边', btn.borderStyle);
     ok(btn.width < btn.parentWidth * 0.6, '不再撑满整栏（组件收小）', `${btn.width} / ${btn.parentWidth}`);
     ok(btn.height <= 36, '高度是小按钮规格', `${btn.height}px`);
   }
 
   // ── [7] 内置四助手不彩色 ──
+  // T7-2 后模板卡里多了描述与「使用模板」，按 data-agent-template 定位卡片
+  //（不再能靠 innerText 全等匹配到裸名字）；图标盒仍是卡片的第一个 div。
   const tiles = await page.evaluate(() => {
     const names = ['代码助手', '写作助手', '翻译助手', '创意助手'];
     const out = [];
-    for (const el of document.querySelectorAll('[data-settings-panel="agents"] div')) {
+    for (const el of document.querySelectorAll('[data-settings-panel="agents"] [data-agent-template]')) {
       const t = (el.innerText || '').trim();
-      if (names.includes(t)) {
-        const iconBox = el.querySelector('div');
-        if (!iconBox) continue;
-        const cs = getComputedStyle(iconBox);
-        out.push({ name: t, bg: cs.backgroundColor, color: cs.color });
-      }
+      const name = names.find(n => t.startsWith(n));
+      if (!name) continue;
+      const iconBox = el.querySelector('div');
+      if (!iconBox) continue;
+      const cs = getComputedStyle(iconBox);
+      out.push({ name, bg: cs.backgroundColor, color: cs.color });
     }
     return out;
   });
@@ -478,9 +486,10 @@ console.log('\n[9] 通讯录右侧栏：无小字');
   });
   ok(!!tabs, '找到两个 Tab');
   if (tabs) {
-    ok(tabs.texts.join('/') === 'AGENT/群聊', 'Tab 文案正确（A72：联系人 → AGENT）', tabs.texts.join(' / '));
+    // S3-4（审查报告）：Tab 统一为「Agent / 群聊」（首字母大写）。
+    ok(tabs.texts.join('/') === 'Agent/群聊', 'Tab 文案正确（A72 → S3-4：Agent / 群聊）', tabs.texts.join(' / '));
     ok(Math.abs(tabs.widths[0] - tabs.widths[1]) <= 1, '两个 Tab 等宽（平均分布）', tabs.widths.join(' vs '));
-    ok(tabs.lefts[0] < tabs.lefts[1], '顺序是 AGENT 在左');
+    ok(tabs.lefts[0] < tabs.lefts[1], '顺序是 Agent 在左');
     // 两栏的分界应落在容器中点附近（±2px）
     ok(Math.abs((tabs.lefts[1] - tabs.lefts[0]) - tabs.widths[0]) <= 2, '两栏紧邻、各占一半', `间距 ${tabs.lefts[1] - tabs.lefts[0]} vs 宽 ${tabs.widths[0]}`);
   }

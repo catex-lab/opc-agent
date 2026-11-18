@@ -852,7 +852,9 @@ export const AVAILABILITY_META: Record<
     label: '在线', color: 'var(--tc-status-ok)', dot: 'var(--tc-status-dot-ok)', dotShape: 'solid',
   },
   'needs-auth': {
-    label: '未登录', color: 'var(--tc-status-warn)', dot: 'var(--tc-status-warn)', dotShape: 'hollow',
+    // S3-2（审查报告）：「未登录」原来是空心圆，与「在线」是两套视觉语言；
+    // 现在与「在线」同形的实心小圆点，只以颜色区分（绿/橙）。
+    label: '未登录', color: 'var(--tc-status-warn)', dot: 'var(--tc-status-warn)', dotShape: 'solid',
   },
   'needs-setup': {
     label: '需修复', color: 'var(--tc-status-danger)', dot: 'var(--tc-status-danger)', dotShape: 'hollow',

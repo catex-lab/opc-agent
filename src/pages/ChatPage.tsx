@@ -867,6 +867,9 @@ export function ChatPage({
                 // A36：后台任务胶囊点「查看」时跳到那个还在跑的会话
                 onOpenSession={sessionId => navigate(`/chat/${sessionId}`)}
                 currentSessionId={currentSessionId}
+                // 审批卡卡头「{name} 请求」（2026-11-18 内嵌化）：卡片长在
+                // 消息流里，会话名由这里递下去
+                sessionTitle={currentSession?.title ?? ''}
                 // A97：验证面板要按这个目录探测「能跑哪些检查」
                 sessionCwd={currentSession?.cwd}
               />

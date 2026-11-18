@@ -292,8 +292,10 @@ export function ModelSelectPopup({
     const max = window.innerWidth - PANEL_WIDTH - 12;
     return Math.max(12, Math.min(anchor.left, max));
   }, [anchor.left]);
-  // 贴在触发器上方（底部工具栏在屏幕底部，向上开）
-  const bottom = window.innerHeight - anchor.top + 6;
+  // 贴在触发器上方（底部工具栏在屏幕底部，向上开）。
+  // M-2（审查报告）：原来 +6 会让浮层底边压进触发器 6px，遮住输入框上半部；
+  // 现在浮层底边与触发器顶边留 8px 间隙（向上弹出时不遮挡正在输入的内容）。
+  const bottom = window.innerHeight - anchor.top - 8;
 
   return createPortal(
     <div
@@ -344,8 +346,10 @@ export function ModelSelectPopup({
         >
           <Info size={13} style={{ color: 'var(--td-text-color-placeholder)' }} data-model-popup-info />
         </Tooltip>
+        {/* M-4（审查报告）：模型总数 ≤5 时不显示计数 —— 两个模型配一个「2」
+            是分组开销大于信息量；>5 时计数才值得占一个角。 */}
         <span className="ml-auto text-caption tabular-nums" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          {manual ? '手动' : models.length}
+          {manual ? '手动' : models.length > 5 ? models.length : null}
         </span>
       </div>
 
@@ -549,21 +553,25 @@ export function ModelSelectPopup({
           className="shrink-0"
           style={{ borderTop: '1px solid var(--tc-divider)' }}
         >
-          <div className="flex items-center gap-1.5 px-3 pt-2 pb-1">
-            <span
-              className="text-caption font-medium"
-              style={{ color: 'var(--td-text-color-secondary)' }}
-            >
-              {wbOnlyGroup ? 'WorkBuddy 自定义模型' : '本机 CLI 配置'}
-            </span>
-            <span
-              className="text-caption tabular-nums"
-              style={{ color: 'var(--td-text-color-placeholder)' }}
-            >
-              {configuredModels.length}
-            </span>
-          </div>
-          <div className="max-h-[160px] overflow-y-auto pb-1">
+          {/* M-4：同主清单 —— 组内 ≤5 条时不显示分组标题与计数，直接列模型；
+              行上各自的「未验证」标与来源行已经说清这些是什么。 */}
+          {configuredModels.length > 5 && (
+            <div className="flex items-center gap-1.5 px-3 pt-2 pb-1">
+              <span
+                className="text-caption font-medium"
+                style={{ color: 'var(--td-text-color-secondary)' }}
+              >
+                {wbOnlyGroup ? 'WorkBuddy 自定义模型' : '本机 CLI 配置'}
+              </span>
+              <span
+                className="text-caption tabular-nums"
+                style={{ color: 'var(--td-text-color-placeholder)' }}
+              >
+                {configuredModels.length}
+              </span>
+            </div>
+          )}
+          <div className={configuredModels.length > 5 ? 'max-h-[160px] overflow-y-auto pb-1' : 'max-h-[160px] overflow-y-auto py-1'}>
             {configuredModels.map((m) => (
               <button
                 key={m.id}
@@ -627,17 +635,40 @@ export function ModelSelectPopup({
             带「未验证」的模型选中前会先跑一次 CLI 确认（花少量 token）。
           </p>
         )}
-        {/* P0：清单自报来源与时间。老服务端没给就明说「未知」，
-            绝不因为拿不到数据就省掉这一行 —— 省掉反而最像「实时」。 */}
-        <p
-          className="mb-1 px-2 text-caption leading-4 break-words"
-          style={{ color: 'var(--td-text-color-placeholder)' }}
-          title={asProvenance(provenance)?.note}
-          data-model-popup-provenance
-          data-provenance-verified={asProvenance(provenance)?.verified ? '1' : '0'}
-        >
-          {describeProvenance(provenance)}
-        </p>
+        {/* P0：清单自报来源与时间。老服务端没给就明说「从未刷新」——
+            绝不因为拿不到数据就省掉这一行，省掉反而最像「实时」。
+            M-1（审查报告）：「数据来源与时间未知」是没法行动的反馈，
+            改成「上次刷新：从未刷新 · 点此刷新」，刷新动作与底部
+            「添加模型（去设置）」同源（设置里刷新枚举）。 */}
+        {asProvenance(provenance) ? (
+          <p
+            className="mb-1 px-2 text-caption leading-4 break-words"
+            style={{ color: 'var(--td-text-color-placeholder)' }}
+            title={asProvenance(provenance)?.note}
+            data-model-popup-provenance
+            data-provenance-verified={asProvenance(provenance)?.verified ? '1' : '0'}
+          >
+            {describeProvenance(provenance)}
+          </p>
+        ) : (
+          <p
+            className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-2 text-caption leading-4"
+            style={{ color: 'var(--td-text-color-placeholder)' }}
+            data-model-popup-provenance
+            data-provenance-verified="0"
+          >
+            <span>上次刷新：从未刷新</span>
+            <button
+              type="button"
+              className="underline underline-offset-2 transition-colors hover:opacity-80"
+              style={{ color: 'var(--td-brand-color)' }}
+              onClick={onAddModel}
+              data-model-popup-refresh
+            >
+              点此刷新
+            </button>
+          </p>
+        )}
         {readonly || manual ? (
           /* 只读时「添加模型」必须消失：那个按钮指向设置页的刷新枚举，
              而这份清单根本不来自枚举 —— 摆着就是一个点了没用的控件。
@@ -661,7 +692,9 @@ export function ModelSelectPopup({
             style={{ color: 'var(--td-text-color-primary)' }}
           >
             <Plus size={14} />
-            添加模型
+            {/* M-3（审查报告）：去向写明 —— 这个按钮不是就地新建模型，
+                而是跳「设置 → 模型清单」刷新枚举。 */}
+            添加模型（去设置）
           </button>
         )}
       </div>

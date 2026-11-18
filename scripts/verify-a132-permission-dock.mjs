@@ -1,9 +1,9 @@
 /**
- * A132 审批浮层的浏览器打靶 —— 第一层：卡片真的落到了页面上，且命令整段可读。
+ * A132 审批卡（2026-11-18 起为消息流内嵌形态）的浏览器打靶 ——
+ * 第一层：卡片真的落到了页面上，且命令整段可读。
  *
- * 为什么这一层必须真开浏览器：Dock 是 `createPortal(…, document.body)`，它渲染在
- * React 树之外；只看源码（甚至只看 jsdom）都证明不了「用户能看见」。而「命令被截成
- * 省略号」这类缺陷恰恰只在有宽度约束的真实布局里才出现 —— 容器宽 360px，
+ * 为什么这一层必须真开浏览器：只看源码（甚至只看 jsdom）都证明不了「用户能看见」。
+ * 而「命令被截成省略号」这类缺陷恰恰只在有宽度约束的真实布局里才出现 ——
  * 一条 260 字符的 PowerShell 命令必然折行，`text-overflow: ellipsis` 在真机上
  * 表现为「看起来完整、实际少了半条命令」，用户点允许时并不知道自己批了什么。
  *
@@ -165,18 +165,19 @@ async function sendMessage(page) {
     .locator('t-chat-sender button, [class*="chat-input__actions"] button')
     .last()
     .click({ timeout: 5000 });
-  // 等的是「有一个答复按钮出现」而不是「Dock 出现」：这一步要证明的是
-  // 请求真的被前端收到并渲染成可操作的卡，Dock 没接线时它由旧内联卡满足，
-  // 后面的断言才会因为「卡片不在 Dock 里」而红 —— 这样红的原因才是准的。
+  // 等的是「有一个答复按钮出现」而不是「卡片宿主出现」：这一步要证明的是
+  // 请求真的被前端收到并渲染成可操作的卡，宿主没接线时它无从出现，
+  // 后面的断言才会因为「卡片不在消息流里」而红 —— 这样红的原因才是准的。
   await page.waitForSelector('[data-permission-option]', { timeout: 8000 });
   await page.waitForTimeout(250);
 }
 
-// ============= [1] 卡片落在 Dock 上，命令整段可读 =============
-console.log('\n[1] Dock 承载审批卡，长命令默认 4 行且不丢字');
+// ============= [1] 卡片内嵌在消息流里，命令整段可读 =============
+console.log('\n[1] 审批卡内嵌在消息流（输入框完整可见），长命令默认 4 行且不丢字');
 {
-  // 200 个 x 保证无论字号怎么调都必然折行超过 4 行
-  const LONG = `$root = "C:\\$Recycle.Bin"; Get-ChildItem -Force -Directory | ForEach-Object { ${'x'.repeat(200)} }`;
+  // 800 个 x：卡片在消息列里比原 360px 浮层宽得多（720px 列），
+  // 200 个 x 只折 3 行 —— 数量按「720px 宽 × 12px 字号」校准，保证必超 4 行
+  const LONG = `$root = "C:\\$Recycle.Bin"; Get-ChildItem -Force -Directory | ForEach-Object { ${'x'.repeat(800)} }`;
 
   const { ctx, page } = await newPage([
     {
@@ -190,21 +191,43 @@ console.log('\n[1] Dock 承载审批卡，长命令默认 4 行且不丢字');
   await sendMessage(page);
 
   const dockCount = await page.locator('[data-permission-dock]').count();
-  ok(dockCount === 1, '浮层挂在 body 上（createPortal 生效）', `count=${dockCount}`);
+  ok(dockCount === 1, '审批卡宿主恰有一个（内嵌在消息流里）', `count=${dockCount}`);
+
+  // P-1 的核心：卡片是文档流里的一张卡，不是 fixed 浮层；且长在消息列表容器内。
+  // 输入框在 shadow root 里（document.querySelectorAll 穿不透），几何一律走
+  // Playwright locator（默认穿透 open shadow root）量。
+  const shape = await (async () => {
+    const dockBox = await page.locator('[data-permission-dock]').first().boundingBox();
+    const taBox = await page.locator('textarea').first().boundingBox();
+    const position = await page.evaluate(() => getComputedStyle(document.querySelector('[data-permission-dock]')).position);
+    const inMsgList = await page.evaluate(() => !!document.querySelector('[data-permission-dock]')?.closest('[data-msg-list]'));
+    return {
+      position,
+      inMsgList,
+      taBox,
+      // 「输入框完整可见」的可观测量：卡片不遮输入框 —— 两者在竖直方向不相交
+      overlap: !!dockBox && !!taBox && dockBox.top < taBox.bottom && dockBox.bottom > taBox.top,
+    };
+  })();
+  ok(shape.position !== 'fixed', '卡片不是 fixed 浮层（内嵌形态）', `position=${shape.position}`);
+  ok(shape.inMsgList, '卡片长在消息列表容器内（data-msg-list 后代）');
+  ok(!!shape.taBox && shape.taBox.height > 0, '输入框在文档里且可见', JSON.stringify(shape.taBox));
+  ok(!shape.overlap, 'P-1：输入框完整可见（卡片与输入框不相交）');
 
   const card = page.locator('[data-permission-card="q1"]');
   const cardCount = await card.count();
   const visible = cardCount > 0 && (await card.first().isVisible());
-  ok(visible, 'Dock 里的审批卡可见', `count=${cardCount}`);
+  ok(visible, '消息流里的审批卡可见', `count=${cardCount}`);
 
   if (!visible) {
     // 不是「优雅跳过」：卡片不在页面上就是没做到，必须记红
     ok(false, '命令整段在 DOM 里，没有被截成省略号', '卡片未渲染，无从测量');
     ok(false, '默认最多 4 行，不是一眼望不到头', '卡片未渲染，无从测量');
+    ok(false, '超出 4 行的命令有「展开全部」', '卡片未渲染，无从测量');
   } else {
     const cmd = page.locator('[data-permission-card="q1"] [data-permission-cmd]');
     const shown = await cmd.innerText();
-    ok(shown.includes('x'.repeat(200)), '命令整段在 DOM 里，没有被截成省略号', `尾部 ${shown.slice(-12)}`);
+    ok(shown.includes('x'.repeat(800)), '命令整段在 DOM 里，没有被截成省略号', `尾部 ${shown.slice(-12)}`);
 
     // 4 行上限从令牌算：--text-secondary × line-height 1.5 × 4，加 padding。
     // 不写 78/94 这种魔数 —— 改字号时这里要跟着算出来才对。
@@ -228,12 +251,18 @@ console.log('\n[1] Dock 承载审批卡，长命令默认 4 行且不丢字');
       '默认恰好 4 行，不是一眼望不到头',
       `${lines.toFixed(2)} 行（高 ${Math.round(m.h)}px / 行高 ${m.lh}px / 内边距 ${m.pad}px）`
     );
+
+    // P-4：长命令才渲染「展开全部」；[6] 的短命令卡里这颗按钮必须缺席
+    ok(
+      (await page.locator('[data-permission-card="q1"] [data-permission-cmd-toggle]').count()) === 1,
+      '超出 4 行的命令有「展开全部」'
+    );
   }
 
   await page.screenshot({ path: join(OUT, 'dock-long-command.png'), fullPage: false });
 
-  // 四档中文标签在 360px 宽的浮层里排得下吗？排不下会被 `overflow:hidden` 裁掉，
-  // 而「本会话始终允许」被裁半个字，用户就分不清它是哪一档 —— 这颗还是权限最大的那颗。
+  // 决策按钮在消息列宽度里排得下吗？排不下会换行（flex-wrap），但绝不允许
+  // 横向溢出把最右一颗裁掉 —— 那颗还是权限最大的「永久允许」。
   const fit = await page.evaluate(() => {
     const dock = document.querySelector('[data-permission-dock]');
     const btns = [...document.querySelectorAll('[data-permission-option]')];
@@ -247,16 +276,16 @@ console.log('\n[1] Dock 承载审批卡，长命令默认 4 行且不丢字');
   });
   ok(
     fit.lastRight <= fit.dockRight - 4,
-    '最右一颗按钮没有顶到浮层边缘（不被裁掉）',
-    `右缘 ${Math.round(fit.lastRight)} / 浮层 ${Math.round(fit.dockRight)}`
+    '最右一颗按钮没有顶到卡片边缘（不被裁掉）',
+    `右缘 ${Math.round(fit.lastRight)} / 卡片 ${Math.round(fit.dockRight)}`
   );
-  eq(fit.clipped, 0, '浮层内容没有横向溢出（scrollWidth 等于 clientWidth）');
+  eq(fit.clipped, 0, '卡片内容没有横向溢出（scrollWidth 等于 clientWidth）');
 
   await ctx.close();
 }
 
-// ============= [2] 切走会话：卡不消失，角标提醒 =============
-console.log('\n[2] 切走会话后未答复项不丢，列表上有「等授权」角标');
+// ============= [2] 切走会话：卡不串台，角标 + 预览提醒 =============
+console.log('\n[2] 切走会话后：卡留在自己的会话流里，列表用角标 + 「等待授权」预览提醒');
 {
   const { ctx, page } = await newPage([
     {
@@ -269,28 +298,32 @@ console.log('\n[2] 切走会话后未答复项不丢，列表上有「等授权�
   await page.waitForTimeout(900);
   await sendMessage(page);
 
-  // 切到另一个会话。**必须真的切走**，否则「切走之后还在」这句话根本没被验证 ——
+  // 切到另一个会话。**必须真的切走**，否则「切走之后」这句话根本没被验证 ——
   // 所以下面用 URL 自证，不靠「点了就假定切了」。
   await page.locator('[data-conversation-item="s2"]').click();
   await page.waitForTimeout(400);
   ok(page.url().includes('/chat/s2'), '确实切到了另一个会话', page.url().split('/chat/')[1] ?? page.url());
 
-  // 旧实现在这一步就什么都不剩了：卡随 ChatMessages 卸载，槽位也跟着没了。
-  const stillThere = await page.locator('[data-permission-card="q1"]').count();
-  ok(stillThere === 1, '切走会话后审批卡仍在（Dock 不随会话卸载）', `count=${stillThere}`);
+  // 内嵌形态（2026-11-18）：一张卡只属于它自己的会话流。q1 是 s1 的请求，
+  // 不许串台画进 s2 的消息流里 —— 那正是「以为批的是眼前这个会话」的旧缺陷反面。
+  const there = await page.locator('[data-permission-card="q1"]').count();
+  ok(there === 0, 's1 的审批卡不串台进当前会话（s2）的消息流', `count=${there}`);
 
   const badge = await page.locator('[data-permission-waiting="s1"]').count();
   ok(badge === 1, '被切走的会话项上有「等授权」角标', `count=${badge}`);
 
-  // 卡上要写清「这不是当前会话」，否则用户会以为自己批的是眼前这个会话的请求
-  const label = await page.locator('[data-permission-card="q1"]').innerText();
-  ok(/非当前会话/.test(label), '卡上标明「非当前会话」', label.replace(/\s+/g, ' ').slice(0, 40));
+  // P-5：列表预览不再说「还没有消息」，而是「等待授权：{工具} {命令}」——
+  // 角标说「要你动手」，预览说「动什么」。
+  const preview = await page.locator('[data-conversation-item="s1"]').innerText();
+  ok(/等待授权/.test(preview) && /rm -rf build/.test(preview),
+    'P-5：s1 的预览是「等待授权：执行命令 rm -rf build」',
+    preview.replace(/\s+/g, ' ').slice(0, 60));
 
   await page.screenshot({ path: join(OUT, 'dock-cross-session.png'), fullPage: false });
   await ctx.close();
 }
 
-// ============= [3] 队列：两条并存，一次只展开队首 =============
+// ============= [3] 队列：两条并存，一次只画队首 =============
 console.log('\n[3] 两条待授权并存，后来的不顶掉前面的');
 {
   const mk = (id, cmd) => ({
@@ -303,23 +336,23 @@ console.log('\n[3] 两条待授权并存，后来的不顶掉前面的');
   await page.waitForTimeout(900);
   await sendMessage(page);
 
-  eq(await page.locator('[data-permission-card]').count(), 1, '[验收 1] 一次只展开队首一张');
-  const toggle = await page.locator('[data-permission-queue-toggle]').innerText();
-  eq(toggle.trim(), '▾ 还有 1 条待授权', '[验收 1] 其余折成计数条');
+  eq(await page.locator('[data-permission-card]').count(), 1, '[验收 1] 一次只画队首一张');
+  const count = await page.locator('[data-permission-queue-count]').innerText();
+  ok(/还有 1 条待授权/.test(count.trim()), '[验收 1] 其余折成一行计数说明', count.trim());
   eq(await page.locator('[data-permission-card="q1"]').count(), 1, '队首是先来的那条（组内先来先批）');
 
   // 答掉队首 → 队列必须往前顶，而不是留个空壳
   await page.locator('[data-permission-card="q1"] [data-permission-option="allow_once"]').click();
   await page.waitForTimeout(300);
   eq(await page.locator('[data-permission-card="q2"]').count(), 1, '答掉队首后第二条顶上来');
-  eq(await page.locator('[data-permission-queue-toggle]').count(), 0, '只剩一条时不再画计数条');
+  eq(await page.locator('[data-permission-queue-count]').count(), 0, '只剩一条时不再画计数行');
   eq(posts[0]?.requestId, 'q1', '答复发的是队首那条的 requestId');
 
   await ctx.close();
 }
 
-// ============= [4] 键盘：Esc 只收起，Enter 才答复 =============
-console.log('\n[4] 快捷键：Esc 收起零请求，Enter 才是「允许」');
+// ============= [4] 键盘：Esc 零请求，Enter 才答复 =============
+console.log('\n[4] 快捷键：Esc 不发答复，Enter 才是「仅本次允许」');
 {
   const { ctx, page, posts } = await newPage([
     {
@@ -333,21 +366,19 @@ console.log('\n[4] 快捷键：Esc 收起零请求，Enter 才是「允许」');
   await sendMessage(page);
 
   const before = posts.length;
+  // 内嵌卡没有「收起」态：Esc 不再有关掉任何东西的职责，但它**依然不许**变成答复。
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
-  eq(await page.locator('[data-permission-card]').count(), 0, '[验收 4] Esc 后 Dock 收起');
+  eq(await page.locator('[data-permission-card]').count(), 1, '[验收 4] Esc 后卡仍在（内嵌卡没有收起态）');
   eq(posts.length, before, '[验收 4] Esc 没有发出任何 /api/permission-response');
-  ok(await page.locator('[data-permission-dock-open]').isVisible(), '收起后留一个「点此展开」的窄条');
 
   // 焦点在输入框里按 Enter：那是「发送消息」，绝不能变成「批准命令」
-  await page.locator('[data-permission-dock-open]').click();
-  await page.waitForTimeout(150);
   await page.locator('textarea').first().focus();
   await page.keyboard.press('Enter');
   await page.waitForTimeout(300);
   eq(posts.length, before, '[验收 4b] 焦点在输入框时 Enter 不答复（打字打一半不会把命令批了）');
 
-  // 焦点不在输入框时 Enter = 队首的 allow 档
+  // 焦点在卡上（非按钮）时 Enter = 队首的第一档 allow
   await page.locator('[data-permission-card="q1"]').click({ position: { x: 8, y: 8 } });
   await page.keyboard.press('Enter');
   await page.waitForTimeout(300);
@@ -357,8 +388,8 @@ console.log('\n[4] 快捷键：Esc 收起零请求，Enter 才是「允许」');
   await ctx.close();
 }
 
-// ============= [5] 命中测试：点正文不关闭（真实鼠标坐标） =============
-console.log('\n[5] 点浮层外面不会关闭审批卡（没有「点外面」这种答复）');
+// ============= [5] 内嵌卡不是浮层：点正文没有任何「关闭」语义 =============
+console.log('\n[5] 点消息区不会「关掉」审批卡（没有「点外面」这种答复），也不再是 overlay');
 {
   const { ctx, page } = await newPage([
     {
@@ -371,23 +402,26 @@ console.log('\n[5] 点浮层外面不会关闭审批卡（没有「点外面」�
   await page.waitForTimeout(900);
   await sendMessage(page);
 
-  // 用真实鼠标坐标，并用 elementFromPoint 自证「这一下确实点在 Dock 外面」——
+  // 用真实鼠标坐标，并用 elementFromPoint 自证「这一下确实点在卡片外面」——
   // 否则「点外面没关闭」可能只是因为压根没点在外面。
   const probe = await page.evaluate(() => {
     const el = document.elementFromPoint(300, 300);
     return { inDock: !!el?.closest('[data-permission-dock]'), tag: el?.tagName ?? '' };
   });
-  ok(!probe.inDock, '自证：坐标 (300,300) 落在 Dock 之外', `命中 ${probe.tag}`);
+  ok(!probe.inDock, '自证：坐标 (300,300) 落在卡片之外', `命中 ${probe.tag}`);
   await page.mouse.click(300, 300);
   await page.waitForTimeout(200);
   ok(await page.locator('[data-permission-card]').isVisible(), '[验收 5] 点正文后审批卡仍在');
-  eq(await page.locator('[data-permission-dock]').count(), 1, '[验收 10] Dock 带 data-opc-overlay 哨兵');
+  eq(await page.locator('[data-permission-dock]').count(), 1, '[验收 10] 卡片宿主哨兵仍在');
+  // 内嵌卡不是 overlay：不再带 data-opc-overlay 哨兵（2026-11-18 起浮层退役）
+  eq(await page.locator('[data-permission-dock][data-opc-overlay]').count(), 0,
+    '内嵌卡不再带 data-opc-overlay 哨兵（不是浮层）');
 
   await ctx.close();
 }
 
-// ============= [6] 没有超时不伪造；404 不静默丢项 =============
-console.log('\n[6] ACP 无 expiresAt → 「无超时」；404 → 卡留下并说明原因');
+// ============= [6] 没有超时写「等待你的决定」；404 不静默丢项 =============
+console.log('\n[6] ACP 无 expiresAt → 「等待你的决定」（P-3）；404 → 卡留下并说明原因');
 {
   const { ctx, page } = await newPage([
     {
@@ -401,7 +435,11 @@ console.log('\n[6] ACP 无 expiresAt → 「无超时」；404 → 卡留下并�
   await page.waitForTimeout(900);
   await sendMessage(page);
   const text = await page.locator('[data-permission-card="acp1"]').innerText();
-  ok(/无超时/.test(text), '[验收 7] 没下发 expiresAt 就写「无超时」，不伪造倒计时', text.replace(/\s+/g, ' ').slice(0, 40));
+  ok(/等待你的决定/.test(text), '[验收 7] 没下发 expiresAt 就写「等待你的决定」，不伪造倒计时也不写「无超时」', text.replace(/\s+/g, ' ').slice(0, 40));
+  ok(!/无超时/.test(text), '[验收 7] 「无超时」字样不再出现（P-3）');
+  // P-4 的另一面：单行命令装得下，「展开全部」不许出现（有地方可展开的假话不说）
+  eq(await page.locator('[data-permission-card="acp1"] [data-permission-cmd-toggle]').count(), 0,
+    'P-4：装得下的命令不渲染「展开全部」');
   await ctx.close();
 }
 {
@@ -444,7 +482,7 @@ console.log('\n[7] 控制台');
 await browser.close();
 server.close();
 
-console.log(`\nA132 审批浮层（第 1 层）：${checks.total - failures.length}/${checks.total} 通过`);
+console.log(`\nA132 审批卡内嵌形态（第 1 层）：${checks.total - failures.length}/${checks.total} 通过`);
 if (failures.length) {
   console.log('失败项：');
   for (const f of failures) console.log(`  · ${f}`);

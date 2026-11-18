@@ -82,7 +82,7 @@ export function InfoHint({ items, text, label, title, note, className, warn }: I
     const panel = panelRef.current;
     if (!trigger || !panel) return;
     const rect = trigger.getBoundingClientRect();
-    const width = Math.min(320, window.innerWidth - 16);
+    const width = Math.min(360, window.innerWidth - 16);
     const height = panel.offsetHeight;
     const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
     let top = rect.bottom + 8;
@@ -185,7 +185,7 @@ export function InfoHint({ items, text, label, title, note, className, warn }: I
                 position: 'fixed',
                 left: pos?.left ?? 0,
                 top: pos?.top ?? 0,
-                width: 320,
+                width: 360,
                 maxWidth: 'calc(100vw - 16px)',
                 visibility: pos ? 'visible' : 'hidden',
                 zIndex: 1000,

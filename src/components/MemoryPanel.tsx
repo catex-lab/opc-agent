@@ -272,56 +272,28 @@ export function MemoryPanel() {
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-2">
-        <h2 className="text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-          {t('settings.memory.title')}
-        </h2>
+      {/* T2-1（P0）：记忆的生效边界改常驻提示条，置于统计条上方 —— 原本藏在标题旁的
+          橙色 ⓘ 里，用户写了半天记忆却对 CLI 类 Agent 完全无效而不知（A19：重要信息
+          不应只靠弱悬停承载）。完整细节收进条内那枚 ⓘ（精简到 ≤40 字的悬停版）。 */}
+      <div
+        className="mb-4 flex items-center gap-2 rounded-lg px-3 py-2"
+        style={{
+          backgroundColor: 'color-mix(in srgb, var(--td-warning-color) 8%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--td-warning-color) 28%, transparent)',
+        }}
+        data-memory-injection-banner
+      >
         <InfoHint
           warn
           label={t('settings.memory.injectionHintLabel')}
           text={t('settings.memory.injectionHint')}
         />
-      </div>
-
-      {/* A98：作用域切换 */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <span className="text-xs" style={{ color: 'var(--td-text-color-secondary)' }}>
-          {t('settings.memory.scope')}
+        <span className="text-secondary" style={{ color: 'var(--tc-warning-text)' }}>
+          {t('settings.memory.injectionBanner')}
         </span>
-        {/* 英文的「Global (shared by all projects)」比中文长一半：给下拉多留 40px，
-            中文仍是 260px，不改变既有布局 */}
-        <div style={{ width: locale === 'en' ? 300 : 260 }}>
-          <Select
-            value={projectPath}
-            onChange={v => {
-              setProjectPath(String(v ?? ''));
-              setEditing(null);
-              setHits([]);
-            }}
-            options={[
-              { label: t('settings.memory.scopeGlobal'), value: '' },
-              ...projects.map(p => ({
-                label: t('settings.memory.scopeProject', { name: p.name, n: p.sessionCount }),
-                value: p.path,
-              })),
-            ]}
-            placeholder={t('settings.memory.scopePlaceholder')}
-          />
-        </div>
-        <InfoHint
-          label={t('settings.memory.scopeHintLabel')}
-          text={t('settings.memory.scopeHint')}
-        />
-        {isProject && (
-          <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-            {projectStats?.exists
-              ? t('settings.memory.projectHasMemory')
-              : t('settings.memory.projectNoMemory')}
-          </span>
-        )}
       </div>
 
-      {/* 统计条 */}
+      {/* 统计条 —— T2-4：删掉「核心记忆 0 / 800 token」，预算只在编辑器下方数一次 */}
       <div
         className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-lg px-3 py-2 text-xs"
         style={{ backgroundColor: 'var(--td-bg-color-container)', color: 'var(--td-text-color-secondary)' }}
@@ -330,9 +302,6 @@ export function MemoryPanel() {
           <>
             <span>{t('settings.memory.projectSkillsCount', { n: projectStats?.skillCount ?? 0 })}</span>
             <span>{t('settings.memory.projectSkillTokens', { n: projectStats?.skillTokens ?? 0 })}</span>
-            <span>
-              {t('settings.memory.coreMemory')} {counter(projectStats?.coreTokens ?? 0, projectStats?.coreBudget ?? 800)}
-            </span>
             <span>{t('settings.memory.globalSkillsEffective', { n: globalSkillCount })}</span>
           </>
         ) : (
@@ -340,21 +309,54 @@ export function MemoryPanel() {
             <span>{t('settings.memory.skillsCount', { n: stats?.skillCount ?? 0 })}</span>
             <span>{t('settings.memory.skillTokens', { n: stats?.skillTokens ?? 0 })}</span>
             <span>{t('settings.memory.indexedCount', { n: stats?.indexedDocs ?? 0 })}</span>
-            <span>
-              {t('settings.memory.coreMemory')} {counter(stats?.coreTokens ?? 0, stats?.coreBudget ?? 800)}
-            </span>
           </>
         )}
       </div>
 
       {/* L1 核心记忆 */}
-      <section className="mb-6">
-        <div className="mb-1 flex items-center gap-2">
-          <h3 className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-            {isProject ? t('settings.memory.coreTitleProject') : t('settings.memory.coreTitleGlobal')}
-          </h3>
-          <InfoHint label={t('settings.memory.budgetHintLabel')} text={t(BUDGET_HINT_KEY)} />
+      <section className="mb-6" style={{ scrollMarginTop: 16 }}>
+        {/* A98：作用域切换 —— T2-3：移到核心记忆编辑器正上方，紧挨它实际控制的东西 */}
+        <div className="mb-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs" style={{ color: 'var(--td-text-color-secondary)' }}>
+              {t('settings.memory.scope')}
+            </span>
+            {/* 英文的「Global (shared by all projects)」比中文长一半：给下拉多留 40px，
+                中文仍是 260px，不改变既有布局 */}
+            <div style={{ width: locale === 'en' ? 300 : 260 }}>
+              <Select
+                value={projectPath}
+                onChange={v => {
+                  setProjectPath(String(v ?? ''));
+                  setEditing(null);
+                  setHits([]);
+                }}
+                options={[
+                  { label: t('settings.memory.scopeGlobal'), value: '' },
+                  ...projects.map(p => ({
+                    label: t('settings.memory.scopeProject', { name: p.name, n: p.sessionCount }),
+                    value: p.path,
+                  })),
+                ]}
+                placeholder={t('settings.memory.scopePlaceholder')}
+              />
+            </div>
+            {isProject && (
+              <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                {projectStats?.exists
+                  ? t('settings.memory.projectHasMemory')
+                  : t('settings.memory.projectNoMemory')}
+              </span>
+            )}
+          </div>
+          {/* T2-2：作用域说明从 ⓘ 改为常驻小字（切换作用域时正需要看的一句话） */}
+          <p className="mt-1 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+            {t('settings.memory.scopeHint')}
+          </p>
         </div>
+        <h3 className="mb-1 text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+          {isProject ? t('settings.memory.coreTitleProject') : t('settings.memory.coreTitleGlobal')}
+        </h3>
         <Textarea
           value={core}
           onChange={v => setCore(String(v))}
@@ -367,18 +369,30 @@ export function MemoryPanel() {
         />
         <div className="mt-1 flex items-center justify-between">
           {counter(estimate(core), isProject ? (projectStats?.coreBudget ?? 800) : (stats?.coreBudget ?? 800))}
+          {/* T2-3：按钮文案带作用域（只改文案 —— 保存目标仍由 save() 里的 scope 参数决定） */}
           <Button variant="outline" loading={saving === 'core'} onClick={() => void save('core')}>
-            {t('settings.memory.save')}
+            {isProject ? t('settings.memory.saveProject') : t('settings.memory.saveGlobal')}
           </Button>
         </div>
+        {/* T2-2：预算说明从 ⓘ 改为常驻小字 */}
+        <p className="mt-1 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+          {t(BUDGET_HINT_KEY)}
+        </p>
       </section>
 
-      {/* L2 用户画像 */}
-      <section className="mb-6">
+      {/* L2 用户画像 —— T2-3：「始终全局」徽标常驻（这条事实原本只藏在 ⓘ 里，
+          而核心记忆的保存按钮却会跟着作用域变，两相对照最容易存错地方） */}
+      <section className="mb-6" style={{ scrollMarginTop: 16 }}>
         <div className="mb-1 flex items-center gap-2">
           <h3 className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
             {t('settings.memory.userTitle')}
           </h3>
+          <span
+            className="rounded-full px-2 py-0.5 text-caption"
+            style={{ color: 'var(--td-text-color-secondary)', backgroundColor: 'var(--td-bg-color-component)' }}
+          >
+            {t('settings.memory.alwaysGlobal')}
+          </span>
           <InfoHint
             label={t('settings.memory.userHintLabel')}
             text={t('settings.memory.userHint')}
@@ -398,11 +412,14 @@ export function MemoryPanel() {
         </div>
       </section>
 
-      {/* L4 检索 */}
-      <section className="mb-6">
-        <h3 className="mb-2 text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+      {/* L4 检索 —— T2-5：加 1 行范围说明，与知识库面板的检索划清口径 */}
+      <section className="mb-6" style={{ scrollMarginTop: 16 }}>
+        <h3 className="mb-1 text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
           {t('settings.memory.searchTitle')}
         </h3>
+        <p className="mb-2 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+          {t('settings.memory.searchScope')}
+        </p>
         <div className="flex items-center gap-2">
           <Input
             value={query}
@@ -433,7 +450,7 @@ export function MemoryPanel() {
       </section>
 
       {/* L3 技能 */}
-      <section>
+      <section style={{ scrollMarginTop: 16 }}>
         <div className="mb-2 flex items-center gap-2">
           <h3 className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
             {isProject

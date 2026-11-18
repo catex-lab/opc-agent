@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   RefreshCw,
   Search,
@@ -14,6 +14,8 @@ import {
   Terminal,
   Trash2,
   Radar,
+  X,
+  MessagesSquare,
 } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentHoverCard } from './AgentHoverCard';
@@ -23,6 +25,7 @@ import { RemarkDialog } from './RemarkDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { AddCustomCliDialog } from './AddCustomCliDialog';
 import { LoginTerminalDialog } from './LoginTerminalDialog';
+import { EmptyState } from './EmptyState';
 import { useAgentRemarks, setAgentRemark } from '../agentRemarks';
 import {
   SEARCH_PILL_CLASS,
@@ -84,6 +87,17 @@ interface ContactsPanelProps {
    * 现在整件事收进「设置 → 登录配置 → 自定义模型厂商」，这里只做跳转。
    */
   onAddProvider?: () => void;
+  /**
+   * E-2：把「搜索无结果」抬给宿主（App 的右侧空态要用）。
+   * `true` = 有关键词且当前 Tab 一条都匹配不上。关键词变化 / 清空时回调 false。
+   */
+  onNoMatchChange?: (noMatch: boolean) => void;
+  /**
+   * 受控关键词（E-2）：右侧「清除搜索」按钮要能清掉左栏的搜索词，
+   * 所以词的**唯一真源**上移到 App。不传 = 非受控，组件自己管（老行为）。
+   */
+  keyword?: string;
+  onKeywordChange?: (keyword: string) => void;
 }
 
 type Tab = 'agents' | 'groups';
@@ -141,9 +155,18 @@ export function ContactsPanel({
   onOpenCredential,
   onAddProvider,
   onCanary,
+  onNoMatchChange,
+  keyword: keywordProp,
+  onKeywordChange,
 }: ContactsPanelProps) {
   const { t } = useTranslation();
-  const [keyword, setKeyword] = useState('');
+  // 关键词真源：受控（App 抬走了）或本地。两条路径都同步回调宿主。
+  const [keywordInner, setKeywordInner] = useState('');
+  const keyword = keywordProp !== undefined ? keywordProp : keywordInner;
+  const setKeyword = (next: string) => {
+    setKeywordInner(next);
+    onKeywordChange?.(next);
+  };
   /** Tab：AGENT（Agent 通讯录）/ 群聊目录 */
   const [tab, setTab] = useState<Tab>('agents');
   /**
@@ -281,6 +304,18 @@ export function ContactsPanel({
   );
 
   const switchTab = (next: Tab) => setTab(next);
+
+  // E-2：搜索无结果要抬给宿主 —— 右侧空态不能再说「从左侧选一个 Agent」
+  //（左侧明明一条都没匹配上）。关键词为空 / 有匹配时回调 false。
+  useEffect(() => {
+    if (!onNoMatchChange) return;
+    const noMatch =
+      keyword.trim().length > 0 &&
+      (tab === 'agents' ? visibleAgents.length === 0 : visibleGroups.length === 0);
+    onNoMatchChange(noMatch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyword, tab, visibleAgents, visibleGroups, onNoMatchChange]);
+
   return (
     <div
       className={`flex flex-col ${compact ? 'w-full' : 'shrink-0'}`}
@@ -323,6 +358,22 @@ export function ContactsPanel({
               className="w-full bg-transparent text-body outline-none"
               style={{ color: 'var(--td-text-color-primary)' }}
             />
+            {/* E-3：有内容时显示 × 清除按钮 —— 不用让用户一个个删字。
+                无内容时不渲染（而不是摆一个禁用的 ×）：空搜索框里放一个
+                点不动的叉是噪声。 */}
+            {keyword.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setKeyword('')}
+                title={t('contacts.clearSearch')}
+                aria-label={t('contacts.clearSearch')}
+                data-contacts-search-clear
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                style={{ color: 'var(--td-text-color-secondary)' }}
+              >
+                <X size={13} />
+              </button>
+            )}
           </div>
 
           {/* 右侧只留一个「+」：添加/建群/加好友全收在搜索框右边的这个加号里。
@@ -561,14 +612,17 @@ export function ContactsPanel({
           /* ── AGENT Tab：一条平铺名单，在线的排最上 ── */
           <div data-contacts-list>
             {visibleAgents.length === 0 ? (
-              <div
-                className="px-3 py-10 text-center"
-                style={{ color: 'var(--td-text-color-placeholder)' }}
-              >
-                <span className="tc-hint">
-                  {keyword ? t('contacts.noMatchAgents') : t('contacts.noAgents')}
-                </span>
-              </div>
+              /* 共性 3 / E-1：搜索无结果走统一空态（图标 + 标题 + 一行说明 +
+                 「清除搜索」出口）；没关键词的空名册同样收进组件，不再各写一套。 */
+              <EmptyState
+                icon={keyword ? Search : MessagesSquare}
+                fill
+                compact
+                title={keyword ? t('contacts.noMatchAgents') : t('contacts.noAgents')}
+                description={keyword ? t('contacts.noMatchDesc') : undefined}
+                action={keyword ? t('contacts.clearSearch') : undefined}
+                onAction={keyword ? () => setKeyword('') : undefined}
+              />
             ) : (
             <div className="flex flex-col gap-0.5">
               {sections.map(s =>
@@ -640,14 +694,15 @@ export function ContactsPanel({
               一个数字更直接。 */
           <section className="mb-4 pt-1">
             {visibleGroups.length === 0 ? (
-              <div
-                className="px-3 py-10 text-center"
-                style={{ color: 'var(--td-text-color-placeholder)' }}
-              >
-                <span className="tc-hint">
-                  {keyword ? t('contacts.noMatchGroups') : t('contacts.noGroups')}
-                </span>
-              </div>
+              <EmptyState
+                icon={keyword ? Search : MessagesSquare}
+                fill
+                compact
+                title={keyword ? t('contacts.noMatchGroups') : t('contacts.noGroups')}
+                description={keyword ? t('contacts.noMatchDesc') : undefined}
+                action={keyword ? t('contacts.clearSearch') : undefined}
+                onAction={keyword ? () => setKeyword('') : undefined}
+              />
             ) : (
               <div className="flex flex-col gap-0.5">
                 {visibleGroups.map(session => (
@@ -774,6 +829,15 @@ function ContactRow({ agent, onViewDetail, onEdit, onRemove, onOpenLogin }: Cont
   // P1：状态词与动作都以诊断事实为准（canary > 运行期 > 探测，服务端已合并）
   const view = agentStatusViewOf(agent);
   const diagAction = diagnosticActionOf(agent);
+  // S3-3（审查报告）：「未登录」行内必须有登录入口。
+  // agent.login 存在 → 按钮就是「登录」，直开登录终端；不存在（本应用
+  // 替不了它登录）→ 「查看登录指引」，进资料页 —— 而不是什么都不给。
+  const loginActionLabel =
+    diagAction?.action === 'open_login'
+      ? agent.login
+        ? t('contacts.login')
+        : t('contacts.loginGuide')
+      : t(diagAction?.labelKey as MessageKey);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [editing, setEditing] = useState(false);
 
@@ -823,13 +887,13 @@ function ContactRow({ agent, onViewDetail, onEdit, onRemove, onOpenLogin }: Cont
             if (diagAction.action === 'open_login' && agent.login && onOpenLogin) onOpenLogin();
             else onViewDetail();
           }}
-          title={t(diagAction.labelKey as MessageKey)}
-          aria-label={t(diagAction.labelKey as MessageKey)}
+          title={loginActionLabel}
+          aria-label={loginActionLabel}
           data-agent-diag-action={agent.id}
           className="shrink-0 rounded-md px-1 py-0.5 text-caption transition-colors hover:bg-[var(--tc-hover-chrome)]"
           style={{ color: view.color }}
         >
-          {t(diagAction.labelKey as MessageKey)}
+          {loginActionLabel}
         </button>
       )}
     </>

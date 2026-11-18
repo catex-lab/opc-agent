@@ -375,13 +375,14 @@ console.log('\n[6] 设置页分区：互斥渲染 + 副标题跟着走');
   // 当时只同步了前两项（权限门禁 / 登录配置），漏了这一项 —— 于是本闸门红了整整一版。
   // 文案变更属于契约变更，改断言是**对的**；但改的时候要显式记下是哪次改名，
   // 否则下一个人看到这里只会以为「当初就写错了」。
-  const NAV_LABELS = ['我的资料', '记忆', '权限门禁', '外观', '登录配置', '模型清单', '助手人设', '关于与隐私'];
+  // T7-1（UI 优化 2026-11-18）：「助手人设」随效果图 07~14 全量改名「自定义助手」。
+  const NAV_LABELS = ['我的资料', '记忆', '权限门禁', '外观', '登录配置', '模型清单', '自定义助手', '关于与隐私'];
   const navTexts = await page.locator('[data-settings-section]').allInnerTexts();
   const navCount = navTexts.length;
   const navOk =
     navCount === NAV_LABELS.length &&
     NAV_LABELS.every((label, i) => navTexts[i]?.trim().startsWith(label));
-  ok(navOk, '分区导航为八项且顺序正确（我的资料/记忆/权限门禁/外观/登录配置/模型清单/助手人设/关于）', navTexts.map(t => t.trim()).join(' | '));
+  ok(navOk, '分区导航为八项且顺序正确（我的资料/记忆/权限门禁/外观/登录配置/模型清单/自定义助手/关于）', navTexts.map(t => t.trim()).join(' | '));
   // 默认分区改成「我的资料」（用户要求：设置弹窗一打开先看到自己的资料）。
   ok(await page.locator('[data-settings-panel="profile"]').count() > 0, '默认落在「我的资料」');
 

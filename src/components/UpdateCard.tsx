@@ -267,7 +267,14 @@ export function UpdateCard() {
       <div className="tc-update-head">
         <div className="tc-update-version">
           <span className="tc-update-label">{t('settings.update.currentVersion')}</span>
-          <span className="tc-about-ver">v{state.currentVersion}</span>
+          {/* T8-3（UI 优化 2026-11-18）：版本号缺失（浏览器开发态拿不到
+              getVersion 桥，占位「—」）时如实显示「开发版」，不再露出「v—」；
+              打包态照旧显示 v{版本}。 */}
+          <span className="tc-about-ver">
+            {state.currentVersion && state.currentVersion !== '—'
+              ? `v${state.currentVersion}`
+              : t('settings.about.devBadge')}
+          </span>
           {state.checkedAt && phase !== 'checking' ? (
             <span className="tc-update-checked">{t('settings.update.lastChecked', { time: formatTime(state.checkedAt) })}</span>
           ) : null}

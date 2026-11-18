@@ -208,12 +208,14 @@ ok((await panelWrap.getAttribute('data-open')) === 'true', '面板标记为打�
 await shot('verify-p7-panel');
 
 {
-  // 位置与尺寸：贴右、**与群成员栏同宽**、上下同起同止（2026-10-20 用户反馈）
+  // 位置与尺寸：贴右、上下同起同止（2026-10-20 用户反馈）。
+  // G-1（ui-review 17 号图）：面板 236 → 260，比成员栏（236）宽一档 ——
+  // 8 组内容在 236 里塞不下。两者仍不同时渲染，宽度不必再相等。
   const box = await panel.boundingBox();
   ok(
-    !!box && !!member && Math.abs(box.width - member.width) < 2,
-    '面板宽度 = 群成员栏宽度',
-    box && member ? `panel.w=${Math.round(box.width)} member.w=${Math.round(member.width)}` : '无 box'
+    !!box && Math.round(box.width) === 260,
+    '面板宽度 = 260（G-1 加宽档）',
+    box ? `panel.w=${Math.round(box.width)}` : '无 box'
   );
   // A103 起三栏各内缩 6px（圆角落到画布上，见 verify:surface [3]），
   // 「贴右侧通栏」的基准从**视口**变成了**聊天列的右缘** —— 这条断言
@@ -253,8 +255,10 @@ await shot('verify-p7-panel');
   );
 }
 
-// 面板内容按截图的顺序一件不少
-for (const label of ['群聊成员', '我在本群的昵称', '群聊备注', '设为置顶', '消息免打扰', '群消息设置', '删除聊天记录', '退出群聊']) {
+// 面板内容按截图的顺序一件不少。
+// G-2（ui-review）：「消息免打扰」开关删了 —— 与「群消息设置」下拉共用
+// notifyMode，是同一状态的两个控件；G-1：「定时任务」钉底固定栏也在面板里。
+for (const label of ['群聊成员', '我在本群的昵称', '群聊备注', '设为置顶', '群消息设置', '删除聊天记录', '退出群聊', '定时任务']) {
   ok((await panel.getByText(label, { exact: true }).count()) >= 1, `面板含「${label}」`);
 }
 ok((await panel.locator('[data-group-nickname]').count()) === 1, '昵称是可点击的编辑项');
@@ -299,14 +303,21 @@ ok((await panel.locator('[data-group-remark]').count()) === 1, '群聊备注是�
     '「退出群聊」在「删除聊天记录」下方（上下排列，不并排）',
     exitBox && clearBox ? `exit.y=${Math.round(exitBox.y)} clear.bottom=${Math.round(clearBox.y + clearBox.height)}` : 'n/a'
   );
-  // 结构断言：aside 只剩「栏头 + 滚动内容」两个孩子。早先退出按钮是第三个
-  // 孩子（shrink-0 的贴底容器），会一直占着面板底部 —— 那正是要修掉的形态。
+  // 结构断言：aside = 「栏头 + 滚动内容 + 定时任务固定栏」三个孩子。
+  // 早先退出按钮是第三个孩子（shrink-0 的贴底容器），会一直占着面板底部
+  // —— 那正是 2026-10-20 要修掉的形态，危险操作必须留在滚动区里。
+  // G-1（ui-review 17 号图）之后底部固定栏回来了，但里面只有「定时任务」
+  // 这一个入口动作 —— 危险操作的约束不放松，改断结构为「钉的是定时任务」。
   const shape = await panel.evaluate(el => ({
     children: el.children.length,
+    exitInScroll: !!(el.children[1]?.querySelector?.('[data-exit-group]')),
+    scheduleInScroll: !!(el.children[1]?.querySelector?.('[data-group-schedule]')),
+    lastIsSchedule: !!(el.lastElementChild?.querySelector('[data-group-schedule]')),
     lastHasExit: !!el.lastElementChild?.querySelector('[data-exit-group]'),
   }));
-  ok(shape.children === 2, '面板不再有贴底的操作容器（只剩栏头 + 滚动区）', `children=${shape.children}`);
-  ok(shape.lastHasExit, '「退出群聊」在滚动内容里，跟着内容走');
+  ok(shape.children === 3, '面板结构 = 栏头 + 滚动区 + 定时任务固定栏（G-1）', `children=${shape.children}`);
+  ok(shape.exitInScroll && !shape.lastHasExit, '「退出群聊」在滚动内容里，跟着内容走（不钉底）');
+  ok(shape.lastIsSchedule && !shape.scheduleInScroll, '「定时任务」钉在底部固定栏（G-1）');
 
   // A24 用户反馈：两个按钮都不要红色描边。断言「描边同值」而不是
   // 「描边等于某个具体色」—— 具体色随主题变，但两者必须一致；
@@ -377,25 +388,16 @@ await page.waitForTimeout(200);
 ok((await panel.locator('[data-group-remark]').innerText()).includes('玻璃质感回归群'), '回车后备注保存并回显');
 await shot('verify-p7-nick-remark');
 
-// ============= [3] 置顶 / 免打扰 / 群消息设置 ==============
-console.log('\n[3] 置顶 / 免打扰 / 群消息设置（四档）');
+// ============= [3] 置顶 / 群消息设置 ==============
+console.log('\n[3] 置顶 / 群消息设置（四档）');
 const pinSwitch = panel.getByRole('switch', { name: '设为置顶' });
 ok((await pinSwitch.getAttribute('aria-checked')) === 'false', '置顶默认关');
 await pinSwitch.click();
 await page.waitForTimeout(150);
 ok((await pinSwitch.getAttribute('aria-checked')) === 'true', '点一下置顶打开');
 
-const muteSwitch = panel.getByRole('switch', { name: '消息免打扰' });
-ok((await muteSwitch.getAttribute('aria-checked')) === 'false', '免打扰默认关');
-await muteSwitch.click();
-await page.waitForTimeout(150);
-ok((await muteSwitch.getAttribute('aria-checked')) === 'true', '再点一下免打扰打开（写 muted）');
-{
-  const flags = await page.evaluate(() => JSON.parse(localStorage.getItem('opc:sessionFlags') || '{}'));
-  ok(flags.g1?.notifyMode === 'muted' && flags.g1?.muted === true, '免打扰与群消息设置同源（notifyMode）', JSON.stringify(flags.g1 || null));
-}
-
-// 群消息设置：四档下拉，与上面的开关共用同一状态
+// G-2（ui-review）：「消息免打扰」开关已删 —— 它与「群消息设置」下拉共用
+// notifyMode，是同一状态的两个控件。四档下拉是唯一入口，静音档从下拉进。
 const notifyTrigger = panel.locator('[data-notify-trigger]');
 await notifyTrigger.click();
 await page.waitForTimeout(150);
@@ -406,28 +408,35 @@ ok((await options.count()) === 4, '群消息设置有四档（含「接收消息
   ok(labels[0].includes('接收消息并提醒'), '第一档是「接收消息并提醒」（normal，不能被漏掉）', labels.join(' | '));
   ok(labels.includes('屏蔽群消息'), '最后一档是「屏蔽群消息」');
 }
+// 先切到静音档：验证 muted 落 flags（G-2 后这是唯一入口）
+await options.nth(1).click();
+await page.waitForTimeout(200);
 {
-  // 当前档位（muted）应该打勾
+  const flags = await page.evaluate(() => JSON.parse(localStorage.getItem('opc:sessionFlags') || '{}'));
+  ok(flags.g1?.notifyMode === 'muted' && flags.g1?.muted === true, '静音档写 notifyMode（下拉与 flags 同源）', JSON.stringify(flags.g1 || null));
+}
+// 重开下拉：当前档位（muted）应该打勾
+await notifyTrigger.click();
+await page.waitForTimeout(150);
+{
   const checked = await panel.locator('[role="option"][aria-selected="true"]').count();
   ok(checked === 1, '当前档位有选中标记', `count=${checked}`);
   const activeText = await panel.locator('[role="option"][aria-selected="true"]').innerText();
-  ok(/但不提醒/.test(activeText), '选中档位与免打扰开关一致', activeText.replace(/\n/g, ' '));
+  ok(/但不提醒/.test(activeText), '选中档位与 flags 一致', activeText.replace(/\n/g, ' '));
 }
 await options.nth(2).click();
 await page.waitForTimeout(200);
 ok((await notifyTrigger.innerText()).includes('群助手'), '切到「收进群助手且不提醒」');
-ok((await muteSwitch.getAttribute('aria-checked')) === 'true', '群助手档同样算免打扰（投影一致）');
 
-// 切回「接收消息并提醒」→ 免打扰开关应当同步关上
+// 切回「接收消息并提醒」（normal 是缺省值，不占位存储）
 await notifyTrigger.click();
 await page.waitForTimeout(150);
 await panel.locator('[role="option"]').nth(0).click();
 await page.waitForTimeout(300);
 {
-  const checked = await muteSwitch.getAttribute('aria-checked');
   const label = await notifyTrigger.innerText();
   const flags = await page.evaluate(() => JSON.parse(localStorage.getItem('opc:sessionFlags') || '{}'));
-  ok(checked === 'false', '切回「接收消息并提醒」后免打扰同步关闭', `aria-checked=${checked} | 标签=${label.replace(/\n/g, '')} | flags=${JSON.stringify(flags.g1 || null)}`);
+  ok(label.includes('接收消息并提醒'), '切回「接收消息并提醒」后触发器文案还原', `标签=${label.replace(/\n/g, '')}`);
   ok(flags.g1?.notifyMode === undefined, 'normal 是缺省值，不占位存储（localStorage 里不留 notifyMode）', JSON.stringify(flags.g1 || null));
 }
 

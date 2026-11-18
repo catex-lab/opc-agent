@@ -46,6 +46,12 @@ interface ChatHeaderProps {
   /** A77：展开 / 收起工作区文件面板。不传则不渲染开关（窄屏单栏模式） */
   onToggleWorkspace?: () => void;
   onDelete: () => void;
+  /**
+   * N-1：这是不是一条「还没开始」的空壳会话（新建会话页）。
+   * true 时顶栏显示「新会话」、不显示 Agent 状态 —— 正文正在让用户选 Agent，
+   * 顶栏提前顶着某个人的名字是「预选」的假象。只改显示态，不改选择逻辑。
+   */
+  isNewChatShell?: boolean;
   /** 单栏（窄屏）模式下返回列表；宽屏不传 */
   onBack?: () => void;
   /** 知识库面板按会话维度开关，必须知道当前会话 */
@@ -91,6 +97,7 @@ export function ChatHeader({
   fallbackTitle,
   // isLoading 仍留在 props 里（调用方与 UI 探针都用它表达「正在生成」），
   // 但头部不再渲染任何「正在输入」的字样 —— 见上面 badge 里的注释。
+  isNewChatShell = false,
   scenario,
   cwd,
   onCwdChange,
@@ -164,11 +171,18 @@ export function ChatHeader({
       backLabel={t('chat.back')}
       // 名字允许被截断，但截断后的完整名字要能读回来：
       // h1 自带 truncate，这里再套一层只为挂 title（原生悬停提示）。
-      title={<span className="block truncate" title={displayName}>{displayName}</span>}
+      // N-1：空壳会话（新建页）显示「新会话」，不预选 Agent。
+      title={
+        <span className="block truncate" title={isNewChatShell ? t('chat.newSession') : displayName}>
+          {isNewChatShell ? t('chat.newSession') : displayName}
+        </span>
+      }
       badge={
         <>
-          {/* 在线状态紧贴名字：IM 里「在跟谁说话 / 他能不能回」是同一眼要读到的信息 */}
-          {meta ? (
+          {/* 在线状态紧贴名字：IM 里「在跟谁说话 / 他能不能回」是同一眼要读到的信息。
+              N-1：新建页还没有「在跟谁说话」这个事实，状态一并隐藏 ——
+              挂着某个 Agent 的「在线」等于把预选画在头上。 */}
+          {!isNewChatShell && meta ? (
             <span
               // 状态点是**读数**不是装饰：宽度再紧也不参与压缩，更不能折行 ——
               // 折成「在 / 线」两行时，徽标比名字还占高，52px 的单行头部直接破功。
@@ -180,7 +194,7 @@ export function ChatHeader({
               <StatusDot color={meta.dot} shape={meta.dotShape} size={6} statusLabel={statusText} />
               {statusText}
             </span>
-          ) : (
+          ) : !isNewChatShell ? (
             <span
               data-chat-status
               className="shrink-0 whitespace-nowrap text-secondary"
@@ -188,7 +202,7 @@ export function ChatHeader({
             >
               {t('chat.offline')}
             </span>
-          )}
+          ) : null}
           {scenario && (
             <span
               // 场景标签同样按「不换行、不压缩」处理：它是可选的第三块内容，
@@ -239,10 +253,15 @@ export function ChatHeader({
               title={t('chat.expandWorkspace')}
               aria-label={t('chat.expandWorkspace')}
               data-workspace-toggle="expand"
-              className="flex h-8 w-8 items-center justify-center rounded-lg bg-transparent transition-colors hover:bg-[var(--tc-hover-chrome)]"
+              /* S1-1（审查报告）：这个开关原来只有一枚图标（含义全靠悬停
+                  title），新用户不知道它是干什么的。改成图标 + 文字（与群聊
+                  头部的「工作流」按钮同规格），一眼可读；窄宽下的退化交给
+                  kb-ui.css 的容器查询（<900px 隐藏文字）。 */
+              className="flex h-8 items-center gap-1 rounded-lg bg-transparent px-2 text-xs transition-colors hover:bg-[var(--tc-hover-chrome)]"
               style={{ color: 'var(--td-text-color-secondary)' }}
             >
-              <PanelRight size={16} />
+              <PanelRight size={14} />
+              <span data-workspace-toggle-label>{t('chat.workspaceLabel')}</span>
             </button>
           )}
           <details ref={moreRef} className="relative" data-chat-more>

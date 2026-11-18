@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useMemo } from 'react';
 import { useVisiblePermissions, answer } from '../permissions/permissionStore';
-import { pickOptionByKind, type PermissionScopeKind } from '../../shared/permissions';
+import { pickOptionByKind } from '../../shared/permissions';
 import { PermissionCard } from './PermissionCard';
+import { useTranslation } from '../i18n';
 
 interface PermissionDockProps {
   currentSessionId: string | null;
-  /** 会话 id → 标题。Dock 挂在 App 层，拿不到 useChat 的当前会话对象，所以由调用方给 */
-  titleOf: (sessionId: string) => string;
+  /** 当前会话显示名：卡头「{name} 请求」用。由消息流宿主（ChatPage）给 */
+  sessionLabel?: string;
 }
 
 /** 焦点在可编辑元素里时，快捷键必须让路 —— 否则打字打一半就把命令批准了。 */
@@ -19,59 +19,53 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 /**
- * 权限审批浮层 —— A132。
+ * 权限审批卡的挂载点（2026-11-18 内嵌化改造，原 A132 右下角浮层退役）。
  *
- * 全局常驻在 `document.body` 上，不随会话卸载：会话切走了，那条流仍在服务端挂着
- * 等答复，卡片跟着消失等于把人晾死。队首是「当前会话优先、组内先来先批」，
- * 排序规则在 `sortPendingPermissions` 里，这里不重复实现。
+ * ## 形态变了，出处没变
  *
- * 收起态**只写「谁 + 要做什么」，不写命令本身** —— 浮层收起时也可能被旁人看到。
+ * 卡片仍然由全局单一事实源 `permissionStore` 驱动（队列、归属、送达判定、
+ * 「只有 200 才摘卡」都在那里），本组件只负责把**当前会话**的队首卡片
+ * 渲染进消息流 —— 挂在 `ChatMessages` 的消息列末尾、输入框上方，输入框
+ * 完整可见（原浮层盖住输入框，正是 ui-review P-1 的问题）。
+ *
+ * ## 跨会话的待授权去哪了
+ *
+ * 原浮层常驻 body、切走会话也挂着，代价是盖内容、抢焦点。内嵌后一张卡只属于
+ * 它自己的会话流：切走的会话由会话列表承接 —— 「等授权」角标 + 「等待授权：
+ * …」预览（P-5）说明那条流正卡着，切回去就能批。`sessionId === ''`（本地新建、
+ * 还没落库的群）无法归属，仍在当前会话里兜底展示，不给它玩失踪。
+ *
+ * ## 快捷键
+ *
+ * ↵ = 队首的第一档 allow（`pickOptionByKind` 的契约：不替用户选 always）；
+ * Del = 拒绝。焦点在卡片内部（按钮上）时不抢 —— 原生按钮自己处理
+ * Enter/Space，文档级监听再发一次就是重复答复。Esc 不再收起：内嵌卡
+ * 没有「收起」态，也没有「点外面」这种合法答复（A19 的豁免随之失效）。
  */
-export function PermissionDock({ currentSessionId, titleOf }: PermissionDockProps) {
-  const items = useVisiblePermissions(currentSessionId);
-  const [open, setOpen] = useState(true);
-  const head = items[0];
-  const rest = items.length - 1;
-
-  /**
-   * 授权范围（2026-11-12 变体 A）。状态在 Dock 而不是卡片：Enter 快捷键
-   * 在这里，必须按**当前选中**的范围答复。队首换人即重置为「仅本次」——
-   * 上一条里选过的范围不该悄悄延续到另一条请求上。
-   */
-  const [scope, setScope] = useState<PermissionScopeKind>('once');
-  const headRequestId = head?.request.requestId ?? null;
-  useEffect(() => {
-    setScope('once');
-  }, [headRequestId]);
-
-  // 顶层 sessionId 与 request.sessionId 同值，但读顶层这一份 —— 排序、计数、
-  // 角标都从这一个字段出发，两处各读一份迟早会漂。
-  const headSessionId = head?.sessionId ?? null;
+export function PermissionDock({ currentSessionId, sessionLabel }: PermissionDockProps) {
+  const { t } = useTranslation();
+  const sorted = useVisiblePermissions(currentSessionId);
+  /** 只画当前会话的（含无法归属的 '' 兜底）；别的会话靠列表角标 + 预览提醒 */
+  const visible = useMemo(
+    () => sorted.filter(it => it.sessionId === currentSessionId || it.sessionId === ''),
+    [sorted, currentSessionId]
+  );
+  const head = visible[0];
+  const rest = visible.length - 1;
 
   useEffect(() => {
     if (!head) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        // A24：Esc 若被外层面板监听，收起内层会把外层一起关掉。
-        // 这里只在 Dock 确实展开时吃掉它，且**不发送任何答复**。
-        if (!open) return;
-        e.stopPropagation();
-        setOpen(false);
-        return;
-      }
-      if (!open || isTyping(e.target)) return;
+      if (isTyping(e.target)) return;
+      // 卡片内的按钮自带 Enter/Space 激活；文档级监听跳过，避免一次按键两次答复
+      if (e.target instanceof Element && e.target.closest('[data-permission-card]')) return;
       if (e.key === 'Enter') {
-        // ↵ 按**当前选中的范围**答复：仅本次 → 第一个 allow 档；
-        // 本会话 / 该 Agent 永久 → allow_always 档（选择器只在双 allow 档
-        // 都在时出现，所以这里一定找得到；找不到就什么都不发，不替用户决定）。
-        const opts = head.request.options ?? [];
-        const opt =
-          scope === 'once'
-            ? pickOptionByKind(opts, 'allow')
-            : opts.find(o => o.kind === 'allow_always');
+        // ↵ 命中第一档 allow_*（仅本次），永不替用户选 always / 永久 ——
+        // 持久授权只留给显式点击「永久允许」。
+        const opt = pickOptionByKind(head.request.options ?? [], 'allow');
         if (opt) {
           e.preventDefault();
-          void answer(head.request.requestId, opt, scope === 'agent' ? { persistAgent: true } : undefined);
+          void answer(head.request.requestId, opt);
         }
         return;
       }
@@ -85,55 +79,22 @@ export function PermissionDock({ currentSessionId, titleOf }: PermissionDockProp
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [head, open, scope]);
-
-  const label = useMemo(
-    () => (headSessionId ? titleOf(headSessionId) : ''),
-    [headSessionId, titleOf]
-  );
+  }, [head]);
 
   if (!head) return null;
 
-  return createPortal(
-    <div
-      className="tc-permission-dock tc-glass"
-      data-opc-overlay
-      data-permission-dock
-      // 不挂 onMouseDown 关闭：审批卡没有「点外面」这种合法答复（A19 的豁免）
-    >
+  return (
+    <div className="tc-permission-dock" data-permission-dock>
       {rest > 0 && (
-        <button
-          type="button"
-          className="w-full px-3 py-1.5 text-left text-xs"
-          data-permission-queue-toggle
-          onClick={() => setOpen(v => !v)}
-        >
-          {open
-            ? `▾ 还有 ${rest} 条待授权`
-            : `▸ 还有 ${rest} 条待授权（最新：${label}）`}
-        </button>
+        <div className="pb-1 text-secondary" data-permission-queue-count>
+          {t('permission.queue.more', { n: rest })}
+        </div>
       )}
-      {!open && (
-        <button
-          type="button"
-          className="w-full px-3 py-2 text-left text-xs"
-          data-permission-dock-open
-          onClick={() => setOpen(true)}
-        >
-          {label} 请求「{head.request.toolName}」，点此展开
-        </button>
-      )}
-      {open && (
-        <PermissionCard
-          item={head}
-          sessionLabel={label}
-          isCurrentSession={headSessionId === currentSessionId}
-          scope={scope}
-          onScopeChange={setScope}
-          onResolve={(opt, opts) => void answer(head.request.requestId, opt, opts)}
-        />
-      )}
-    </div>,
-    document.body
+      <PermissionCard
+        item={head}
+        sessionLabel={sessionLabel ?? ''}
+        onResolve={(opt, opts) => void answer(head.request.requestId, opt, opts)}
+      />
+    </div>
   );
 }

@@ -7,12 +7,12 @@
  * optionId，适配器就只能按第一档猜 —— 用户以为开了永久放行，实际没有。
  *
  * 四份夹具：
- *   [1][2] SDK 四档：拒绝两颗原样渲染 + 授权范围三段选择器（2026-11-12 变体 A）
- *          / 样式常量（24 档选项、32 档确认、44px 选择器段）
- *   [3]    三个范围各自的请求体：默认仅本次 → allow_once；本会话 → allow_always；
- *          该 Agent 永久 → allow_always + persistAgent:true
+ *   [1][2] SDK 四档：拒绝两颗原样渲染 + 三个一次点击动作（2026-11-18，ui-review
+ *          P-2 一次点击改造）/ 样式常量（32 档决策按钮、14px 字号、中性描边动作）
+ *   [3]    三个动作各自的请求体：仅本次允许 → allow_once；本会话允许 → allow_always；
+ *          永久允许 → allow_always + persistAgent:true
  *   [4]    点「始终拒绝」必须带 user_denied_always，不能只说一句 deny
- *   [5]    老路径没下发 options → 只画两档，不凭空补 always、不画选择器
+ *   [5]    老路径没下发 options → 只画两档，不凭空补 always、不画动作按钮
  *   [6]    群聊审批（修的是「卡片显示群请求、按钮却回复了 null」的旧缺陷）
  *
  * 运行：node scripts/verify-a128-permission-ui.mjs（需先 npm run build）
@@ -179,14 +179,16 @@ async function sendMessage(page) {
   await page.waitForTimeout(250);
 }
 
-// ============= [1][2] 目录渲染 + 授权范围选择器 + 样式常量 =============
-// 2026-11-12 变体 A：目录同时含 allow_once/allow_always 时，两颗 allow 按钮
-// 被「三段授权范围选择器 + 确认主按钮」替代（用户拍板的效果稿）；拒绝类按钮
-// 维持服务端目录顺序原样渲染。本闸门保护的核心不变量没有变：
+// ============= [1][2] 目录渲染 + 一次点击动作按钮 + 样式常量 =============
+// 2026-11-18（ui-review P-2）：两步决策（三段范围选择器 + 确认主按钮）退役，
+// 改成「拒绝类原样 + 仅本次允许 / 本会话允许 / 永久允许」一次点击，无默认选中。
+// 本闸门保护的核心不变量没有变：
 //   · 服务端给几档，界面画几档，不凭空补（[5] 的老路径、CLI 两档仍然成立）；
 //   · 点下去发出去的 optionId 与目录一致、适配器能精确回选；
-//   · 设计常量（24 档选项 / 32 档确认 / 选择器几何）不被样式带跑。
-console.log('\n[1] 四档目录 → 拒绝两颗原样 + 三段范围选择器 + 确认主按钮');
+//   · 「永久允许」= allow_always + persistAgent，不新增第四种 kind；
+//   · 设计常量（32 档决策按钮 / 14px 字号，P-2「13.5px 起」取其上的按钮文字档）
+//     不被样式带跑。
+console.log('\n[1] 四档目录 → 拒绝两颗原样 + 三个一次点击动作（无默认选中）');
 {
   const { ctx, page } = await newPage(permissionEvent());
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
@@ -197,43 +199,43 @@ console.log('\n[1] 四档目录 → 拒绝两颗原样 + 三段范围选择器 +
     [...document.querySelectorAll('[data-permission-option]')].map(el => ({
       id: el.getAttribute('data-permission-option'),
       kind: el.getAttribute('data-permission-kind'),
+      action: el.getAttribute('data-permission-action'),
       label: el.textContent.trim(),
       title: el.getAttribute('title'),
       x: Math.round(el.getBoundingClientRect().x),
     }))
   );
-  eq(buttons.map(b => b.id), ['reject_once', 'reject_always', 'allow_once'], '拒绝两颗按目录顺序，确认按钮锚定默认档 allow_once');
-  eq(buttons.map(b => b.kind), ['reject_once', 'reject_always', 'allow_once'], 'kind 原样透传');
-  eq(buttons.map(b => b.label), ['拒绝', '本会话始终拒绝', '允许'], '确认主按钮默认文案是「允许」（仅本次）');
+  eq(buttons.map(b => b.kind),
+    ['reject_once', 'reject_always', 'allow_once', 'allow_always', 'allow_always'],
+    'kind 序列：拒绝两颗原样 + 三个 allow 动作（永久=allow_always+persist，不新增 kind）');
+  eq(buttons.map(b => b.action), [null, null, 'once', 'session', 'agent'],
+    '三个动作带 data-permission-action 锚点，拒绝类不带');
+  eq(buttons.map(b => b.label),
+    ['拒绝', '本会话始终拒绝', '仅本次允许', '本会话允许', '永久允许'],
+    '动作文案与效果稿 16 号图一致（一次点击，无「确认」步）');
   ok((buttons[1].title || '').includes('应用重启后失效'), '「始终拒绝」标题写明作用域', buttons[1].title ?? '');
-  ok((buttons[2].title || '').includes('高危操作仍会被门禁拦截'), '确认按钮标题写明安全边界（来自 allow_always 的 note）', buttons[2].title ?? '');
+  ok((buttons[3].title || '').includes('高危操作仍会被门禁拦截'), '「本会话允许」标题写明安全边界（来自 allow_always 的 note）', buttons[3].title ?? '');
+  ok(/撤销/.test(buttons[4].title || '') && /门禁/.test(buttons[4].title || ''),
+    '「永久允许」标题写明持久化边界（可在设置撤销 + 门禁仍在）', buttons[4].title ?? '');
   ok(
     buttons.every((b, i) => i === 0 || b.x > buttons[i - 1].x),
     '视觉顺序从左到右与目录一致（不是倒序）',
     buttons.map(b => b.x).join(' < ')
   );
 
-  // 授权范围选择器：三段、默认仅本次、radiogroup 语义
-  const scope = await page.evaluate(() => ({
-    root: !!document.querySelector('[data-permission-scope]'),
-    options: [...document.querySelectorAll('[data-permission-scope-option]')].map(el => ({
-      kind: el.getAttribute('data-permission-scope-option'),
-      checked: el.getAttribute('aria-checked'),
-      role: el.getAttribute('role'),
-      tabindex: el.getAttribute('tabindex'),
-    })),
-    groupRole: document.querySelector('[data-permission-scope] [role="radiogroup"]')?.getAttribute('role'),
+  // P-2：无默认选中 —— 卡片里不许再有任何预选状态（radiogroup / aria-checked），
+  // 摆默认选中等于替用户预支一个决定。
+  const preselection = await page.evaluate(() => ({
+    radiogroup: document.querySelectorAll('[data-permission-card] [role="radiogroup"]').length,
+    checked: document.querySelectorAll('[data-permission-card] [aria-checked]').length,
+    scopeTitle: document.querySelector('[data-permission-scope-title]')?.textContent?.trim() ?? '',
   }));
-  ok(scope.root, '选择器出现在按钮区上方');
-  eq(scope.groupRole, 'radiogroup', '选择器是 radiogroup');
-  eq(scope.options.map(o => o.kind), ['once', 'session', 'agent'], '三段：仅本次 / 本会话 / 该 Agent 永久');
-  eq(scope.options.map(o => o.checked), ['true', 'false', 'false'], '默认选中「仅本次」');
-  eq(scope.options.map(o => o.role), ['radio', 'radio', 'radio'], '每段都是 radio');
-  eq(scope.options.map(o => o.tabindex), ['0', '-1', '-1'], 'roving tabindex：只有选中段可 Tab 到');
+  eq(preselection.radiogroup, 0, 'P-2：radiogroup 选择器已退役');
+  eq(preselection.checked, 0, 'P-2：无默认选中（没有任何 aria-checked 预选态）');
+  eq(preselection.scopeTitle, '选择授权范围，点一次即生效：', '效果稿的提示行在按钮区上方');
 
   // ---- [2] 样式：设计常量写死在这里，被现有样式带跑就红 ----
-  // 先把鼠标挪开再量：sendMessage 的落点就在右下角 Dock 区，
-  // 悬停态的 .tc-btn-brand 是 --td-brand-color-hover，量出来就不是默认态了
+  // 先把鼠标挪开再量：sendMessage 的落点可能停在按钮上，悬停态量出来就不是默认态
   await page.mouse.move(300, 160);
   await page.waitForTimeout(200);
   const style = await page.evaluate(() => {
@@ -242,12 +244,8 @@ console.log('\n[1] 四档目录 → 拒绝两颗原样 + 三段范围选择器 +
     probe.style.backgroundColor = 'var(--td-error-color)';
     document.body.appendChild(probe);
     const error = getComputedStyle(probe).backgroundColor;
-    probe.style.backgroundColor = 'var(--td-brand-color)';
-    const brand = getComputedStyle(probe).backgroundColor;
-    probe.style.backgroundColor = 'var(--tc-on-brand)';
-    const onBrand = getComputedStyle(probe).backgroundColor;
-    probe.style.backgroundColor = 'var(--tc-fill-hover)';
-    const fillHover = getComputedStyle(probe).backgroundColor;
+    probe.style.color = 'var(--td-text-color-primary)';
+    const textPrimary = getComputedStyle(probe).color;
     probe.remove();
 
     const read = (sel, textSel) => {
@@ -274,65 +272,58 @@ console.log('\n[1] 四档目录 → 拒绝两颗原样 + 三段范围选择器 +
     probe2.remove();
 
     return {
-      gap: getComputedStyle(el('[data-permission-option="allow_once"]').parentElement).gap,
+      gap: getComputedStyle(el('[data-permission-actions]')).gap,
       error,
-      brand,
-      onBrand,
-      fillHover,
+      textPrimary,
       stroke,
       reject: read('[data-permission-option="reject_once"]'),
       rejectAlways: read('[data-permission-option="reject_always"]'),
-      confirm: read('[data-permission-confirm="1"]'),
-      segOnce: read('[data-permission-scope-option="once"]', ':scope'),
-      segSession: read('[data-permission-scope-option="session"]', ':scope'),
+      once: read('[data-permission-action="once"]'),
+      session: read('[data-permission-action="session"]'),
+      agent: read('[data-permission-action="agent"]'),
     };
   });
 
-  eq(style.gap, '8px', '按钮间距 8px（原设计 gap-2，不被覆盖）');
-  for (const key of ['reject', 'rejectAlways']) {
-    eq(style[key].fontSize, '12px', `${key} 字号 12px（TDesign small 档）`);
-    eq(style[key].height, 24, `${key} 按钮高 24px`);
-    eq(style[key].fontWeight, '500', `${key} 字重 500`);
+  eq(style.gap, '8px', '按钮间距 8px（设计 gap-2，不被覆盖）');
+  for (const [key, name] of [['reject', '拒绝'], ['rejectAlways', '始终拒绝'], ['once', '仅本次允许'], ['session', '本会话允许'], ['agent', '永久允许']]) {
+    eq(style[key].fontSize, '14px', `${name} 字号 14px（--text-body-lg，P-2「13.5px 起」取 DESIGN-SYSTEM 档位）`);
+    eq(style[key].height, 32, `${name} 按钮高 32px（A124 单档，决策动作不再是行内 24）`);
+    eq(style[key].fontWeight, '500', `${name} 字重 500`);
+    eq(style[key].radius, '6px', `${name} 圆角 6px`);
   }
   eq(style.reject.background, 'rgba(0, 0, 0, 0)', '「拒绝」无底色（文字按钮）');
   eq(style.reject.textColor, style.error, '「拒绝」文字用危险色');
   eq(style.rejectAlways.textColor, style.error, '「始终拒绝」与「拒绝」同色，只靠描边区分层级');
-  // 确认主按钮：32 档品牌实心（A124 的唯一入口 .tc-btn-brand）
-  eq(style.confirm.height, 32, '确认主按钮高 32px（提交级动作走 32 档，不是行内 24）');
-  eq(style.confirm.background, style.brand, '确认主按钮是品牌色实心（石墨黑，不是蓝）');
-  eq(style.confirm.textColor, style.onBrand, '确认主按钮文字用 on-brand 反向配对');
-  // 选择器几何：高 44 / 圆角 6 / 选中品牌描边 + fill-hover 底。
-  // 描边宽度（1.5px）量不准 —— Chrome 的 computed border-width 会取整，
-  // 改量颜色：选中段描边是品牌色，未选中段是 --td-component-stroke。
-  eq(style.segOnce.height, 44, '选择器段高 44px（效果稿 .seg .s）');
-  eq(style.segOnce.radius, '6px', '选择器段圆角 6px');
-  eq(style.segOnce.borderColor, style.brand, '选中段描边是品牌色');
-  eq(style.segOnce.background, style.fillHover, '选中段底色是 --tc-fill-hover');
-  eq(style.segSession.borderColor, style.stroke, '未选中段描边是 --td-component-stroke');
-  ok(style.segOnce.borderColor !== style.segSession.borderColor, '选中与未选中的描边可区分');
+  // 三个一次点击动作：无默认选中的中性描边档（效果稿 16 号图），hover 才给底
+  for (const [key, name] of [['once', '仅本次允许'], ['session', '本会话允许'], ['agent', '永久允许']]) {
+    eq(style[key].textColor, style.textPrimary, `${name} 文字色为主文字色（中性档）`);
+    eq(style[key].borderColor, style.stroke, `${name} 描边是 --td-component-stroke`);
+    eq(style[key].background, 'rgba(0, 0, 0, 0)', `${name} 默认无底色`);
+    ok(style[key].textColor !== style.error, `${name} 不用危险色（持久重量写在 title 里，不靠描红）`);
+  }
 
   await page.screenshot({ path: join(OUT, 'a128-four-options.png'), fullPage: false });
   await ctx.close();
 }
 
-// ============= [3] 三个范围各自发什么 =============
-console.log('\n[3] 范围选择器：默认仅本次 / 本会话 / 该 Agent 永久 各自的请求体');
+// ============= [3] 三个动作各自发什么 =============
+console.log('\n[3] 一次点击：仅本次 / 本会话 / 永久 各自的请求体');
 {
-  // 默认（仅本次）：确认按钮直接点 → allow_once，不带 persistAgent
+  // 仅本次允许 → allow_once，不带 persistAgent
   {
     const { ctx, page, posts } = await newPage(permissionEvent());
     await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
     await page.waitForTimeout(900);
     await sendMessage(page);
 
-    await page.locator('[data-permission-confirm="1"]').click();
+    await page.locator('[data-permission-action="once"]').click();
     await page.waitForTimeout(600);
 
     eq(posts.length, 1, '只发一条答复');
     if (posts[0]) {
       eq(posts[0].requestId, 'req-a128', '带对 requestId');
       eq(posts[0].behavior, 'allow', '行为是 allow（不是默认 deny）');
-      eq(posts[0].optionId, 'allow_once', '默认范围是「仅本次」→ allow_once');
+      eq(posts[0].optionId, 'allow_once', '「仅本次允许」→ allow_once');
       eq(posts[0].persistAgent, undefined, '仅本次不携带持久化标记');
       ok(posts[0].reasonCode === undefined, '允许不带拒绝原因码', String(posts[0].reasonCode));
     }
@@ -340,20 +331,14 @@ console.log('\n[3] 范围选择器：默认仅本次 / 本会话 / 该 Agent 永
     await ctx.close();
   }
 
-  // 本会话：选段之后确认按钮的锚点跟着换成 allow_always
+  // 本会话允许 → allow_always，不落库
   {
     const { ctx, page, posts } = await newPage(permissionEvent());
     await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
     await page.waitForTimeout(900);
     await sendMessage(page);
 
-    await page.locator('[data-permission-scope-option="session"]').click();
-    await page.waitForTimeout(150);
-    ok(
-      (await page.locator('[data-permission-option="allow_always"]').count()) === 1,
-      '选「本会话」后确认按钮锚定 allow_always（适配器据此记住本会话）'
-    );
-    await page.locator('[data-permission-option="allow_always"]').click();
+    await page.locator('[data-permission-action="session"]').click();
     await page.waitForTimeout(600);
 
     eq(posts.length, 1, '只发一条答复');
@@ -365,31 +350,21 @@ console.log('\n[3] 范围选择器：默认仅本次 / 本会话 / 该 Agent 永
     await ctx.close();
   }
 
-  // 该 Agent 永久：带 persistAgent，且边界说明出现
+  // 永久允许 → allow_always + persistAgent:true，一次点击直接生效
   {
     const { ctx, page, posts } = await newPage(permissionEvent());
     await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
     await page.waitForTimeout(900);
     await sendMessage(page);
 
-    ok(
-      (await page.locator('[data-permission-scope-hint]').count()) === 0,
-      '没选「该 Agent 永久」时不画边界说明（不是常驻噪音）'
-    );
-    await page.locator('[data-permission-scope-option="agent"]').click();
-    await page.waitForTimeout(150);
-    ok(
-      await page.locator('[data-permission-scope-hint]').isVisible(),
-      '选「该 Agent 永久」后出现持久化边界说明（可撤销 + 门禁仍在）'
-    );
-    await page.locator('[data-permission-confirm="1"]').click();
+    await page.locator('[data-permission-action="agent"]').click();
     await page.waitForTimeout(600);
 
     eq(posts.length, 1, '只发一条答复');
     if (posts[0]) {
       eq(posts[0].behavior, 'allow', '行为是 allow');
       eq(posts[0].optionId, 'allow_always', '回传的仍是 allow_always 档（persistAgent 是附加指令，不是新选项）');
-      eq(posts[0].persistAgent, true, '「该 Agent 永久」→ persistAgent:true（服务端在答复里一并落库）');
+      eq(posts[0].persistAgent, true, '「永久允许」→ persistAgent:true（服务端在答复里一并落库）');
     }
     await ctx.close();
   }
@@ -450,7 +425,7 @@ console.log('\n[6] 群聊：卡片与答复口是同一个请求');
   await page.waitForTimeout(1000);
   await sendMessage(page);
 
-  ok((await page.locator('[data-permission-option]').count()) === 3, '群聊审批卡正常出现（拒绝两颗 + 确认主按钮）');
+  ok((await page.locator('[data-permission-option]').count()) === 5, '群聊审批卡正常出现（拒绝两颗 + 三个一次点击动作）');
   await page.locator('[data-permission-option="allow_once"]').click();
   await page.waitForTimeout(600);
 
