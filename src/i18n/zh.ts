@@ -594,7 +594,11 @@ export const zh = {
   'chat.status.image': '正在生成图像',
   'chat.status.processing': '正在处理',
   'chat.status.reconnecting': '连接中断，正在重连…',
+  // 2026-11-18 粒子状态行：静默 >60s（看门狗）时状态行的「已等待」文案
+  'chat.status.silentWait': '已等待 {n} 秒（未收到内容）',
   'chat.status.thinking': '正在思考',
+  // 2026-11-18 粒子状态行：会话列表「正在跑」角标的无障碍名
+  'chat.status.turnRunning': '正在运行',
   'chat.status.writing': '正在生成',
   'chat.thinking.chars': '{n} 字',
   'chat.thinking.live': '思考中',

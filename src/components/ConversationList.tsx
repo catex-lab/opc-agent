@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentHoverCard } from './AgentHoverCard';
+import { ParticleStatusOrb } from './ParticleStatusOrb';
 import { GroupAvatar, groupAvatarMembersOf } from './UserAvatar';
 import { ContextMenu } from './ContextMenu';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -44,6 +45,18 @@ import { agentStatusViewOf, availabilityLabelOf, type RegisteredAgent, type Sess
 
 const LAST_READ_KEY = 'opc:lastRead';
 
+/**
+ * 「正在跑」角标的 Canvas 实例预算（2026-11-18 粒子状态行落地）。
+ *
+ * 每条正在跑的会话挂一颗 16px 粒子聚散环（降级尺寸：120 颗；实测 16px 下
+ * 120 与 300 视觉差可忽略）。Canvas 2D 单实例很便宜，但极端情况下列表可能
+ * 同时出现 N 条并行会话 —— 为把同屏动画实例的 CPU/GPU 开销钉住，
+ * **Canvas 实例 ≤4**：按列表顺序取前 4 条，其后的会话降级为 CSS 旋转圆环
+ * （ParticleStatusOrb 的 degrade 形态，同尺寸同令牌色，只丢粒子质感）。
+ * 排前的通常是用户正看着的会话；消息列的 24px 主环全屏唯一，不占这份预算。
+ */
+const CANVAS_ORB_BUDGET = 4;
+
 /** 读取「上次已读时间」表，用于算未读红点 */
 export function readLastReadMap(): Record<string, string> {
   try {
@@ -67,6 +80,12 @@ export function markSessionRead(sessionId: string): void {
 interface ConversationListProps {
   sessions: Session[];
   currentSessionId: string | null;
+  /**
+   * 正在跑的会话 id（a142 的 runningIds，useChat 按「每会话一轮」记录）。
+   * 命中的会话在预览行首挂一颗 16px 粒子聚散环角标（2026-11-18 粒子状态行落地），
+   * 让「哪个 Agent 还在干活」不点进会话也一眼可见。
+   */
+  runningIds: string[];
   getAgent: (id: string | undefined) => RegisteredAgent | undefined;
   /** 点「+」菜单里的「重新探测」：去通讯录（那里才是发现 / 探测 Agent 的地方） */
   onAddContacts: () => void;
@@ -98,6 +117,7 @@ interface ConversationListProps {
 export function ConversationList({
   sessions,
   currentSessionId,
+  runningIds,
   getAgent,
   onAddContacts,
   onSelect,
@@ -198,6 +218,16 @@ export function ConversationList({
         return b.lastAt.getTime() - a.lastAt.getTime();
       });
   }, [sessions, getAgent, lastRead, currentSessionId, keyword, flags, remarks, permissionItems, t]);
+
+  /** 本屏吃到 Canvas 预算的「正在跑」会话（见上方 CANVAS_ORB_BUDGET 注释） */
+  const canvasOrbIds = (() => {
+    const ids = new Set<string>();
+    for (const item of items) {
+      if (ids.size >= CANVAS_ORB_BUDGET) break;
+      if (runningIds.includes(item.session.id)) ids.add(item.session.id);
+    }
+    return ids;
+  })();
 
   return (
     <div
@@ -422,6 +452,17 @@ export function ConversationList({
                     </span>
                   </div>
                   <div className="mt-0.5 flex items-center gap-2">
+                    {/* 「正在跑」角标：16px 粒子聚散环（120 颗降级尺寸）。
+                        超出 CANVAS_ORB_BUDGET 的并发会话降级为 CSS 旋转圆环，
+                        注释见上方 canvasOrbIds。纯状态指示，title 即无障碍名。 */}
+                    {runningIds.includes(session.id) && (
+                      <ParticleStatusOrb
+                        state="working"
+                        size={16}
+                        degrade={!canvasOrbIds.has(session.id)}
+                        title={t('chat.status.turnRunning')}
+                      />
+                    )}
                     <span
                       className="truncate text-secondary"
                       style={{ color: 'var(--td-text-color-secondary)' }}

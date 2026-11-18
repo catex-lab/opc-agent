@@ -27,6 +27,7 @@ import { useTranslation } from '../i18n';
 import { useAgentLogin } from '../agentLogin';
 import { api } from '../api';
 import { PermissionDock } from './PermissionDock';
+import { ParticleStatusOrb } from './ParticleStatusOrb';
 
 /* ── 消息呈现（A33）─────────────────────────────────────────────────────
  *
@@ -154,7 +155,7 @@ function ThinkingView({
  */
 
 /**
- * 流式状态行（A34）。
+ * 回合状态行（A34 → 2026-11-18 粒子聚散环落地）。
  *
  * 文案不用任何厂商的专属说法，改成中性的「正在处理」，
  * 并按**分阶段语义**给状态行不同文案：
@@ -162,33 +163,48 @@ function ThinkingView({
  *   idle（刚发出、还没有块）→ 正在处理
  * 阶段由 shared/blocks 的 runActivity() 推导，前后端同一套判据。
  *
- * 视觉上把原来的「缩放脉冲点 + 行尾三个跳动点」收敛成**一个呼吸灯**：
- * 实心核 + 向外扩散的环，两个动画同周期（1.8s），读起来是一盏灯在呼吸，
- * 而不是两个互不相干的动画抢注意力。
+ * 2026-11-18 指示器升级：呼吸灯（实心核 + 扩散环）换成**粒子聚散环**
+ * （ParticleStatusOrb，24px 盒 / 300 颗；用户拍板形态：文本灰 + 聚散环、
+ * 不聚成 M）。三态：
+ *   · working —— 灰色聚散环 + 呼吸脉冲，阶段文案 + 「用时 N 秒」每秒跳动；
+ *   · silent  —— 静默 >60s（C8 看门狗，信号即 reconnecting）粒子转橙 +
+ *                「已等待 N 秒（未收到内容）」，不假装还在正常生成；
+ *   · done    —— 回合结束（完成 / 停止）后本行多留 ~800ms：粒子向外扩散
+ *                淡出，文案定格「已处理 X 秒」，随后整行交还操作行。
+ *                总耗时口径不动（S1-2 单口径）：优先 message.durationMs
+ *                （服务端 run_end 盖章，与消息头部同一个
+ *                formatHandledDurationText），停止没有 durationMs 时才
+ *                退回「回合起点 → 散开瞬间」的本机计时。
  */
 function StreamStatus({
   startedAt,
   blocks,
   imageMode,
   reconnecting,
+  ended,
+  endedAt,
+  durationMs,
 }: {
   startedAt?: number;
   blocks?: readonly Block[];
   imageMode?: boolean;
-  /** C8：SSE 静默超时后的重连中，覆盖阶段文案为人话提示 */
+  /** C8：SSE 静默超时后的重连中（看门狗信号）→ 粒子转橙 + 已等待文案 */
   reconnecting?: boolean;
+  /** 回合已结束：粒子散开定格（~800ms 过渡，由 TurnStatusSlot 控制卸载） */
+  ended?: boolean;
+  /** 散开那一瞬的时钟：停止的回合没有服务端 durationMs，用它兜底计总时长 */
+  endedAt?: number;
+  durationMs?: number;
 }) {
-  const { t } = useTranslation();
-  const elapsed = useElapsed(startedAt, true);
+  const { t, locale } = useTranslation();
+  const elapsed = useElapsed(startedAt, !ended);
   const activity = imageMode ? 'image' : runActivity(blocks ?? []);
   const runningToolName = [...(blocks ?? [])]
     .reverse()
     .find((b): b is ToolBlock => b.type === 'tool' && (b.status === 'running' || b.status === 'pending'))?.name;
-  /** 与 shared/blocks 的 streamPhaseLabel 同一套判据，只把文案交给 i18n */
-  /** C8：重连中优先显示断线提示，不假装还在正常生成 */
-  const label = reconnecting
-    ? t('chat.status.reconnecting')
-    : imageMode
+  /** 与 shared/blocks 的 streamPhaseLabel 同一套判据，只把文案交给 i18n。
+      静默与散开两态不走阶段文案 —— 它们各自有更准确的话（见上方三态注释）。 */
+  const label = imageMode
     ? t('chat.status.image')
     : activity === 'thinking'
       ? t('chat.status.thinking')
@@ -199,6 +215,16 @@ function StreamStatus({
         : activity === 'writing'
           ? t('chat.status.writing')
           : t('chat.status.processing');
+
+  /** 散开定格的总耗时（S1-2 单口径）：run_end 的 durationMs 优先 */
+  const settleMs = (() => {
+    if (typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0) {
+      return durationMs;
+    }
+    const measured = endedAt != null && startedAt ? endedAt - startedAt : 0;
+    // 停止链路至少一次网络往返：钳到 1s 起，避免「已处理 0 秒」的边界态
+    return Math.max(1000, measured);
+  })();
 
   return (
     <span
@@ -211,27 +237,110 @@ function StreamStatus({
       style={{ color: 'var(--td-text-color-secondary)', minHeight: 24 }}
       data-stream-status
       data-reconnecting={reconnecting ? 'true' : undefined}
-      data-stream-phase={reconnecting ? 'reconnecting' : imageMode ? 'image' : runActivity(blocks ?? [])}
+      data-stream-phase={reconnecting ? 'reconnecting' : ended ? 'done' : activity}
     >
-      <span className="tc-live-dot" aria-hidden="true">
-        <span className="tc-live-core" style={{ backgroundColor: 'var(--td-brand-color)' }} />
-        <span className="tc-live-ring" style={{ borderColor: 'var(--td-brand-color)' }} />
-      </span>
-      {/* A83：阶段文案走打字机（模糊渐显 + 逐字错开）。
-          只包 label、不包后面的「用时 N 秒」—— 那个数字每秒都变，
-          一起包进去会让整行每秒重打一遍（startsWith 断在数字上）。
-          阶段切换（思考 → 调用工具 → 生成）时才重播，正好对应
-          「换了一件事在做」这个语义。
+      {/* 粒子聚散环（纯装饰，状态语义由文字承担，故 aria-hidden）：
+          working 灰色聚散、silent 转橙、done 散开淡出。 */}
+      <ParticleStatusOrb state={ended ? 'done' : reconnecting ? 'silent' : 'working'} size={24} />
+      {ended ? (
+        /* 散开定格：粒子散开淡出的同时文案落到总耗时。不走打字机 ——
+           这 800ms 是一次「收尾」，不是新内容。 */
+        <span data-stream-settled="true">
+          {t('chat.msg.handled', { duration: formatHandledDurationText(settleMs, locale) ?? '' })}
+        </span>
+      ) : reconnecting ? (
+        /* 静默 >60s（看门狗）：已等待 N 秒（未收到内容）。数字每秒递增，
+           不包 TypingText —— 与「用时 N 秒」同一理由，避免整行每秒重打。 */
+        <span>{t('chat.status.silentWait', { n: elapsed ?? 0 })}</span>
+      ) : (
+        <span>
+          {/* A83：阶段文案走打字机（模糊渐显 + 逐字错开）。
+              只包 label、不包后面的「用时 N 秒」—— 那个数字每秒都变，
+              一起包进去会让整行每秒重打一遍（startsWith 断在数字上）。
+              阶段切换（思考 → 调用工具 → 生成）时才重播，正好对应
+              「换了一件事在做」这个语义。
 
-          ⚠️ 外层必须再套一个 span：这一行是 `flex items-center gap-1.5`，
-          两个 span 直接并排会被 gap 撑出 6px，渲染成「正在思考 ，用时 0 秒」
-          （逗号前多一个空格）。套一层之后 gap 只作用在「指示灯 ↔ 文字」之间，
-          文字内部是普通行内流，标点紧贴。 */}
-      <span>
-        <TypingText text={label} />
-        <span>{t('chat.status.elapsed', { n: elapsed ?? 0 })}</span>
-      </span>
+              ⚠️ 外层必须再套一个 span：这一行是 `flex items-center gap-1.5`，
+              两个 span 直接并排会被 gap 撑出 6px，渲染成「正在思考 ，用时 0 秒」
+              （逗号前多一个空格）。套一层之后 gap 只作用在「指示灯 ↔ 文字」之间，
+              文字内部是普通行内流，标点紧贴。 */}
+          <TypingText text={label} />
+          <span>{t('chat.status.elapsed', { n: elapsed ?? 0 })}</span>
+        </span>
+      )}
     </span>
+  );
+}
+
+/** 粒子散开定格的驻留时长（ms）。与光标行收尾（CURSOR_RETIRE_MS = 160）、
+    占位收拢（PLACEHOLDER_RETIRE_MS = 220）同一量级 —— 读起来是一次动作。 */
+const ORB_SETTLE_MS = 800;
+
+/**
+ * 回合状态行的槽位守卫（粒子状态行的落点，2026-11-18）。
+ *
+ * 为什么需要单独一层：`message.isStreaming` 翻 false 的那一帧 StreamStatus
+ * 就会被卸载，粒子没有散开的机会。这一层**始终在场**（含历史消息）、内部管
+ * 过渡 —— 回合活着渲染状态行；回合刚结束渲染 ~800ms 的散开定格；其余时刻
+ * 返回 null 不占 DOM。粒子只在回合进行中（+ 收尾 800ms）出现，S1-2 的
+ * 「已处理 X 秒」口径不新增计时器。
+ *
+ * 挂载时回合就已结束（历史消息 / 刷新恢复）不播散开动画 —— 与
+ * StreamCursorLine 的「挂载即 settle」同一规则：没有「从有到无」可延续。
+ */
+function TurnStatusSlot({
+  message,
+  imageMode,
+  onSettleChange,
+}: {
+  message: Message;
+  imageMode: boolean;
+  /**
+   * 向父层（MessageRow）同步「散开定格是否在播」。父层用它把操作行 /
+   * 核对行 / 用量行**等到定格播完再挂载** —— 否则回合结束那一帧这三行
+   * 先出现、800ms 后定格行又卸载，同一个位置跳两次。
+   */
+  onSettleChange?: (settling: boolean) => void;
+}) {
+  /** 回合进行中：气泡还挂着流式标记、且没有失败 */
+  const active = !!message.isStreaming && !message.error;
+  /** true = 回合刚结束，正在播散开定格 */
+  const [settle, setSettle] = useState(false);
+  /** 散开那一刻的时钟（停止的回合没有服务端 durationMs，用它计总时长） */
+  const [endedAt, setEndedAt] = useState<number | undefined>(undefined);
+  const prevActive = useRef(active);
+
+  useEffect(() => {
+    onSettleChange?.(settle);
+  }, [settle, onSettleChange]);
+
+  useEffect(() => {
+    const was = prevActive.current;
+    prevActive.current = active;
+    if (active) {
+      setSettle(false);
+      setEndedAt(undefined);
+      return;
+    }
+    if (!was) return; // 挂载时就已结束（历史消息）：不播散开动画
+    if (message.error) return; // 失败回合：错误卡当帧接管，不散开
+    setEndedAt(Date.now());
+    setSettle(true);
+    const timer = setTimeout(() => setSettle(false), ORB_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [active, message.error]);
+
+  if (!active && !settle) return null;
+  return (
+    <StreamStatus
+      startedAt={message.timestamp?.getTime()}
+      blocks={message.blocks}
+      imageMode={imageMode}
+      reconnecting={message.reconnecting}
+      ended={!active}
+      endedAt={endedAt}
+      durationMs={message.durationMs}
+    />
   );
 }
 
@@ -1301,6 +1410,13 @@ const MessageRow = memo(function MessageRow({
   onBranch,
 }: MessageRowProps) {
   const { t, locale } = useTranslation();
+  /**
+   * 粒子状态行的「散开定格」是否在播（2026-11-18）。定格的 ~800ms 里，
+   * 操作行 / 核对行 / 用量行先不挂载 —— 否则回合结束那一帧它们先出现、
+   * 定格行卸载时同一位置又跳一次（见 TurnStatusSlot.onSettleChange）。
+   * hooks 必须在 note 早退之前调用（条件早退不能跳过 hook）。
+   */
+  const [statusSettling, setStatusSettling] = useState(false);
   // 编排叙述行：不套气泡外壳，直接居中一行
   if (message.note) return <>{renderNoteRow(message)}</>;
 
@@ -1498,15 +1614,15 @@ const MessageRow = memo(function MessageRow({
         {/* 助手消息 - 按顺序渲染内容块 */}
         {message.role === 'assistant' && renderContent(message, isLastAssistant)}
 
-        {/* 流式状态行（A34）：从发出请求到最后一条 token 全程在线、
-            秒数在涨；文案按阶段变化（正在处理 / 思考 / 调用工具 / 生成）。
-            imageMode 时固定为「正在生成图像」。 */}
-        {message.role === 'assistant' && message.isStreaming && !message.error && (
-          <StreamStatus
-            startedAt={message.timestamp?.getTime()}
-            blocks={message.blocks}
+        {/* 回合状态行（A34 → 2026-11-18 粒子聚散环）：进行中 = 灰色聚散环 +
+            阶段文案 + 秒数跳动；静默 >60s（看门狗）= 粒子转橙 + 已等待；
+            回合结束（停止 / 完成）= 粒子散开 ~800ms 定格「已处理 X 秒」，
+            随后把这一行交还给操作行（原「状态行 → 操作行」同槽位替换不变）。 */}
+        {message.role === 'assistant' && !message.error && (
+          <TurnStatusSlot
+            message={message}
             imageMode={imageMode}
-            reconnecting={message.reconnecting}
+            onSettleChange={setStatusSettling}
           />
         )}
 
@@ -1518,6 +1634,7 @@ const MessageRow = memo(function MessageRow({
         {message.role === 'assistant' &&
           !message.isStreaming &&
           !message.error &&
+          !statusSettling && /* 散开定格播完再挂载（粒子状态行，2026-11-18） */
           !!message.id &&
           !!currentSessionId &&
           hasFileEdits(toBlocks(message)) && (
@@ -1541,7 +1658,7 @@ const MessageRow = memo(function MessageRow({
             不显示「0 秒 · $0.00」冒充「这次没花钱」。
             已知取舍：数据显示与 run_end 同帧到达，预占一行会让流式期常驻空白，
             故不预占，收尾帧净增 24.5px 保持现状（不是待修 bug）。 */}
-        {message.role === 'assistant' && usageText && (
+        {message.role === 'assistant' && usageText && !statusSettling && (
           <span
             className="text-caption"
             style={{ color: 'var(--td-text-color-placeholder)' }}
@@ -1554,7 +1671,7 @@ const MessageRow = memo(function MessageRow({
         {/* 消息操作行：复制 / 重新生成 / 分享 / 分支（A55 删了赞踩与代码两个）。
             只在「流式已结束、且没有报错」时出现 —— 正在生成或报错时不给
             用户提供对半成品的操作。 */}
-        {message.role === 'assistant' && !message.isStreaming && !message.error && (
+        {message.role === 'assistant' && !message.isStreaming && !message.error && !statusSettling && (
           <MessageActions
             /* A149：复制出去的内容必须与屏幕上看到的一致 —— 正文在渲染层
                去了 emoji，这里不跟着去，用户复制回来会发现「屏幕上没有的

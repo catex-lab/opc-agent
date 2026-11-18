@@ -401,6 +401,8 @@ function AppContent() {
 
   const {
     isLoading,
+    /** 正在跑的会话 id（a142）：会话列表的粒子角标据此派生「正在跑」 */
+    runningIds,
     inputValue,
     setInputValue,
     sendMessage,
@@ -1785,6 +1787,7 @@ function AppContent() {
               <ConversationList
                 sessions={sessions}
                 currentSessionId={currentSessionId}
+                runningIds={runningIds}
                 getAgent={registry.getAgent}
                 onAddContacts={handleAddContacts}
                 onSelect={handleSelectSession}

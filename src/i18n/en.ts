@@ -595,7 +595,11 @@ export const en: Record<MessageKey, string> = {
   'chat.status.image': 'Generating image',
   'chat.status.processing': 'Working',
   'chat.status.reconnecting': 'Connection lost, reconnecting…',
+  // 2026-11-18 粒子状态行：静默 >60s（看门狗）时状态行的「已等待」文案
+  'chat.status.silentWait': 'Waited {n}s (no content yet)',
   'chat.status.thinking': 'Thinking',
+  // 2026-11-18 粒子状态行：会话列表「正在跑」角标的无障碍名
+  'chat.status.turnRunning': 'Running',
   'chat.status.writing': 'Writing',
   'chat.thinking.chars': '{n} chars',
   'chat.thinking.live': 'Thinking',

@@ -1124,6 +1124,9 @@ export function useChat(options: UseChatOptions) {
   // 队列也由 store 统一持有 —— 这里不再需要对外暴露任何权限相关的东西。
   return {
     isLoading,
+    /** 正在跑的会话 id 列表（a142）。会话列表用它派生「正在跑」粒子角标，
+        派生口径与 isLoading（当前会话那份）完全同源，不另起轮询。 */
+    runningIds,
     inputValue,
     setInputValue: saveInput,
     sendMessage,
