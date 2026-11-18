@@ -857,6 +857,8 @@ export const en: Record<MessageKey, string> = {
   'settings.login.othersSummary': 'Credentials for other agents live in “Other agent credentials” below.',
   // T5-3: sign-in entry for the CodeBuddy CLI area
   'settings.login.openTerminal': 'Open sign-in terminal',
+  // T5-3 fix: WorkBuddy has no CLI login command; desktop-client guidance instead
+  'settings.login.workbuddyGuide': 'WorkBuddy shares the desktop client session: sign in (or sign out and sign in again) inside the WorkBuddy desktop app, then come back here and click Re-detect. There is no standalone CLI login command for WorkBuddy.',
   // T5-7: extra entry hint for the custom provider area
   'settings.login.providerAddHint': 'You can also add from the top-right ＋ in Contacts',
   'settings.login.method1': 'Environment variables',

@@ -1048,13 +1048,17 @@ export function SettingsPage({
               </Link>
             </div>
             <div className="mt-3">
-              <Button
-                theme="primary"
-                onClick={() => setLoginTerminalAgent(WORKBUDDY_TERMINAL_AGENT)}
-                data-open-login-terminal
+              {/* T5-3 修正（2026-11-19 用户实测）：WorkBuddy 无已核实的 CLI 登录命令
+                 （login 表仅收录 opencode）——对它开登录终端会回退 spawn opencode ENOENT，
+                 且浏览器 OAuth 完成后 CLI keyblob 并不刷新（实测 keyblob 停留在 11-09）。
+                 WorkBuddy 的登录路径 = 桌面客户端登录态共享，改为指引文案。 */}
+              <div
+                className="text-xs leading-relaxed"
+                style={{ color: 'var(--td-text-color-secondary)' }}
+                data-wb-login-guide
               >
-                {t('settings.login.openTerminal')}
-              </Button>
+                {t('settings.login.workbuddyGuide')}
+              </div>
             </div>
           </div>
 

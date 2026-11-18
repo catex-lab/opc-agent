@@ -856,6 +856,8 @@ export const zh = {
   'settings.login.othersSummary': '其他 Agent 的凭据状态见下方「其他 Agent 凭据」。',
   // T5-3：CodeBuddy CLI 区的登录入口
   'settings.login.openTerminal': '打开登录终端',
+  // T5-3 修正：WorkBuddy 无 CLI 登录命令，改桌面端登录指引
+  'settings.login.workbuddyGuide': 'WorkBuddy 复用桌面客户端的登录态：请在 WorkBuddy 桌面端登录（必要时退出后重新登录一次），然后回到这里点「重新检测」。本应用不提供独立的 CLI 登录命令。',
   // T5-7：自定义模型厂商区的补充入口说明
   'settings.login.providerAddHint': '也可从通讯录右上角 ＋ 添加',
   'settings.login.method1': '环境变量',
