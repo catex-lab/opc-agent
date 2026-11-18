@@ -56,7 +56,22 @@ function newestPackagedExe() {
   return candidates[0]?.p ?? null;
 }
 
-const EXE = process.argv[2] || newestPackagedExe() || path.join('release-p5d', 'win-unpacked', 'OPC Agent.exe');
+let EXE = process.argv[2] || newestPackagedExe();
+// F0-02③ 交互坑：electron:build 打包后 build-installer 会清掉 win-unpacked（磁盘纪律），
+// 本闸门就没了冒烟对象。自足兜底：现打一个 unpacked（不打 installer，约 1-2 分钟）。
+if (!EXE) {
+  console.log('[package] 未找到 win-unpacked，现打一个（electron-builder --dir）……');
+  const r = spawnSync('npx', ['electron-builder', '--dir'], {
+    shell: true, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, CODEBUDDY_SAFE_DELETE_ENABLED: '0' },
+  });
+  if (r.status !== 0) {
+    console.error('[package] electron-builder --dir 失败：', String(r.stderr ?? '').slice(-800));
+    process.exit(1);
+  }
+  EXE = newestPackagedExe();
+}
+if (!EXE) EXE = path.join('release-p5d', 'win-unpacked', 'OPC Agent.exe');
 
 // 本机（沙箱 / EDR 注入未签名 DLL）会让 GPU 子进程 `0xC0000005` 崩溃，
 // 进而 `FATAL: GPU process isn't usable. Goodbye.` —— 主进程随即退出
