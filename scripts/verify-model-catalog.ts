@@ -584,13 +584,15 @@ function honestEmptySummary(catalogSrc: string): boolean {
   const indexSrc = read('server/index.ts');
   // F0-02②：模型清单 / 凭据三端点已迁到 server/routes/*，接线判据改在
   // 「index + 分区文件」的合并源上跑 —— 否则路由一搬家，接线契约就整片假红。
+  // 模型路由后来又从分区文件搬到了 custom-agents.ts，所以这里一并并入。
+  const modelsRouteSrc = [indexSrc, read('server/routes/custom-agents.ts')].join('\n');
   const wiringSrc = [
     indexSrc,
     read('server/routes/model-catalog.ts'),
     read('server/routes/agent-credentials.ts'),
   ].join('\n');
   ok(
-    indexSrc.includes('await registry.modelsFor('),
+    modelsRouteSrc.includes('await registry.modelsFor('),
     '接线：/api/agents/:id/models 必须 await（漏了 await 会返回 Promise 序列化后的空对象）'
   );
   ok(
@@ -602,7 +604,7 @@ function honestEmptySummary(catalogSrc: string): boolean {
     '接线：启动时必须预热目录（否则首次打开菜单要等 2 秒 CLI）'
   );
   ok(
-    indexSrc.includes('findDef(agentId)?.defaultModel ?? (await getDefaultModelForAgent(agentId))'),
+    modelsRouteSrc.includes('findDef(agentId)?.defaultModel ?? (await getDefaultModelForAgent(agentId))'),
     '接口：默认模型 = 定义表里的（opencode）优先，其次是 CLI 自己声明的（codex 的 config.toml）'
   );
   const cacheSrc = read('server/model-cache.ts');
@@ -1130,7 +1132,7 @@ function honestEmptySummary(catalogSrc: string): boolean {
 //   ③ `ChatInput` / `ModelSelectPopup` 据此禁用点击。
 // 单测只钉得住 ①，所以 ②③ 用源码契约钉。
 {
-  const routeSrc = read('server/index.ts');
+  const routeSrc = [read('server/index.ts'), read('server/routes/custom-agents.ts')].join('\n');
   const inputSrc = read('src/components/ChatInput.tsx');
   const popupSrc = read('src/components/ModelSelectPopup.tsx');
   const cfgSrc = read('server/agents/agentConfigModels.ts');
@@ -1245,7 +1247,7 @@ function honestEmptySummary(catalogSrc: string): boolean {
   eq(texts[0]?.description, '智谱旗舰', 'A151：官方文案表的 description 一并取到');
 
   // ⑨ 源码契约：三段接线少一段，界面就还是「模型由 Agent 决定」
-  const routeSrc2 = read('server/index.ts');
+  const routeSrc2 = [read('server/index.ts'), read('server/routes/custom-agents.ts')].join('\n');
   const popupSrc2 = read('src/components/ModelSelectPopup.tsx');
   const inputSrc2 = read('src/components/ChatInput.tsx');
   const chatSrc = read('src/pages/ChatPage.tsx');
@@ -1279,7 +1281,7 @@ function honestEmptySummary(catalogSrc: string): boolean {
   ok(!agentAcceptsModel('kimicode'), 'A151：kimicode 没有 cli 通道（不许给它输入框）');
   ok(!agentAcceptsModel('这个-id-不存在'), 'A151：未知 id 返回 false（不抛错）');
 
-  const routeSrc3 = read('server/index.ts');
+  const routeSrc3 = [read('server/index.ts'), read('server/routes/custom-agents.ts')].join('\n');
   const popupSrc3 = read('src/components/ModelSelectPopup.tsx');
   const inputSrc3 = read('src/components/ChatInput.tsx');
   const appSrc3 = read('src/App.tsx');
