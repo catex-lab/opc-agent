@@ -199,13 +199,14 @@ console.log('\n[4] summarizeTrace：一句话摘要');
 // ============= [5] 时长文案 =============
 console.log('\n[5] 时长文案');
 {
-  ok(formatHandledDuration(4500) === '4.5s', '< 1 分钟保留一位小数', formatHandledDuration(4500) ?? 'null');
+  // 2026-11-20：分钟以内去小数（63.7s → 5s），用户口径「< 1 分钟按秒计」
+  ok(formatHandledDuration(4500) === '5s', '< 1 分钟按整秒（不再带小数）', formatHandledDuration(4500) ?? 'null');
   ok(formatHandledDuration(2862000) === '47m42s', '47 分 42 秒', formatHandledDuration(2862000) ?? 'null');
   ok(formatHandledDuration(3723000) === '1h02m', '超过 1 小时进位', formatHandledDuration(3723000) ?? 'null');
   ok(formatHandledDuration(0) === null, '0 不编造时长');
   ok(formatHandledDuration(undefined) === null, '无数据不编造时长');
   ok(formatStepDuration(600) === '600ms', '单步 < 1s 用毫秒', formatStepDuration(600) ?? 'null');
-  ok(formatStepDuration(1600) === '1.6s', '单步 >= 1s 用秒', formatStepDuration(1600) ?? 'null');
+  ok(formatStepDuration(1600) === '1.6s', '单步 >= 1s 用秒（另一条轴：单工具步）', formatStepDuration(1600) ?? 'null');
 }
 
 // ============= [6] 后台任务（遗留工具） =============
