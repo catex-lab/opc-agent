@@ -784,7 +784,7 @@ function registerIpc() {
   // ── M01：本机 token 下发 + harness 状态事件 ──────────────────────────────
   //
   // 渲染端经 preload 的 getApiToken() 拉一次，api.ts 内存缓存、每个 /api
-  // 请求带 x-opc-token 头。token 不落 localStorage、不进 URL —— 只活在
+  // 请求带 x-opc-token 头。token 不落任何持久化存储、不进 URL —— 只活在
   // main 内存、harness env 与 0600 文件三处（§7.5 红线：不进日志/argv）。
   ipcMain.handle('opc:api-token', _e => {
     if (rejectUntrustedIpc(_e, 'opc:api-token')) return null;

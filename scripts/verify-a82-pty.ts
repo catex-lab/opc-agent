@@ -155,7 +155,12 @@ async function runSmoke() {
 
     console.log('  · 连接并建会话…');
     harness = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 45_000 });
-    const appPage = harness.contexts().flatMap(c => c.pages())[0];
+    // M01：窗口等 harness 握手后才 loadURL —— CDP 连上时页面可能还没出生，轮询等
+    let appPage = null;
+    for (let i = 0; i < 50 && !appPage; i++) {
+      appPage = harness.contexts().flatMap(c => c.pages())[0] ?? null;
+      if (!appPage) await SLEEP(300);
+    }
     if (!appPage) throw new Error('没找到应用窗口的 page');
     await appPage.waitForFunction(() => document.querySelector('nav') !== null, { timeout: 60_000 });
 
