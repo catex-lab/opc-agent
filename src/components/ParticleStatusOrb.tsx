@@ -7,9 +7,10 @@ import { memo, useEffect, useRef } from 'react';
  *
  * 2026-11-18 初版用黄金角螺旋铺满圆盘（24px / 300 颗、16px / 120 颗），
  * 真实界面里粒子彼此覆盖，缩小后糊成实心黑团。之后改为**稀疏空心星轨**：
- * 均匀角分布 + 窄径向抖动，约 90° 的局部亮弧随整环缓慢公转，其余粒子保持
- * 低亮度。2026-11-19 定稿尺寸：状态行 16px / 12 颗（与 13px 文案同层级）、
- * 列表角标同尺寸；小尺寸可辨的前提是留白与明暗层次，不是堆数量。
+ * 均匀角分布 + 窄径向抖动。中间曾做过「90° 亮弧公转 + 其余低亮度」的明暗
+ * 分层，2026-11-19 晚用户拍板**全亮**——12 颗等亮度，方向感不再靠明暗差
+ * 表达。2026-11-19 定稿：状态行 16px / 12 颗（与 13px 文案同层级）、列表
+ * 角标同尺寸；小尺寸可辨的前提是留白，不是堆数量。
  *
  * ## 为什么是 Canvas 2D 而不是 WebGL
  *
@@ -55,11 +56,8 @@ function makeParticles(count: number, maxR: number): OrbParticle[] {
   return ps;
 }
 
-/** 亮弧位于运动头部之后约 90°：12 颗主环约 3 颗点亮，其余退到背景 */
-function trailStrength(angle: number): number {
-  const delta = Math.atan2(Math.sin(angle), Math.cos(angle));
-  return delta <= 0 ? Math.max(0, 1 + delta / (Math.PI / 2)) : 0;
-}
+/** 全亮基准透明度：12 颗等亮度，呼吸/微光只做 ±6% 的活体感，不做明暗分层 */
+const ORB_ALPHA = 0.9;
 
 /* ── 共享 rAF 时钟 ───────────────────────────────────────────────────── */
 
@@ -198,7 +196,7 @@ class ParticleOrbEngine implements OrbTicker {
     return this.warnColor;
   }
 
-  /** 整环统一缓慢公转，亮弧表达方向；不再让每颗粒子独立运动 */
+  /** 整环统一缓慢公转，全亮等明度；不再让每颗粒子独立运动 */
   private draw() {
     const { ctx, size } = this;
     const cx = size / 2;
@@ -213,7 +211,6 @@ class ParticleOrbEngine implements OrbTicker {
     const spread = done ? 1 + this.t * 1.6 : 1;
     const fade = done ? Math.max(0, 1 - this.t / 0.8) : 1;
     const dotRadius = size >= 24 ? 0.65 : 1.15;
-    const baseAlpha = size >= 24 ? 0.22 : 0.3;
     ctx.fillStyle = color;
     for (const p of this.particles) {
       const a = p.baseA + rot + (spinning ? Math.sin(this.t * 1.4 + p.phase) * 0.012 : 0);
@@ -221,9 +218,8 @@ class ParticleOrbEngine implements OrbTicker {
         p.baseR * breathe * spread + (spinning ? Math.sin(this.t * 2.2 + p.phase) * 0.16 : 0);
       const x = cx + Math.cos(a) * r;
       const y = cy + Math.sin(a) * r;
-      const trail = trailStrength(p.baseA);
       const shimmer = spinning ? 0.94 + 0.06 * Math.sin(this.t * 1.6 + p.phase) : 1;
-      ctx.globalAlpha = fade * (baseAlpha + (0.92 - baseAlpha) * Math.pow(trail, 1.4)) * shimmer;
+      ctx.globalAlpha = fade * ORB_ALPHA * shimmer;
       ctx.beginPath();
       ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
       ctx.fill();
@@ -231,7 +227,7 @@ class ParticleOrbEngine implements OrbTicker {
     ctx.globalAlpha = 1;
   }
 
-  /** reduced-motion：保留同样的空环与亮弧，只关闭位移和明暗变化 */
+  /** reduced-motion：保留同样的全亮空环，只关闭位移和明暗变化 */
   private drawStatic() {
     const { ctx, size } = this;
     const cx = size / 2;
@@ -242,13 +238,11 @@ class ParticleOrbEngine implements OrbTicker {
     const color = silent ? this.resolveWarnColor() || 'currentColor' : 'currentColor';
     const fade = done ? 0.35 : 1;
     const dotRadius = size >= 24 ? 0.65 : 1.15;
-    const baseAlpha = size >= 24 ? 0.22 : 0.3;
     ctx.fillStyle = color;
     for (const p of this.particles) {
       const x = cx + Math.cos(p.baseA) * p.baseR;
       const y = cy + Math.sin(p.baseA) * p.baseR;
-      const trail = trailStrength(p.baseA);
-      ctx.globalAlpha = fade * (baseAlpha + (0.92 - baseAlpha) * Math.pow(trail, 1.4));
+      ctx.globalAlpha = fade * ORB_ALPHA;
       ctx.beginPath();
       ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
       ctx.fill();
