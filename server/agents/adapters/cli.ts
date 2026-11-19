@@ -68,8 +68,36 @@ import {
 /** 去掉终端颜色 / 光标控制序列 */
 const ANSI_RE = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
 
-/** 单次 CLI 调用的默认上限（导出给闸门断言「未覆盖的 Agent 仍是 480 秒」） */
-export const DEFAULT_TIMEOUT_MS = 8 * 60 * 1000;
+/**
+ * 单次 CLI 调用的**总墙钟兜底**（含全部工具步骤）。
+ *
+ * 2026-11-20 用户实测反馈后重定义：原默认 480 秒是「整条指令」的墙钟超时，
+ * 但编码类 Agent（Pi/Codex/Kimi…）一轮跑 23 步改 5 个文件轻松超过 8 分钟，
+ * 被这堵墙无差别击杀（「Pi 超过 480 秒仍未完成，已终止」）。Codex/Hermes/
+ * ZCode 等的口径都是**每一步/静默**计时，从不按整条指令掐表。
+ *
+ * 现口径：流式协议（jsonl/text）由 DEFAULT_IDLE_TIMEOUT_MS 判生死 —— 任何
+ * stdout/stderr 输出都重置；本值降级为失控兜底（进程哪怕一直吐进度也最多
+ * 跑这么久），默认 60 分钟。仍可被 spec.timeoutMs / OPC_CLI_TOTAL_TIMEOUT_MS
+ * 覆盖。导出给闸门断言。
+ */
+export const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000;
+
+/**
+ * 静默上限：流式协议下连续这么久没有任何输出（stdout/stderr 都算「活着」）
+ * 才判死。默认 8 分钟 —— 与旧总墙钟同值，「最多容忍 8 分钟的彻底无声」与
+ * 改造前的最坏情况一致；改造前「有输出的合法长任务」同样会在 480 秒被误杀，
+ * 那正是本次要修的缺陷。
+ *
+ * `json-object`（单次模式，进程结束前没有任何增量输出）不适用静默判定，
+ * 只受总墙钟约束 —— 那类 Agent 的 spec 自带更长的 timeoutMs（如 zcode 15
+ * 分钟）。可被 spec.idleTimeoutMs / OPC_CLI_IDLE_TIMEOUT_MS 覆盖。
+ */
+export const DEFAULT_IDLE_TIMEOUT_MS = 8 * 60 * 1000;
+
+/** 总墙钟 / 静默上限的环境变量覆盖（>0 才生效；闸门与部署调参用） */
+const ENV_TOTAL_TIMEOUT_MS = Number(process.env.OPC_CLI_TOTAL_TIMEOUT_MS) || 0;
+const ENV_IDLE_TIMEOUT_MS = Number(process.env.OPC_CLI_IDLE_TIMEOUT_MS) || 0;
 
 /**
  * A106：优雅中止的宽限窗（毫秒）。
@@ -926,11 +954,51 @@ export class CliAdapter implements AgentProvider {
       settleTimer.unref?.();
     };
 
-    const timeoutMs = this.spec.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const timeoutMs = this.spec.timeoutMs ?? (ENV_TOTAL_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
+    // 静默判定只对流式协议（jsonl/text）生效：json-object 单次模式在进程
+    // 结束前没有任何增量输出，静默判定必然误杀，只受总墙钟约束。
+    const streaming = this.spec.parse !== 'json-object';
+    const idleMs = streaming
+      ? this.spec.idleTimeoutMs ?? (ENV_IDLE_TIMEOUT_MS || DEFAULT_IDLE_TIMEOUT_MS)
+      : 0;
+    /** 最后一次收到子进程任何输出（stdout/stderr 都算活着）的时刻 */
+    let lastOutputAt = Date.now();
+    const noteOutput = () => {
+      lastOutputAt = Date.now();
+      armIdleCheck();
+    };
+    /** 'idle' = 静默判死；'total' = 总墙钟兜底。两种死法文案要分开说 */
+    let timeoutKind: 'idle' | 'total' | null = null;
+
     const timer = setTimeout(() => {
+      timeoutKind = 'total';
       stopAll('timeout');
     }, timeoutMs);
     timer.unref?.();
+
+    /**
+     * 静默看门狗（2026-11-20）：在 lastOutputAt + idleMs 的到期点挂一次性
+     * 检查，新输出到来就重挂到新到期点。不用 setInterval 轮询 —— 到期时间
+     * 精确（闸门用秒级 idleMs 实测不抖），也没有固定节拍的空转。
+     */
+    let idleTimer: NodeJS.Timeout | null = null;
+    const armIdleCheck = () => {
+      if (!idleMs || killed) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(
+        () => {
+          if (Date.now() - lastOutputAt >= idleMs) {
+            timeoutKind = 'idle';
+            stopAll('timeout');
+          } else {
+            armIdleCheck();
+          }
+        },
+        Math.max(lastOutputAt + idleMs - Date.now(), 250)
+      );
+      idleTimer.unref?.();
+    };
+    armIdleCheck();
 
     /**
      * 终止子进程。
@@ -949,6 +1017,10 @@ export class CliAdapter implements AgentProvider {
       killed = reason;
       fatalDetail = detail;
       clearTimeout(timer);
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
       cancelKill?.();
       cancelKill = null;
       if (!child.killed) cancelKill = terminateGracefully(child, TERM_GRACE_MS);
@@ -1220,6 +1292,9 @@ export class CliAdapter implements AgentProvider {
     child.stderr.setEncoding('utf8');
 
     child.stdout.on('data', (chunk: string) => {
+      // M01-adjacent：任何输出都证明进程活着 —— 重置静默看门狗。
+      // 哪怕是 ANSI 噪音 / 空行也算：这里判的是「进程活性」不是「事件密度」。
+      noteOutput();
       if (this.spec.parse === 'jsonl') {
         lineBuf += chunk;
         const lines = lineBuf.split(/\r?\n/);
@@ -1235,6 +1310,7 @@ export class CliAdapter implements AgentProvider {
     });
 
     child.stderr.on('data', (chunk: string) => {
+      noteOutput(); // stderr 同样算「活着」（重连提示、进度条都走这里）
       stderrBuf += stripAnsi(chunk);
       // 保留尾部，避免无限增长
       if (stderrBuf.length > 8000) stderrBuf = stderrBuf.slice(-8000);
@@ -1281,6 +1357,10 @@ export class CliAdapter implements AgentProvider {
       }
       unlinkAbort();
       clearTimeout(timer);
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
       // A106：进程已经退了，SIGKILL 升级没必要再执行
       cancelKill?.();
       cancelKill = null;
@@ -1314,9 +1394,14 @@ export class CliAdapter implements AgentProvider {
         return;
       }
       if (killed === 'timeout') {
+        // 两种死法分开说：静默 = 「没动静了，可能卡住」；总墙钟 = 「一直在
+        // 干但超过失控兜底」。用户据此能判断该重试还是该去查 Agent 本身。
         queue.push({
           type: 'error',
-          message: `${this.descriptor.name} 超过 ${Math.round(timeoutMs / 1000)} 秒仍未完成，已终止。`,
+          message:
+            timeoutKind === 'idle'
+              ? `${this.descriptor.name} 已静默超过 ${Math.round(idleMs / 1000)} 秒无任何输出，可能卡住，已终止。`
+              : `${this.descriptor.name} 全程超过 ${Math.round(timeoutMs / 1000)} 秒仍未完成（含工具步骤），已终止。`,
         });
         queue.push({ type: 'done', durationMs: elapsed });
         queue.close();

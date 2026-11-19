@@ -134,13 +134,23 @@ export interface CliSpec {
   /** 从一行 JSON 中提取续接上下文的令牌 */
   extractResumeToken?(obj: unknown): string | null;
   /**
-   * 整体超时（毫秒）。默认 8 分钟。
+   * 总墙钟兜底（毫秒，含全部工具步骤）。默认 60 分钟。
    *
    * 为什么必须有：这些 CLI 在遇到网络故障时会**无限重连**而不是退出
    * （codex 实测会一直打印 "Reconnecting... waiting for network"）。
    * 没有超时的话，一次对话就能把 HTTP 请求永久挂住。
+   *
+   * 2026-11-20 重定义：生死判定走 idleTimeoutMs（静默上限）—— 流式协议
+   * 下任何输出都重置计时器，长任务（23 步改 5 个文件）不再被「整条指令」
+   * 墙钟误杀。本值只是「哪怕一直有输出也最多跑这么久」的失控兜底。
    */
   timeoutMs?: number;
+  /**
+   * 静默上限（毫秒，流式协议专用）：连续这么久没有任何 stdout/stderr
+   * 输出才判死。默认 8 分钟（DEFAULT_IDLE_TIMEOUT_MS）。
+   * `json-object` 单次模式（无增量输出）不适用 —— 只受 timeoutMs 约束。
+   */
+  idleTimeoutMs?: number;
   /**
    * A106：stdio 双向模式（目前只有 claude 的 control 协议）。
    *
