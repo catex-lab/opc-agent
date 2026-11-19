@@ -43,20 +43,30 @@ interface StartOpts {
   extraEnv?: Record<string, string>;
 }
 
-/** 三级解析 harness 入口（照 server/kb/tool.ts resolveKbMcpLaunch 的先例） */
+/**
+ * 三级解析 harness 入口。
+ *
+ * ⚠️ 与 kb-mcp 的先例**刻意不同**：harness 必须从 **asar 内**跑，不进
+ * asar.unpacked。实测（2026-11-20）：ELECTRON_RUN_AS_NODE 子进程从
+ * asar.unpacked/dist-electron/ require 裸依赖（express 等）解析不到 ——
+ * 依赖全在 app.asar/node_modules 里，只有从 asar 内启动才沿 asar 解析
+ * （main.cjs 同理，它一直就是从 asar 里跑的）。asar.unpacked 里留一份
+ * 反而是「能启动、必崩」的陷阱。
+ */
 function resolveHarnessEntry(): { command: string; args: string[]; env: Record<string, string> } {
   const resources = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-  const unpacked = resources
-    ? path.join(resources, 'app.asar.unpacked', 'dist-electron', 'harness.cjs')
-    : null;
-  if (unpacked && existsSync(unpacked)) {
-    return { command: process.execPath, args: [unpacked], env: {} };
+  const inAsar = resources ? path.join(resources, 'app.asar', 'dist-electron', 'harness.cjs') : null;
+  if (inAsar && existsSync(inAsar)) {
+    // existsSync 走的是主进程的 asar 补丁 fs —— 打包态能看见 asar 内文件
+    return { command: process.execPath, args: [inAsar], env: {} };
   }
   const built = path.join(process.cwd(), 'dist-electron', 'harness.cjs');
   if (existsSync(built)) {
     return { command: process.execPath, args: [built], env: {} };
   }
-  // 开发态未构建：源码 + tsx（devDependency，打包态不会走到这里）
+  // 开发态未构建：源码 + tsx（devDependency，打包态不会走到这里）。
+  // 注意 tsx 形态下 IPC disconnect / stdin close 都收不到（tsx 包一层进程），
+  // 只用于 electron:dev 的快速起跑 —— build:electron 先行时不会落到这里。
   const source = path.join(process.cwd(), 'harness', 'index.ts');
   return { command: process.execPath, args: ['--import', 'tsx', source], env: {} };
 }
@@ -65,6 +75,8 @@ class HarnessManager {
   private child: ChildProcess | null = null;
   private state: HarnessState = 'stopped';
   private port: number | null = null;
+  /** 上一代就绪端口：重启优先复用（origin 不变则窗口免 reload） */
+  private lastPort: number | null = null;
   private token: string | null = null;
   /** 当前 child 是第几次尝试（看门狗计数，稳定运行后归零） */
   private restartAttempt = 0;
@@ -100,7 +112,15 @@ class HarnessManager {
     if (process.env[OPC_HARNESS_ENV] === '0') {
       return Promise.reject(new Error('OPC_HARNESS=0 —— harness 进程壳已关闭'));
     }
-    // 在途去重：顶层拉起与 resolveAppUrl 会先后调 start，同一代进程只 spawn 一次
+    // 三态去重（2026-11-20 实测修：resolveAppUrl 在首次握手**结算后**再调
+    // start，旧写法会再 spawn 一代——旧实例还活着占旧端口，新 token 写进
+    // 文件，按 buf 里第一行握手打到旧端口就是 401）：
+    //   · running → 直接返回已就绪端口，绝不重复 spawn；
+    //   · starting（在途）→ 返回同一份等待；
+    //   · restarting/stopped → 走真正的 spawn（重启路径）。
+    if (this.state === 'running' && this.port != null) {
+      return Promise.resolve(this.port);
+    }
     if (this.activeStart) return this.activeStart;
     this.stopping = false;
     this.wasReady = false;
@@ -190,10 +210,14 @@ class HarnessManager {
       if (payload.type === 'ready') {
         const resumed = this.state === 'restarting';
         this.port = payload.port;
+        this.lastPort = payload.port;
         this.state = 'running';
         this.wasReady = true;
         this.runningSince = Date.now();
         this.restartAttempt = 0;
+        // 原始握手行要透传到 main 的 stdout：打包闸门（verify-package）等
+        // 外部工具靠它识别「server 真实端口」，吞掉就只剩 CDP 口可抢。
+        console.log(`[Harness] ${HANDSHAKE_PREFIX}${JSON.stringify(payload)}`);
         console.log(`[Harness] 就绪：127.0.0.1:${payload.port}（pid ${payload.pid}）`);
         if (resumed) this.uiSink?.({ type: 'recovered', port: payload.port });
         for (const w of this.handshakeWaiters.splice(0)) w.resolve(payload.port);
@@ -230,7 +254,7 @@ class HarnessManager {
     setTimeout(() => {
       if (this.quitRequested || this.stopping) return;
       // 重启优先复用上一代端口：origin 不变，窗口不用 reload
-      this.start({ ...opts, port: opts.port || this.port || opts.port }).catch(err => {
+      this.start({ ...opts, port: opts.port || this.lastPort || opts.port }).catch(err => {
         console.error('[Harness] 重启失败:', (err as Error).message);
       });
     }, delay).unref?.();
