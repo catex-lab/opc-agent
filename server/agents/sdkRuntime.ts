@@ -179,7 +179,16 @@ export function sdkAuthChildFor(runtime: SdkRuntime): {
   return {
     executable: process.execPath,
     executableArgs: [resolveSdkSettingsShim()],
-    env: { ...runtime.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: {
+      ...runtime.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      // A233：CLI 的 `UrlUtils.openUrl()` 会先读 `process.env.BROWSER`，Windows 上
+      // 没设时退回 `rundll32 url,OpenURL` —— 也就是**每次 authenticate 都替我们
+      // 弹一次系统浏览器**。探测每轮都跑一次 authenticate，于是用户看到「浏览器
+      // 无限弹登录」。这里给一个必然解析失败的命令名，让 CLI 的 openUrl 静默失败；
+      // 浏览器只由前端在用户点「去登录」时打开一次（见 src/agentLogin.ts）。
+      BROWSER: '__opc_no_browser__',
+    },
   };
 }
 
