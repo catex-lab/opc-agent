@@ -57,6 +57,7 @@ function loadSdk(): Promise<ClaudeSdkModule> {
 }
 import { AsyncQueue, PendingReplies, linkAbort } from '../channel.js';
 import { toUnpackedPath } from '../sdkRuntime.js';
+import { resolveVendorComponentBinary } from '../vendorComponents.js';
 import { withMemoryContext } from '../../memory.js';
 import { withAnswerLanguage } from '../../answer-language.js';
 import { withExtensionsContext } from '../../extensions/inject.js';
@@ -176,9 +177,10 @@ function bundledBinary(): string | null {
       if (fs.existsSync(candidate)) return toUnpackedPath(candidate);
     }
   } catch {
-    // 打包态下 node_modules 布局可能变；找不到就如实报未安装
+    // 打包态下 node_modules 布局可能变；往下走按需下载目录
   }
-  return null;
+  // 瘦身批次 2：平台包不再随安装包分发，用户点「下载」后落在 <dataDir>/vendor/claude/
+  return resolveVendorComponentBinary('claude');
 }
 
 /**
@@ -274,9 +276,7 @@ export class ClaudeSdkAdapter implements AgentProvider {
       this.status = {
         availability: 'not-installed',
         installed: false,
-        message:
-          '未找到 SDK 自带的 claude 可执行文件（平台包可能没装上）。' +
-          '可执行 `npm i @anthropic-ai/claude-agent-sdk-<平台>-<架构>` 补齐。',
+        message: '运行组件未下载（约 320MB）。在 Agent 详情里下载后即可使用',
         probedAt: now,
       };
       return this.status;

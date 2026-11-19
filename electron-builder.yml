@@ -45,6 +45,17 @@ files:
   - '!node_modules/@tencent-ai/agent-sdk/cli/vendor/sandbox-center-runtime-kit/**/macos*/**'
   - '!node_modules/@tencent-ai/agent-sdk/cli/vendor/sandbox-center-runtime-kit/**/darwin*/**'
   - '!node_modules/@tencent-ai/agent-sdk/cli/vendor/sandbox-center-runtime-kit/**/linux*/**'
+  # ── 瘦身批次 2（2026-11-19）：Codex / Claude 运行组件改为按需下载 ──
+  # 两个平台包各带一个几百 MB 的可执行文件（codex.exe 354.5MB + 资源 ≈ 479.5MB、
+  # claude.exe 319.9MB），是安装包体积的绝对大头。它们不随包分发，用户第一次
+  # 使用对应 Agent 时由 `server/agents/vendorComponents.ts` 从 npm 镜像按
+  # package-lock.json 记录的 sha512 校验后下载到 `<dataDir>/vendor/<id>/`。
+  #
+  # ⚠️ 不要顺手删这两行下方的注释去「恢复内置」——那会把 setup 重新推回 385MB。
+  # 冒烟闸门 verify:package 会校验包里不含这两个目录，verify:a232 会校验
+  # 这里的排除规则仍然存在。
+  - '!node_modules/@openai/codex-win32-x64/**'
+  - '!node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/**'
   # 2026-10-31：把 @tencent-ai/agent-sdk 内嵌的 CLI（cli/）**打回安装包**。
   #
   # 此前（2026-10-30）因为 cli/package.json 写 "SEE LICENSE IN README.md"

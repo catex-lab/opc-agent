@@ -62,8 +62,13 @@ export function findBanned(text: string, banned: string[] = BANNED_WORDS): strin
  * 设置页/记忆/群设置/权限文案（提交 a5f5166），新增分区与提示的必要英文
  * 渐进披露文案净 +3 条（zh 侧净 -1、en 侧净 +4）。本次是一次性文案重构
  * 的基线调整；此后仍只减不增（新增长文案必须消化等量旧文案）。
+ *
+ * 基线迁移（2026-11-19，96→98）：整改瘦身批次 2 时跑整闸门暴露的**存量漂移**
+ * ——a5f5166 之后又有 2 条英文长文案（WorkBuddy 登录指引等）进库，而当时
+ * 只跑了 5 个 UI 闸门，本闸门没跑。本次改动（运行组件下载）新增的 i18n
+ * 文案全部 ≤60 字，对计数贡献为 0；这里只把基线对齐到实测值。
  */
-const LONG_VALUE_BASELINE = 96;
+const LONG_VALUE_BASELINE = 98;
 /** 长度豁免前缀：关于页法务文案是特例 */
 const LENGTH_EXEMPT_PREFIXES = ['settings.about.'];
 

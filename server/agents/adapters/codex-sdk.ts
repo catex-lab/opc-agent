@@ -57,6 +57,7 @@ function loadSdk(): Promise<CodexSdkModule> {
 }
 import { AsyncQueue, linkAbort } from '../channel.js';
 import { toUnpackedPath } from '../sdkRuntime.js';
+import { resolveVendorComponentBinary } from '../vendorComponents.js';
 import { createCodexLineageMapper } from '../definitions.js';
 import { codexSandboxFor } from '../permissions.js';
 import {
@@ -119,9 +120,10 @@ function bundledBinary(): string | null {
       }
     }
   } catch {
-    // 打包态布局不同就如实报未安装，不猜路径
+    // 打包态布局不同就往下走按需下载目录，不猜 node_modules 里的路径
   }
-  return null;
+  // 瘦身批次 2：平台包不再随安装包分发，用户点「下载」后落在 <dataDir>/vendor/codex/
+  return resolveVendorComponentBinary('codex');
 }
 
 /**
@@ -191,7 +193,7 @@ export class CodexSdkAdapter implements AgentProvider {
       this.status = {
         availability: 'not-installed',
         installed: false,
-        message: '未找到 SDK 自带的 codex 可执行文件（平台包可能没装上）',
+        message: '运行组件未下载（约 479MB）。在 Agent 详情里下载后即可使用',
         probedAt: now,
       };
       return this.status;

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { InstallCard } from './InstallCard';
+import { VendorComponentRow } from './VendorComponentCard';
 import { AgentCredentialEditor } from './AgentCredentialEditor';
 import { InfoHint } from './InfoHint';
 import { describeProbeFeedback, type AgentProbeFeedback } from '../agentProbe';
@@ -360,6 +361,13 @@ export function AgentDetailSections({
               />
             </div>
           )}
+
+          {/* 瘦身批次 2：Codex / Claude 的运行组件按需下载。
+              组件已就绪或不适用时本行返回 null，其他 Agent 布局不变。 */}
+          <VendorComponentRow
+            agentId={agent.id}
+            onInstalled={onReprobe ? () => onReprobe(agent.id) : undefined}
+          />
 
           {/* key 类 Agent：就地凭据配置（取 / 存 / 清 + 连通性 + 模型）。
               不论 availability 是什么都显示 —— 已配置时用户可能想换 Key 或

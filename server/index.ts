@@ -184,6 +184,7 @@ import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerCustomAgentRoutes } from "./routes/custom-agents.js";
 import { registerChatRoutes, type ChatRoutesDeps } from "./routes/chat.js";
+import { registerVendorComponentRoutes } from "./routes/vendor-components.js";
 import { buildMcpConfig, safeAgentId } from "./extensions/distribute.js";
 import { applyDrift as extApplyDrift, scanDrift as extScanDrift } from "./extensions/drift.js";
 import {
@@ -715,6 +716,11 @@ app.get("/api/models", async (req, res) => {
 // 仍被下面「用户自建 Agent」分区的详情路由使用，从 routes 文件导入。
 // ⚠️ 注册顺序不变：login-terminal 必须仍先于 /api/agents/:agentId 注册。
 registerAgentRosterRoutes(app);
+
+// ============= 厂商运行组件（瘦身批次 2）=============
+// Codex / Claude 的平台二进制不再随安装包分发，改为按需下载到 data/vendor/。
+// 与名册分开：这是「机器上有没有这个文件」，不是 Agent 的登录/可用状态。
+registerVendorComponentRoutes(app);
 
 // ============= 用户资料（A115）/ 头像图片（A160）/ 界面偏好（A135）=============
 // F0-02②：三个分区已原样迁往 server/routes/*（行为零改动），注册顺序与拆分前一致。
