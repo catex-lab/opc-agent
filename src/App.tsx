@@ -1441,6 +1441,32 @@ function AppContent() {
     [registry]
   );
 
+  /**
+   * 把内置 Agent 从列表移除 / 放回（可恢复）。
+   *
+   * `registry.hideAgent/showAgent` 内部已经重拉名册；这里只负责失败提示，
+   * 以及移除后关掉正停在该条目的资料页 —— 它引用的对象已经从列表消失。
+   */
+  const handleHideBuiltinAgent = useCallback(
+    async (agentId: string) => {
+      const ok = await registry.hideAgent(agentId);
+      if (!ok) {
+        MessagePlugin.warning('移除 Agent 失败，请稍后重试');
+        return;
+      }
+      setDetailAgentId(prev => (prev === agentId ? null : prev));
+    },
+    [registry]
+  );
+
+  const handleShowBuiltinAgent = useCallback(
+    async (agentId: string) => {
+      const ok = await registry.showAgent(agentId);
+      if (!ok) MessagePlugin.warning('恢复 Agent 失败，请稍后重试');
+    },
+    [registry]
+  );
+
   // Esc 关闭设置弹窗。弹窗的键盘出口是必备项 —— 鼠标在滑杆上时，
   // 用户最直觉的动作是「按 Esc」，而不是把指针移到右上角那个 × 上。
   useEffect(() => {
@@ -1829,11 +1855,14 @@ function AppContent() {
             ) : (
               <ContactsPanel
                 agents={registry.agents}
+                hiddenAgents={registry.hiddenAgents}
                 comingSoon={registry.comingSoon}
                 loading={registry.loading}
                 probing={registry.probing}
                 error={registry.error}
                 onProbe={registry.probe}
+                onHideAgent={handleHideBuiltinAgent}
+                onShowAgent={handleShowBuiltinAgent}
                 onCanary={registry.canaryAll}
                 onCreateGroup={handleCreateGroup}
                 onViewDetail={setDetailAgentId}
@@ -1940,6 +1969,7 @@ function AppContent() {
                     probeFeedback={registry.probeFeedback[detailAgent.id]}
                     onOpenCredential={handleOpenCredential}
                     onDeleteCustom={handleDeleteCustomAgent}
+                    onHideBuiltin={handleHideBuiltinAgent}
                     onAvatarChanged={registry.load}
                     onRequestRefresh={registry.load}
                   />

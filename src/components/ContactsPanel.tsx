@@ -44,12 +44,21 @@ import { api } from '../api';
 
 interface ContactsPanelProps {
   agents: RegisteredAgent[];
+  /**
+   * 被用户从列表移除的内置 Agent。与 `agents` 互斥：它们不出现在通讯录，
+   * 只透传给「获取 Agent」弹窗的恢复分组。
+   */
+  hiddenAgents?: RegisteredAgent[];
   /** A210：只透传给「获取 Agent」弹窗的独立分组，不参与通讯录任何判定 */
   comingSoon?: ComingSoonAgent[];
   loading: boolean;
   probing: boolean;
   error: string | null;
   onProbe: () => void;
+  /** 把内置 Agent 从列表移除（可恢复） */
+  onHideAgent?: (agentId: string) => void;
+  /** 把已移除的内置 Agent 放回列表 */
+  onShowAgent?: (agentId: string) => void;
   /** 发起群聊：弹窗里勾到的成员 id 列表（与会话栏同一条建群路径） */
   onCreateGroup?: (agentIds: string[]) => void;
   /**
@@ -141,11 +150,14 @@ type Tab = 'agents' | 'groups';
  */
 export function ContactsPanel({
   agents,
+  hiddenAgents = [],
   comingSoon = [],
   loading,
   probing,
   error,
   onProbe,
+  onHideAgent,
+  onShowAgent,
   onCreateGroup,
   onViewDetail,
   getAgent,
@@ -195,6 +207,8 @@ export function ContactsPanel({
   const [editingCliId, setEditingCliId] = useState<string | null>(null);
   /** A223：移除确认（右键菜单 → ConfirmDialog），pending 存待删条目 */
   const [removeCli, setRemoveCli] = useState<{ id: string; name: string } | null>(null);
+  /** 内置 Agent「从列表移除」确认（可恢复，不是删除） */
+  const [hideTarget, setHideTarget] = useState<{ id: string; name: string } | null>(null);
   /** P2：登录代管终端（open_login 且该 Agent 有已核实登录命令时直开） */
   const [loginTerminalAgent, setLoginTerminalAgent] = useState<RegisteredAgent | null>(null);
 
@@ -244,6 +258,17 @@ export function ContactsPanel({
       onProbe(); // 名册里少了一条，重新探测一次刷掉残留状态
     }
   };
+
+  /** 内置 Agent 的「从列表移除」：可恢复，所以不需要重新探测 */
+  const hideBuiltin = (target: { id: string; name: string }) => {
+    setHideTarget(null);
+    onHideAgent?.(target.id);
+  };
+  /** 内置条目的右键菜单项（自建条目走编辑/删除，不出现这一项） */
+  const hideMenuOf = (agent: RegisteredAgent) =>
+    onHideAgent && !agent.custom
+      ? { onHide: () => setHideTarget({ id: agent.id, name: agent.name }) }
+      : {};
 
   /**
    * 同族分组（A68）。
@@ -618,10 +643,34 @@ export function ContactsPanel({
                 icon={keyword ? Search : MessagesSquare}
                 fill
                 compact
-                title={keyword ? t('contacts.noMatchAgents') : t('contacts.noAgents')}
-                description={keyword ? t('contacts.noMatchDesc') : undefined}
-                action={keyword ? t('contacts.clearSearch') : undefined}
-                onAction={keyword ? () => setKeyword('') : undefined}
+                title={
+                  keyword
+                    ? t('contacts.noMatchAgents')
+                    : hiddenAgents.length > 0
+                      ? t('contacts.allHidden')
+                      : t('contacts.noAgents')
+                }
+                description={
+                  keyword
+                    ? t('contacts.noMatchDesc')
+                    : hiddenAgents.length > 0
+                      ? t('contacts.allHiddenDesc')
+                      : undefined
+                }
+                action={
+                  keyword
+                    ? t('contacts.clearSearch')
+                    : hiddenAgents.length > 0
+                      ? t('contacts.getAgents')
+                      : undefined
+                }
+                onAction={
+                  keyword
+                    ? () => setKeyword('')
+                    : hiddenAgents.length > 0
+                      ? () => setGetAgentsOpen(true)
+                      : undefined
+                }
               />
             ) : (
             <div className="flex flex-col gap-0.5">
@@ -640,7 +689,7 @@ export function ContactsPanel({
                           },
                           onRemove: () => setRemoveCli({ id: s.agent.id, name: s.agent.name }),
                         }
-                      : {})}
+                      : hideMenuOf(s.agent))}
                   />
                 ) : (
                   /* 同族分组：标题可折叠。标题行本身不是 Agent，不可点开资料页 ——
@@ -677,7 +726,7 @@ export function ContactsPanel({
                                 },
                                 onRemove: () => setRemoveCli({ id: agent.id, name: agent.name }),
                               }
-                            : {})}
+                            : hideMenuOf(agent))}
                         />
                       ))}
                   </section>
@@ -746,11 +795,13 @@ export function ContactsPanel({
       <GetAgentsDialog
         open={getAgentsOpen}
         agents={agents}
+        hiddenAgents={hiddenAgents}
         comingSoon={comingSoon}
         onClose={() => setGetAgentsOpen(false)}
         onReprobe={onProbe}
         onOpenCredential={onOpenCredential}
         onViewDetail={onViewDetail}
+        onRestore={onShowAgent}
       />
 
       {/* A223：手动添加 / 编辑本地 CLI Agent。保存成功后重探一次名册，
@@ -784,6 +835,22 @@ export function ContactsPanel({
           {t('contacts.removeCliConfirm', { name: removeCli?.name ?? '' })}
         </p>
       </ConfirmDialog>
+
+      {/* 内置 Agent 从列表移除：可恢复，文案必须和「删除接入声明」区分开 */}
+      <ConfirmDialog
+        open={hideTarget !== null}
+        title={t('contacts.hideAgentConfirmTitle')}
+        confirmText={t('contacts.confirmHide')}
+        cancelText={t('addcli.cancel')}
+        onConfirm={() => {
+          if (hideTarget) hideBuiltin(hideTarget);
+        }}
+        onCancel={() => setHideTarget(null)}
+      >
+        <p>
+          {t('contacts.hideAgentConfirm', { name: hideTarget?.name ?? '' })}
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }
@@ -797,6 +864,11 @@ interface ContactRowProps {
    */
   onEdit?: () => void;
   onRemove?: () => void;
+  /**
+   * 内置条目的「从列表移除」：只是从 Agent 列表隐藏，可在「+ → 获取 Agent」
+   * 里恢复 —— 与自定义条目的 `onRemove`（删接入声明）是两件事。
+   */
+  onHide?: () => void;
   /** P2：open_login 直开登录终端（仅 agent.login 存在时被调用） */
   onOpenLogin?: () => void;
 }
@@ -820,7 +892,7 @@ interface ContactRowProps {
  * 悬停有底色反馈，箭头在 300px 的窄栏里只是把名称的可读宽度又切掉一截，
  * 属于「解释一个已经说清楚的事」。可点性靠 hover 态和 `title` 承担。
  */
-function ContactRow({ agent, onViewDetail, onEdit, onRemove, onOpenLogin }: ContactRowProps) {
+function ContactRow({ agent, onViewDetail, onEdit, onRemove, onHide, onOpenLogin }: ContactRowProps) {
   const { t } = useTranslation();
   const remarks = useAgentRemarks();
   const remark = remarks[agent.id] ?? '';
@@ -954,6 +1026,19 @@ function ContactRow({ agent, onViewDetail, onEdit, onRemove, onOpenLogin }: Cont
                     label: t('contacts.removeCliAgent'),
                     icon: <Trash2 size={14} />,
                     onSelect: onRemove,
+                  },
+                ]
+              : []),
+            // 内置条目：只从列表隐藏（可恢复），与上面的「移除接入声明」分开
+            ...(onHide
+              ? [
+                  {
+                    key: 'hide-builtin',
+                    label: t('contacts.hideAgent'),
+                    icon: <Trash2 size={14} />,
+                    danger: true,
+                    divider: true,
+                    onSelect: onHide,
                   },
                 ]
               : []),

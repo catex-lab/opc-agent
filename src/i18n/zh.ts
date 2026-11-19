@@ -176,6 +176,16 @@ export const zh = {
   'contacts.editCliAgent': '编辑',
   'contacts.removeCliAgent': '移除',
   'contacts.removeCliConfirm': '移除「{name}」？只删除接入声明，本机文件不受影响。',
+  // 内置 Agent：只从列表隐藏，可在「+ → 获取 Agent」里恢复
+  'contacts.hideAgent': '从列表移除',
+  'contacts.hideAgentConfirmTitle': '从列表移除',
+  'contacts.hideAgentConfirm':
+    '移除「{name}」？它只是从 Agent 列表隐藏，可在「+ → 获取 Agent」里重新添加。',
+  'contacts.hideAgentFromDetail': '从列表移除这个 Agent',
+  'contacts.hideAgentFromDetailConfirm': '移除后可在「+ → 获取 Agent」中重新添加',
+  'contacts.confirmHide': '确认移除',
+  'contacts.allHidden': '所有 Agent 都已从列表移除',
+  'contacts.allHiddenDesc': '到「+ → 获取 Agent」里把它们加回来',
 
   // 弹窗系 C-1~C-5（ui-review 24/25 号图）：发起群聊弹窗。标题复用 contacts.newGroup，
   // 「清除搜索」复用 contacts.clearSearch，群名兜底与人计数复用 contacts.groupFallback / memberOne

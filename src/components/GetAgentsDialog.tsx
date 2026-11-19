@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, X } from 'lucide-react';
+import { RefreshCw, RotateCcw, X } from 'lucide-react';
 import { AgentAvatar } from './AgentAvatar';
 import { InstallCard } from './InstallCard';
 import { useOverflowY } from '../hooks/useOverflowY';
@@ -42,6 +42,11 @@ interface GetAgentsDialogProps {
   open: boolean;
   agents: RegisteredAgent[];
   /**
+   * 用户从 Agent 列表移除的内置条目。它们不是「没装」，也不参与
+   * groups / readyCount / isInstallable —— 单独一个恢复分组。
+   */
+  hiddenAgents?: RegisteredAgent[];
+  /**
    * A210「即将接入」占位清单。独立的平级数据，**不是** RegisteredAgent：
    * 不可点、不参与 groups / readyCount / isInstallable / InstallCard。
    */
@@ -51,6 +56,8 @@ interface GetAgentsDialogProps {
   onOpenCredential?: (agentId: string) => void;
   /** 点名字看完整资料（可选；清单页里点了会先关掉自己） */
   onViewDetail?: (agentId: string) => void;
+  /** 把「已从列表移除」的内置 Agent 放回 Agent 列表 */
+  onRestore?: (agentId: string) => void;
 }
 
 /** 分组顺序 = 用户此刻最可能动手的顺序 */
@@ -95,11 +102,13 @@ export function isInstallable(agent: RegisteredAgent): boolean {
 export function GetAgentsDialog({
   open,
   agents,
+  hiddenAgents = [],
   comingSoon = [],
   onClose,
   onReprobe,
   onOpenCredential,
   onViewDetail,
+  onRestore,
 }: GetAgentsDialogProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
   // A134：内容装不下时底边渐隐 —— Windows 的 overlay 滚动条静止时不画，
@@ -205,14 +214,79 @@ export function GetAgentsDialog({
           className="tc-scroll-fade min-h-0 flex-1 overflow-y-auto"
           data-fade={overflowing ? '1' : undefined}
         >
+          {/* 已从列表移除：用户自己隐藏的内置 Agent，一行一个「重新添加」。
+              与下面的安装分组无关 —— 它们不缺安装、不缺 Key，缺的只是一次恢复。 */}
+          {hiddenAgents.length > 0 && (
+            <section data-get-agents-hidden-group>
+              <div
+                className="sticky top-0 z-10 flex items-baseline gap-2 px-5 py-2 text-secondary"
+                style={{
+                  backgroundColor: 'var(--tc-surface-raised, transparent)',
+                  color: 'var(--td-text-color-placeholder)',
+                  backdropFilter: 'blur(6px)',
+                }}
+              >
+                <span style={{ color: 'var(--td-text-color-secondary)', fontWeight: 500 }}>
+                  已从列表移除
+                </span>
+                <span>{hiddenAgents.length} 条</span>
+                <span>· 点「重新添加」放回 Agent 列表</span>
+              </div>
+              {hiddenAgents.map(a => (
+                <div
+                  key={a.id}
+                  className="mx-5 mb-2 flex items-center gap-2.5 rounded-xl px-4 py-3"
+                  style={{
+                    backgroundColor: 'var(--tc-surface-raised)',
+                    border: '1px solid var(--tc-edge)',
+                  }}
+                  data-get-agents-hidden-row={a.id}
+                >
+                  <AgentAvatar
+                    id={a.id}
+                    name={a.name}
+                    icon={a.icon}
+                    src={a.logoUrl}
+                    color={a.color}
+                    availability={a.status.availability}
+                    size={28}
+                  />
+                  <span
+                    className="min-w-0 flex-1 truncate text-body"
+                    style={{ color: 'var(--td-text-color-primary)' }}
+                  >
+                    {a.name}
+                  </span>
+                  <span className="shrink-0 text-caption" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                    {availabilityLabelOf(a)}
+                  </span>
+                  {onRestore && (
+                    <button
+                      type="button"
+                      className="tc-btn-secondary shrink-0"
+                      onClick={() => onRestore(a.id)}
+                      data-get-agents-restore={a.id}
+                    >
+                      <RotateCcw size={12} />
+                      重新添加
+                    </button>
+                  )}
+                </div>
+              ))}
+            </section>
+          )}
+
           {groups.length === 0 ? (
-            <div
-              className="px-5 py-10 text-center text-secondary"
-              style={{ color: 'var(--td-text-color-secondary)' }}
-              data-get-agents-empty
-            >
-              全部就绪，没有需要获取的条目
-            </div>
+            /* 只有「既没有可安装项、也没有隐藏项」时才是真的空 */
+            hiddenAgents.length === 0 ? (
+              <div
+                className="px-5 py-10 text-center text-secondary"
+                style={{ color: 'var(--td-text-color-secondary)' }}
+                data-get-agents-empty
+              >
+                全部就绪，没有需要获取的条目
+              </div>
+            ) : null
           ) : (
             groups.map(g => (
               <section key={g.method} data-get-agents-group={g.method}>

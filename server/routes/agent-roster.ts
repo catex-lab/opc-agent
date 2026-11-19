@@ -11,10 +11,11 @@
 
 import type { Express } from 'express';
 import * as db from '../db.js';
-import { registry } from '../agents/registry.js';
+import { isValidAgentId, registry } from '../agents/registry.js';
 import { COMING_SOON_AGENTS } from '../agents/comingSoon.js';
 import { runCanary, scheduleAutoCanaries } from '../agents/canary.js';
 import { getLoginState, startLogin, stopLogin, writeLogin } from '../agents/loginRunner.js';
+import { hideBuiltinAgent, loadHiddenAgentIds, showBuiltinAgent } from '../agents/hiddenAgents.js';
 import type { CapabilityProfile } from '../../shared/capabilities.js';
 
 /**
@@ -55,6 +56,36 @@ export function withObservedCapabilities<T extends { id: string }>(
 function comingSoonList(): Array<(typeof COMING_SOON_AGENTS)[number]> {
   const registered = new Set(registry.list().map(a => a.id));
   return COMING_SOON_AGENTS.filter(a => !registered.has(a.id));
+}
+
+/**
+ * 按「用户是否把它移出了列表」把名册分成两份。
+ *
+ * `agents` 是名册的正常消费方（通讯录、新建会话、群聊成员选择器）；
+ * `hiddenAgents` 只给「获取 Agent」弹窗的「已从列表移除」分组用。
+ * 两者都保留完整状态，恢复时不必等探测。
+ */
+function splitHidden<T extends { id: string }>(
+  all: T[]
+): { agents: T[]; hiddenAgents: T[] } {
+  const hidden = new Set(loadHiddenAgentIds());
+  if (hidden.size === 0) return { agents: all, hiddenAgents: [] };
+  const agents: T[] = [];
+  const hiddenAgents: T[] = [];
+  for (const item of all) {
+    if (hidden.has(item.id)) hiddenAgents.push(item);
+    else agents.push(item);
+  }
+  return { agents, hiddenAgents };
+}
+
+/** 统一的名册响应体：可见条目 + 已移除条目（都带观测能力） */
+function rosterPayload(all: Array<{ id: string }>) {
+  const { agents, hiddenAgents } = splitHidden(all);
+  return {
+    agents: withObservedCapabilities(agents),
+    hiddenAgents: withObservedCapabilities(hiddenAgents),
+  };
 }
 
 export function registerAgentRosterRoutes(app: Express): void {
@@ -118,10 +149,8 @@ export function registerAgentRosterRoutes(app: Express): void {
     try {
       const force = req.query.refresh === '1' || req.query.refresh === 'true';
       if (force) {
-        return res.json({
-          agents: withObservedCapabilities(await registry.probeAll(true)),
-          comingSoon: comingSoonList(),
-        });
+        const payload = rosterPayload(await registry.probeAll(true));
+        return res.json({ ...payload, comingSoon: comingSoonList() });
       }
       // 冷启动时缓存是空的，此时名册里全是 unknown（前端会显示成「未接入」）。
       // 这里把探测在后台启动起来，本次仍按当前缓存如实返回，由前端轮询补齐。
@@ -129,10 +158,8 @@ export function registerAgentRosterRoutes(app: Express): void {
       // P1：名册打开 = 自动 canary 的触发点。TTL/频控/开关都在 canary 模块内，
       // fire-and-forget——本次响应如实返回当前状态，前端既有轮询收回结果。
       scheduleAutoCanaries(registry.list().map(a => a.id));
-      res.json({
-        agents: withObservedCapabilities(registry.list()),
-        comingSoon: comingSoonList(),
-      });
+      const payload = rosterPayload(registry.list());
+      res.json({ ...payload, comingSoon: comingSoonList() });
     } catch (error: any) {
       console.error("[Agents] Error:", error);
       res.status(500).json({ error: error?.message || "获取 Agent 列表失败" });
@@ -142,11 +169,59 @@ export function registerAgentRosterRoutes(app: Express): void {
   // 主动触发全量探测（首次打开名册页时调用）
   app.post("/api/agents/probe", async (req, res) => {
     try {
-      const agents = await registry.probeAll(true);
-      res.json({ agents: withObservedCapabilities(agents), comingSoon: comingSoonList() });
+      const payload = rosterPayload(await registry.probeAll(true));
+      res.json({ ...payload, comingSoon: comingSoonList() });
     } catch (error: any) {
       console.error("[Agents] Probe error:", error);
       res.status(500).json({ error: error?.message || "探测失败" });
+    }
+  });
+
+  /**
+   * 把内置 Agent 移出 / 放回列表。
+   *
+   * 只影响 `/api/agents` 的下发内容：定义、凭据、探测状态、既有会话全部不动。
+   * 路由是 POST 三段路径，且本文件整体先于 custom-agents 的
+   * `/api/agents/:agentId` 注册，不会被详情路由吞掉。
+   */
+  app.post("/api/agents/:agentId/hide", (req, res) => {
+    try {
+      const agentId = String(req.params.agentId ?? '');
+      if (!isValidAgentId(agentId)) {
+        return res.status(400).json({ error: 'agentId 非法' });
+      }
+      if (!registry.hasAgent(agentId)) {
+        return res.status(404).json({ error: 'Agent 不存在' });
+      }
+      if (registry.get(agentId)?.custom) {
+        return res.status(400).json({ error: '自建 Agent 请使用删除' });
+      }
+      if (!hideBuiltinAgent(agentId)) {
+        return res.status(400).json({ error: '只能移除内置 Agent' });
+      }
+      res.json({ ok: true, id: agentId });
+    } catch (error: any) {
+      console.error('[Agents] Hide error:', error);
+      res.status(500).json({ error: error?.message || '移除 Agent 失败' });
+    }
+  });
+
+  app.post("/api/agents/:agentId/show", (req, res) => {
+    try {
+      const agentId = String(req.params.agentId ?? '');
+      if (!isValidAgentId(agentId)) {
+        return res.status(400).json({ error: 'agentId 非法' });
+      }
+      if (!registry.hasAgent(agentId)) {
+        return res.status(404).json({ error: 'Agent 不存在' });
+      }
+      if (!showBuiltinAgent(agentId)) {
+        return res.status(400).json({ error: '恢复 Agent 失败' });
+      }
+      res.json({ ok: true, id: agentId });
+    } catch (error: any) {
+      console.error('[Agents] Show error:', error);
+      res.status(500).json({ error: error?.message || '恢复 Agent 失败' });
     }
   });
 }

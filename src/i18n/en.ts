@@ -177,6 +177,16 @@ export const en: Record<MessageKey, string> = {
   'contacts.editCliAgent': 'Edit',
   'contacts.removeCliAgent': 'Remove',
   'contacts.removeCliConfirm': 'Remove "{name}"? Only the attach declaration is deleted; local files are untouched.',
+  // Built-in agents: hidden from the list only, recoverable via "+ → Get agents"
+  'contacts.hideAgent': 'Remove from list',
+  'contacts.hideAgentConfirmTitle': 'Remove from list',
+  'contacts.hideAgentConfirm':
+    'Remove "{name}"? It is only hidden from the agent list and can be re-added via "+ → Get agents".',
+  'contacts.hideAgentFromDetail': 'Remove this agent from the list',
+  'contacts.hideAgentFromDetailConfirm': 'You can re-add it via "+ → Get agents"',
+  'contacts.confirmHide': 'Confirm removal',
+  'contacts.allHidden': 'All agents are removed from the list',
+  'contacts.allHiddenDesc': 'Re-add them via "+ → Get agents"',
 
   // Modals C-1~C-5 (ui-review shots 24/25): new group dialog. Title reuses contacts.newGroup;
   // "clear search" reuses contacts.clearSearch; group-name fallback & member count reuse contacts.groupFallback / memberOne
