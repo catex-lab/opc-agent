@@ -181,7 +181,9 @@ export const en: Record<MessageKey, string> = {
   'contacts.hideAgent': 'Remove from list',
   'contacts.hideAgentConfirmTitle': 'Remove from list',
   'contacts.hideAgentConfirm':
-    'Remove "{name}"? It is only hidden from the agent list and can be re-added via "+ → Get agents".',
+    // ≤60 字（copy-governance 棘轮）：「只是隐藏、可恢复」的细节在下一行
+    // hideAgentFromDetailConfirm / allHiddenDesc 里都有，不在这里堆。
+    'Remove "{name}"? You can re-add it via "+ → Get agents".',
   'contacts.hideAgentFromDetail': 'Remove this agent from the list',
   'contacts.hideAgentFromDetailConfirm': 'You can re-add it via "+ → Get agents"',
   'contacts.confirmHide': 'Confirm removal',
@@ -611,12 +613,14 @@ export const en: Record<MessageKey, string> = {
   'chat.selection.selectAll': 'Select all',
   'chat.status.calling': 'Calling {name}',
   'chat.status.callingTool': 'Calling a tool',
-  'chat.status.elapsed': ', {n}s elapsed',
+  // 2026-11-20: {n} is pre-formatted by formatHandledDurationText (seconds
+  // under 1 min, min+sec above) — the template no longer hardcodes "{n}s".
+  'chat.status.elapsed': ', {n} elapsed',
   'chat.status.image': 'Generating image',
   'chat.status.processing': 'Working',
   'chat.status.reconnecting': 'Connection lost, reconnecting…',
   // 2026-11-18 粒子状态行：静默 >60s（看门狗）时状态行的「已等待」文案
-  'chat.status.silentWait': 'Waited {n}s (no content yet)',
+  'chat.status.silentWait': 'Waited {n} (no content yet)',
   'chat.status.thinking': 'Thinking',
   // 2026-11-18 粒子状态行：会话列表「正在跑」角标的无障碍名
   'chat.status.turnRunning': 'Running',

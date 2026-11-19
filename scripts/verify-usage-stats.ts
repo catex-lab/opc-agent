@@ -57,7 +57,10 @@ async function main() {
   eq(formatUsage({}), null, '三个字段全无 → null（不渲染，而不是显示 0）');
   eq(formatUsage({ durationMs: 0, cost: 0, tokens: 0 }), null, '全 0 → null（0 不代表没有数据，但 usage 里 0 无信息量）');
   eq(formatUsage({ durationMs: 830 }), '830ms', '毫秒 < 1000 显示 ms');
-  eq(formatUsage({ durationMs: 2340 }), '2.3s', '毫秒 ≥ 1000 显示秒');
+  // 2026-11-20：耗时段收口到 formatHandledDurationText —— <1 分按秒、≥1 分分+秒
+  eq(formatUsage({ durationMs: 2340 }), '2 秒', '≥1s 走统一口径（zh：N 秒）');
+  eq(formatUsage({ durationMs: 96_000 }), '1 分 36 秒', '≥1 分钟 → 分+秒（zh）');
+  eq(formatUsage({ durationMs: 2340, cost: 0.05 }, 'en'), '2s · $0.05', 'en 走 formatHandledDuration（不带小数）');
   eq(formatUsage({ cost: 0.0123 }), '$0.01', '费用按分显示');
   eq(formatUsage({ cost: 5 }), '$5.00', '整数费用补两位小数');
   eq(formatUsage({ cost: 0.004 }), '<$0.01', '极小费用显示 <$0.01（不与「没花钱」混淆）');
@@ -65,13 +68,13 @@ async function main() {
   eq(formatUsage({ tokens: 12345 }), '12.3k tokens', 'token ≥ 1000 显示 k');
   eq(
     formatUsage({ durationMs: 2340, cost: 0.05, tokens: 12345 }),
-    '2.3s · $0.05 · 12.3k tokens',
+    '2 秒 · $0.05 · 12.3k tokens',
     '三项齐全时按 耗时 · 费用 · token 顺序、以 · 连接'
   );
   // 顺序必须固定：三项随机排列会让用户对不上哪个数是哪个
   eq(
     formatUsage({ tokens: 500, cost: 0.02, durationMs: 1200 }),
-    '1.2s · $0.02 · 500 tokens',
+    '1 秒 · $0.02 · 500 tokens',
     '字段传入顺序不影响输出顺序（固定为 耗时→费用→token）'
   );
   eq(formatUsage({ tokens: 300 }), '300 tokens', '只有 token（ACP 场景）也能渲染');
@@ -319,11 +322,13 @@ async function main() {
     'SDK 仍从平台拿真费用');
 
   // D2. 落库 glue：一对一与群聊两条路径都要带三列
-  has('server/index.ts', 'donePayload = { durationMs: ev.durationMs, cost: ev.cost, tokens: ev.tokens };',
+  // （F0-02② 把路由从 server/index.ts 搬到了 server/routes/chat.ts，
+  // 断言跟着实现走 —— 判据本身不放宽。）
+  has('server/routes/chat.ts', 'donePayload = { durationMs: ev.durationMs, cost: ev.cost, tokens: ev.tokens };',
     '一对一 SSE 处理器捕获 tokens');
-  has('server/index.ts', 'donePayload?.durationMs ?? null', '一对一 createMessage 落 duration_ms');
-  has('server/index.ts', 'donePayload?.cost ?? null', '一对一 createMessage 落 cost');
-  has('server/index.ts', 'donePayload?.tokens ?? null', '一对一 createMessage 落 tokens');
+  has('server/routes/chat.ts', 'donePayload?.durationMs ?? null', '一对一 createMessage 落 duration_ms');
+  has('server/routes/chat.ts', 'donePayload?.cost ?? null', '一对一 createMessage 落 cost');
+  has('server/routes/chat.ts', 'donePayload?.tokens ?? null', '一对一 createMessage 落 tokens');
 
   // 群聊那一棒的落库 glue 在 A41 搬到了 `server/turn-runner.ts`（index.ts 只留
   // 「谁来发言」的编排）。断言必须跟着实现走 —— 但**不能删**：
@@ -338,10 +343,10 @@ async function main() {
   has('server/turn-runner.ts', "type: 'turn_done',", '群聊 turn_done 下发事件');
   has('server/turn-runner.ts', 'duration: turnDone?.durationMs,', '群聊 turn_done 下发 duration');
   has('server/turn-runner.ts', 'tokens: turnDone?.tokens,', '群聊 turn_done 下发 tokens');
-  has('server/index.ts', 'createTurnRunner({', '群聊真的在调 turn-runner（不是「代码在、没人用」）');
+  has('server/routes/chat.ts', 'createTurnRunner({', '群聊真的在调 turn-runner（不是「代码在、没人用」）');
 
   // D3. 接口透传：/api/sessions/:id 必须是整行 spread，不能挑字段
-  has('server/index.ts', '...msg,', 'GET /api/sessions/:id 整行返回（新列自动透传）');
+  has('server/routes/sessions.ts', '...msg,', 'GET /api/sessions/:id 整行返回（新列自动透传）');
 
   // D4. 前端 glue：刷新还原 + 流式挂载 + 渲染
   has('src/hooks/useSessions.ts', 'durationMs: typeof m.duration_ms === \'number\' ? m.duration_ms : undefined',

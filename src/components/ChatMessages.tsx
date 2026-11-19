@@ -9,7 +9,7 @@ import { canGroupProcess } from '../trace/rows';
 import { shouldFoldProcess } from '../trace/fold';
 import { BackgroundTasksPill } from './BackgroundTasksPill';
 import { useBackgroundTasks } from '../hooks/useBackgroundTasks';
-import { formatHandledDuration, hasFileEdits, lingeringToolBlocks } from '../../shared/trace';
+import { formatHandledDurationText, hasFileEdits, lingeringToolBlocks } from '../../shared/trace';
 import { RoundAudit } from './RoundAudit';
 import { useVerifications } from '../hooks/useVerifications';
 import { installCherryCodeIconFix } from './cherryCodeIcon';
@@ -50,26 +50,10 @@ function useElapsed(startedAt: number | undefined, active: boolean): number | nu
 }
 
 /**
- * S2-4 / S1-2：本轮总耗时按**界面语言**格式化 —— 中文统一
- * 「32 秒 / 1 分 36 秒 / 2 小时 5 分钟」（单聊与群聊同一函数，见审查报告
- * S2-4「全应用统一为中文格式」），英文沿用 shared/trace 的 32.0s / 1m36s。
- * 数据源与埋点不动（shared/trace.formatHandledDuration 仍归它管，
- * 服务端 skill-distill 也用同一份），这里只做显示层的换算。
+ * S2-4 / S1-2：本轮总耗时按界面语言格式化 —— 2026-11-20 起收口到
+ * shared/trace.formatHandledDurationText（全站唯一出口，用量小字/状态行/
+ * 头部同一份），本文件不再持有本地实现。
  */
-function formatHandledDurationText(ms: number | undefined, locale: 'zh' | 'en'): string | null {
-  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return null;
-  if (locale !== 'zh') return formatHandledDuration(ms);
-  const total = Math.round(ms / 1000);
-  if (total < 60) return `${total} 秒`;
-  if (total < 3600) {
-    const m = Math.floor(total / 60);
-    const s = total % 60;
-    return s ? `${m} 分 ${s} 秒` : `${m} 分钟`;
-  }
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  return m ? `${h} 小时 ${m} 分钟` : `${h} 小时`;
-}
 
 /**
  * 思考块。
@@ -248,13 +232,15 @@ function StreamStatus({
           {t('chat.msg.handled', { duration: formatHandledDurationText(settleMs, locale) ?? '' })}
         </span>
       ) : reconnecting ? (
-        /* 静默 >60s（看门狗）：已等待 N 秒（未收到内容）。数字每秒递增，
-           不包 TypingText —— 与「用时 N 秒」同一理由，避免整行每秒重打。 */
-        <span>{t('chat.status.silentWait', { n: elapsed ?? 0 })}</span>
+        /* 静默 >60s（看门狗）：已等待 N（未收到内容）。每秒递增，
+           不包 TypingText —— 与「用时 N」同一理由，避免整行每秒重打。
+           2026-11-20：耗时统一走 formatHandledDurationText（<1 分按秒、
+           ≥1 分分+秒），状态行不再独走「N 秒」裸口径。 */
+        <span>{t('chat.status.silentWait', { n: formatHandledDurationText((elapsed ?? 0) * 1000, locale) ?? '' })}</span>
       ) : (
         <span>
           {/* A83：阶段文案走打字机（模糊渐显 + 逐字错开）。
-              只包 label、不包后面的「用时 N 秒」—— 那个数字每秒都变，
+              只包 label、不包后面的「用时 N」—— 那个数字每秒都变，
               一起包进去会让整行每秒重打一遍（startsWith 断在数字上）。
               阶段切换（思考 → 调用工具 → 生成）时才重播，正好对应
               「换了一件事在做」这个语义。
@@ -264,7 +250,7 @@ function StreamStatus({
               （逗号前多一个空格）。套一层之后 gap 只作用在「指示灯 ↔ 文字」之间，
               文字内部是普通行内流，标点紧贴。 */}
           <TypingText text={label} />
-          <span>{t('chat.status.elapsed', { n: elapsed ?? 0 })}</span>
+          <span>{t('chat.status.elapsed', { n: formatHandledDurationText((elapsed ?? 0) * 1000, locale) ?? '' })}</span>
         </span>
       )}
     </span>

@@ -420,15 +420,17 @@ export function formatStepDuration(ms?: number): string | null {
 }
 
 /**
- * 本轮总耗时（头部「已处理 47m42s」）。
+ * 本轮总耗时（头部「已处理 47m42s」），**en/中性口径**。
  *
  * 与单步不同，这里要**进位到分钟**：47 分钟写成 2862.4s 没人读得下去。
  * 超过一分钟省掉秒的小数（47m42s），超过一小时再进位到小时（1h02m）。
+ * 2026-11-20：分钟以内不再带小数（63.7s → 64s）—— 用户口径「不满 1 分钟
+ * 按秒计」；一位小数是另一个口径，留着会让人以为是两种数据。
  */
 export function formatHandledDuration(ms?: number): string | null {
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return null;
   const total = Math.round(ms / 1000);
-  if (total < 60) return `${(ms / 1000).toFixed(1)}s`;
+  if (total < 60) return `${total}s`;
   if (total < 3600) {
     const m = Math.floor(total / 60);
     const s = total % 60;
@@ -437,6 +439,32 @@ export function formatHandledDuration(ms?: number): string | null {
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   return `${h}h${String(m).padStart(2, '0')}m`;
+}
+
+/**
+ * 本轮总耗时，**按语言出文案**（2026-11-20 统一口径，用户拍板）：
+ *
+ *   zh：<1 分钟 → 「N 秒」；≥1 分钟 → 「M 分 S 秒」（整分 → 「M 分钟」）；
+ *       ≥1 小时 → 「H 小时 M 分钟」（整点 → 「H 小时」）。
+ *   en：走 formatHandledDuration（32s / 47m42s / 1h02m）。
+ *
+ * 全站唯一的回合耗时文案出口 —— 消息头部、状态行定格、用量小字都必须走
+ * 这里，不许再各自手搓（之前「63.7s」「已处理 8 分钟」「用时 480 秒」
+ * 三种口径并存，就是三处各写各的后果）。
+ */
+export function formatHandledDurationText(ms: number | undefined, locale: 'zh' | 'en'): string | null {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return null;
+  if (locale !== 'zh') return formatHandledDuration(ms);
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total} 秒`;
+  if (total < 3600) {
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return s ? `${m} 分 ${s} 秒` : `${m} 分钟`;
+  }
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  return m ? `${h} 小时 ${m} 分钟` : `${h} 小时`;
 }
 
 /**
