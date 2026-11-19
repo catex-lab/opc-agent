@@ -1,23 +1,21 @@
 import { memo, useEffect, useRef } from 'react';
 
 /**
- * 粒子聚散环 —— 「回合工作状态」指示（2026-11-18 落地）。
+ * 星轨粒子环 —— 「回合工作状态」指示。
  *
- * ## 形态来源（已拍板，不再改）
+ * ## 形态演进
  *
- * 用户在真实方案预览（`particle-preview-live.html`）里确认的形态：
- * **文本灰 + 聚散环，不聚成 M**。算法与那份预览同一族：
- * 黄金角螺旋（GOLDEN = π(3−√5)）铺满圆盘 → 切向旋转 + 呼吸脉冲 + 错峰微抖；
- * 静默时降速转橙；回合结束时向外扩散淡出（散开定格）。
+ * 2026-11-18 初版用黄金角螺旋铺满圆盘（24px / 300 颗、16px / 120 颗），
+ * 真实界面里粒子彼此覆盖，缩小后糊成实心黑团。之后改为**稀疏空心星轨**：
+ * 均匀角分布 + 窄径向抖动，约 90° 的局部亮弧随整环缓慢公转，其余粒子保持
+ * 低亮度。2026-11-19 定稿尺寸：状态行 16px / 12 颗（与 13px 文案同层级）、
+ * 列表角标同尺寸；小尺寸可辨的前提是留白与明暗层次，不是堆数量。
  *
  * ## 为什么是 Canvas 2D 而不是 WebGL
  *
  * HANDOFF.md「历史交接 — 2026-11-13 19:47」的实测结论：原 Three.js 方案
  * 每实例独占一个 WebGL context，多会话并存（列表角标 × N + 状态行主环）在
- * Electron 里有 context 数上限风险；Canvas 2D 无此约束。同一次实测还证明
- * 小尺寸可辨的前提是**粒子数**：24px 槽位 ≥300 颗清晰、16px 用 120 颗
- * （120 与 300 在 16px 下视觉差可忽略）——所以这里按尺寸取默认粒子数，
- * 不复刻当年 72 颗断笔的老问题。
+ * Electron 里有 context 数上限风险；Canvas 2D 无此约束。
  *
  * ## 性能纪律
  *
@@ -37,30 +35,30 @@ import { memo, useEffect, useRef } from 'react';
 
 export type ParticleOrbState = 'working' | 'silent' | 'done';
 
-/** 黄金角：等角螺线的角增量，让 N 颗粒子在圆盘上近似均匀分布 */
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-
 interface OrbParticle {
   baseA: number;
   baseR: number;
-  /** 错峰相位：微抖与呼吸不齐步，聚散才有「群」的质感 */
+  /** 错峰相位：只用于极轻微的明暗与径向变化，不再各自乱转 */
   phase: number;
-  speed: number;
 }
 
 function makeParticles(count: number, maxR: number): OrbParticle[] {
   const ps: OrbParticle[] = [];
   for (let i = 0; i < count; i++) {
-    const a = i * GOLDEN_ANGLE;
-    const r = maxR * Math.sqrt((i + 0.5) / count);
     ps.push({
-      baseA: a,
-      baseR: r,
+      baseA: (i / count) * Math.PI * 2,
+      // 粒子只落在窄环上，中央留白；径向抖动避免机械的完美圆周
+      baseR: maxR * (0.88 + Math.random() * 0.08),
       phase: Math.random() * Math.PI * 2,
-      speed: 0.6 + Math.random() * 0.8,
     });
   }
   return ps;
+}
+
+/** 亮弧位于运动头部之后约 90°：12 颗主环约 3 颗点亮，其余退到背景 */
+function trailStrength(angle: number): number {
+  const delta = Math.atan2(Math.sin(angle), Math.cos(angle));
+  return delta <= 0 ? Math.max(0, 1 + delta / (Math.PI / 2)) : 0;
 }
 
 /* ── 共享 rAF 时钟 ───────────────────────────────────────────────────── */
@@ -200,7 +198,7 @@ class ParticleOrbEngine implements OrbTicker {
     return this.warnColor;
   }
 
-  /** 逐帧绘制。算法与已拍板预览 particle-preview-live.html 的 step() 一致 */
+  /** 整环统一缓慢公转，亮弧表达方向；不再让每颗粒子独立运动 */
   private draw() {
     const { ctx, size } = this;
     const cx = size / 2;
@@ -209,30 +207,31 @@ class ParticleOrbEngine implements OrbTicker {
     const spinning = this.state === 'working';
     const silent = this.state === 'silent';
     const done = this.state === 'done';
-    // 静默降速旋转；完成时保持旋转继续散开（残影感）
-    const rot = this.t * (silent ? 0.25 : 1.1);
+    const rot = this.t * (silent ? 0.22 : 0.68);
     const color = silent ? this.resolveWarnColor() || 'currentColor' : 'currentColor';
-    // working 呼吸脉冲；done 按时间向外扩散
-    const breathe = spinning ? 1 + 0.12 * Math.sin(this.t * 3) : 1;
-    const spread = done ? 1 + this.t * 2.5 : 1;
-    const alpha = done ? Math.max(0.12, 0.35 - this.t * 0.1) : 0.9;
-    const sz = size >= 24 ? 0.9 : 0.7;
+    const breathe = spinning ? 1 + 0.035 * Math.sin(this.t * 2) : 1;
+    const spread = done ? 1 + this.t * 1.6 : 1;
+    const fade = done ? Math.max(0, 1 - this.t / 0.8) : 1;
+    const dotRadius = size >= 24 ? 0.65 : 1.15;
+    const baseAlpha = size >= 24 ? 0.22 : 0.3;
     ctx.fillStyle = color;
-    ctx.globalAlpha = alpha;
     for (const p of this.particles) {
-      // 切向旋转（聚拢感）+ 错峰微抖；静默/完成只旋转不加抖
-      const a =
-        p.baseA + rot * p.speed + (spinning ? Math.sin(this.t * 2 + p.phase) * 0.05 : 0);
+      const a = p.baseA + rot + (spinning ? Math.sin(this.t * 1.4 + p.phase) * 0.012 : 0);
       const r =
-        p.baseR * breathe * spread + (spinning ? Math.sin(this.t * 4 + p.phase * 3) * 0.6 : 0);
+        p.baseR * breathe * spread + (spinning ? Math.sin(this.t * 2.2 + p.phase) * 0.16 : 0);
       const x = cx + Math.cos(a) * r;
       const y = cy + Math.sin(a) * r;
-      ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
+      const trail = trailStrength(p.baseA);
+      const shimmer = spinning ? 0.94 + 0.06 * Math.sin(this.t * 1.6 + p.phase) : 1;
+      ctx.globalAlpha = fade * (baseAlpha + (0.92 - baseAlpha) * Math.pow(trail, 1.4)) * shimmer;
+      ctx.beginPath();
+      ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
 
-  /** reduced-motion 静态环：base 位置画一帧（散开完成态画淡出的残影） */
+  /** reduced-motion：保留同样的空环与亮弧，只关闭位移和明暗变化 */
   private drawStatic() {
     const { ctx, size } = this;
     const cx = size / 2;
@@ -241,14 +240,18 @@ class ParticleOrbEngine implements OrbTicker {
     const silent = this.state === 'silent';
     const done = this.state === 'done';
     const color = silent ? this.resolveWarnColor() || 'currentColor' : 'currentColor';
-    const alpha = done ? 0.35 : 0.9;
-    const sz = size >= 24 ? 0.9 : 0.7;
+    const fade = done ? 0.35 : 1;
+    const dotRadius = size >= 24 ? 0.65 : 1.15;
+    const baseAlpha = size >= 24 ? 0.22 : 0.3;
     ctx.fillStyle = color;
-    ctx.globalAlpha = alpha;
     for (const p of this.particles) {
       const x = cx + Math.cos(p.baseA) * p.baseR;
       const y = cy + Math.sin(p.baseA) * p.baseR;
-      ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
+      const trail = trailStrength(p.baseA);
+      ctx.globalAlpha = fade * (baseAlpha + (0.92 - baseAlpha) * Math.pow(trail, 1.4));
+      ctx.beginPath();
+      ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
@@ -256,9 +259,9 @@ class ParticleOrbEngine implements OrbTicker {
 
 export interface ParticleStatusOrbProps {
   state: ParticleOrbState;
-  /** 画布边长（CSS px）。消息列状态行用 24、会话列表角标用 16 */
+  /** 画布边长（CSS px）。消息列状态行与会话列表角标均为 16 */
   size?: number;
-  /** 粒子数。缺省按尺寸取实测口径：24px → 300 颗、16px → 120 颗（见头注释） */
+  /** 粒子数。缺省按尺寸取稀疏星轨口径：16px → 12 颗 */
   particles?: number;
   /**
    * CSS 旋转圆环降级。
@@ -276,13 +279,13 @@ export interface ParticleStatusOrbProps {
 
 export const ParticleStatusOrb = memo(function ParticleStatusOrb({
   state,
-  size = 24,
+  size = 16,
   particles,
   degrade = false,
   title,
   className,
 }: ParticleStatusOrbProps) {
-  const count = particles ?? (size >= 24 ? 300 : 120);
+  const count = particles ?? (size >= 24 ? 20 : 12);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<ParticleOrbEngine | null>(null);
 

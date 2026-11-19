@@ -155,7 +155,7 @@ function ThinkingView({
  */
 
 /**
- * 回合状态行（A34 → 2026-11-18 粒子聚散环落地）。
+ * 回合状态行（A34 → 2026-11-19 星轨粒子环降噪改版）。
  *
  * 文案不用任何厂商的专属说法，改成中性的「正在处理」，
  * 并按**分阶段语义**给状态行不同文案：
@@ -163,10 +163,9 @@ function ThinkingView({
  *   idle（刚发出、还没有块）→ 正在处理
  * 阶段由 shared/blocks 的 runActivity() 推导，前后端同一套判据。
  *
- * 2026-11-18 指示器升级：呼吸灯（实心核 + 扩散环）换成**粒子聚散环**
- * （ParticleStatusOrb，24px 盒 / 300 颗；用户拍板形态：文本灰 + 聚散环、
- * 不聚成 M）。三态：
- *   · working —— 灰色聚散环 + 呼吸脉冲，阶段文案 + 「用时 N 秒」每秒跳动；
+ * 指示器采用**星轨粒子环**（ParticleStatusOrb，16px 盒 / 12 颗）：
+ * 空心窄环 + 局部亮弧，与 13px 状态文案同层级。三态：
+ *   · working —— 灰色星轨缓慢流转 + 轻呼吸，阶段文案 + 「用时 N 秒」每秒跳动；
  *   · silent  —— 静默 >60s（C8 看门狗，信号即 reconnecting）粒子转橙 +
  *                「已等待 N 秒（未收到内容）」，不假装还在正常生成；
  *   · done    —— 回合结束（完成 / 停止）后本行多留 ~800ms：粒子向外扩散
@@ -228,20 +227,20 @@ function StreamStatus({
 
   return (
     <span
-      className="mt-1.5 flex items-center gap-1.5 text-secondary"
+      className="mt-1.5 flex items-center gap-1.5 text-body"
       /* 与下方操作行同槽位：`.tc-actions` 是 28px + `mt-0.5`，这里补上同样的
          上边距与最小高度，回合结束那一帧「状态行 → 操作行」才是纯内容替换，
          不再矮/高一档（24 + 6 与 28 + 2 同高 = 30px）。
-         字号从 11px caption 提到 12px，颜色从占位灰升到次级灰：这一行是
-         「它现在在干什么」，属于实时状态而不是脚注，11px 隔着半屏读不清。 */
+         字号 13px（text-body）、颜色次级灰：这一行是「它现在在干什么」，
+         属于实时状态而不是脚注。粒子环同步收到 16px，与字号同层级。 */
       style={{ color: 'var(--td-text-color-secondary)', minHeight: 24 }}
       data-stream-status
       data-reconnecting={reconnecting ? 'true' : undefined}
       data-stream-phase={reconnecting ? 'reconnecting' : ended ? 'done' : activity}
     >
-      {/* 粒子聚散环（纯装饰，状态语义由文字承担，故 aria-hidden）：
-          working 灰色聚散、silent 转橙、done 散开淡出。 */}
-      <ParticleStatusOrb state={ended ? 'done' : reconnecting ? 'silent' : 'working'} size={24} />
+      {/* 星轨粒子环（纯装饰，状态语义由文字承担，故 aria-hidden）：
+          working 灰色亮弧流转、silent 转橙、done 散开淡出。 */}
+      <ParticleStatusOrb state={ended ? 'done' : reconnecting ? 'silent' : 'working'} size={16} />
       {ended ? (
         /* 散开定格：粒子散开淡出的同时文案落到总耗时。不走打字机 ——
            这 800ms 是一次「收尾」，不是新内容。 */
@@ -1614,7 +1613,7 @@ const MessageRow = memo(function MessageRow({
         {/* 助手消息 - 按顺序渲染内容块 */}
         {message.role === 'assistant' && renderContent(message, isLastAssistant)}
 
-        {/* 回合状态行（A34 → 2026-11-18 粒子聚散环）：进行中 = 灰色聚散环 +
+        {/* 回合状态行（A34 → 2026-11-19 星轨粒子环）：进行中 = 灰色亮弧流转 +
             阶段文案 + 秒数跳动；静默 >60s（看门狗）= 粒子转橙 + 已等待；
             回合结束（停止 / 完成）= 粒子散开 ~800ms 定格「已处理 X 秒」，
             随后把这一行交还给操作行（原「状态行 → 操作行」同槽位替换不变）。 */}

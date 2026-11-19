@@ -48,8 +48,8 @@ const LAST_READ_KEY = 'opc:lastRead';
 /**
  * 「正在跑」角标的 Canvas 实例预算（2026-11-18 粒子状态行落地）。
  *
- * 每条正在跑的会话挂一颗 16px 粒子聚散环（降级尺寸：120 颗；实测 16px 下
- * 120 与 300 视觉差可忽略）。Canvas 2D 单实例很便宜，但极端情况下列表可能
+ * 每条正在跑的会话挂一颗 16px 星轨粒子环（12 颗稀疏粒子 + 局部亮弧）。
+ * Canvas 2D 单实例很便宜，但极端情况下列表可能
  * 同时出现 N 条并行会话 —— 为把同屏动画实例的 CPU/GPU 开销钉住，
  * **Canvas 实例 ≤4**：按列表顺序取前 4 条，其后的会话降级为 CSS 旋转圆环
  * （ParticleStatusOrb 的 degrade 形态，同尺寸同令牌色，只丢粒子质感）。
@@ -82,7 +82,7 @@ interface ConversationListProps {
   currentSessionId: string | null;
   /**
    * 正在跑的会话 id（a142 的 runningIds，useChat 按「每会话一轮」记录）。
-   * 命中的会话在预览行首挂一颗 16px 粒子聚散环角标（2026-11-18 粒子状态行落地），
+   * 命中的会话在预览行首挂一颗 16px 星轨粒子环角标（2026-11-19 降噪改版），
    * 让「哪个 Agent 还在干活」不点进会话也一眼可见。
    */
   runningIds: string[];
@@ -452,7 +452,7 @@ export function ConversationList({
                     </span>
                   </div>
                   <div className="mt-0.5 flex items-center gap-2">
-                    {/* 「正在跑」角标：16px 粒子聚散环（120 颗降级尺寸）。
+                    {/* 「正在跑」角标：16px 星轨粒子环（12 颗稀疏尺寸）。
                         超出 CANVAS_ORB_BUDGET 的并发会话降级为 CSS 旋转圆环，
                         注释见上方 canvasOrbIds。纯状态指示，title 即无障碍名。 */}
                     {runningIds.includes(session.id) && (
