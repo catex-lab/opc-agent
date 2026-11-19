@@ -169,6 +169,19 @@ function l1(): void {
   say('1-5 字符串正文走总量去重', takeStreamedTotalText(s3, 'XYZ') === '');
   say('1-6 不认识的事件交给 raw 旁路', mapStreamTextEvent({ type: 'stream_event', event: { type: 'ping' } }, s3) === null);
 
+  // 1-8~1-10：同一条 assistant 消息被重复下发（WorkBuddy 实测），
+  // 即使中间夹了一条 message_start 把增量缓存清空，也不能再追加一遍。
+  const s4 = createStreamTextState();
+  const dup = '大帅，你好！刚才聊到深圳今天的APEC峰会，需要继续深挖哪一条吗？';
+  say('1-8 首次整条下发正常', takeStreamedText(s4, 0, dup) === dup);
+  mapStreamTextEvent({ type: 'stream_event', event: { type: 'message_start', message: {} } }, s4);
+  say('1-9 重置后重复下发同一段被抑制', takeStreamedText(s4, 0, dup) === '');
+  say('1-10 之后的另一段正文不受影响', takeStreamedText(s4, 0, '另一段完全不同的正文') === '另一段完全不同的正文');
+  const s5 = createStreamTextState();
+  takeStreamedThinking(s5, 1, '先想一下');
+  mapStreamTextEvent({ type: 'stream_event', event: { type: 'message_start', message: {} } }, s5);
+  say('1-11 thinking 同样挡住重复下发', takeStreamedThinking(s5, 1, '先想一下') === '');
+
   const p = new RunProjector({
     runId: 'r1',
     sessionId: 's1',

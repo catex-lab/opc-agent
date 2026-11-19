@@ -17,15 +17,31 @@ export interface StreamTextState {
   blocks: Map<number, { kind: 'text' | 'thinking'; text: string }>;
   /** 当前消息已推出的正文总量（assistant content 为字符串时用于去重） */
   totalText: string;
+  /**
+   * 本轮每个块最近一次整条下发的正文（key = `${kind}:${index}`），
+   * 以及字符串正文的最近一次整条下发（settledTotal）。
+   *
+   * 为什么需要：增量去重只对「先增量、后整条」这一种顺序有效。实测
+   * WorkBuddy 会把**同一条 assistant 消息下发两次**（CLI 侧会话记录里
+   * 只有一份 87 字的回答，界面上却拼成了 174 字），中间还可能夹一条
+   * message_start 把增量缓存清空。于是第二次到达时既没有增量可减、也
+   * 没有缓存可比，整段又被追加一遍。
+   *
+   * 这两个字段跨 message_start 保留（生命周期 = 一轮），只用于识别
+   * 「同一块、同一段文字再次下发」，不参与任何内容裁剪。
+   */
+  settled: Map<string, string>;
+  settledTotal: string;
 }
 
 export function createStreamTextState(): StreamTextState {
-  return { blocks: new Map(), totalText: '' };
+  return { blocks: new Map(), totalText: '', settled: new Map(), settledTotal: '' };
 }
 
 function reset(state: StreamTextState): void {
   state.blocks.clear();
   state.totalText = '';
+  // settled 刻意不清：它挡的正是「重置之后同段再来一次」
 }
 
 function append(
@@ -114,12 +130,18 @@ function remainder(streamed: string, full: string): string {
 
 /** 整条 assistant 消息到达时，取「增量还没推出去的部分」。 */
 export function takeStreamedText(state: StreamTextState, index: number, full: string): string {
+  const key = `text:${index}`;
+  if (full && state.settled.get(key) === full) return '';
+  state.settled.set(key, full);
   const block = state.blocks.get(index);
   if (!block || block.kind !== 'text') return full;
   return remainder(block.text, full);
 }
 
 export function takeStreamedThinking(state: StreamTextState, index: number, full: string): string {
+  const key = `thinking:${index}`;
+  if (full && state.settled.get(key) === full) return '';
+  state.settled.set(key, full);
   const block = state.blocks.get(index);
   if (!block || block.kind !== 'thinking') return full;
   return remainder(block.text, full);
@@ -127,5 +149,7 @@ export function takeStreamedThinking(state: StreamTextState, index: number, full
 
 /** 无 block index 的字符串正文（部分 SDK 会把 content 直接给成字符串）。 */
 export function takeStreamedTotalText(state: StreamTextState, full: string): string {
+  if (full && state.settledTotal === full) return '';
+  state.settledTotal = full;
   return remainder(state.totalText, full);
 }
