@@ -898,6 +898,13 @@ app.post("/api/chat", async (req, res) => {
   /** 客户端是否已断开：断开后继续跑（等重连），但不再往死连接里写 */
   let clientGone = false;
   runHub.create(runId);
+  // M01：run 台账落一行（「进行中的回合记中断」依赖它 —— 助手消息只在收尾
+  // 落库，崩溃的回合没有任何痕迹可查）。台账失败绝不影响聊天主链路。
+  try {
+    db.markRunStarted(runId, session.id, agentId);
+  } catch (e) {
+    console.warn('[Runs] 台账落行失败（不影响对话）:', (e as Error).message);
+  }
   // A122：界面上的「停止」按 runId 即时中止。断开宽限那条路要等 20 秒，
   // 而「停止」的语义是「现在就别跑了」——子进程继续跑等于继续花用户的额度。
   runHub.setAbortHandler(runId, () => {
@@ -1072,6 +1079,13 @@ app.post("/api/chat", async (req, res) => {
 
   // 收尾：关闭所有打开的块（文本/思考/工具），先于落库
   const runStatus = ac.signal.aborted ? 'aborted' : hadError ? 'error' : 'ok';
+  // M01：run 台账收行（ok→finished / error→failed / aborted→stopped）。
+  // 只有走到这里的 run 才有"正常结束"可言；harness 崩溃走不到，由下次启动清算成 interrupted。
+  try {
+    db.markRunFinished(runId, runStatus === 'ok' ? 'finished' : runStatus === 'error' ? 'failed' : 'stopped');
+  } catch (e) {
+    console.warn('[Runs] 台账收行失败（不影响对话）:', (e as Error).message);
+  }
   // A210：取走这一轮的服务端时间戳挂到 run_end 上。取走即清理，
   // 不留残骸；没有正文时 t2=null，前端据此显示「—」而不是 0ms。
   const { closes, end } = projector.finish(

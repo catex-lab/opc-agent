@@ -160,6 +160,12 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
     if (!internal) {
       runHub.create(runId);
       activeRuns.add(runId);
+      // M01：run 台账落行（内部阶段不算回合，不记 —— 与 runHub.create 同口径）。
+      try {
+        db.markRunStarted(runId, session.id, agentId);
+      } catch {
+        // 台账失败不影响群聊主链路（单聊路径同款处理）
+      }
       // A122：这一棒的即时中止入口（界面点「停止」）。群聊一次可能有几路
       // 同时在跑，所以每路单独注册：停一路只杀那一路的子进程，
       // abortTurn 负责让编排引擎别再往下派发。
@@ -272,6 +278,18 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
     // closes 和 end 必须一起发：只发 closes 会让这个成员 run 永远停在活跃清单里，
     // 重连流也等不到 run_end；后续对旧 runId 的 stop 还可能误伤同一请求里的其他成员。
     emit([...closes, end]);
+    // M01：run 台账收行（与落行同口径：内部阶段不记）。
+    // status 映射：ok→finished / error→failed / aborted→stopped。
+    if (!internal) {
+      try {
+        db.markRunFinished(
+          runId,
+          status === 'ok' ? 'finished' : status === 'error' ? 'failed' : 'stopped'
+        );
+      } catch {
+        // 台账失败不影响群聊主链路
+      }
+    }
     // P2：内部阶段的"能力"不是用户看到的这一轮，不记；
     // 其余每一棒都记 —— 群聊里谁给得出思考，正是这里最想知道的事。
     if (!internal && end.type === 'run_end' && end.capabilities) {

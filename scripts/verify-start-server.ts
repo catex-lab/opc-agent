@@ -75,10 +75,19 @@ function main() {
   ok(/LISTEN=true/.test(r2), 'startServer 后开始监听', r2.slice(0, 200));
   ok(/HTTP=200/.test(r2), '启动后 API 可用（HTTP 200）', r2.slice(0, 200));
 
-  // [3] 静态闸门：electron 主进程显式调用；自启动守卫存在
+  // [3] 静态闸门：主进程启动模型（M01 起双轨）。
+  //
+  // M01 后 main.ts **不允许静态 import** server/index —— db.ts 在模块顶层开
+  // SQLite，静态 import 会让主进程在 harness 模式下也开一个同库连接。新契约：
+  //   · harness 路（默认）：harnessManager spawn 子进程，main 不碰 server 模块；
+  //   · 老路（OPC_HARNESS=0）：动态 import + startServer()（惰性，仅回退时执行）。
+  // 两轨都必须可从 main.ts 源码上看出证据，且「静态 import server/index」必须缺席。
   const main = readFileSync(join(process.cwd(), 'electron/main.ts'), 'utf8');
-  ok(/import \{ startServer \}/.test(main), 'electron 显式 import startServer');
-  ok(/const server = startServer\(\)/.test(main), 'electron 显式调用 startServer');
+  ok(!/import \{ startServer \} from '\.\.\/server\/index\.js'/.test(main),
+    'main 不静态 import server/index（防主进程重复开库）');
+  ok(/await import\('\.\.\/server\/index\.js'\)/.test(main), '老路：main 动态 import startServer（惰性）');
+  ok(/m\.startServer\(\)!/.test(main), '老路：main 显式调用 startServer');
+  ok(/harnessManager\s*\n?\s*\.start\(|void harnessManager/.test(main), '新路：main 拉起 harness 子进程');
   const idx = readFileSync(join(process.cwd(), 'server/index.ts'), 'utf8');
   ok(/export function startServer\(\)/.test(idx), 'index.ts 导出 startServer');
   ok(/export let server/.test(idx), 'server 是 live binding 导出');

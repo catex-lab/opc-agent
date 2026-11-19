@@ -22,14 +22,64 @@ import { once } from 'node:events';
 import { join, isAbsolute } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
-import { startServer } from '../server/index.js';
-import { registry } from '../server/agents/registry.js';
 import { loadPrefs } from '../server/preferences.js';
-import { runHub } from '../server/run-hub.js';
 import { decideCloseAction } from './close-policy.js';
 import { updater } from './updater/index.js';
 import { browserPanel, normalizeBrowserUrl, runBrowserSmoke } from './browser-view.js';
 import { terminal, type TerminalState } from './terminal.js';
+import { harnessManager } from './harness-manager.js';
+import {
+  OPC_HARNESS_ENV,
+  OPC_TOKEN_HEADER,
+  type HarnessUiEvent,
+} from '../shared/harness-protocol.js';
+
+// ── M01：进程模型选择（绞杀者第 1 期 / 设计 §10.1 方案 A）──────────────────
+//
+// 默认走 **harness 子进程**：server 生死独立于主进程，崩了由看门狗重启，
+// 窗口只受一次 reload 影响。`OPC_HARNESS=0` 回到老路：Express 仍内联在
+// 主进程里（与改造前逐字节一致），作为回归逃生口。
+//
+// ⚠️ server 三件套（index / registry / run-hub）必须**动态 import**：
+// `server/db.ts` 在模块顶层就开 SQLite，静态 import 会让主进程在 harness
+// 模式下也开一个同库连接（两代迁移/调度互相踩）。esbuild 的 CJS 输出把
+// `import()` 编成惰性 require —— 只有真正走到这一行才加载执行。
+const USE_HARNESS = process.env[OPC_HARNESS_ENV] !== '0';
+
+/** 开发态由 Vite 提供前端；打包态为空字符串，走 harness/内联 server 托管的 dist */
+const DEV_URL = process.env.OPC_DEV_SERVER_URL || '';
+
+interface ServerModules {
+  startServer: typeof import('../server/index.js').startServer;
+}
+
+let server: import('node:http').Server | null = null;
+let serverModules: ServerModules | null = null;
+
+/** 老路（OPC_HARNESS=0）：主进程内联启动。幂等。 */
+async function ensureInlineServer(): Promise<ServerModules> {
+  if (serverModules) return serverModules;
+  const m = await import('../server/index.js');
+  serverModules = { startServer: m.startServer };
+  server = m.startServer()!;
+  return serverModules;
+}
+
+if (!USE_HARNESS) {
+  // 老路与改造前的求值时机保持一致（模块加载期启动），只是经动态 import
+  // 延后到 Promise 微任务 —— 对「bootstrap 先设 env 再 require main.cjs」
+  // 的顺序没有影响（env 在更外层就已就位）。
+  void ensureInlineServer().catch(err => {
+    console.error('[Main] 内联 server 启动失败:', err);
+  });
+} else {
+  // 新路：立刻拉起 harness 子进程（与 app ready 并行，不拖慢首帧）。
+  // dev-electron 固定 3000（vite proxy target 指向它）；打包态 PORT=0
+  // 由系统分配，真实端口走 stdout 握手。
+  void harnessManager
+    .start({ port: DEV_URL ? 3000 : 0 })
+    .catch(err => console.error('[Harness] 启动失败:', (err as Error).message));
+}
 import {
   enableCdp,
   initCdpEndpoint,
@@ -37,10 +87,6 @@ import {
   setCdpAppUrls,
   currentCdpDescriptor,
 } from './cdp.js';
-
-// C1 / 绞杀者第 0 期：显式启动后端（import server/index 不再自启动）。
-// bootstrap.cjs 已在此前设好 OPC_DATA_DIR / PORT / OPC_WEB_DIR，顺序安全。
-const server = startServer()!;
 
 /**
  * 软件渲染逃生开关。
@@ -72,9 +118,6 @@ if (process.env.OPC_SAFE_GRAPHICS === '1') {
  * 真正的端点在 ready 之后从 `DevToolsActivePort` 读回。
  */
 enableCdp();
-
-/** 开发态由 Vite 提供前端；打包态为空字符串，走进程内托管的 dist */
-const DEV_URL = process.env.OPC_DEV_SERVER_URL || '';
 
 /**
  * Windows 任务栏图标的分组与通知归属靠 AppUserModelID 识别。
@@ -147,16 +190,23 @@ let closePromptOpen = false;
 /**
  * 等 HTTP 服务真正开始监听，再返回窗口该加载的地址。
  *
- * 不能直接用 `PORT` 算地址：打包态传的是 `PORT=0`（由系统分配空闲端口），
- * 真实端口只有 `listening` 之后才能从 `server.address()` 读到。
+ * harness 路：等 stdout 握手行（真实端口由系统分配，PORT=0）。
+ * 老路：不能直接用 `PORT` 算地址——打包态传的是 `PORT=0`，真实端口只有
+ * `listening` 之后才能从 `server.address()` 读到。
  */
 async function resolveAppUrl(): Promise<string> {
   if (DEV_URL) return DEV_URL;
 
-  // `listen` 是异步的，但可能在我们挂监听之前就已完成，所以先查状态
-  if (!server.listening) await once(server, 'listening');
+  if (USE_HARNESS) {
+    const port = await harnessManager.start({ port: 0 });
+    return `http://127.0.0.1:${port}`;
+  }
 
-  const addr = server.address();
+  await ensureInlineServer();
+  // `listen` 是异步的，但可能在我们挂监听之前就已完成，所以先查状态
+  if (server && !server.listening) await once(server, 'listening');
+
+  const addr = server!.address();
   const port = typeof addr === 'object' && addr ? addr.port : 3000;
   return `http://127.0.0.1:${port}`;
 }
@@ -730,6 +780,59 @@ function registerIpc() {
     n.on('close', () => notified.delete(p.sessionId!));
     n.show();
   });
+
+  // ── M01：本机 token 下发 + harness 状态事件 ──────────────────────────────
+  //
+  // 渲染端经 preload 的 getApiToken() 拉一次，api.ts 内存缓存、每个 /api
+  // 请求带 x-opc-token 头。token 不落 localStorage、不进 URL —— 只活在
+  // main 内存、harness env 与 0600 文件三处（§7.5 红线：不进日志/argv）。
+  ipcMain.handle('opc:api-token', _e => {
+    if (rejectUntrustedIpc(_e, 'opc:api-token')) return null;
+    return USE_HARNESS ? harnessManager.getToken() : null;
+  });
+
+  harnessManager.onUiEvent(ev => {
+    const win = mainWindow;
+    const alive = win && !win.isDestroyed();
+    if (ev.type === 'recovered') {
+      const newOrigin = `http://127.0.0.1:${ev.port}`;
+      const notify = () => {
+        if (alive) win!.webContents.send('opc:harness-event', { type: 'recovered', port: ev.port });
+      };
+      // 重启复用同端口时 origin 不变，免 reload；变了才整页迁移（旧 origin
+      // 的连接已随上一代进程死透，页面刷新是唯一诚实的恢复方式）。
+      if (alive && !DEV_URL) {
+        let currentOrigin: string | null = null;
+        try {
+          currentOrigin = new URL(win!.webContents.getURL()).origin;
+        } catch {
+          currentOrigin = null;
+        }
+        if (currentOrigin && currentOrigin !== newOrigin) {
+          appOrigin = newOrigin;
+          void loadWithRetry(win!, newOrigin)
+            .then(notify)
+            .catch(err => console.error('[Main] 迁移到新 harness 地址失败:', (err as Error).message));
+          return;
+        }
+      }
+      notify();
+      return;
+    }
+    if (alive) win!.webContents.send('opc:harness-event', ev);
+    if (ev.type === 'gave-up') {
+      // 看门狗 3 次退避重启都失败：明说，不装无事发生。渲染端还在 ——
+      // 窗口不退出，用户可以手动重启应用（会话数据都在磁盘上）。
+      void dialog.showMessageBox({
+        type: 'error',
+        title: 'OPC Agent',
+        message: '核心服务多次重启失败',
+        detail: '后台服务已尝试自动重启 3 次仍未成功。你的会话数据不受影响；请重启应用，若持续出现请查看日志反馈问题。',
+        buttons: ['好'],
+        noLink: true,
+      });
+    }
+  });
 }
 
 async function createWindow() {
@@ -909,9 +1012,22 @@ function readCloseBehavior() {
   }
 }
 
-/** 还在跑的 Agent 任务数。读不到（旧版/异常）就当 0，不因统计失败而挡住关闭。 */
-function runningTaskCount(): number {
+/** 还在跑的 Agent 任务数。读不到（异常/重启窗口期）就当 0，不因统计失败而挡住关闭。 */
+async function runningTaskCount(): Promise<number> {
   try {
+    if (USE_HARNESS) {
+      const origin = harnessManager.getOrigin();
+      if (!origin) return 0;
+      const token = harnessManager.getToken();
+      const res = await fetch(`${origin}/api/runs/active`, {
+        headers: token ? { [OPC_TOKEN_HEADER]: token } : undefined,
+        signal: AbortSignal.timeout(1500),
+      });
+      if (!res.ok) return 0;
+      const body = (await res.json()) as { runs?: unknown[] };
+      return Array.isArray(body.runs) ? body.runs.length : 0;
+    }
+    const { runHub } = await import('../server/run-hub.js');
     return runHub.activeRuns().length;
   } catch {
     return 0;
@@ -953,7 +1069,7 @@ function closeWindowNow() {
  * 与它属于同一层语义。
  */
 async function handleCloseRequest(win: BrowserWindow) {
-  const running = runningTaskCount();
+  const running = await runningTaskCount();
   const action = decideCloseAction({
     behavior: readCloseBehavior(),
     runningTasks: running,
@@ -1099,10 +1215,23 @@ app.on('before-quit', () => {
   // 系统关机时更会变成关不掉的拒绝关机。
   isQuitting = true;
   updater.dispose();
-  try {
-    registry.disposeAll();
-  } catch (err) {
-    console.error('[Main] 清理子进程失败:', (err as Error).message);
+  if (USE_HARNESS) {
+    // M01：agent 子进程的收口在 harness 自己手里（disconnect → shutdown →
+    // registry.disposeAll）。main 只负责断通道 + 兜底 taskkill，不等它 ——
+    // 进程生命周期由 harness 自行结束，这是「一并退出」的实现点。
+    harnessManager.stop();
+  } else {
+    // 老路：server 与 main 同进程，agent 子进程仍归主进程回收。
+    // 动态 import：harness 模式下绝不加载 server 模块（避免主进程重开 SQLite）。
+    void import('../server/agents/registry.js')
+      .then(m => {
+        try {
+          m.registry.disposeAll();
+        } catch (err) {
+          console.error('[Main] 清理子进程失败:', (err as Error).message);
+        }
+      })
+      .catch(err => console.error('[Main] 清理子进程失败:', (err as Error).message));
   }
   // P4：同理，终端里的 shell 也不能变成孤儿进程。用户可能正跑着
   // `npm run build`，直接走人会留下一个占着目录的 cmd.exe。

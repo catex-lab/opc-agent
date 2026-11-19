@@ -272,6 +272,28 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_extension_source_item ON extension_source(item_id);
   CREATE INDEX IF NOT EXISTS idx_extension_target_item ON extension_target(item_id);
+
+  -- M01（绞杀者第 1 期）：最小 run 台账。
+  --
+  -- 为什么必须落库：助手消息只在**回合收尾**时整条一次写入（见 chat.ts 落库
+  -- 注释），harness 中途崩溃时回合既不会留下假完成（没有消息 = 没有伪装），
+  -- 也不会留下任何「这一轮发生过」的痕迹。「进行中的回合记中断」要成立，
+  -- 就得在回合**开始**时先落一行，收尾时更新；harness 下次启动把残留的
+  -- running 清算成 interrupted（见 sweepInterruptedRuns）。
+  --
+  -- 为什么不外键到 sessions：runs 是**审计台账**不是会话附属数据 —— 会话
+  -- 删除后这条 run 仍应可考（谁、何时、怎么结束的），跟随 CASCADE 删掉
+  -- 反而丢事实。M03 的正式迁移机制上线后由它接管口径。
+  CREATE TABLE IF NOT EXISTS runs (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT,
+    agent_id    TEXT,
+    -- running | finished | failed | stopped | interrupted
+    status      TEXT NOT NULL DEFAULT 'running',
+    started_at  TEXT NOT NULL,
+    finished_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 `);
 
 /**
@@ -1218,6 +1240,65 @@ export function clearAllData(): void {
   db.exec('DELETE FROM messages');
   db.exec('DELETE FROM sessions');
   notifyKbPersist({ type: 'all-cleared' });
+}
+
+// ============= Run 台账（M01）=============
+
+export type RunRowStatus = 'running' | 'finished' | 'failed' | 'stopped' | 'interrupted';
+
+export interface DbRunRow {
+  id: string;
+  session_id: string | null;
+  agent_id: string | null;
+  status: RunRowStatus;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/**
+ * 回合开始落一行台账。幂等（同一 runId 重复落忽略）：重连/重试路径可能
+ * 重放 run_start，台账只关心「这一轮存在过」。
+ *
+ * 调用方包 try/catch：台账失败绝不能影响聊天主链路 —— 它是记账，不是闸门。
+ */
+export function markRunStarted(runId: string, sessionId: string | null, agentId: string | null): void {
+  db.prepare(`
+    INSERT INTO runs (id, session_id, agent_id, status, started_at, finished_at)
+    VALUES (?, ?, ?, 'running', ?, NULL)
+    ON CONFLICT(id) DO NOTHING
+  `).run(bind(runId), bind(sessionId), bind(agentId), bind(new Date().toISOString()));
+}
+
+/** 回合收尾更新台账。status 映射：ok→finished、error→failed、aborted→stopped */
+export function markRunFinished(
+  runId: string,
+  status: Exclude<RunRowStatus, 'running' | 'interrupted'>
+): void {
+  db.prepare('UPDATE runs SET status = ?, finished_at = ? WHERE id = ?').run(
+    bind(status),
+    bind(new Date().toISOString()),
+    bind(runId)
+  );
+}
+
+/**
+ * harness 启动清算：上一代进程没来得及收尾的 run 一律记 interrupted。
+ *
+ * 这是「进行中的回合记中断、不假装完成」的落库终点 —— 崩溃的回合永远
+ * 不会有一条假装跑完的助手消息（消息本就只在收尾时写），这里再把台账
+ * 补成诚实状态。返回清算条数（诊断/闸门用）。
+ */
+export function sweepInterruptedRuns(): number {
+  const info = db
+    .prepare("UPDATE runs SET status = 'interrupted', finished_at = ? WHERE status = 'running'")
+    .run(bind(new Date().toISOString()));
+  return Number(info.changes ?? 0);
+}
+
+export function listRuns(limit = 50): DbRunRow[] {
+  return db
+    .prepare('SELECT * FROM runs ORDER BY started_at DESC, rowid DESC LIMIT ?')
+    .all(bind(limit)) as unknown as DbRunRow[];
 }
 
 // ============= 验证结果（A97）=============
