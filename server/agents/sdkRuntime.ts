@@ -119,7 +119,24 @@ export function expandHome(p: string): string {
 
 export function resolveSdkRuntime(spec?: SdkSpec): SdkRuntime {
   const env: Record<string, string> = { ...(spec?.env ?? {}) };
-  if (spec?.configDir) env.CODEBUDDY_CONFIG_DIR = expandHome(spec.configDir);
+  if (spec?.configDir) {
+    const configDir = expandHome(spec.configDir);
+    env.CODEBUDDY_CONFIG_DIR = configDir;
+    // A234：WorkBuddy 桌面端把凭据以 at-rest 加密（`$wbEncrypted` envelope）写入
+    // `<home>\AppData\Local\CodeBuddyExtension\Data\Public\auth\*.info`，加密 key 只活在
+    // 桌面端 prewarm 子进程内存里（不落盘、不可枚举）。CLI 在 standalone 模式下拿不到 key
+    // → 读到 envelope 时直接删字段 → `hasAccessToken=false`（永远显示未登录）。
+    //
+    // 路径由 SDK 的 `FilePathServiceImpl.getBasePath()` 用 `os.homedir()` 推导
+    // （Node 在 Windows 上取 `USERPROFILE`），**不是 LOCALAPPDATA**。所以隔离点是
+    // USERPROFILE：给 WorkBuddy 的 CLI 子进程一个独立的「家目录」，凭据落到 OPC 自己的
+    // 明文存储，与桌面端互不覆盖。同时把 HOME 显式指回真实家目录 —— git 等工具优先读
+    // HOME，仍能找到用户的全局配置与凭据。
+    if (isWorkbuddyConfigDir(configDir)) {
+      env.USERPROFILE = ensureIsolatedProfile(configDir);
+      env.HOME = os.homedir();
+    }
+  }
 
   // A216：优先让 CLI 读官方自己的产品配置。变量名不是我们猜的 —— 官方配置
   // 快照里 `productConfigPathEnv` 写死了 `ACC_PRODUCT_CONFIG_PATH`，打包 CLI
@@ -157,6 +174,45 @@ export function resolveSdkRuntime(spec?: SdkSpec): SdkRuntime {
     // A231：见 SdkRuntime.settingSources 注释。SDK 不传时写死 none，必须显式给。
     settingSources: ['user'],
   };
+}
+
+/**
+ * A234：判断配置根是否属于 WorkBuddy（`.workbuddy-ai` / `.workbuddy`）。
+ *
+ * 只有 WorkBuddy 的产品使用 at-rest 加密写凭据，也才需要隔离家目录；
+ * 其它 SDK 产品（claude / codex / opencode）保持原样，避免无谓地改动它们的路径。
+ */
+export function isWorkbuddyConfigDir(configDir: string): boolean {
+  const base = path.basename(configDir).toLowerCase();
+  return base === '.workbuddy-ai' || base === '.workbuddy';
+}
+
+/**
+ * A234：准备 WorkBuddy CLI 子进程的隔离家目录，返回该目录。
+ *
+ * 目录形状必须与 SDK 的推导一致：`<home>/AppData/Local/CodeBuddyExtension/Data/Public/auth`。
+ * 顺手把真实家目录的 `.ssh` 以 junction 挂进来 —— git push 走 SSH 时 OpenSSH 在 Windows
+ * 上按 `%USERPROFILE%\.ssh` 找密钥，不挂这一层会话里的推送会因找不到密钥而失败。
+ * 全部 best-effort：任何一步失败都不阻塞（最坏退回「没有登录态」，而不是崩溃）。
+ */
+function ensureIsolatedProfile(configDir: string): string {
+  const profile = path.join(configDir, 'opc-profile');
+  const authDir = path.join(profile, 'AppData', 'Local', 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+  try {
+    fs.mkdirSync(authDir, { recursive: true });
+  } catch {
+    // CLI 会自行创建；失败也不阻塞
+  }
+  try {
+    const realSsh = path.join(os.homedir(), '.ssh');
+    const mirroredSsh = path.join(profile, '.ssh');
+    if (fs.existsSync(realSsh) && !fs.existsSync(mirroredSsh)) {
+      fs.symlinkSync(realSsh, mirroredSsh, 'junction');
+    }
+  } catch {
+    // 非 Windows 或权限不足：忽略
+  }
+  return profile;
 }
 
 /**

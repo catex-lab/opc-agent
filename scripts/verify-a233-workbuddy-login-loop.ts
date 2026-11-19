@@ -23,6 +23,7 @@
  * 运行：npx tsx scripts/verify-a233-workbuddy-login-loop.ts
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { resolveSdkRuntime, sdkAuthChildFor } from '../server/agents/sdkRuntime.js';
 
@@ -75,6 +76,17 @@ function staticContract(src: { agentLogin: string; runtimeSrc: string }): Record
   ok(auth.env.BROWSER === '__opc_no_browser__', '登录子进程必须注入 BROWSER 哨兵', String(auth.env.BROWSER));
   ok(auth.env.ELECTRON_RUN_AS_NODE === '1', 'A231 的 shim 开关必须保留');
   ok(auth.env.CODEBUDDY_CONFIG_DIR === wb.env.CODEBUDDY_CONFIG_DIR, '原有 env 项不能被哨兵覆盖丢失');
+
+  // A234：WorkBuddy 必须用独立家目录（凭据与桌面端隔离），其它产品不许改
+  ok(
+    typeof wb.env.USERPROFILE === 'string' &&
+      wb.env.USERPROFILE.endsWith(path.join('.workbuddy-ai', 'opc-profile')),
+    'A234：WorkBuddy runtime 必须把 USERPROFILE 指到隔离家目录',
+    String(wb.env.USERPROFILE)
+  );
+  ok(wb.env.HOME === os.homedir(), 'A234：HOME 必须指回真实家目录，保证 git 等工具仍可用');
+  const nonWb = resolveSdkRuntime({ environment: 'internal', configDir: '~/.codebuddy' });
+  ok(!('USERPROFILE' in nonWb.env), 'A234：非 WorkBuddy 产品不许注入隔离 USERPROFILE');
 }
 
 // ── 2. 前端源码契约 ────────────────────────────────────────────────

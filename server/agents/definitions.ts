@@ -241,8 +241,8 @@ export interface SdkSpec {
    * 配置根（官方客户端的 `dataFolderName`），支持 `~`。
    *
    * ⚠️ 它不只是「日志放哪」：SDK 内置 CLI 的登录态与设置都按这个根隔离。
-   * 指到 `~/.workbuddy` 才能复用 WorkBuddy 桌面端已经登录的账号 ——
-   * 指到默认的 `~/.codebuddy` 则等同于「换了一个客户端」，未登录且初始化超时。
+   * 必须指到与桌面端相同的根（`~/.workbuddy-ai` / `~/.workbuddy`），才能让 CLI
+   * 看到同一套产品配置与模型清单；凭据文件则另行隔离（见 sdkRuntime 的 A234）。
    */
   configDir?: string;
   /**
@@ -1055,7 +1055,7 @@ const RAW_DEFS: AgentDefinition[] = [
       description: '全能型主控 Agent，可读写文件、执行命令、联网检索，适合担任群聊的调度中枢',
       icon: 'workbuddy',
       color: '#0EC8A9',
-      installHint: '先在 WorkBuddy 桌面客户端登录（默认复用 ~/.workbuddy，应用会自动跟随桌面端实际使用的数据目录），或在下方凭据配置填 CODEBUDDY_API_KEY',
+      installHint: '点「去登录」在应用内完成一次授权（登录态独立保存，不影响桌面端）；也可在下方凭据配置填 CODEBUDDY_API_KEY',
     },
     /**
      * A155：真正接到 WorkBuddy 国内产品上。
@@ -1085,7 +1085,7 @@ const RAW_DEFS: AgentDefinition[] = [
      */
     credential: {
       keyEnv: ['CODEBUDDY_API_KEY'],
-      hint: 'WorkBuddy 桌面客户端登录后会自动复用 ~/.workbuddy 登录态；也可填腾讯云 API Key（写入 CODEBUDDY_API_KEY）',
+      hint: '应用内登录态独立保存（不与桌面端共用）；也可填腾讯云 API Key（写入 CODEBUDDY_API_KEY）',
     },
   },
   {
@@ -2444,7 +2444,7 @@ const INSTALL_INFO: Record<string, AgentInstall> = {
     // 2026-10-31：SDK 自带的 CLI 已随安装包分发（asarUnpack，见
     // electron-builder.yml），bootstrap.cjs 会把它注入 CODEBUDDY_CODE_PATH。
     // 所以打包版不再要求用户另装 CLI，缺的只是登录。
-    note: '走内置 SDK（CLI 已随应用分发）；先在 WorkBuddy 桌面客户端登录，回来点「重新探测」复用其登录态（默认 ~/.workbuddy，桌面端换目录时应用自动跟随，见「设置 → 登录配置 → WorkBuddy 产品版本」）；也可在下方「凭据配置」填 CODEBUDDY_API_KEY',
+    note: '走内置 SDK（CLI 已随应用分发）；点「去登录」在应用内完成一次授权即可（登录态独立保存，桌面端登录不受影响，也不会互相覆盖）；也可在下方「凭据配置」填 CODEBUDDY_API_KEY',
     checkedAt: CHECKED,
     checkedFrom: '官方双版本产品配置（A68 已核：productName / networkEnvironment）',
   },

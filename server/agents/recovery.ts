@@ -11,12 +11,12 @@
  *   2. 不编造命令。没核实过的命令宁可写成「在该 Agent 里重新登录」，也不写一个
  *      跑不通的 `xxx login`。
  */
-import { workbuddyKeyblobDisplay, workbuddyState } from './wbProductProfile.js';
+import { workbuddyState } from './wbProductProfile.js';
 
 /** 每个 Agent 的「怎么恢复」一句话。键与定义表 id 一致。 */
 const RECOVERY_HINTS: Record<string, string> = {
   workbuddy:
-    '在 WorkBuddy 桌面端重新登录，或让桌面端保持运行后再点「重新探测」；也可在「设置 → 登录配置 → Agent API Key」填 CODEBUDDY_API_KEY',
+    '点「去登录」在应用内完成一次授权（登录态独立保存，不影响桌面端）；也可在「设置 → 登录配置 → Agent API Key」填 CODEBUDDY_API_KEY',
   codex: '在终端运行 `codex login`（登录态写入 ~/.codex/auth.json），或设置 OPENAI_API_KEY',
   gemini:
     '在终端运行 `gemini`，用 `/auth` 完成 Google 登录；也可在「设置 → 登录配置 → Agent API Key」填 GEMINI_API_KEY',
@@ -79,7 +79,7 @@ function workbuddyRecoveryHint(): string {
     parts.push(`本机检测到 ${state.profiles.length} 个版本，可在「设置 → 登录配置 → WorkBuddy 产品版本」一键切换`);
   }
   parts.push(
-    `在该版本的桌面端重新登录（登录态写入 ${workbuddyKeyblobDisplay()}），或让桌面端保持运行后点「重新探测」；也可在「设置 → 登录配置 → Agent API Key」填 CODEBUDDY_API_KEY`
+    '点「去登录」在应用内完成一次授权（登录态独立保存，不受桌面端影响，也不会覆盖桌面端登录）；也可在「设置 → 登录配置 → Agent API Key」填 CODEBUDDY_API_KEY'
   );
   return parts.join('；');
 }
