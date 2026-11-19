@@ -64,9 +64,24 @@ function read(rel: string): string {
 
 const SLEEP = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-/** 带超时的 fetch。API 卡住时不能把整个冒烟无限期拖住（实测挂住过）。 */
+/**
+ * 带超时的 fetch。API 卡住时不能把整个冒烟无限期拖住（实测挂住过）。
+ *
+ * M01：harness 模式下 /api/* 需要 x-opc-token —— runSmoke 把令牌文件路径
+ * 挂到 harnessTokenFile，这里每请求现读（重启会换代）。
+ */
+let harnessTokenFile: string | null = null;
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+  const headers: Record<string, string> = { ...((init?.headers as Record<string, string>) ?? {}) };
+  if (harnessTokenFile) {
+    try {
+      const token = (JSON.parse(fs.readFileSync(harnessTokenFile, 'utf8')) as { token?: string }).token;
+      if (token) headers['x-opc-token'] = token;
+    } catch {
+      /* 令牌文件还没落（探针在握手前打）→ 无头请求；/api/health 有豁免 */
+    }
+  }
+  const res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(20_000) });
   return (await res.json()) as T;
 }
 
@@ -280,6 +295,7 @@ async function runSmoke() {
   const probeUrl = `http://127.0.0.1:${probePort}/`;
 
   const { child, dataDir, log } = launchApp();
+  harnessTokenFile = path.join(dataDir, 'harness-token.json');
   let harness: Browser | null = null;
   let agent: Browser | null = null;
 
