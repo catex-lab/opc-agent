@@ -248,6 +248,19 @@ export function NewGroupDialog({
                   style={{ color: 'var(--td-text-color-primary)' }}
                   data-new-group-search
                 />
+                {/* E-3：有内容时显示 × 清除（同通讯录搜索框） */}
+                {keyword && (
+                  <button
+                    type="button"
+                    onClick={() => { setKeyword(''); inputRef.current?.focus(); }}
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                    aria-label={t('contacts.clearSearch')}
+                    data-new-group-search-clear
+                  >
+                    <X size={13} />
+                  </button>
+                )}
               </div>
             </div>
 

@@ -154,6 +154,19 @@ export function HandoffDialog({ open, currentAgentId, onClose, onHandoff }: Hand
               className="w-full bg-transparent text-body outline-none"
               style={{ color: 'var(--td-text-color-primary)' }}
             />
+            {/* E-3：有内容时显示 × 清除（同通讯录/建群搜索框） */}
+            {keyword && (
+              <button
+                type="button"
+                onClick={() => setKeyword('')}
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+                style={{ color: 'var(--td-text-color-placeholder)' }}
+                aria-label={t('contacts.clearSearch')}
+                data-handoff-search-clear
+              >
+                <X size={13} />
+              </button>
+            )}
           </div>
         </div>
 

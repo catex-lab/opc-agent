@@ -276,6 +276,8 @@ export const en: Record<MessageKey, string> = {
   'settings.remote.kindGeneric': 'Custom webhook',
   'settings.remote.webhookUrl': 'Webhook URL',
   'settings.remote.urlSaved': 'Saved (paste a new URL to replace)',
+  'settings.remote.changeUrl': 'Change',
+  'settings.remote.cancelChange': 'Cancel',
   'settings.remote.externalBase': 'External base URL for approval links (optional)',
   'settings.remote.externalBasePlaceholder': 'https://opc.example.com',
   // T3-6: approval-link hint split into a status line + a guidance line

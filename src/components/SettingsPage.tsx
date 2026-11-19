@@ -2434,6 +2434,9 @@ function RemoteApprovalSection() {
   const [kind, setKind] = useState<'lark' | 'wecom' | 'dingtalk' | 'generic'>('lark');
   const [url, setUrl] = useState('');
   const [hasUrl, setHasUrl] = useState(false);
+  // T3-5：已配置态掩码展示（urlTail 为服务端脱敏尾段）+ 更换态开关
+  const [urlTail, setUrlTail] = useState<string | null>(null);
+  const [editingUrl, setEditingUrl] = useState(false);
   const [externalBaseUrl, setExternalBaseUrl] = useState('');
   const [enabled, setEnabled] = useState(false);
   const [approvalBase, setApprovalBase] = useState<string | null>(null);
@@ -2448,6 +2451,7 @@ function RemoteApprovalSection() {
         if (cancelled) return;
         setKind(d.kind ?? 'lark');
         setHasUrl(d.hasUrl === true);
+        setUrlTail(typeof d.urlTail === 'string' && d.urlTail ? d.urlTail : null);
         setExternalBaseUrl(d.externalBaseUrl ?? '');
         setEnabled(d.enabled === true);
         setApprovalBase(d.approvalBase ?? null);
@@ -2480,6 +2484,8 @@ function RemoteApprovalSection() {
       setUrl('');
       const cfg = await api.get('/api/notify/config').then(x => x.json());
       setApprovalBase(cfg.approvalBase ?? null);
+      setUrlTail(typeof cfg.urlTail === 'string' && cfg.urlTail ? cfg.urlTail : null);
+      setEditingUrl(false);
       return true;
     } finally {
       setSaving(false);
@@ -2538,15 +2544,49 @@ function RemoteApprovalSection() {
         <label className="mb-1 block text-caption" style={{ color: 'var(--td-text-color-secondary)' }}>
           {t('settings.remote.webhookUrl')}
         </label>
-        <input
-          value={url}
-          onChange={e => setUrl(e.target.value)}
-          placeholder={hasUrl ? t('settings.remote.urlSaved') : 'https://…'}
-          spellCheck={false}
-          data-remote-url
-          className="h-9 w-full rounded-lg px-3 font-mono text-body outline-none"
-          style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-primary)' }}
-        />
+        {/* T3-5（2026-11-19）：已配置态显示掩码值（urlTail，服务端只回尾段）+「更换」按钮，
+            与未配置态（placeholder https://…）可区分；点「更换」才进入可编辑。
+            不改数据：urlTail 是 API 已有的脱敏字段，不含完整密钥 URL。 */}
+        {hasUrl && !editingUrl ? (
+          <div className="flex items-center gap-2" data-remote-url-masked>
+            <code
+              className="h-9 flex-1 rounded-lg px-3 font-mono text-body leading-9 truncate"
+              style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-secondary)' }}
+            >
+              {urlTail || t('settings.remote.urlSaved')}
+            </code>
+            <Button
+              theme="default"
+              variant="outline"
+              onClick={() => setEditingUrl(true)}
+              data-remote-url-change
+            >
+              {t('settings.remote.changeUrl')}
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <input
+              value={url}
+              onChange={e => setUrl(e.target.value)}
+              placeholder={hasUrl ? t('settings.remote.urlSaved') : 'https://…'}
+              spellCheck={false}
+              data-remote-url
+              className="h-9 flex-1 rounded-lg px-3 font-mono text-body outline-none"
+              style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-primary)' }}
+            />
+            {hasUrl && (
+              <Button
+                theme="default"
+                variant="outline"
+                onClick={() => { setEditingUrl(false); setUrl(''); }}
+                data-remote-url-cancel
+              >
+                {t('settings.remote.cancelChange')}
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="mb-3">

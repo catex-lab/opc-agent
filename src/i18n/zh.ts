@@ -275,6 +275,8 @@ export const zh = {
   'settings.remote.kindGeneric': '自定义 webhook',
   'settings.remote.webhookUrl': 'Webhook 地址',
   'settings.remote.urlSaved': '已保存（粘贴新地址可更换）',
+  'settings.remote.changeUrl': '更换',
+  'settings.remote.cancelChange': '取消更换',
   'settings.remote.externalBase': '审批链接的对外地址（可选）',
   'settings.remote.externalBasePlaceholder': 'https://opc.example.com',
   // T3-6：审批链接 hint 拆两行——状态行 + 行动指引行

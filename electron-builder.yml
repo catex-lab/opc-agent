@@ -32,6 +32,19 @@ files:
   - '!**/*.tsbuildinfo'
   - '!**/{CHANGELOG.md,README.md,readme.md,LICENSE,LICENSE.md}'
   - '!**/{.github,.vscode,__tests__,test,tests,example,examples,docs}/**'
+  # ── 瘦身批次 1（2026-11-19，S6 报告路线①）：排除非 win32-x64 平台二进制 ──
+  # 本安装包只面向 Windows x64；以下目录是 macOS/Linux/arm64 的副本，
+  # 打进包里纯属浪费（实测 node-pty arm64 28MB + ripgrep 四平台 + genie-trash/
+  # sandbox 的 mac/linux 目录，合计约 70-90MB）。
+  # 只删「非目标平台」的副本——win32-x64 一个都不动（冒烟闸门会验证）。
+  - '!node_modules/node-pty/prebuilds/darwin-arm64/**'
+  - '!node_modules/node-pty/prebuilds/darwin-x64/**'
+  - '!node_modules/node-pty/prebuilds/win32-arm64/**'
+  - '!node_modules/@tencent-ai/agent-sdk/cli/vendor/ripgrep/{arm64-darwin,arm64-linux,x64-darwin,x64-linux}/**'
+  - '!node_modules/@tencent-ai/agent-sdk/cli/vendor/genie-trash/{darwin-arm64,darwin-x64,linux-arm64,linux-x64}/**'
+  - '!node_modules/@tencent-ai/agent-sdk/cli/vendor/sandbox-center-runtime-kit/**/macos*/**'
+  - '!node_modules/@tencent-ai/agent-sdk/cli/vendor/sandbox-center-runtime-kit/**/darwin*/**'
+  - '!node_modules/@tencent-ai/agent-sdk/cli/vendor/sandbox-center-runtime-kit/**/linux*/**'
   # 2026-10-31：把 @tencent-ai/agent-sdk 内嵌的 CLI（cli/）**打回安装包**。
   #
   # 此前（2026-10-30）因为 cli/package.json 写 "SEE LICENSE IN README.md"
