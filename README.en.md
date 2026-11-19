@@ -182,4 +182,4 @@ Details in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Status
 
-Version `1.0.20` (`v1.0.20` released; changes since then are recorded under "Unreleased" in `CHANGELOG.md`).
+Version `1.0.21` (`v1.0.21` released; changes since then are recorded under "Unreleased" in `CHANGELOG.md`).
