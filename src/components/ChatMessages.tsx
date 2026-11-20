@@ -1549,23 +1549,10 @@ const MessageRow = memo(function MessageRow({
               · {formatModelName(message.model)}
             </span>
           )}
-          {/* A36：本轮总耗时。参考图把它放在头部右端（「已处理 47m42s」）——
-              它描述的是**这一轮**，不是某一步，放在步骤里反而会被误读成单步耗时。
-              流式中不显示：那一刻还没跑完，写死一个不断变大的数会和下面
-              状态行的秒数打架。
-              S2-4（审查报告）：中文界面统一「已处理 1 分 36 秒 / 32 秒」格式
-              （单聊与群聊同一函数），英文沿用 1m36s。 */}
-          {!msgIsImage && !message.isStreaming && formatHandledDurationText(message.durationMs, locale) && (
-            <span
-              className="ml-auto shrink-0 text-caption tabular-nums"
-              style={{ color: 'var(--td-text-color-placeholder)' }}
-              data-msg-duration
-            >
-              {t('chat.msg.handled', {
-                duration: formatHandledDurationText(message.durationMs, locale) ?? '',
-              })}
-            </span>
-          )}
+          {/* 2026-11-20 用户拍板：头部右上角的总耗时移除（A36 引入）。
+              回合耗时只保留在两个不打扰阅读的位置：流式/散开的状态行
+              （「已处理 X」，由 StreamStatus 承担）与用量小字（有费用或
+              token 时）。data-msg-duration 随之退役，verify:a36 [1] 已跟随。 */}
         </div>
       )}
 

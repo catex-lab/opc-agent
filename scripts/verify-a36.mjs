@@ -218,19 +218,18 @@ async function newPage() {
 }
 
 // ============= [1] 头部总耗时 =============
-console.log('\n[1] 头部「已处理 47 分 42 秒」');
+console.log('\n[1] 头部右上角不再有总耗时（2026-11-20 用户拍板移除）');
 {
   const { ctx, page } = await newPage();
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1000);
 
-  const dur = await page.locator('[data-msg-duration]').first().textContent().catch(() => null);
-  ok(!!dur, '头部有总耗时', dur ?? '缺失');
-  // S2-4（审查报告）：中文界面统一「47 分 42 秒」格式（原 47m42s）；
-  // 分钟进位的断言口径不变 —— 47m42s 的数值仍是 2862.4s。
-  ok((dur ?? '').includes('已处理 47 分 42 秒'), '分钟进位正确（47 分 42 秒，不是 2862.4s）', dur ?? '');
+  ok(
+    (await page.locator('[data-msg-duration]').count()) === 0,
+    '头部不再渲染总耗时（data-msg-duration 退役）'
+  );
   const header = await page.locator('[data-msg-header]').first().innerText();
-  ok(header.includes('已处理'), '耗时在消息头部那一行里', header.replace(/\n/g, ' '));
+  ok(!header.includes('已处理'), '头部无「已处理」字样', header.replace(/\n/g, ' '));
   await ctx.close();
 }
 
