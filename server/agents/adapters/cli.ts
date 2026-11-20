@@ -85,15 +85,16 @@ export const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000;
 
 /**
  * 静默上限：流式协议下连续这么久没有任何输出（stdout/stderr 都算「活着」）
- * 才判死。默认 8 分钟 —— 与旧总墙钟同值，「最多容忍 8 分钟的彻底无声」与
- * 改造前的最坏情况一致；改造前「有输出的合法长任务」同样会在 480 秒被误杀，
- * 那正是本次要修的缺陷。
+ * 才判死。默认 15 分钟 —— 2026-11-21 用户拍板再次放宽：无人值守跑长任务
+ * 是核心场景，「工具静默几分钟」是合法工作状态（Pi 的 tool_execution_start
+ * → end 之间、非流式网关的等待期都可能整段无声），宁可晚判死也不误杀；
+ * 真卡死仍有总墙钟兜底 + 可随时手动停止。
  *
  * `json-object`（单次模式，进程结束前没有任何增量输出）不适用静默判定，
  * 只受总墙钟约束 —— 那类 Agent 的 spec 自带更长的 timeoutMs（如 zcode 15
  * 分钟）。可被 spec.idleTimeoutMs / OPC_CLI_IDLE_TIMEOUT_MS 覆盖。
  */
-export const DEFAULT_IDLE_TIMEOUT_MS = 8 * 60 * 1000;
+export const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 
 /** 总墙钟 / 静默上限的环境变量覆盖（>0 才生效；闸门与部署调参用） */
 const ENV_TOTAL_TIMEOUT_MS = Number(process.env.OPC_CLI_TOTAL_TIMEOUT_MS) || 0;

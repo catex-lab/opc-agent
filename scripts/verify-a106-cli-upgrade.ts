@@ -609,7 +609,8 @@ setInterval(() => {}, 1000);
     eq(findDef('qoder-cn').cli!.timeoutMs, 1_200_000, 'qoder-cn 放宽到 20 分钟');
     eq(findDef('zcode').cli!.timeoutMs, 900_000, 'zcode 仍是 15 分钟');
     eq(DEFAULT_TIMEOUT_MS, 3_600_000, '总墙钟兜底默认 60 分钟（2026-11-20 重定义）');
-    eq(DEFAULT_IDLE_TIMEOUT_MS, 480_000, '静默上限默认 8 分钟');
+    eq(DEFAULT_IDLE_TIMEOUT_MS, 900_000, '静默上限默认 15 分钟（2026-11-21 用户拍板放宽，无人值守场景）');
+    eq(findDef('pi').cli!.idleTimeoutMs, 1_200_000, 'pi 静默单独放宽到 20 分钟（三层静默叠加）');
     const uncovered = AGENT_DEFS.filter(
       d => d.cli && d.descriptor.id !== 'qoder' && d.descriptor.id !== 'qoder-cn' && d.descriptor.id !== 'zcode'
     );

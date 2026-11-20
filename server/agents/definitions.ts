@@ -2132,6 +2132,10 @@ cli: {
       },
       parse: 'jsonl',
       mapLine: mapPiLine,
+      // 2026-11-21：Pi 的三层静默叠加（tool_execution_start→end 之间零输出、
+      // 第三方网关可能非流式、请求级失败塞消息体不吐 stderr）——静默单独放宽
+      // 到 20 分钟，其余 CLI 仍吃全局 15 分钟默认。
+      idleTimeoutMs: 20 * 60 * 1000,
       extractResumeToken: obj => {
         const o = obj as { type?: string; id?: unknown };
         return o.type === 'session' && typeof o.id === 'string' ? o.id : null;
