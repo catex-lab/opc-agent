@@ -26,10 +26,11 @@ import { memo, useEffect, useRef } from 'react';
  * · **页面不可见停表**：`visibilitychange` 里 document.hidden 时取消 rAF、
  *   回到前台再踢一脚（Electron 会节流后台 rAF，与其让它空转不如显式停）。
  * · **dt 钳制**：单帧最多按 50ms 计 —— 从隐藏恢复的那一帧不会让粒子瞬移。
- * · **颜色只取令牌**：工作/完成色 = `currentColor`（宿主行已设
- *   `--td-text-color-secondary` 级文本灰）；静默警示色按需读
- *   `--td-warning-color`（缓存 1s，避免每帧 getComputedStyle）。
- *   不写死任何 hex —— 不为动画新造色值。
+ * · **颜色只取令牌**：工作/完成色 = 主文本色令牌（`--td-text-color-primary`，
+ *   暗色近白、浅色近黑，1s 缓存现算 —— 不能用 canvas 的 currentColor，它按
+ *   赋值时刻解析并缓存，主题切换后不跟随，实测暗色会定格近黑）；静默警示
+ *   色按需读 `--td-warning-color`（同款 1s 缓存）。不写死任何 hex —— 不为
+ *   动画新造色值。
  * · **卸载必须 dispose**：从共享时钟摘除 + 清 canvas（见组件卸载 effect）。
  *   `prefers-reduced-motion` 时不进时钟，只画一帧静态环。
  */
@@ -139,6 +140,16 @@ class ParticleOrbEngine implements OrbTicker {
   /** 静默警示色缓存：令牌值随主题切换会变，每 1s 重读一次足够 */
   private warnColor = '';
   private warnColorAt = 0;
+  /**
+   * 工作色缓存（主文本色，暗色 = 近白）。
+   *
+   * ⚠️ 为什么不能直接 `fillStyle = 'currentColor'`：canvas 的 currentColor
+   * 按**赋值时刻**解析并缓存，不会跟随主题变化 —— 用户实测（2026-11-20）
+   * 暗色模式下环定格成近黑。这里改为每 1s 从令牌现算一次显式色值，
+   * 主题切换最迟 1s 内跟上。
+   */
+  private workColor = '';
+  private workColorAt = 0;
 
   constructor(canvas: HTMLCanvasElement, size: number, count: number) {
     this.canvas = canvas;
@@ -196,6 +207,21 @@ class ParticleOrbEngine implements OrbTicker {
     return this.warnColor;
   }
 
+  /**
+   * 工作色：主文本色令牌现算（暗色 = #F9FAFB 近白、浅色 = 近黑，都取高对比档）。
+   * 令牌缺失时退回元素计算色。
+   */
+  private resolveWorkColor(): string {
+    const now = performance.now();
+    if (!this.workColor || now - this.workColorAt > 1000) {
+      const cs = getComputedStyle(this.canvas);
+      this.workColor =
+        cs.getPropertyValue('--td-text-color-primary').trim() || cs.color;
+      this.workColorAt = now;
+    }
+    return this.workColor;
+  }
+
   /** 整环统一缓慢公转，全亮等明度；不再让每颗粒子独立运动 */
   private draw() {
     const { ctx, size } = this;
@@ -206,7 +232,7 @@ class ParticleOrbEngine implements OrbTicker {
     const silent = this.state === 'silent';
     const done = this.state === 'done';
     const rot = this.t * (silent ? 0.22 : 0.68);
-    const color = silent ? this.resolveWarnColor() || 'currentColor' : 'currentColor';
+    const color = silent ? this.resolveWarnColor() || this.resolveWorkColor() : this.resolveWorkColor();
     const breathe = spinning ? 1 + 0.035 * Math.sin(this.t * 2) : 1;
     const spread = done ? 1 + this.t * 1.6 : 1;
     const fade = done ? Math.max(0, 1 - this.t / 0.8) : 1;
@@ -235,7 +261,7 @@ class ParticleOrbEngine implements OrbTicker {
     ctx.clearRect(0, 0, size, size);
     const silent = this.state === 'silent';
     const done = this.state === 'done';
-    const color = silent ? this.resolveWarnColor() || 'currentColor' : 'currentColor';
+    const color = silent ? this.resolveWarnColor() || this.resolveWorkColor() : this.resolveWorkColor();
     const fade = done ? 0.35 : 1;
     const dotRadius = size >= 24 ? 0.65 : 1.15;
     ctx.fillStyle = color;
@@ -318,7 +344,7 @@ export const ParticleStatusOrb = memo(function ParticleStatusOrb({
           borderColor:
             state === 'silent'
               ? 'var(--td-warning-color)'
-              : 'var(--td-text-color-placeholder)',
+              : 'var(--td-text-color-primary)',
           borderTopColor: 'transparent',
         }}
       />
