@@ -35,7 +35,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check', 'a138');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 const PROBE = process.argv.includes('--probe-h-auto');
 
 /** 修完之后的规格：高度上限 700，与改动前 `max-h` 同一个数（不引入新数字） */

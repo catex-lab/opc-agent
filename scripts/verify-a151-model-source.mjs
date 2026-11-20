@@ -41,7 +41,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const TMP = path.join(ROOT, '.tmp', `a151-model-${Date.now()}`);
 const DATA = path.join(TMP, 'data');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 // [2] 的固定夹具：目录快照 + ZCode HOME 文件树，都不读本机外部数据。
 const CATALOG_FIXTURE = path.join(ROOT, 'scripts', 'fixtures', 'a151-cursor-catalog.json');

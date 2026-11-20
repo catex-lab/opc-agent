@@ -720,9 +720,15 @@ export function ChatInput({
 
   return (
     <div
-      className="px-4 pb-6 pt-4"
+      className="rounded-t-2xl px-4 pb-3 pt-3"
       style={{
-        backgroundColor: 'var(--tc-surface-content)'
+        /* 2026-11-21：玻璃浮层（用户拍板「半透明毛玻璃 + 上方圆角」）——
+           滚动正文从这层底下经过，backdrop-filter 负责把底下的内容磨砂。 */
+        backgroundColor: 'color-mix(in srgb, var(--tc-surface-content) 72%, transparent)',
+        backdropFilter: 'blur(18px) saturate(1.15)',
+        WebkitBackdropFilter: 'blur(18px) saturate(1.15)',
+        borderTop: '1px solid var(--tc-hairline)',
+        boxShadow: '0 -8px 24px rgb(0 0 0 / 0.14)',
       }}
     >
       {/* A215：内容列宽度与居中规则的唯一来源（.tc-chat-column，见 index.css）。

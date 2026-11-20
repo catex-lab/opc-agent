@@ -674,6 +674,8 @@ export const en: Record<MessageKey, string> = {
   'chat.trace.thinkingLive': 'Deep thinking…',
   'chat.trace.toolDuration': 'Tool {duration}',
   'chat.trace.unreturned': 'No result returned',
+  'chat.trace.chipRunning': 'Running {n}',
+  'chat.trace.chipDone': '{n}/{total} done',
   'chat.trace.unreturnedTitle': 'The last step never received an end event, so it counts as neither done nor failed',
   'chat.trace.verb.call': 'Call',
   'chat.trace.verb.check': 'Check',

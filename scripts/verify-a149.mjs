@@ -18,7 +18,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -252,12 +253,13 @@ console.log('\n[2] 红框2：无总条/导轨/分隔线，整轮收成一条轨�
   const traceBar = page.locator('[data-steps-bar]').first();
   ok((await traceBar.count()) > 0, '轨迹汇总行在 DOM 里');
   ok((await traceBar.getAttribute('aria-expanded')) === 'false', '有答案 → 轨迹默认收起');
-  ok((await page.locator('[data-trace-scroll]').count()) === 0, '收起时步骤不渲染');
-  ok((await page.locator('.tc-thinking').count()) === 0, '思考并入轨迹后，收起态不在消息流里单独占版面');
+  // 2026-11-21 行式重设计：步骤行常驻（明细收起），不再卸载子树
+  ok((await page.locator('[data-trace-scroll]').count()) === 1, '步骤行常驻（明细各自收起）');
+  ok((await page.locator('.tc-thinking').count()) > 0, '思考并入轨迹，行式一行（明细收起）');
 
   // 旁白属于过程：收起态不可见，展开后才随步骤一起出现（见 [3]）。
   const body = await page.evaluate(DEEP_TEXT);
-  ok(!body.includes(NARRATION_2), '收起态不直接铺开中途旁白（已随轨迹收走）');
+  ok(body.includes(NARRATION_2), '旁白随步骤行常驻（一行一条，不再整段折叠）');
   ok(body.includes('GPT-6.1 Terra'), '答案正文可见', `${body.length} 字`);
 
   await page.screenshot({ path: join(OUT, 'a149-collapsed.png'), fullPage: false });

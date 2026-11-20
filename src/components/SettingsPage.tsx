@@ -744,10 +744,6 @@ export function SettingsPage({
             {/* A228：远程审批。管的是同一件事的「人不在场」那一半 ——
                 门禁决策仍走本机，这里只是把请求递到手机上 */}
             <RemoteApprovalSection />
-            {/* T3-2：规则文件路径从按钮行挪到分区页脚小字 */}
-            <p className="tc-hint" data-permission-footer style={{ marginTop: 24 }}>
-              {t('settings.permission.footerNote')}
-            </p>
           </>
         )}
 
@@ -1112,9 +1108,6 @@ export function SettingsPage({
                 text={t('settings.login.method3Hint')}
               />
             </h3>
-            {/* NOTES（11 号图）：该区在无凭据行时没有任何控件，说明改为常驻可见，
-                避免组标题下面直接是空的。 */}
-            <p className="tc-hint mb-3">{t('settings.login.method3Hint')}</p>
             <AgentCredentialSettings onSaved={onCredentialsSaved} />
           </div>
 
@@ -1134,10 +1127,6 @@ export function SettingsPage({
               />
             </h3>
             <ProviderSettings onChanged={onCredentialsSaved} autoOpen={autoOpenProvider} />
-            {/* T5-7：第二个入口（通讯录右上角 ＋）也交代一句，别让人以为入口只有这里 */}
-            <p className="tc-hint mt-2" data-provider-add-hint>
-              {t('settings.login.providerAddHint')}
-            </p>
           </div>
 
           {/* T5-3：登录代管终端。进程退出后服务端自动复检，这里再刷一次
@@ -1162,21 +1151,12 @@ export function SettingsPage({
         {section === 'models' && (
         <div>
           <ModelCatalogSettings onRefreshed={onModelsRefreshed} />
-          <p className="tc-hint" style={{ marginTop: 12 }}>{t('settings.models.hint')}</p>
         </div>
         )}
 
         {/* ── 自定义助手（T7-1 改名：原「助手人设」，更早叫「自定义 Agent」） */}
         {section === 'agents' && (
         <div>
-          {/* T7-1：区顶 1 行区分说明 —— 与通讯录里「本机安装的 Agent」划清边界 */}
-          <p
-            className="text-sm"
-            style={{ color: 'var(--td-text-color-secondary)', marginBottom: 16 }}
-          >
-            {t('settings.agents.intro')}
-          </p>
-
           <div className="space-y-6">
               {/* 创建/编辑表单 */}
               {isCreating ? (
@@ -1299,7 +1279,6 @@ export function SettingsPage({
                     <h4 className="text-sm font-medium mb-1" style={{ color: 'var(--td-text-color-secondary)' }}>
                       {t('settings.agents.quickCreate')}
                     </h4>
-                    <p className="tc-hint mb-3">{t('settings.agents.quickCreateHint')}</p>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       {PRESET_TEMPLATES.map(template => {
                         const Icon = getIconComponent(template.icon);
@@ -1340,12 +1319,6 @@ export function SettingsPage({
                                 {t(template.descKey)}
                               </div>
                             </div>
-                            <span
-                              className="shrink-0 text-caption"
-                              style={{ color: 'var(--td-text-color-secondary)' }}
-                            >
-                              {t('settings.agents.useTemplate')}
-                            </span>
                           </div>
                         );
                       })}
@@ -2410,7 +2383,6 @@ function PermissionGrantsSection() {
       )}
 
       <p className="tc-hint" data-permission-mgr-hint style={{ marginTop: 8 }}>
-        {t('settings.permissionMgr.hint')}
       </p>
     </section>
   );
@@ -2514,7 +2486,6 @@ function RemoteApprovalSection() {
       {/* T3-1：组三标题与「自定义规则 / 持久授权」同一刻度（tc-section-title） */}
       <h2 className="tc-section-title">{t('settings.remote.title')}</h2>
       <p className="tc-hint" style={{ marginBottom: 12 }}>
-        {t('settings.remote.desc')}
       </p>
 
       {/* 渠道：四个等权选项，选中走品牌色描边（与外观区主题卡同一形态） */}
@@ -2637,7 +2608,6 @@ function RemoteApprovalSection() {
         )}
       </div>
       <p className="tc-hint" style={{ marginTop: 8 }}>
-        {t('settings.remote.securityHint')}
       </p>
     </section>
   );

@@ -35,7 +35,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const TMP = path.join(ROOT, '.tmp', `a162-carry-${Date.now()}`);
 const DATA = path.join(TMP, 'data');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 let pass = 0;
 let fail = 0;

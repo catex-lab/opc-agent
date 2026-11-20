@@ -53,7 +53,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const COMPONENT = join(ROOT, 'src', 'components', 'GetAgentsDialog.tsx').replace(/\\/g, '/');
 
 // 现有两个验证脚本一致的 Chrome 定位方式。
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 // ---- 反向探针 ----------------------------------------------------------
 const argv = process.argv.slice(2);

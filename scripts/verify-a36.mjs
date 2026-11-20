@@ -22,7 +22,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -249,15 +250,16 @@ console.log('\n[2] 完成态默认收起，点开才出现步骤');
 
   const bar = page.locator('[data-steps-bar]').first();
   ok(await bar.count() > 0, '存在轨迹汇总行');
-  ok((await bar.getAttribute('aria-expanded')) === 'false', '完成态默认收起（aria-expanded=false）');
-  ok((await page.locator('[data-trace-scroll]').count()) === 0, '收起时步骤不渲染');
+  ok((await bar.getAttribute('aria-expanded')) === 'false', '完成态明细默认全收（aria-expanded=false）');
+  // 2026-11-21 行式重设计：步骤行常驻（明细收起），不再卸载子树
+  ok((await page.locator('[data-trace-scroll]').count()) === 1, '步骤行常驻（明细各自收起）');
 
   // 收起态才是日常视图（长会话里绝大多数消息都是收起状态），单独留一张图
   await page.screenshot({ path: join(OUT, 'a36-collapsed.png'), fullPage: false });
 
   await bar.click();
   await page.waitForTimeout(300);
-  ok((await bar.getAttribute('aria-expanded')) === 'true', '点击后展开');
+  ok((await bar.getAttribute('aria-expanded')) === 'true', '点击汇总行 = 全部明细展开');
   ok((await page.locator('[data-trace-scroll]').count()) === 1, '展开后出现步骤容器');
 
   // ---- [3] 活动摘要 ----

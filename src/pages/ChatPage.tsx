@@ -246,6 +246,21 @@ export function ChatPage({
    */
   const stickToBottomRef = useRef(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  /**
+   * 2026-11-21：输入区改为**玻璃浮层**（内容从它底下滚过）后，滚动容器的
+   * 底部内边距与「回到最新」按钮的位置都要跟随输入区的实测高度 ——
+   * autosize + 附件条会变高，写死必错，ResizeObserver 现测。
+   */
+  const [inputHeight, setInputHeight] = useState(0);
+  const inputWrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = inputWrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setInputHeight(el.offsetHeight));
+    ro.observe(el);
+    setInputHeight(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
   /** 当前观察的内容根节点（`[data-msg-list]`），切视图时会被替换 */
   const observedContentRef = useRef<HTMLElement | null>(null);
 
@@ -822,6 +837,7 @@ export function ChatPage({
             ref={scrollContainerRef}
             data-chat-scroll
             className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-6 [overflow-anchor:none] [scrollbar-gutter:stable]"
+            style={{ paddingBottom: inputHeight ? inputHeight + 8 : undefined }}
             onScroll={handleScrollFollow}
           >
             {showNewChatView ? (
@@ -896,8 +912,11 @@ export function ChatPage({
                 setShowJumpToLatest(false);
                 pinToLatest();
               }}
-              className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5 text-caption shadow-md transition-colors"
+              className="absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5 text-caption shadow-md transition-colors"
               style={{
+                /* 2026-11-21：输入区改为玻璃浮层后，按钮要浮在玻璃上方而不是
+                    被它盖住 —— bottom 跟随输入区实测高度。 */
+                bottom: inputHeight ? inputHeight + 16 : 16,
                 backgroundColor: 'var(--tc-surface-content)',
                 border: '1px solid var(--tc-hairline)',
                 color: 'var(--td-text-color-secondary)',
@@ -915,19 +934,22 @@ export function ChatPage({
               `dangling` 是**加载时**的快照，这一轮跑成功后不会自动消失，
               所以再拿本地消息顺序校验一次：最后一条真的是 user 才显示。
               没有这道校验，用户发完新消息、回答到了，横幅还会再冒出来。 */}
-          {!isGroup &&
-            currentSession?.dangling &&
-            !loading &&
-            currentSession.messages[currentSession.messages.length - 1]?.role === 'user' && (
-              <DanglingNotice at={currentSession.dangling.at} />
-            )}
-
           {/*
             输入区域。
             A62：思考强度两颗 prop 见下面 —— 既有会话读库里的值，改了立刻 PATCH；
             没接 onReasoningEffortChange、或当前模型没有档位表时，
             ChatInput 内部不渲染那颗下拉。
           */}
+          {/* 2026-11-21：输入区改为玻璃浮层（absolute 覆在滚动内容之上，
+              圆角只在上方）—— 滚动区加等高内边距，正文从玻璃底下滚过。
+              「上一轮指令未完成」横幅也搬进浮层：留在流里会被玻璃盖住。 */}
+          <div ref={inputWrapRef} className="absolute inset-x-0 bottom-0 z-10">
+          {!isGroup &&
+            currentSession?.dangling &&
+            !loading &&
+            currentSession.messages[currentSession.messages.length - 1]?.role === 'user' && (
+              <DanglingNotice at={currentSession.dangling.at} />
+            )}
           <ChatInput
             inputValue={inputValue}
             selectedModel={selectedModel}
@@ -962,6 +984,7 @@ export function ChatPage({
             // A73：模型浮层底部的「添加模型」—— 去设置页刷新模型清单
             onAddModel={() => navigate('/settings?section=models')}
           />
+          </div>
         </div>
 
         {/* 右栏：群成员栏 / 群设置面板，同一块位置只放一个。

@@ -672,6 +672,8 @@ export const zh = {
   'chat.trace.thinkingLive': '深度思考中',
   'chat.trace.toolDuration': '工具 {duration}',
   'chat.trace.unreturned': '结果未回传',
+  'chat.trace.chipRunning': '执行中 {n}',
+  'chat.trace.chipDone': '完成 {n}/{total}',
   'chat.trace.unreturnedTitle': '最后一步没有等到结束事件，既不算完成也不算失败',
   'chat.trace.verb.call': '调用',
   'chat.trace.verb.check': '检查',

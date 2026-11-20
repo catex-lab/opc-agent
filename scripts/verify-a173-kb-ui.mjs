@@ -34,7 +34,8 @@ const FIXTURE_DIR = join(tmpdir(), 'opc-kb-a173-fixture');
 const SHOTS = join(OUT, 'shots');
 /** 会话头部三档截图单独放目录：它们是「头部布局」的证据，不是知识库面板的。 */
 const HEADER_SHOTS = join(ROOT, '.render-check', 'header');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 const failures = [];
 const checks = { total: 0 };

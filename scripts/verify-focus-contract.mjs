@@ -28,7 +28,8 @@ const ROOT = process.cwd();
 const OUT = join(ROOT, '.render-check', 'focus-contract');
 const FIXTURE_DIR = join(tmpdir(), 'opc-focus-contract-fixture');
 const SHOTS_DIR = join(OUT, 'shots');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 const WANT_SHOTS = process.argv.includes('--shots');
 
 const failures = [];

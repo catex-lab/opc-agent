@@ -39,7 +39,8 @@ const ROOT = process.cwd();
 const TMP = path.join(ROOT, '.tmp', `cred-refresh-${Date.now()}`);
 const DATA = path.join(TMP, 'data');
 const SHOTS = path.join(ROOT, '.tmp', 'credential-refresh');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 let pass = 0;
 let fail = 0;

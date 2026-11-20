@@ -25,7 +25,8 @@ const ROOT = process.cwd();
 const TMP = path.join(ROOT, '.tmp', `a153-cred-${Date.now()}`);
 const DATA = path.join(TMP, 'data');
 const SHOTS = path.join(ROOT, '.tmp', 'a153-credential-inline');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 let pass = 0;
 let fail = 0;

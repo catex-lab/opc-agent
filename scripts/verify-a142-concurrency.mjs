@@ -34,7 +34,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const OUT = join(ROOT, '.render-check', 'a142');
 const OLD_DIST = join(ROOT, '.tmp', 'dist-pre-a142');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 const PROBE = process.argv.includes('--probe-old');
 const DIST = PROBE ? OLD_DIST : join(ROOT, 'dist');
 

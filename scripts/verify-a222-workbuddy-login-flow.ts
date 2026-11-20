@@ -393,7 +393,8 @@ if (!FULL) {
 } else if (!fs.existsSync(path.join(DIST, 'index.html'))) {
   ok(false, '需要 dist/（先 npm run build），本层跳过');
 } else {
-  const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+  import { resolveChromePath } from './lib/chrome';
+const CHROME = resolveChromePath();
   const MIME: Record<string, string> = {
     '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
     '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json',

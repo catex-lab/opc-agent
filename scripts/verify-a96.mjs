@@ -20,7 +20,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -142,13 +143,14 @@ const bar = page.locator('[data-steps-bar]').first();
 await bar.click();
 await page.waitForTimeout(300);
 
+
+
 const steps = page.locator('[data-tool-step]');
 const stepCount = await steps.count();
 console.log('\n[1] 步骤与展开');
 ok(stepCount === 3, '3 个工具步骤', String(stepCount));
 
-// ---- 展开 Edit ----
-await steps.nth(0).locator('.tc-step-head').click();
+// ---- 展开 Edit（2026-11-21 行式形态：汇总行点击 = 全部明细展开）----
 await page.waitForTimeout(250);
 
 const dv = steps.nth(0).locator('.tc-diffview');
@@ -197,8 +199,7 @@ await page.screenshot({ path: join(OUT, 'a96-diff.png'), fullPage: false });
 
 // ---- [5] write → create ----
 console.log('\n[5] write 的 create 模式');
-await steps.nth(1).locator('.tc-step-head').click();
-await page.waitForTimeout(250);
+// 2026-11-21 行式形态：汇总行已全开，write 行随批展开（不需要再点头部）
 const dv2 = steps.nth(1).locator('.tc-diffview');
 ok((await dv2.count()) === 1, 'Write 也有 diff 视图');
 ok((await dv2.getAttribute('data-diffview')) === 'create', 'Write 标记为 create 模式');
@@ -209,10 +210,10 @@ ok(wRows.every(k => k === 'add'), 'Write 全部是新增行', wRows.join(','));
 
 // ---- [6] read 退回原明细 ----
 console.log('\n[6] 无 diff 数据时退回原明细');
-await steps.nth(2).locator('.tc-step-head').click();
 await page.waitForTimeout(250);
 ok((await steps.nth(2).locator('.tc-diffview').count()) === 0, 'Read 不出现 diff 视图（不能是空框）');
 ok((await steps.nth(2).locator('.tc-step-detail').count()) >= 1, 'Read 退回原来的明细渲染');
+
 
 // ---- [7] 控制台 ----
 console.log('\n[7] 控制台');

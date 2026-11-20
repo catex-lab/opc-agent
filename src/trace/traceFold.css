@@ -142,3 +142,74 @@
     animation: none;
   }
 }
+
+/* ── 2026-11-21 行式步骤条重设计（对照 ZCode 过程条）──────────────────── */
+
+/* 运行中步骤的动词短语：自左而右的文字扫光（光晕循环）。
+   ZCode 同款机制：不做旋转 loading（长期占用渲染资源），动文案。 */
+@keyframes opc-text-sweep {
+  from {
+    background-position: 200% center;
+  }
+  to {
+    background-position: -200% center;
+  }
+}
+
+.opc-sweep-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--td-text-color-secondary) 0%,
+    var(--td-text-color-secondary) 38%,
+    var(--td-text-color-primary) 50%,
+    var(--td-text-color-secondary) 62%,
+    var(--td-text-color-secondary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: opc-text-sweep 2.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opc-sweep-text {
+    animation: none;
+    background: none;
+    color: var(--td-text-color-secondary);
+  }
+}
+
+/* 头部进度 chips（对照 ZCode 底部的「处理中 x/7 · 已完成 4」） */
+.tc-trace-chips {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.tc-trace-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  background-color: var(--tc-hover-chrome);
+  color: var(--td-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 运行中行的实时尾部：压成单行的「正在干什么」 */
+.tc-trace-tail {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  font-family: var(--font-mono, monospace);
+}

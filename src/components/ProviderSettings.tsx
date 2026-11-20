@@ -349,11 +349,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
         <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
           {t('settings.provider.loading')}
         </div>
-      ) : list.length === 0 && !draft ? (
-        <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          {t('settings.provider.empty')}
-        </div>
-      ) : (
+      ) : list.length === 0 && !draft ? null : (
         <div className="space-y-2">
           {list.map(item => (
             <div
