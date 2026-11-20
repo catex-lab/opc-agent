@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Bug,
+  ExternalLink,
   Globe,
   RotateCw,
 } from 'lucide-react';
@@ -286,6 +287,29 @@ export function WorkspaceBrowser() {
           style={{ color: 'var(--td-text-color-secondary)' }}
         >
           <Bug size={13} />
+        </button>
+
+        {/*
+          2026-11-21 用户拍板：一键从系统浏览器查看当前预览。
+          nav.url 为空（还没加载过）时置灰；外链交给主进程 shell.openExternal。
+        */}
+        <button
+          type="button"
+          onClick={() => {
+            const url = nav.url;
+            if (!url || url === 'about:blank') return;
+            const opc = (window as unknown as {
+              opc?: { externalOpen?: (url: string) => Promise<boolean> };
+            }).opc;
+            void opc?.externalOpen?.(url);
+          }}
+          disabled={!nav.url || nav.url === 'about:blank'}
+          title="在系统浏览器打开"
+          aria-label="在系统浏览器打开"
+          className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--tc-hover-chrome)] disabled:opacity-40"
+          style={{ color: 'var(--td-text-color-secondary)' }}
+        >
+          <ExternalLink size={13} />
         </button>
       </div>
 

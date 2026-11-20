@@ -4,6 +4,8 @@ import { useSmoothText } from '../hooks/useSmoothText';
 import { stripEmoji } from '../utils/plainText';
 import { useTranslation } from '../i18n';
 import { chartOf, planAnswer, type AnswerSegment } from '../answer/renderPlan';
+// 2026-11-21：dev-server 回环 URL 自动预览（用户拍板「首现即开」→ 右侧工作区）
+import { autoOpenLoopbackPreview, firstLoopbackUrl } from '../answer/linkRouter';
 import { AnswerChartCard, AnswerCodeCard, AnswerEvidence, AnswerLinkCards, AnswerTableCard } from './AnswerCards';
 
 /**
@@ -337,6 +339,16 @@ function AnswerMarkdownImpl({
     () => planAnswer(planStreaming ? trimTrailingEmptyFence(shown) : shown, { streaming: planStreaming }),
     [shown, planStreaming]
   );
+  // 2026-11-21 用户拍板「回环 URL 首现即开」：正在增长的正文里首次稳定出现
+  // dev-server 地址（1.5s 不再变化）→ 自动在右侧工作区浏览器打开。只在正在
+  // 增长的块上生效 —— 历史消息滚动进视口不会把旧预览拉起来；同源只开一次。
+  useEffect(() => {
+    if (!streaming) return;
+    const found = firstLoopbackUrl(shown);
+    if (!found) return;
+    const timer = window.setTimeout(() => void autoOpenLoopbackPreview(found), 1500);
+    return () => window.clearTimeout(timer);
+  }, [shown, streaming]);
   const keys = useMemo(() => segmentKeys(segments), [segments]);
   return (
     <div

@@ -38,7 +38,7 @@ export function isLinkOpenMode(v: unknown): v is LinkOpenMode {
   return v === 'system' || v === 'in-app';
 }
 
-/** 注入 > localStorage > 默认 system */
+/** 注入 > localStorage > 默认 in-app（2026-11-21 用户拍板：正文链接默认右侧工作区） */
 export function readLinkOpenMode(): LinkOpenMode {
   const injected = bootPref('linkOpenMode');
   if (isLinkOpenMode(injected)) return injected;
@@ -48,7 +48,7 @@ export function readLinkOpenMode(): LinkOpenMode {
   } catch {
     /* 隐私模式 / 存储被禁：用默认值 */
   }
-  return 'system';
+  return 'in-app';
 }
 
 /** 写偏好：localStorage 镜像（dev 与既有闸门都能看到） + 服务端落盘 */
@@ -108,6 +108,39 @@ export function takePendingWorkspaceUrl(): string | null {
 
 export function clearPendingWorkspaceUrl(): void {
   pendingUrl = null;
+}
+
+/* ── dev-server 自动预览（2026-11-21 用户拍板「回环 URL 首现即开」）──────
+ *
+ * Agent 起了本地 dev server（Vite/Next/…）时，回环 URL 在流式正文里首次
+ * 稳定出现 → 自动在右侧工作区浏览器打开，不等用户复制粘贴。
+ *
+ * 边界：
+ * · 只认回环（localhost / 127.0.0.1 / [::1]）—— 外网链接绝不自动打开；
+ * · 同源只开一次（面板已经停在那个地址上，后续同源 URL 不重复加载）；
+ * · 没有内嵌浏览视图（浏览器里跑前端）时跳过；
+ * · 调用方负责「URL 稳定 1.5s」的去抖 —— 流式中的半截地址不触发。 */
+const LOOPBACK_URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/[^\s]*)?/gi;
+const autoOpenedOrigins = new Set<string>();
+
+export function firstLoopbackUrl(text: string): string | null {
+  LOOPBACK_URL_RE.lastIndex = 0;
+  const m = LOOPBACK_URL_RE.exec(text);
+  return m ? m[0] : null;
+}
+
+export function autoOpenLoopbackPreview(url: string): boolean {
+  if (!hasInAppBrowser()) return false;
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    return false;
+  }
+  if (autoOpenedOrigins.has(origin)) return false;
+  if (autoOpenedOrigins.size > 20) autoOpenedOrigins.clear();
+  autoOpenedOrigins.add(origin);
+  return requestOpenInWorkspace(url);
 }
 
 /**
