@@ -150,7 +150,8 @@ const stepCount = await steps.count();
 console.log('\n[1] 步骤与展开');
 ok(stepCount === 3, '3 个工具步骤', String(stepCount));
 
-// ---- 展开 Edit（2026-11-21 行式形态：汇总行点击 = 全部明细展开）----
+// ---- 展开 Edit（2026-11-21 v2 定版：收纳线开合行清单；行明细由行自己点开）----
+await steps.nth(0).locator('.tcv2-rowhead').click();
 await page.waitForTimeout(250);
 
 const dv = steps.nth(0).locator('.tc-diffview');
@@ -199,7 +200,9 @@ await page.screenshot({ path: join(OUT, 'a96-diff.png'), fullPage: false });
 
 // ---- [5] write → create ----
 console.log('\n[5] write 的 create 模式');
-// 2026-11-21 行式形态：汇总行已全开，write 行随批展开（不需要再点头部）
+// 2026-11-21 v2：逐行独立开合 —— Write 行自己点开
+await steps.nth(1).locator('.tcv2-rowhead').click();
+await page.waitForTimeout(250);
 const dv2 = steps.nth(1).locator('.tc-diffview');
 ok((await dv2.count()) === 1, 'Write 也有 diff 视图');
 ok((await dv2.getAttribute('data-diffview')) === 'create', 'Write 标记为 create 模式');
@@ -210,9 +213,19 @@ ok(wRows.every(k => k === 'add'), 'Write 全部是新增行', wRows.join(','));
 
 // ---- [6] read 退回原明细 ----
 console.log('\n[6] 无 diff 数据时退回原明细');
+await steps.nth(2).locator('.tcv2-rowhead').click();
 await page.waitForTimeout(250);
 ok((await steps.nth(2).locator('.tc-diffview').count()) === 0, 'Read 不出现 diff 视图（不能是空框）');
-ok((await steps.nth(2).locator('.tc-step-detail').count()) >= 1, 'Read 退回原来的明细渲染');
+{
+  const diag = await steps.nth(2).evaluate(el => ({
+    exp: el.getAttribute('data-expanded'),
+    detail: el.querySelectorAll('.tcv2-detail').length,
+    body: el.querySelectorAll('[data-step-body]').length,
+    pre: el.querySelectorAll('.tcv2-pre').length,
+    text: el.textContent.slice(0, 80),
+  }));
+  ok(diag.detail === 1 && diag.pre >= 1, 'Read 退回详情面板渲染（v2 tcv2-detail）', JSON.stringify(diag).slice(0, 200));
+}
 
 
 // ---- [7] 控制台 ----

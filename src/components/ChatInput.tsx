@@ -720,15 +720,14 @@ export function ChatInput({
 
   return (
     <div
-      className="rounded-t-2xl px-4 pb-3 pt-3"
+      className="tcv2-inputwrap px-4 pb-3 pt-2"
       style={{
-        /* 2026-11-21：玻璃浮层（用户拍板「半透明毛玻璃 + 上方圆角」）——
-           滚动正文从这层底下经过，backdrop-filter 负责把底下的内容磨砂。 */
-        backgroundColor: 'color-mix(in srgb, var(--tc-surface-content) 72%, transparent)',
-        backdropFilter: 'blur(18px) saturate(1.15)',
-        WebkitBackdropFilter: 'blur(18px) saturate(1.15)',
-        borderTop: '1px solid var(--tc-hairline)',
-        boxShadow: '0 -8px 24px rgb(0 0 0 / 0.14)',
+        /* 2026-11-21 v2（定版四图）：整块常驻毛玻璃退役 —— 输入卡本体
+           （t-chat-sender 的 ::part(t-chat__input__content)）本来就是实底
+           卡（底色 + 16px 圆角 + 投影），wrapper 只做定位；半透明只留给
+           「按需出现的行」：附件行（下方 .tcv2-glassrow）、待发送排队行
+           （排队功能落地后同款）。底部锚定渐变见 index.css
+           .tcv2-inputwrap::before。 */
       }}
     >
       {/* A215：内容列宽度与居中规则的唯一来源（.tc-chat-column，见 index.css）。
@@ -808,11 +807,16 @@ export function ChatInput({
           </div>
         )}
 
-        {/* 附件条（A35）：与 @ 成员条同一层 —— 都是「这次发什么」的前置信息。
-            2026-11-20：图片附件（有 previewUrl）升级为缩略卡 —— 点击预览
-            （ImageViewer）、悬停出删除钮；文件/目录/视频保持原 chip。 */}
+        {/* 附件条（A35）→ v2 玻璃行（2026-11-21 定版）：从输入卡内部搬出来，
+            成为输入卡上方**按需出现**的半透明行（毛玻璃 72% + blur12）——
+            只有粘贴/上传附件、图片时才存在，发完即撤。图片附件（有
+            previewUrl）保持缩略卡 —— 点击预览（ImageViewer）、悬停出删除钮；
+            文件/目录/视频保持原 chip。 */}
         {attachments.length > 0 && (
-          <div className="mb-2 flex flex-wrap items-center gap-1.5" data-attachments>
+          <div
+            className="tcv2-glassrow mb-2 flex flex-wrap items-center gap-1.5 px-3 py-2"
+            data-attachments
+          >
             {attachments.map(a => {
               if (a.kind === 'image' && a.previewUrl) {
                 return (

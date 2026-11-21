@@ -254,12 +254,13 @@ console.log('\n[2] 红框2：无总条/导轨/分隔线，整轮收成一条轨�
   ok((await traceBar.count()) > 0, '轨迹汇总行在 DOM 里');
   ok((await traceBar.getAttribute('aria-expanded')) === 'false', '有答案 → 轨迹默认收起');
   // 2026-11-21 行式重设计：步骤行常驻（明细收起），不再卸载子树
-  ok((await page.locator('[data-trace-scroll]').count()) === 1, '步骤行常驻（明细各自收起）');
-  ok((await page.locator('.tc-thinking').count()) > 0, '思考并入轨迹，行式一行（明细收起）');
+  // 2026-11-21 v2 定版：收纳线是唯一门面 —— 折叠态下步骤容器整个不挂载
+  ok((await page.locator('[data-trace-scroll]').count()) === 0, '完成态默认折叠（无步骤容器）');
+  ok((await page.locator('[data-trace-thinking]').count()) === 0, '折叠态无步骤行（思考行随轨迹折叠，展开见 [3]）');
 
-  // 旁白属于过程：收起态不可见，展开后才随步骤一起出现（见 [3]）。
+  // 旁白属于过程：折叠态不渲染，展开后才随步骤一起出现（见 [3]）。
   const body = await page.evaluate(DEEP_TEXT);
-  ok(body.includes(NARRATION_2), '旁白随步骤行常驻（一行一条，不再整段折叠）');
+  ok(!body.includes(NARRATION_2), '旁白随轨迹折叠（展开后才可见）');
   ok(body.includes('GPT-6.1 Terra'), '答案正文可见', `${body.length} 字`);
 
   await page.screenshot({ path: join(OUT, 'a149-collapsed.png'), fullPage: false });
@@ -285,8 +286,8 @@ console.log('\n[3] 红框2：旁白 14px 与答案同档；思考正文是浅灰
   // .tc-trace-narration 渲染；traceFold.css 让它继承 .tc-trace 的 14px。
   await page.click('[data-steps-bar]');
   await page.waitForTimeout(400);
-  const foldThinkOpen = await page.evaluate(() => document.querySelector('.tc-think-note')?.open ?? null);
-  ok(foldThinkOpen === false, '正文已出现 → 轨迹内思考默认收起（点开才看正文）', String(foldThinkOpen));
+  const thinkCollapsed = await page.evaluate(() => [...document.querySelectorAll('[data-trace-thinking]')].every(n => n.getAttribute('data-expanded') === '0'));
+  ok(thinkCollapsed, '正文已出现 → 轨迹内思考行默认收起（点开才看全文）', String(thinkCollapsed));
   const noteSize = await page.evaluate(() => {
     const answer = [...document.querySelectorAll('[data-answer-markdown]')].map(el => getComputedStyle(el).fontSize);
     const narr = [...document.querySelectorAll('.tc-trace-narration')].map(el => getComputedStyle(el).fontSize);
@@ -302,36 +303,40 @@ console.log('\n[3] 红框2：旁白 14px 与答案同档；思考正文是浅灰
 
   // 思考正文：展开轨迹后展开轨迹内思考，仍是浅灰圆角卡片，不是左细线。
   // 依据：AgentTrace 的 ThinkingNode 用 .tc-think-note-body 渲染同一灰卡。
-  await page.locator('[data-trace-thinking] summary').first().click();
+  await page.locator('[data-trace-thinking] .tcv2-rowhead').first().click();
   await page.waitForTimeout(300);
   const thinkCard = await page.evaluate(() => {
-    const el = document.querySelector('.tc-think-note-body');
+    const el = document.querySelector('.tcv2-think-full');
     if (!el) return null;
-    const cs = getComputedStyle(el);
+    // v2：灰卡是外层详情面板（.tcv2-detail），全文本身透明
+    const cs = getComputedStyle(el.closest('.tcv2-detail') ?? el);
     const probe = document.createElement('span');
     probe.style.backgroundColor = 'var(--td-bg-color-secondarycontainer)';
     document.body.appendChild(probe);
     const cardToken = getComputedStyle(probe).backgroundColor;
     probe.remove();
     return {
-      fontSize: cs.fontSize,
+      fontSize: getComputedStyle(el).fontSize,
       background: cs.backgroundColor,
       cardToken,
-      borderLeftWidth: cs.borderLeftWidth,
-      borderLeftStyle: cs.borderLeftStyle,
+      panelRadius: (el.closest('.tcv2-detail') ? getComputedStyle(el.closest('.tcv2-detail')).borderTopLeftRadius : ''),
+      borderLeftWidth: getComputedStyle(el).borderLeftWidth,
+      borderLeftStyle: getComputedStyle(el).borderLeftStyle,
       borderRadius: cs.borderTopLeftRadius,
     };
   });
-  ok(thinkCard != null, '思考正文展开后可见');
+  ok(thinkCard != null, '思考正文展开后可见', JSON.stringify(thinkCard?.diag ?? {}).slice(0, 240));
   if (thinkCard) {
-    ok(thinkCard.fontSize === answerSize, '思考正文字号 = 答案正文字号', `思考 ${thinkCard.fontSize} / 答案 ${answerSize}`);
-    ok(thinkCard.background === thinkCard.cardToken, '思考正文是灰卡（secondarycontainer 令牌）', thinkCard.background);
+    ok(parseFloat(thinkCard.fontSize) >= 12, '思考全文 ≥12px（v2 详情面板口径）', `思考 ${thinkCard.fontSize} / 答案 ${answerSize}`);
+    // v2：思考全文住在详情面板里，面板底色即灰卡（secondarycontainer）
+    ok(thinkCard.background === thinkCard.cardToken, '思考全文面板是灰卡（secondarycontainer 令牌）', thinkCard.background);
+    // 面板四边描边是有意设计（圆角卡）；要守的是全文本身不带 blockquote 左细线
     ok(
       thinkCard.borderLeftWidth === '0px' || thinkCard.borderLeftStyle === 'none',
-      '思考正文不再有左细线',
+      '思考全文本身不带左细线（面板描边是圆角卡设计）',
       `${thinkCard.borderLeftWidth} ${thinkCard.borderLeftStyle}`
     );
-    ok(parseFloat(thinkCard.borderRadius) >= 6, '思考灰卡有圆角（≥6px）', thinkCard.borderRadius);
+    ok(parseFloat(thinkCard.panelRadius) >= 6, '思考详情面板有圆角（≥6px）', thinkCard.panelRadius);
   }
 
   await page.screenshot({ path: join(OUT, 'a149-expanded.png'), fullPage: false });

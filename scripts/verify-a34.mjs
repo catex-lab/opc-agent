@@ -205,7 +205,8 @@ console.log('\n[2] 代码块：A55 后按钮精简');
     const step = document.querySelector('[data-tool-step]');
     return step?.querySelector('.tc-trace-meta')?.textContent?.trim() ?? null;
   });
-  ok(stepMeta === null, 'F3：<3s 的步骤行不挂耗时（不再出现 1.2s）', String(stepMeta));
+  // 2026-11-21 v2 定版：单步耗时全量显示（图上 2.8s / 3.6s 全挂），<1s 用 ms
+  ok(stepMeta === '1.2s', 'v2：单步耗时全量显示（1200ms → 1.2s）', String(stepMeta));
   const barMeta = await page.evaluate(() => {
     const bar = document.querySelector('[data-steps-bar]');
     return bar?.querySelector('.tc-trace-meta')?.textContent?.trim() ?? null;

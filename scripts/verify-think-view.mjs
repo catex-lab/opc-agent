@@ -472,24 +472,32 @@ ok(traceState.scroll === 0, '收起态不渲染步骤（动画播完就卸载，
 await page.click('[data-steps-bar]');
 await page.waitForTimeout(500);
 const expandedFold = await page.evaluate(() => ({
-  fold: document.querySelector('[data-trace-fold]')?.getAttribute('data-fold') ?? null,
-  noteOpen: document.querySelector('.tc-think-note')?.open ?? null,
-  // 轨迹内思考是独立一类，不能被数进 `.tc-think`（否则消息级断言会串味）。
-  // 依据：src/trace/rows.ts buildTraceRows 把 m5 的开头思考与工具后思考都压进轨迹，
-  // AgentTrace 用 .tc-think-note 渲染；消息级只剩 m1 / m4 / m6 三条。
-  noteCount: document.querySelectorAll('.tc-think-note').length,
+  // 2026-11-21 v2：data-fold 退役，展开态锚点 = 收纳线 aria-expanded
+  aria: document.querySelector('[data-steps-bar]')?.getAttribute('aria-expanded') ?? null,
+  // 轨迹内思考是独立一类（data-trace-thinking），不能数进 `.tc-think`。
+  // 依据：rows.ts buildTraceRows 把开头思考与工具后思考都压进轨迹，v2 渲染成单行；
+  // 消息级只剩 m1 / m4 / m6 三条。
+  thinkExpanded: [...document.querySelectorAll('[data-trace-thinking]')].map(r => r.getAttribute('data-expanded')),
+  noteCount: document.querySelectorAll('[data-trace-thinking]').length,
   messageThinkCount: document.querySelectorAll('.tc-think').length,
 }));
-ok(expandedFold.fold === '1', '展开后 data-fold=1（过渡动画的状态锚点）', String(expandedFold.fold));
-ok(expandedFold.noteOpen === false, '正文已出现 → 轨迹内思考也收起（不再自动铺开）', String(expandedFold.noteOpen));
+ok(expandedFold.aria === 'true', '点开收纳线 → 步骤清单展开（aria-expanded=true）', String(expandedFold.aria));
+ok(
+  expandedFold.thinkExpanded.every(v => v === '0'),
+  '正文已出现 → 轨迹内思考行也收起（点行头才看全文）'
+);
 ok(
   expandedFold.noteCount === 2 && expandedFold.messageThinkCount === 3,
   '轨迹内思考单独一类（2 条在轨迹内，消息级剩 3 条）',
   `${expandedFold.noteCount} / ${expandedFold.messageThinkCount}`
 );
+// v2：详情按需挂载 —— 点开第一条轨迹内思考行再探针
+await page.locator('[data-trace-thinking]').first().locator('.tcv2-rowhead').click();
+await page.waitForTimeout(300);
 const note = await page.evaluate(() => {
-  const el = document.querySelector('.tc-think-note-body');
+  const el = document.querySelector('.tcv2-think-full');
   if (!el) return null;
+  const panel = el.closest('.tcv2-detail');
   const cs = getComputedStyle(el);
   const probe = (prop, value) => {
     const s = document.createElement('span');
@@ -499,18 +507,20 @@ const note = await page.evaluate(() => {
     s.remove();
     return out;
   };
-  const head = document.querySelector('.tc-think-note > summary');
+  const head = document.querySelector('[data-trace-thinking] .tcv2-verb');
   const hcs = head ? getComputedStyle(head) : null;
+  const pcs = getComputedStyle(panel ?? el);
   return {
     fontSize: cs.fontSize,
     fontStyle: cs.fontStyle,
     lineHeight: parseFloat(cs.lineHeight) / parseFloat(cs.fontSize),
     fontFamily: cs.fontFamily.toLowerCase(),
     color: cs.color,
-    background: cs.backgroundColor,
-    paddingLeft: cs.paddingLeft,
+    background: pcs.backgroundColor,
+    paddingLeft: pcs.paddingLeft,
     borderLeftWidth: cs.borderLeftWidth,
     borderLeftStyle: cs.borderLeftStyle,
+    panelRadius: pcs.borderTopLeftRadius,
     borderRadius: cs.borderTopLeftRadius,
     card: probe('backgroundColor', 'var(--td-bg-color-secondarycontainer)'),
     secondary: probe('color', 'var(--td-text-color-secondary)'),
@@ -521,7 +531,7 @@ const note = await page.evaluate(() => {
 });
 ok(note != null, '轨迹内思考正文存在');
 if (note) {
-  ok(note.fontSize === '14px', '正文字号 14px（与消息级思考同档）', note.fontSize);
+  ok(parseFloat(note.fontSize) >= 12, '正文 ≥12px（v2 详情面板口径）', note.fontSize);
   ok(note.fontStyle === 'normal', '正体，不再斜体', note.fontStyle);
   ok(note.color === note.secondary, '正文颜色 = secondary（不是最浅一档 placeholder）', note.color);
   ok(
@@ -529,14 +539,16 @@ if (note) {
     '不再有左细线',
     `${note.borderLeftWidth} ${note.borderLeftStyle}`
   );
-  ok(parseFloat(note.borderRadius) >= 6, '圆角卡片（≥6px）', note.borderRadius);
-  ok(note.background === note.card, '底色 = --td-bg-color-secondarycontainer（与消息级同一令牌）', note.background);
-  ok(note.paddingLeft === '10px', '卡片内边距 10px（轨迹里空间更紧，比消息级浅）', note.paddingLeft);
+  ok(parseFloat(note.panelRadius) >= 6, '详情面板圆角 ≥6px（v2）', note.panelRadius);
+  // v2：灰卡是外层详情面板（.tcv2-detail），全文本身透明
+  ok(note.background === note.card, '面板底色 = --td-bg-color-secondarycontainer（与消息级同一令牌）', note.background);
+  ok(note.paddingLeft === '14px', '面板内边距 14px（v2 详情面板）', note.paddingLeft);
   ok(!/mono|consolas|courier/.test(note.fontFamily), '不再用等宽字体（那是工具输出的语言）', note.fontFamily.split(',')[0]);
-  ok(Math.abs(note.lineHeight - 1.7) < 0.02, '行高 1.7', note.lineHeight.toFixed(2));
-  ok(note.headFontSize === '14px', '头部 14px（过程流全局同号）', note.headFontSize);
+  ok(Math.abs(note.lineHeight - 1.6) < 0.02, '行高 1.6（v2 详情面板）', note.lineHeight.toFixed(2));
+  ok(note.headFontSize === '13px', '动词 13px（v2 单行行口径）', note.headFontSize);
   ok(note.headColor === note.secondary, '头部颜色 = secondary', note.headColor);
-  ok(note.headText.includes('深度思考') && note.headText.includes('字'), '头部保留「深度思考 + 字数」', note.headText);
+  // v2：字数 chip 退役（归入详情 dlabel），行上只有「深度思考」
+  ok(note.headText.includes('深度思考'), '行首动词是「深度思考」', note.headText);
 }
 
 // ── [7] 匀速揭示的接线 ────────────────────────────────────────────────
@@ -571,7 +583,8 @@ await page.evaluate(() => document.documentElement.classList.add('dark'));
 await page.waitForTimeout(400);
 const dark = await page.evaluate(() => {
   const body = document.querySelector('.tc-think[open] .tc-think-body');
-  const note = document.querySelector('.tc-think-note-body');
+  // v2：轨迹内思考全文住在详情面板里；探针读外层 .tcv2-detail
+  const note = document.querySelector('.tcv2-think-full')?.closest('.tcv2-detail') ?? null;
   const probe = document.createElement('span');
   document.body.appendChild(probe);
   probe.style.backgroundColor = 'var(--td-bg-color-secondarycontainer)';
@@ -586,6 +599,7 @@ const dark = await page.evaluate(() => {
   return {
     bg: body ? getComputedStyle(body).backgroundColor : null,
     color: body ? getComputedStyle(body).color : null,
+    // v2：灰卡面板
     noteBg: note ? getComputedStyle(note).backgroundColor : null,
     cardToken,
     textToken,

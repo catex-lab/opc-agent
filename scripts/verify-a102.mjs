@@ -158,31 +158,36 @@ await page.waitForTimeout(1000);
 await page.locator('[data-steps-bar]').first().click();
 await page.waitForTimeout(400);
 
-console.log('\n[1] 步骤行内只有一档字号');
+console.log('\n[1] 步骤行字号两档（13 主 / 12 辅，v2 定版）');
 const sizes = await page.evaluate(() => {
   const rows = [];
-  for (const head of document.querySelectorAll('.tc-step-head')) {
+  for (const head of document.querySelectorAll('.tcv2-rowhead')) {
     const vals = [...head.children].map(el => ({
       cls: el.getAttribute('class') || el.tagName.toLowerCase(),
       fs: parseFloat(getComputedStyle(el).fontSize),
-      lh: getComputedStyle(el).lineHeight,
     }));
     rows.push(vals);
   }
   return rows;
 });
 const distinct = [...new Set(sizes.flat().map(s => s.fs))].sort((a, b) => a - b);
-// 2026-10-30：从「两档（主信息 12 / 辅信息 11）」收紧到「一档」——
-// 用户口径是过程流全局同字号，所以行内不再允许任何小字。
-ok(distinct.length === 1, '一行之内只有一档字号（14px）', `实测 ${distinct.join(' / ')}px`);
+// 2026-11-21 v2 定版：行内两档 —— 动词/内容 13px（主），chip 12px（辅）；
+// 命令行走 mono 12.5px（夹在两档之间允许）。任何 11px/14px 回归都不允许。
+const offenders = sizes.flat().filter(v => ![12, 12.5, 13].includes(v.fs)).map(v => `${v.cls}=${v.fs}`);
+ok(
+  offenders.length === 0,
+  '行内只有 12/12.5/13 三档（13 主 / 12 辅，无 11px 或 14px 回归）',
+  `实测 ${distinct.join(' / ')}px；越档：${offenders.join(', ') || '无'}`
+);
 const verbFs = await page.evaluate(() =>
-  parseFloat(getComputedStyle(document.querySelector('.tc-trace-verb')).fontSize));
-const targetFs = await page.evaluate(() =>
-  parseFloat(getComputedStyle(document.querySelector('.tc-trace-target')).fontSize));
-ok(verbFs === targetFs, '动词与目标同档', `${verbFs}px vs ${targetFs}px`);
+  parseFloat(getComputedStyle(document.querySelector('.tcv2-verb')).fontSize));
+const lineFs = await page.evaluate(() =>
+  parseFloat(getComputedStyle(document.querySelector('.tcv2-line:not(.mono)')).fontSize));
+ok(verbFs === 13, '动词 13px（v2 单行行口径）', `实测 ${verbFs}px`);
+ok(lineFs === verbFs, '行内容与动词同档', `${lineFs}px vs ${verbFs}px`);
 
 console.log('\n[2] 动词不再继承 16px');
-ok(verbFs === 14, '动词钉在 14px', `实测 ${verbFs}px`);
+ok(verbFs < 16, '动词不再继承 16px（v2 = 13px）', `实测 ${verbFs}px`);
 // 行高统一到 1.7（比值而非像素：不同元素的行盒高度本就由字号决定，
 // 真正决定基线是否对齐的是**行高与字号同比**）。
 const ratios = await page.evaluate(() => {
@@ -192,12 +197,12 @@ const ratios = await page.evaluate(() => {
     const cs = getComputedStyle(el);
     return parseFloat(cs.lineHeight) / parseFloat(cs.fontSize);
   };
-  return { verb: pick('.tc-trace-verb'), target: pick('.tc-trace-target'), diff: pick('.tc-diff') };
+  return { verb: pick('.tcv2-verb'), line: pick('.tcv2-line:not(.mono)'), diff: pick('.tc-diff') };
 });
 ok(
-  Math.abs(ratios.verb - 1.7) < 0.01 && Math.abs(ratios.target - 1.7) < 0.01 && Math.abs(ratios.diff - 1.7) < 0.01,
-  '动词 / 目标 / diff 行高都与字号同比（1.7）',
-  `${ratios.verb} / ${ratios.target} / ${ratios.diff}`
+  ratios.verb != null && Math.abs(ratios.verb - ratios.line) < 0.01 && Math.abs(ratios.verb - ratios.diff) < 0.01,
+  '动词 / 行内容 / diff 行高同比一致（同一继承源）',
+  `${ratios.verb} / ${ratios.line} / ${ratios.diff}`
 );
 
 console.log('\n[3] 所有步骤行的耗时贴同一右缘');
@@ -206,7 +211,7 @@ const edges = await page.evaluate(() => {
   for (const step of document.querySelectorAll('[data-tool-step]')) {
     const meta = step.querySelector('.tc-trace-meta');
     if (!meta) continue;
-    const head = step.querySelector('.tc-step-head').getBoundingClientRect();
+    const head = step.querySelector('.tcv2-rowhead').getBoundingClientRect();
     const m = meta.getBoundingClientRect();
     out.push(Math.round(head.right - m.right));
   }
@@ -215,17 +220,18 @@ const edges = await page.evaluate(() => {
 ok(edges.length >= 2, '取到多个步骤行', `${edges.length} 行`);
 ok(Math.max(...edges) - Math.min(...edges) <= 1, '各行耗时距右缘一致',
   edges.map(e => `${e}px`).join(' / '));
+// v2 定版：单步耗时全量显示（<1s 用 ms 口径）
 const shortStep = await page.evaluate(() => {
   const step = document.querySelector('[data-tool-step="t3"]');
-  return step ? !!step.querySelector('.tc-trace-meta') : true;
+  return step?.querySelector('.tc-trace-meta')?.textContent?.trim() ?? null;
 });
-ok(shortStep === false, 'F3：<3s 的步骤不挂耗时（t3 只有 200ms）');
+ok(shortStep === '200ms', 'v2：单步耗时全量显示（t3 200ms → 200ms）', String(shortStep));
 
 console.log('\n[4] 来源标签不抢右缘');
 const srcGeo = await page.evaluate(() => {
   const step = document.querySelector('[data-tool-step]:has([data-trace-source])');
   if (!step) return null;
-  const head = step.querySelector('.tc-step-head').getBoundingClientRect();
+  const head = step.querySelector('.tcv2-rowhead').getBoundingClientRect();
   const src = step.querySelector('[data-trace-source]').getBoundingClientRect();
   const meta = step.querySelector('.tc-trace-meta').getBoundingClientRect();
   return {
@@ -238,18 +244,18 @@ ok(srcGeo !== null, '存在带来源标签的步骤行');
 ok(srcGeo.srcFromRight > 20, '标签不在右缘上', `距右缘 ${srcGeo.srcFromRight}px`);
 ok(srcGeo.srcLeftOfMeta, '标签在耗时左侧（不再和耗时抢自动边距）');
 
-console.log('\n[5] 圆点几何跟随行高');
+console.log('\n[5] 图标几何跟随行高（v2：圆点退役）');
 const dot = await page.evaluate(() => {
   const step = document.querySelector('[data-tool-step]');
-  const head = step.querySelector('.tc-step-head').getBoundingClientRect();
-  const d = step.querySelector('.tc-step-dot').getBoundingClientRect();
+  const head = step.getBoundingClientRect();
+  const d = step.querySelector('.tcv2-ic').getBoundingClientRect();
   return {
     headH: Math.round(head.height),
     off: Math.abs((d.top + d.height / 2) - (head.top + head.height / 2)),
   };
 });
-ok(dot.headH === 28, '行头高度 28px（14px 字 / 行高 1.7 + 4px 内边距）', `实测 ${dot.headH}px`);
-ok(dot.off <= 1.5, '圆点圆心与行头中心重合', `偏差 ${dot.off.toFixed(1)}px`);
+ok(dot.headH === 30, '行高 30px（v2 单行行）', `实测 ${dot.headH}px`);
+ok(dot.off <= 1.5, '图标中心与行头中心重合', `偏差 ${dot.off.toFixed(1)}px`);
 
 console.log('\n[6] 状态条高度一致');
 /* D1 改口径：

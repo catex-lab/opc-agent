@@ -249,67 +249,61 @@ console.log('\n[2] 完成态默认收起，点开才出现步骤');
   );
 
   const bar = page.locator('[data-steps-bar]').first();
-  ok(await bar.count() > 0, '存在轨迹汇总行');
-  ok((await bar.getAttribute('aria-expanded')) === 'false', '完成态明细默认全收（aria-expanded=false）');
-  // 2026-11-21 行式重设计：步骤行常驻（明细收起），不再卸载子树
-  ok((await page.locator('[data-trace-scroll]').count()) === 1, '步骤行常驻（明细各自收起）');
+  ok(await bar.count() > 0, '存在「已工作」收纳线');
+  ok((await bar.getAttribute('aria-expanded')) === 'false', '完成态默认折叠（aria-expanded=false）');
+  // 2026-11-21 v2 定版：收纳线是唯一门面 —— 折叠态下步骤容器整个不挂载
+  ok((await page.locator('[data-trace-scroll]').count()) === 0, '完成态默认折叠（无步骤容器）');
 
   // 收起态才是日常视图（长会话里绝大多数消息都是收起状态），单独留一张图
   await page.screenshot({ path: join(OUT, 'a36-collapsed.png'), fullPage: false });
 
   await bar.click();
   await page.waitForTimeout(300);
-  ok((await bar.getAttribute('aria-expanded')) === 'true', '点击汇总行 = 全部明细展开');
+  ok((await bar.getAttribute('aria-expanded')) === 'true', '点开收纳线 = 展开步骤清单');
   ok((await page.locator('[data-trace-scroll]').count()) === 1, '展开后出现步骤容器');
 
-  // ---- [3] 活动摘要 ----
-  /* F1 改口径：
-     原期望：`编辑、已读取、检查：SettingsPage.tsx`（动作清单 + 冒号 + 文件名）
-     新期望：`改了 2 个文件 · 结果未回传`（结果语义：数量 + 结论）
-     依据：动作清单要用户自己再推理一次才知道「成没成」。本夹具里 Edit + Write
-           各改 1 个文件（所以是「改了 2 个文件」）；最后一步 Bash 只有
-           startedAt、没有 endedAt，完成态下不能谎称成功 → 结论是「结果未回传」。 */
-  const summary = await page.locator('[data-trace-summary]').first().innerText();
-  ok(summary.includes('改了 2 个文件'), '摘要按结果语义写「改了 N 个文件」', summary);
-  ok(summary.includes('结果未回传'), '句尾给结论（最后一步没回传 → 结果未回传，不谎称成功）', summary);
-  ok(!summary.includes('、') && !summary.includes('：'), '不再是「动词、动词：文件」的清单结构', summary);
+  // ---- [3] 收纳线文案（v2：旧的「执行、检查 · 成功」摘要退役）----
+  const workedMs = Number((await page.locator('[data-trace-elapsed]').first().getAttribute('data-trace-elapsed')) ?? 0);
+  ok(workedMs > 0, '收纳线带真实墙钟毫秒（data-trace-elapsed）', String(workedMs));
+  const barText = ((await page.locator('[data-steps-bar]').first().innerText()) ?? '').replace(/\n/g, ' ');
+  ok(barText.includes('已工作'), '收纳线文案是「已工作 X 秒」', barText);
+  ok(!barText.includes('执行、检查'), '旧摘要「执行、检查 · 成功」退役', barText);
+  ok(barText.includes('5 步'), '收纳线右侧显示步数', barText);
+  const unretOnBar = await page.locator('[data-steps-bar] [data-trace-unreturned]').count();
+  ok(unretOnBar === 1, '「结果未回传」挂在收纳线上（最后一步没回传）', String(unretOnBar));
 
-  // ---- D2：摘要条不再重复显示耗时（S1-2，审查报告）----
-  // 头部已有总耗时「已处理 …」，摘要条上的「工具 7.0s」与它两套口径并存
-  // （包含/并列读不出），已从显示层删除；埋点（totalMs 计算）保留。
-  // 这里反证摘要条里不再出现任何耗时文案 —— 出现了就是回归。
-  const barText = (await page.locator('[data-steps-bar]').first().innerText()) ?? '';
-  ok(!/工具\s*[\d.]+s|[\d.]+s\s*$/.test(barText.replace(/\n/g, ' ')), '摘要条不再显示「工具 7.0s」这类耗时', barText.replace(/\n/g, ' '));
+  // ---- 汇总 diff 保留在收纳线上（+109+30）----
+  const totalDiff = await page.locator('[data-diff-total]').first().getAttribute('data-diff-total');
+  ok(totalDiff === '+139 -16', '收纳线上的汇总 diff 是各步骤之和（+109+30）', String(totalDiff));
 
-  // ---- [4] 步骤行 ----
+  // ---- [4] 步骤行（扁平单行：图标 + 动词 + 单行内容 + 耗时）----
   const steps = await page.evaluate(() => {
     const rows = [...document.querySelectorAll('[data-tool-step]')];
     return rows.map(r => ({
       verb: r.getAttribute('data-trace-verb'),
-      target: r.querySelector('.tc-trace-target')?.textContent ?? '',
+      line: r.querySelector('.tcv2-line')?.textContent ?? '',
       diff: r.querySelector('.tc-diff')?.getAttribute('data-diff') ?? null,
-      dot: !!r.querySelector('.tc-step-dot'),
+      hasIcon: !!r.querySelector('.tcv2-ic'),
       mono: (() => {
-        const el = r.querySelector('.tc-trace-target');
+        const el = r.querySelector('.tcv2-line');
         return el ? getComputedStyle(el).fontFamily.toLowerCase() : '';
       })(),
     }));
   });
-  ok(steps.length === 5, '5 个步骤各自一行', String(steps.length));
+  ok(steps.length === 5, '5 个工具步骤各自一行（思考行不算工具步）', String(steps.length));
   const verbs = steps.map(s => s.verb);
   ok(verbs.join(',') === '编辑,已读取,检查,写入,执行', '动作词按工具语义归一', verbs.join(','));
-  ok(steps.every(s => s.dot), '每行都有状态圆点');
-  ok(steps[0].target === 'SettingsPage.tsx', '目标显示文件名', steps[0].target);
-  ok(/mono|consolas|courier/.test(steps[0].mono), '文件名用等宽字体', steps[0].mono.split(',')[0]);
+  ok(steps.every(s => s.hasIcon), '每行都有类型图标（v2：图标即状态载体，圆点退役）');
+  ok(steps[0].line === 'SettingsPage.tsx', '文件步骤单行显示文件名', steps[0].line);
+  ok(steps[2].line === 'npm run build', '命令步骤单行显示命令本身', steps[2].line);
+  ok(/mono|consolas|courier/.test(steps[2].mono), '命令用等宽字体', steps[2].mono.split(',')[0]);
+  ok(!/mono|consolas|courier/.test(steps[0].mono), '文件名用普通字体（v2：只有命令族等宽）', steps[0].mono.split(',')[0]);
   ok(steps[0].diff === '+109 -16', '编辑行显示真实 diff', String(steps[0].diff));
   ok(steps[1].diff === '±0', '无 diff 数据的文件步骤显示 ±0（不是留空）', String(steps[1].diff));
   ok(steps[3].diff === '+30', '写入行只报新增（不编造删除）', String(steps[3].diff));
   ok(steps[2].diff === null, '非文件步骤不带 diff 位', String(steps[2].diff));
 
-  const totalDiff = await page.locator('[data-diff-total]').first().getAttribute('data-diff-total');
-  ok(totalDiff === '+139 -16', '汇总行是各步骤之和（+109+30）', String(totalDiff));
-
-  // ---- D2 / F3：单步耗时只在 ≥3s 时出现 ----
+  // ---- 单步耗时：v2 全量显示（定版图上 2.8s / 3.6s 全挂；<1s 用 ms）----
   const metas = await page.evaluate(() => {
     const out = [];
     for (const step of document.querySelectorAll('[data-tool-step]')) {
@@ -322,17 +316,17 @@ console.log('\n[2] 完成态默认收起，点开才出现步骤');
     return out;
   });
   const metaOf = id => metas.find(m => m.id === id) ?? { text: '(missing)' };
-  ok(metaOf('t3').text === '3.0s', '≥3s 的步骤保留耗时（3000ms → 3.0s）', metaOf('t3').text);
-  ok(metaOf('t1').text === '', 'F3：<3s 的步骤不挂耗时（600ms 不再显示 600ms）', JSON.stringify(metaOf('t1').text));
-  ok(metaOf('t2').text === '', 'F3：100ms 同样不显示', JSON.stringify(metaOf('t2').text));
-  ok(metaOf('t5').text === '结果未回传', 'F3 只砍「耗时」，状态词仍然常驻', metaOf('t5').text);
+  ok(metaOf('t3').text === '3.0s', '3000ms → 3.0s', metaOf('t3').text);
+  ok(metaOf('t1').text === '600ms', '<1s 用毫秒口径（600ms）', JSON.stringify(metaOf('t1').text));
+  ok(metaOf('t2').text === '100ms', '100ms 同口径', JSON.stringify(metaOf('t2').text));
+  ok(metaOf('t5').text === '结果未回传', '未回传行给状态词不给耗时', metaOf('t5').text);
 
   // ---- F2：关键步骤用形状表达，不再写「常驻」两个字 ----
   const pins = await page.evaluate(() => {
     const out = [];
     for (const step of document.querySelectorAll('[data-tool-step]')) {
       const pin = step.querySelector('[data-trace-pin]');
-      const head = step.querySelector('.tc-step-head');
+        const head = step.querySelector('.tcv2-rowhead');
       const hs = getComputedStyle(head);
       out.push({
         id: step.getAttribute('data-tool-step'),
@@ -371,47 +365,40 @@ console.log('\n[2] 完成态默认收起，点开才出现步骤');
   );
   ok(!readPin.hasPin && readPin.critical === null, '普通读取不挂关键标记', String(readPin.critical));
 
-  // ---- [5] 思考归并 ----
-  // 依据：src/trace/rows.ts 的 buildTraceRows 把答案前的 thinking 也压进同一条行序列；
-  // 首条 thinking 没有父级 → AgentTrace 渲染成 .tc-trace-solo 独立行；
-  // 紧跟工具的 thinking → 由 AgentTrace 的 ThinkingNode 挂在步骤下面。
+  // ---- [5] 思考行（v2：全部拉平成兄弟行，不再缩进挂在工具下）----
+  // 依据：src/trace/rows.ts 的 buildTraceRows 把答案前的 thinking 也压进同一条
+  // 行序列；v2 把嵌套思考拉平 —— 开头一条独立行、构建后一条紧跟在检查行后。
+  // 字数 chip 随 v2 退役（归入详情面板）。
   const thinkRows = await page.evaluate(() => {
     const nodes = [...document.querySelectorAll('[data-trace-thinking]')];
     return nodes.map(n => {
-      const step = n.closest('[data-tool-step]');
-      const summaryEl = n.querySelector('summary');
-      const nestedBox = n.getBoundingClientRect();
-      const headBox = step?.querySelector('.tc-step-head')?.getBoundingClientRect();
+      const rowBox = n.getBoundingClientRect();
       return {
         id: n.getAttribute('data-trace-thinking'),
-        parentVerb: step?.getAttribute('data-trace-verb') ?? null,
-        text: summaryEl?.textContent ?? '',
-        indent: headBox ? nestedBox.left - headBox.left : 0,
-        border: getComputedStyle(n).borderLeftStyle,
-        solo: !!n.closest('.tc-trace-solo'),
+        text: n.querySelector('.tcv2-verb')?.textContent ?? '',
+        inShell: !!n.closest('.tcv2-shell'),
+        hasChevron: !!n.querySelector('.tcv2-chev'),
+        expandable: n.getAttribute('data-expanded') != null,
       };
     });
   });
   ok(thinkRows.length === 2, '两条思考都在同一条轨迹里（开头一条 + 构建后一条）', String(thinkRows.length));
+  ok(thinkRows.every(r => r.inShell), '思考行都在轨迹壳内（拉平成兄弟行，不再缩进）');
+  ok(thinkRows.every(r => r.text.includes('深度思考')), '思考行动词是「深度思考」', thinkRows.map(r => r.text).join(','));
+  ok(thinkRows.every(r => !r.text.includes('字')), '行上不再有字数 chip（v2：字数归详情）', thinkRows.map(r => r.text).join(','));
 
-  const nested = thinkRows.find(r => r.parentVerb === '检查');
-  ok(!!nested, '构建后的思考挂在对应步骤（检查）下面', thinkRows.map(r => r.parentVerb).join(','));
-  ok((nested?.text ?? '').includes('深度思考'), '嵌套节点标题是「深度思考」', nested?.text ?? '');
-  ok((nested?.text ?? '').includes('字'), '保留字数（用户口径：保留）', nested?.text ?? '');
-  ok((nested?.text ?? '').includes('s'), '保留秒数', nested?.text ?? '');
-  ok((nested?.indent ?? 0) > 8, '嵌套节点有缩进', `${Math.round(nested?.indent ?? 0)}px`);
-  ok(nested?.border === 'solid', '嵌套节点带连接线', String(nested?.border));
-
-  const leading = thinkRows.find(r => !r.parentVerb);
-  ok(
-    !!leading && leading.solo,
-    '开头的思考作为轨迹内独立行（不再游离在轨迹外）',
-    leading ? `solo=${leading.solo}` : 'missing'
-  );
+  // 点开构建后的那条思考：详情面板 = 思考全文 + 字数
+  const thinkRow5 = page.locator('[data-trace-thinking="b5"]');
+  await thinkRow5.locator('.tcv2-rowhead').first().click();
+  await page.waitForTimeout(300);
+  const thinkDetail = await thinkRow5.locator('.tcv2-detail').first().innerText();
+  ok(thinkDetail.includes('思考全文'), '详情面板标题是「思考全文」', thinkDetail.slice(0, 40));
+  ok(thinkDetail.includes('字'), '详情里保留字数', thinkDetail.slice(0, 60));
+  ok(thinkDetail.includes('构建过了'), '详情里是思考原文', thinkDetail.slice(0, 80));
 
   // 整轮归并后，轨迹之外不应再有游离的思考块
   const outsideThinking = await page.evaluate(() => {
-    const all = [...document.querySelectorAll('.tc-thinking')];
+    const all = [...document.querySelectorAll('[data-trace-thinking]')];
     return all.filter(el => !el.closest('[data-trace]')).length;
   });
   ok(outsideThinking === 0, '轨迹之外不再有游离的思考块', String(outsideThinking));
@@ -427,6 +414,17 @@ console.log('\n[6] 长轨迹：限高 320px + 底部渐隐');
   await page.goto(base + '/chat/s3', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1000);
   await page.locator('[data-steps-bar]').first().click();
+  await page.waitForTimeout(400);
+
+  // v2 分组：16 条连续「已读取」合并成一个组（用户拍板一期形态）。
+  // 组默认折叠 —— 先验组头存在，点开组头后 16 行才全部渲染。
+  const grp = page.locator('[data-trace-group]').first();
+  ok((await grp.count()) === 1, '16 条连续已读取合并成一个组（组头一行）', String(await grp.count()));
+  const grpText = ((await grp.locator('.tcv2-gh').innerText()) ?? '').replace(/\n/g, ' ');
+  ok(grpText.includes('已读取') && grpText.includes('16 次'), '组头 = 类型 + 次数（已读取 · 16 次）', grpText);
+  const grpTotal = ((await grp.locator('.tcv2-gh .tc-trace-meta').innerText()) ?? '').trim();
+  ok(grpTotal === '1.6s', '组头累计耗时（16 × 100ms）', grpTotal);
+  await grp.locator('.tcv2-gh').click();
   await page.waitForTimeout(400);
 
   const box = await page.evaluate(() => {
@@ -574,53 +572,53 @@ console.log('\n[8b] 结果未回传与已隐去的思考');
   ok((await chip.count()) > 0, '出现「结果未回传」标记');
   ok(((await chip.textContent()) ?? '').trim() === '结果未回传', '文案是「结果未回传」', ((await chip.textContent()) ?? '').trim());
 
-  // 2026-10-30：胶囊字号并入过程流全局 14px，高度随之自适应
-  //（14px × 1.7 = 23.8px，不再钉死 18px —— 固定高度会切掉行盒）。
+  // 2026-11-21 v2：状态 chip 并入 12px 单行行（行高 30px）
   const chipStyle = await chip.evaluate(el => {
     const s = getComputedStyle(el);
-    return { h: s.height, fs: s.fontSize, br: s.borderTopLeftRadius };
+    return { h: s.height, fs: s.fontSize };
   });
-  ok(Math.round(parseFloat(chipStyle.h)) === 24, '胶囊高随行盒（≈24px）', chipStyle.h);
-  ok(chipStyle.fs === '14px', '胶囊字号 14px（过程流全局同号）', chipStyle.fs);
-  ok(chipStyle.br === '4px', '胶囊圆角 4px（设计稿）', chipStyle.br);
+  ok(parseFloat(chipStyle.fs) === 12, 'chip 字号 12px（v2 单行口径）', chipStyle.fs);
+  ok(parseFloat(chipStyle.h) <= 30, 'chip 不超过行高（30px）', chipStyle.h);
 
-  const dotStyle = await page
-    .locator('[data-tool-step="gt3"] .tc-step-dot')
-    .first()
-    .evaluate(el => {
-      const s = getComputedStyle(el);
-      return { bg: s.backgroundColor, shadow: s.boxShadow };
-    });
-  ok(/rgba\(0, 0, 0, 0\)|transparent/.test(dotStyle.bg), '未回传的圆点不填状态色', dotStyle.bg);
-  ok(dotStyle.shadow.includes('inset'), '空心圈用 inset 描边表达', dotStyle.shadow);
+  // v2：圆点退役 —— 未回传的表达 = 状态词 chip + 行静止（无光晕/扫光）
+  const gt3Row = await page.locator('[data-tool-step="gt3"]').first().evaluate(el => ({
+    dots: el.querySelectorAll('.tc-step-dot').length,
+    running: el.classList.contains('is-running'),
+    interrupted: el.classList.contains('is-interrupted'),
+  }));
+  ok(gt3Row.dots === 0, 'v2 行上没有状态圆点（图标 + 状态词表达）', String(gt3Row.dots));
+  ok(gt3Row.interrupted && !gt3Row.running, '未回传行挂 is-interrupted（不冒充运行中）', JSON.stringify(gt3Row));
 
-  // 2026-10-30 改版：汇总行不再摆状态图标三件套（绿勾/红叉/空心圈/
-  // 脉冲点全部移除），行首就是摘要文案，chevron 紧跟其后；「有工具没回结果」
-  // 由步骤行自己的空心圈与「结果未回传」胶囊表达（上面两条守着）。
+  // 2026-11-21 v2：收纳线行首是 chevron，其后是带 data-trace-elapsed 的
+  // 「已工作」文案；旧摘要（data-trace-summary）与状态图标三件套已退役。
   const barChrome = await page.evaluate(() => {
     const bars = [...document.querySelectorAll('[data-steps-bar]')];
-    return bars.map(b => ({
-      dots: b.querySelectorAll('.tc-unknown-dot, .tc-live-dot').length,
-      // 行内顺序：第一个子节点必须是摘要，chevron（svg）在摘要之后、行尾之前
-      firstIsSummary: b.firstElementChild?.hasAttribute('data-trace-summary') ?? false,
-    }));
+    return bars.map(b => {
+      const first = b.firstElementChild;
+      const cls = first ? (first.getAttribute('class') ?? '') : '';
+      return {
+        chevronFirst: /tcv2-chev/.test(cls),
+        hasElapsed: !!b.querySelector('[data-trace-elapsed]'),
+        dots: b.querySelectorAll('.tc-unknown-dot, .tc-live-dot').length,
+        oldSummary: b.querySelectorAll('[data-trace-summary]').length,
+      };
+    });
   });
   ok(
-    barChrome.every(b => b.dots === 0),
-    '汇总行不再画状态圆点（Trae 语法：行首只有文案）',
-    barChrome.map(b => b.dots).join(',')
+    barChrome.every(b => b.chevronFirst && b.hasElapsed),
+    '收纳线行首 chevron + 「已工作」墙钟文案',
+    JSON.stringify(barChrome)
   );
-  ok(
-    barChrome.every(b => b.firstIsSummary),
-    '汇总行行首是摘要文案（chevron 跟在其后，状态图标已移除）'
-  );
+  ok(barChrome.every(b => b.dots === 0), '收纳线不再画状态圆点');
+  ok(barChrome.every(b => b.oldSummary === 0), '旧摘要节点（data-trace-summary）退役');
 
-  const red = page.locator('[data-trace-thinking] [data-redacted="1"]').first();
+  const red = page.locator('[data-trace-thinking][data-redacted="1"]').first();
   ok((await red.count()) > 0, '被隐去的思考有独立标记');
   const redText = ((await red.textContent()) ?? '').trim();
   ok(redText.includes('已隐去'), '标题是「已隐去」', redText);
   ok(!redText.includes('字'), '不显示字数（没有正文可数）', redText);
-  ok((await red.locator('details').count()) === 0, '没有点了没反应的空折叠条');
+  ok((await red.locator('.tcv2-detail').count()) === 0, '没有点了没反应的空折叠条');
+  ok((await red.getAttribute('data-expanded')) == null, '已隐去行不可展开（无 data-expanded）');
 
   await page.screenshot({ path: join(OUT, 'a36-unknown.png'), fullPage: false });
   await ctx.close();

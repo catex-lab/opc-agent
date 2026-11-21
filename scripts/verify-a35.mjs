@@ -203,7 +203,7 @@ console.log('\n[3] 执行过程：步骤时间线，不再是卡片');
     const cs = getComputedStyle(step);
     return {
       missing: false,
-      dot: !!step.querySelector('.tc-step-dot'),
+      icon: !!step.querySelector('.tcv2-ic'),
       cards: step.querySelectorAll('.tc-card').length,
       bg: cs.backgroundColor,
       radius: cs.borderTopLeftRadius,
@@ -211,10 +211,11 @@ console.log('\n[3] 执行过程：步骤时间线，不再是卡片');
   });
   ok(!shape.missing, '存在步骤节点');
   if (!shape.missing) {
-    ok(shape.dot, '每个步骤有状态圆点');
+    ok(shape.icon, '每个步骤有类型图标（v2：图标即状态载体，圆点退役）');
     ok(shape.cards === 0, '步骤内部没有卡片容器（.tc-card 数为 0）', String(shape.cards));
     ok(shape.bg === 'rgba(0, 0, 0, 0)', '步骤行本身透明（没有底色方块）', shape.bg);
-    ok(shape.radius === '0px', '步骤行没有圆角卡片外形', shape.radius);
+    // v2：行式不变（无底色无描边），圆角 8px 只为 hover 底色留形
+    ok(shape.radius === '8px', '步骤行行式外观（8px 圆角仅 hover 底色用）', shape.radius);
   }
 
   await page.screenshot({ path: join(OUT, 'a35-steps.png'), fullPage: false });
