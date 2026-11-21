@@ -617,9 +617,10 @@ export const en: Record<MessageKey, string> = {
   'chat.status.callingTool': 'Calling a tool',
   // 2026-11-20: {n} is pre-formatted by formatHandledDurationText (seconds
   // under 1 min, min+sec above) — the template no longer hardcodes "{n}s".
-  'chat.status.elapsed': ', {n} elapsed',
+  'chat.status.elapsed': ' {n}',
   'chat.status.image': 'Generating image',
   'chat.status.processing': 'Working',
+  'chat.status.workingShort': 'Working',
   'chat.status.reconnecting': 'Connection lost, reconnecting…',
   // 2026-11-18 粒子状态行：静默 >60s（看门狗）时状态行的「已等待」文案
   'chat.status.silentWait': 'Waited {n} (no content yet)',
@@ -676,6 +677,7 @@ export const en: Record<MessageKey, string> = {
   'chat.trace.unreturned': 'No result returned',
   'chat.trace.chipRunning': 'Running {n}',
   'chat.trace.chipDone': '{n}/{total} done',
+  'chat.trace.chipDoneShort': '{n} done',
   'chat.trace.unreturnedTitle': 'The last step never received an end event, so it counts as neither done nor failed',
   'chat.trace.verb.call': 'Call',
   'chat.trace.verb.check': 'Check',

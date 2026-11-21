@@ -254,6 +254,15 @@ function tailOf(text: string | undefined, n = 48): string {
   const t = text.replace(/\s+/g, ' ').trimEnd();
   return t.length > n ? `…${t.slice(-n)}` : t;
 }
+/** 工具主入参：没有输出时的尾部回退（让活跃行显示「在处理什么」） */
+function primaryInputOf(input?: Record<string, unknown>): string {
+  if (!input) return '';
+  for (const k of ['command', 'query', 'url', 'pattern', 'file_path', 'path', 'skill', 'args']) {
+    const v = input[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return '';
+}
 
 /**
  * 思考节点（行式）：一行「深度思考」+ 字数 + 秒数，运行中加扫光 + 实时尾部。
@@ -273,7 +282,11 @@ function ThinkingNode({ item }: { item: TraceItem }) {
   // 这里既不能伪造内容，也不能什么都不显示 —— 空一行、标明「已隐去」最诚实。
   const redacted = !!thinkText.redacted;
   const secs = item.durationMs != null ? Math.max(1, Math.round(item.durationMs / 1000)) : null;
-  const tail = running ? tailOf(thinkText.text) : '';
+  /** 运行中 = 思考尾部（最新内容）；完成后 = 内容开头摘要（ZCode 图三口径：
+      完成步不折叠成「N 字」计数，保留内容要点，点击仍看全文） */
+  const excerpt = running
+    ? tailOf(thinkText.text)
+    : thinkText.text.replace(/\s+/g, ' ').trim().slice(0, 80);
 
   const row = (
     <>
@@ -282,15 +295,16 @@ function ThinkingNode({ item }: { item: TraceItem }) {
         {redacted ? t('chat.trace.redacted') : running ? t('chat.trace.thinkingLive') : t('chat.trace.thinking')}
       </span>
       {!redacted && thinkText.format === 'summary' && <span className="tc-think-badge">{t('chat.trace.summaryBadge')}</span>}
-      <span className="tc-think-note-meta">
-        {redacted ? t('chat.trace.redactedReason') : t('chat.thinking.chars', { n: thinkText.text.length })}
-      </span>
-      {secs != null && <span className="tc-think-note-meta">{secs}s</span>}
-      {tail && (
+      {!redacted && excerpt && (
         <span className="tc-trace-tail" data-trace-tail>
-          {tail}
+          {excerpt}
         </span>
       )}
+      {!redacted && (
+        <span className="tc-think-note-meta">{t('chat.thinking.chars', { n: thinkText.text.length })}</span>
+      )}
+      {redacted && <span className="tc-think-note-meta">{t('chat.trace.redactedReason')}</span>}
+      {secs != null && <span className="tc-think-note-meta">{secs}s</span>}
     </>
   );
 
@@ -457,8 +471,12 @@ function StepRow({
         : item.status === 'interrupted'
           ? 'interrupted'
           : 'done';
-  /** 运行中的实时尾部（工具输出）—— 行内可见，不展开也在动 */
-  const tail = running ? tailOf(item.block?.output) : '';
+  /** 运行中的实时尾部：工具输出尾部优先；还没有输出时显示主入参
+   *  （命令/查询/URL…），不再用「执行中…」空占位（ZCode 图二口径：
+   *  活跃行的预览是它正在处理的内容本身） */
+  const tail = running
+    ? tailOf(item.block?.output) || tailOf(primaryInputOf(item.block?.input), 56)
+    : '';
 
   return (
     <div
@@ -678,17 +696,8 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
         <span className="tc-trace-summary" data-trace-summary title={summaryText(summary, t)}>
           {barLabel}
         </span>
-        {/* 进度 chips（对照 ZCode：处理中 x/y · 已完成 n），右对齐 */}
-        <span className="tc-trace-chips" data-trace-chips>
-          {activeCount > 0 && (
-            <span className="tc-trace-chip" data-trace-chip-running>
-              {t('chat.trace.chipRunning', { n: activeCount })}
-            </span>
-          )}
-          <span className="tc-trace-chip" data-trace-chip-done>
-            {t('chat.trace.chipDone', { n: doneCount, total: stepCount })}
-          </span>
-        </span>
+        {/* 2026-11-21 对齐 ZCode：进度 chips 移到消息区右下角悬浮
+            （ChatPage 的 TurnProgressChips），头部不再内嵌 */}
         {showTotalDiff && (
           <span className="tc-diff" data-diff-total={`+${summary.diff.added} -${summary.diff.removed}`}>
             <span className="tc-diff-add">+{summary.diff.added}</span>

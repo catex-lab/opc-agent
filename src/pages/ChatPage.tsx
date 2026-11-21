@@ -247,6 +247,31 @@ export function ChatPage({
   const stickToBottomRef = useRef(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   /**
+   * 2026-11-21 对齐 ZCode：回合进行中在右下角**悬浮进度 chips**
+   * （执行中 x · 完成 y）—— 从最后一条助手消息的工具块实时统计，
+   * 指令发出即出现（有步骤后），回合结束随 isStreaming 消失。
+   */
+  const turnChips = useMemo(() => {
+    if (!currentSession) return { running: 0, done: 0, total: 0 };
+    const last = currentSession.messages[currentSession.messages.length - 1];
+    // 块的两种形态：会话内是数组，落库后是 JSON 字符串（与 ChatMessages 的
+    // toBlocks 同一容错，这里只数工具块的状态，不需要完整解析）
+    const raw = (last as unknown as { blocks?: unknown } | undefined)?.blocks;
+    let blocks: Array<{ type?: string; status?: string }> = [];
+    if (Array.isArray(raw)) blocks = raw as Array<{ type?: string; status?: string }>;
+    else if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) blocks = parsed;
+      } catch {
+        /* 半截 JSON（流式中）就当没有 */
+      }
+    }
+    const tools = blocks.filter(b => b?.type === 'tool');
+    const running = tools.filter(b => b?.status === 'running' || b?.status === 'pending').length;
+    return { running, done: tools.length - running, total: tools.length };
+  }, [currentSession]);
+  /**
    * 2026-11-21：输入区改为**玻璃浮层**（内容从它底下滚过）后，滚动容器的
    * 底部内边距与「回到最新」按钮的位置都要跟随输入区的实测高度 ——
    * autosize + 附件条会变高，写死必错，ResizeObserver 现测。
@@ -940,6 +965,39 @@ export function ChatPage({
             没接 onReasoningEffortChange、或当前模型没有档位表时，
             ChatInput 内部不渲染那颗下拉。
           */}
+          {/* 2026-11-21 对齐 ZCode：回合进行中的悬浮进度 chips（右下角，
+              跟随玻璃输入浮层上缘）。数据来自最后一条助手消息的工具块。 */}
+          {loading && turnChips.total > 0 && (
+            <div
+              className="absolute right-4 z-20 flex items-center gap-1.5"
+              style={{ bottom: (inputHeight || 0) + 12 }}
+              data-turn-chips
+            >
+              {turnChips.running > 0 && (
+                <span
+                  className="flex items-center rounded-full px-3 py-1.5 text-caption shadow-md"
+                  style={{
+                    backgroundColor: 'var(--tc-surface-content)',
+                    border: '1px solid var(--tc-hairline)',
+                    color: 'var(--td-text-color-secondary)',
+                  }}
+                >
+                  {t('chat.trace.chipRunning', { n: turnChips.running })}
+                </span>
+              )}
+              <span
+                className="flex items-center rounded-full px-3 py-1.5 text-caption shadow-md"
+                style={{
+                  backgroundColor: 'var(--tc-surface-content)',
+                  border: '1px solid var(--tc-hairline)',
+                  color: 'var(--td-text-color-secondary)',
+                }}
+              >
+                {t('chat.trace.chipDoneShort', { n: turnChips.done })}
+              </span>
+            </div>
+          )}
+
           {/* 2026-11-21：输入区改为玻璃浮层（absolute 覆在滚动内容之上，
               圆角只在上方）—— 滚动区加等高内边距，正文从玻璃底下滚过。
               「上一轮指令未完成」横幅也搬进浮层：留在流里会被玻璃盖住。 */}

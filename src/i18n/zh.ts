@@ -615,9 +615,10 @@ export const zh = {
   'chat.status.callingTool': '正在调用工具',
   // 2026-11-20：{n} 由 formatHandledDurationText 统一出文案（<1 分按秒、
   // ≥1 分分+秒），i18n 只管句式 —— 不再写死「{n} 秒」。
-  'chat.status.elapsed': '，用时 {n}',
+  'chat.status.elapsed': ' {n}',
   'chat.status.image': '正在生成图像',
   'chat.status.processing': '正在处理',
+  'chat.status.workingShort': '工作中',
   'chat.status.reconnecting': '连接中断，正在重连…',
   // 2026-11-18 粒子状态行：静默 >60s（看门狗）时状态行的「已等待」文案
   'chat.status.silentWait': '已等待 {n}（未收到内容）',
@@ -674,6 +675,7 @@ export const zh = {
   'chat.trace.unreturned': '结果未回传',
   'chat.trace.chipRunning': '执行中 {n}',
   'chat.trace.chipDone': '完成 {n}/{total}',
+  'chat.trace.chipDoneShort': '完成 {n}',
   'chat.trace.unreturnedTitle': '最后一步没有等到结束事件，既不算完成也不算失败',
   'chat.trace.verb.call': '调用',
   'chat.trace.verb.check': '检查',

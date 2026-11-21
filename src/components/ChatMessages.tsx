@@ -182,22 +182,12 @@ function StreamStatus({
   const { t, locale } = useTranslation();
   const elapsed = useElapsed(startedAt, !ended);
   const activity = imageMode ? 'image' : runActivity(blocks ?? []);
-  const runningToolName = [...(blocks ?? [])]
-    .reverse()
-    .find((b): b is ToolBlock => b.type === 'tool' && (b.status === 'running' || b.status === 'pending'))?.name;
-  /** 与 shared/blocks 的 streamPhaseLabel 同一套判据，只把文案交给 i18n。
-      静默与散开两态不走阶段文案 —— 它们各自有更准确的话（见上方三态注释）。 */
+  /** 2026-11-21 对齐 ZCode：状态行改**计时器语义**（「工作中 · 累计时长」
+      固定不变），「正在思考/调用什么」由上方活跃步骤行表达 —— 动作信息
+      不再在这里与活跃行重复。生图模式保留专属文案。 */
   const label = imageMode
     ? t('chat.status.image')
-    : activity === 'thinking'
-      ? t('chat.status.thinking')
-      : activity === 'tool'
-        ? runningToolName
-          ? t('chat.status.calling', { name: runningToolName })
-          : t('chat.status.callingTool')
-        : activity === 'writing'
-          ? t('chat.status.writing')
-          : t('chat.status.processing');
+    : t('chat.status.workingShort');
 
   /** 散开定格的总耗时（S1-2 单口径）：run_end 的 durationMs 优先 */
   const settleMs = (() => {

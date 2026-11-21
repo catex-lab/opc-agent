@@ -479,7 +479,7 @@ await page.press('textarea', 'Enter');
 // 轮询：SSE 每 80ms 一片，抓到一次就够
 // 两个计数要分开取最大值：状态行的标签只在阶段切换时重播，与思考块的
 // 字符不同步；用「字符最多那一帧」的状态行计数会漏掉它。
-let typing = { chars: 0, anim: '', delay: '', maxDelay: '', statusChars: 0 };
+let typing = { chars: 0, anim: '', delay: '', maxDelay: '', statusChars: 0, statusText: '' };
 for (let i = 0; i < 40; i++) {
   await page.waitForTimeout(100);
   const snap = await page.evaluate(() => {
@@ -490,6 +490,7 @@ for (let i = 0; i < 40; i++) {
     return {
       chars: all.length,
       statusChars: status.length,
+      statusLine: document.querySelector('[data-stream-status]')?.innerText ?? '',
       anim: el ? getComputedStyle(el).animationName : '',
       delay: el ? el.style.animationDelay : '',
       maxDelay: delays.length ? `${Math.max(...delays)}ms` : '',
@@ -497,6 +498,7 @@ for (let i = 0; i < 40; i++) {
   });
   typing.chars = Math.max(typing.chars, snap.chars);
   typing.statusChars = Math.max(typing.statusChars, snap.statusChars);
+  if (!typing.statusText && snap.statusLine) typing.statusText = snap.statusLine;
   if (snap.anim) typing.anim = snap.anim;
   if (snap.maxDelay) typing.maxDelay = snap.maxDelay;
   if (typing.chars > 0 && typing.statusChars > 0) break;
@@ -504,7 +506,9 @@ for (let i = 0; i < 40; i++) {
 
 ok(typing.chars > 0, '流式期间出现了逐字动画元素（.tc-type-char）', `n=${typing.chars}`);
 ok(typing.anim === 'tc-type-in', '逐字元素的动画是 tc-type-in', typing.anim || 'none');
-ok(typing.statusChars > 0, '状态行的阶段文案也在逐字浮现', `n=${typing.statusChars}`);
+// 2026-11-21 对齐 ZCode：状态行改计时器语义（工作中 · 累计时长固定，
+// 动作信息归活跃步骤行）—— 阶段文案随之退役，改为断言固定文案存在。
+ok(typing.statusText.includes('工作中'), '状态行为计时器语义（工作中 · 累计时长）', typing.statusText.slice(0, 40));
 ok(parseFloat(typing.maxDelay) > 0, '字符带递增的 animation-delay（错开显现）', `最大 ${typing.maxDelay}`);
 
 // 流式**进行中**截一张（等 1.2s 之后流已结束，逐字 span 会被收成纯文本，
