@@ -424,7 +424,6 @@ function StepRow({
         {canToggle && (
           <ChevronRight size={13} className="tcv2-chev" aria-hidden="true" />
         )}
-        {!canToggle && <span className="tcv2-chev-blank" aria-hidden="true" />}
         <Icon size={15} className="tcv2-ic" aria-hidden="true" />
         <div
           className="tcv2-rowhead"

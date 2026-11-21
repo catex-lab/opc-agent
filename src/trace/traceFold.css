@@ -1,9 +1,9 @@
 /**
  * 过程流样式（v2 定版形态，2026-11-21 五图口径）。
  *
- * 结构：`.tcv2-shell`（浅底圆角卡）→ `.tcv2-collapser`（「已工作 X 秒」
- * 收纳线）→ 展开时 `.tcv2-rows`（扁平单行 / 组）→ 行下 `.tcv2-detail`
- * （详情面板）。
+ * 结构：`.tcv2-collapser`（「已工作 X 秒」收纳线，无框）→ 展开时
+ * `.tcv2-rows`（扁平单行 / 组，全员贴左缘）→ 行下 `.tcv2-detail`
+ * （详情面板，唯一带边框的地方）。
  *
  * 与 index.css 的叠加关系：本文件在组件里导入，index.css 在 main.tsx
  * 里更晚导入 —— 同特异性会被它压回去。所以要么用**新类名**（.tcv2-*，
@@ -143,13 +143,10 @@
 
 /* ═══════════ v2 定版形态 ═══════════ */
 
-/* 壳：整个执行过程流的浅底圆角卡 */
+/* 2026-11-21 修订（用户定版）：整壳退役 —— 步骤行直接躺在消息流里，
+   无外框、无底色；唯一带边框的地方是单步详情面板。 */
 .tc-trace.tcv2-shell {
   display: block;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 12px;
-  background-color: var(--td-bg-color-secondarycontainer);
-  padding: 6px;
 }
 
 /* 收纳线：唯一的门面 ——「已工作 X 秒」 */
@@ -159,7 +156,7 @@
   align-items: center;
   gap: 8px;
   min-height: 32px;
-  padding: 0 10px;
+  padding: 0 10px 0 0;
   border-radius: 8px;
   font-size: 13px;
   color: var(--td-text-color-secondary);
@@ -203,7 +200,7 @@
    子节点落在行下方）；.tcv2-row = 纯 flex 单行。 */
 
 .tc-trace .tcv2-step {
-  padding: 0 10px 0 6px;
+  padding: 0 10px 0 0;
   border-radius: 8px;
 }
 
@@ -224,6 +221,10 @@
   width: 14px;
   height: 14px;
   flex-shrink: 0;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--td-text-color-placeholder);
   opacity: 0;
   transition:
@@ -237,12 +238,12 @@
 }
 
 .tc-trace .tcv2-step[data-expanded='1'] .tcv2-chev {
-  transform: rotate(90deg);
+  transform: translateY(-50%) rotate(90deg);
 }
 
+/* .tcv2-chev-blank 已随浮层箭头退役（DOM 保留占位空 span，display:none） */
 .tc-trace .tcv2-chev-blank {
-  width: 14px;
-  flex-shrink: 0;
+  display: none;
 }
 
 .tc-trace .tcv2-ic {
@@ -356,11 +357,7 @@
 /* ---------- 连续同类型步骤的组 ---------- */
 
 .tc-trace .tcv2-group {
-  margin: 2px 10px 8px 6px;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 10px;
-  background-color: var(--td-bg-color-container);
-  overflow: hidden;
+  margin: 0 10px 4px 0;
 }
 
 .tc-trace .tcv2-gh {
@@ -369,8 +366,8 @@
   align-items: center;
   gap: 8px;
   min-height: 30px;
-  padding: 0 10px 0 6px;
-  border-radius: 10px;
+  padding: 0 10px 0 0;
+  border-radius: 8px;
   cursor: pointer;
 }
 
@@ -382,6 +379,10 @@
   width: 14px;
   height: 14px;
   flex-shrink: 0;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--td-text-color-placeholder);
   opacity: 0;
   transition:
@@ -395,7 +396,7 @@
 }
 
 .tc-trace .tcv2-gh[aria-expanded='true'] .tcv2-chev {
-  transform: rotate(90deg);
+  transform: translateY(-50%) rotate(90deg);
 }
 
 .tc-trace .tcv2-gh .tcv2-line {
@@ -404,24 +405,22 @@
 }
 
 .tc-trace .tcv2-gbody {
-  border-top: 1px dashed var(--td-component-stroke);
-  padding: 4px 0;
-  background-color: var(--td-bg-color-secondarycontainer);
+  padding: 0 0 2px 0;
 }
 
 /* 组内行：缩进一级（详情面板内部才允许的层级，这里是最外的一层） */
 .tc-trace .tcv2-gbody .tcv2-step {
-  margin: 0 8px 0 26px;
+  margin: 0 10px 0 26px;
 }
 
 /* ---------- 详情面板 ---------- */
 
 .tc-trace .tcv2-body {
-  margin: 2px 10px 8px 40px;
+  margin: 2px 10px 8px 0;
 }
 
 .tc-trace .tcv2-gbody .tcv2-body {
-  margin-left: 48px;
+  margin-left: 0;
 }
 
 .tc-trace .tcv2-detail {
@@ -473,6 +472,8 @@
   font-family: inherit;
   font-size: 13px;
   color: var(--td-text-color-secondary);
+  text-align: justify;
+  text-justify: inter-ideograph;
 }
 
 /* 输出区：上限 5 行区内滚动 + 吸底跟随（组件里写 scrollTop） */
@@ -498,11 +499,13 @@
 
 .tc-trace .tc-trace-narration {
   margin: 0;
-  padding: 7px 10px 7px 30px;
+  padding: 7px 10px 7px 0;
   color: var(--td-text-color-secondary);
   font-size: 14px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  text-align: justify;
+  text-justify: inter-ideograph;
 }
 
 /* ---------- 降级 ---------- */
