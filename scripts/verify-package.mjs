@@ -237,7 +237,11 @@ function launch() {
           setTimeout(() => {
             const late = strongMatch();
             resolve({ child, port: Number((late || generic)[1]), log: () => buf });
-          }, 1200);
+            // 8000ms（2026-11-21 v1.0.24 冒烟实测）：冷启动的首个临时库要跑完
+            // 全部建表迁移，握手行可能比 CDP 行晚好几秒——旧的 1.2s 宽限会把
+            // 端口锁在 CDP 口上（[CDP] 行走 stderr、先到），打出去全是 404。
+            // 强匹配在任何时刻到达都会先走上面的 onData 分支，这里只是兜底。
+          }, 8000);
         }
       }
     };
