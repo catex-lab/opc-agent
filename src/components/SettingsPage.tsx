@@ -1488,11 +1488,6 @@ function CloseBehaviorSetting() {
             <label className="opc-enum-setting__label" id="opc-close-behavior-label">
               {t('settings.closeBehavior.label')}
             </label>
-            <InfoHint
-              label={t('settings.common.about', { label: t('settings.closeBehavior.label') })}
-              text={t('settings.closeBehavior.info')}
-              note={current.hint}
-            />
           </div>
           {/* A222：当前选项的说明不再常驻占两行 —— 选项名（直接退出 /
               最小化到托盘 / 每次询问）已经把意思说完了，需要细节时 info
@@ -1562,11 +1557,6 @@ function LinkOpenModeSetting() {
             <label className="opc-enum-setting__label" id="opc-link-open-mode-label">
               {t('settings.linkOpen.label')}
             </label>
-            <InfoHint
-              label={t('settings.common.about', { label: t('settings.linkOpen.label') })}
-              text={t('settings.linkOpen.info')}
-              note={current.hint}
-            />
           </div>
         </div>
         <EnumSelect
@@ -1642,19 +1632,7 @@ function InterfaceLanguageSetting() {
             <label className="opc-enum-setting__label" id="opc-interface-language-label">
               {t('settings.interfaceLanguage.label')}
             </label>
-            <InfoHint
-              label={t('settings.common.about', {
-                label: t('settings.interfaceLanguage.label'),
-              })}
-              text={t('settings.interfaceLanguage.info')}
-              note={current.hint}
-            />
           </div>
-          {/* T4-2：语言区加常驻 1 行小字 —— 「界面语言 / 回答语言」两项并排时
-              用户分不清谁管谁，一句话划清边界。 */}
-          <p className="tc-hint" style={{ marginTop: 2 }}>
-            {t('settings.interfaceLanguage.hintShort')}
-          </p>
         </div>
         <EnumSelect
           id="opc-interface-language"
@@ -1721,18 +1699,7 @@ function AnswerLanguageSetting() {
             <label className="opc-enum-setting__label" id="opc-answer-language-label">
               {t('settings.answerLanguage.label')}
             </label>
-            <InfoHint
-              label={t('settings.common.about', {
-                label: t('settings.answerLanguage.label'),
-              })}
-              text={t('settings.answerLanguage.info')}
-              note={current.hint}
-            />
           </div>
-          {/* T4-2：常驻 1 行小字，与「界面语言」的说明同一口径 */}
-          <p className="tc-hint" style={{ marginTop: 2 }}>
-            {t('settings.answerLanguage.hintShort')}
-          </p>
         </div>
         <EnumSelect
           id="opc-answer-language"
@@ -1816,15 +1783,6 @@ function TransparencySlider({ resetToken = 0 }: { resetToken?: number }) {
           {/* A37：原来这里是三行说明文字，现在收进一个 i 图标。
               玻璃不可用时图标转警示色 —— 那时滑杆是禁用的，
               用户需要一个「为什么不能拖」的入口。 */}
-          <InfoHint
-            label={t('settings.common.about', { label: t('settings.transparency.label') })}
-            warn={!glassOn}
-            text={
-              glassOn
-                ? t('settings.transparency.info')
-                : t('settings.transparency.unsupported')
-            }
-          />
         </span>
         <span className="text-sm tabular-nums" style={{ color: 'var(--td-text-color-secondary)' }}>
           {value}%
@@ -1961,10 +1919,6 @@ function GlowSettings({ resetToken = 0 }: { resetToken?: number }) {
           <span className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
             {t('settings.glow.label')}
           </span>
-          <InfoHint
-            label={t('settings.common.about', { label: t('settings.glow.label') })}
-            text={t('settings.glow.info')}
-          />
         </div>
         <Switch
           value={prefs.enabled}
