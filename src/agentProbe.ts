@@ -1,7 +1,18 @@
 import type { AgentStatus } from './types';
+import { api } from './api';
 
 /** 与 server/agents/registry.ts 的 `ProbeFailureReason` 同源（四类，不含凭据态） */
 export type AgentProbeReason = 'timeout' | 'not-found' | 'permission' | 'unknown';
+
+/**
+ * 探测请求只打一个固定 URL，收窄成 string 形参即可（真 fetch 也能赋值给
+ * 它——参数逆变成立）。默认实现必须走 api.post 而不是裸 fetch：
+ * M01 起服务端 /api/* 校验 x-opc-token（server/index.ts 鉴权中间件），
+ * 裸 fetch 不带令牌会被 401 拒掉——2026-11-21 实测表现为「探测失败 ·
+ * unauthorized · 11 ms」：请求根本没到探测逻辑，是被中间件秒拒的。
+ * 闸门注入自己的 fetchImpl 时行为不变（离线假实现照旧）。
+ */
+type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface SingleProbeResponse {
   agentId: string;
@@ -80,7 +91,7 @@ export function describeProbeFeedback(fb?: AgentProbeFeedback): string {
 
 export interface SingleProbeRunnerDeps {
   /** 注入后可在闸门里完全离线执行，不依赖真实 HTTP */
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchLike;
   onStart: (agentId: string) => void;
   onSuccess: (agentId: string, data: SingleProbeResponse) => void;
   onFailure: (agentId: string, feedback: AgentProbeFeedback) => void;
@@ -99,7 +110,7 @@ export function createSingleProbeRunner(
   deps: SingleProbeRunnerDeps
 ): (agentId: string) => Promise<SingleProbeResponse | null> {
   const inflight = new Map<string, Promise<SingleProbeResponse | null>>();
-  const fetchImpl = deps.fetchImpl ?? ((...args) => fetch(...args));
+  const fetchImpl = deps.fetchImpl ?? ((url, init) => api.post(url, init));
   const now = deps.now ?? (() => Date.now());
 
   return (agentId: string) => {

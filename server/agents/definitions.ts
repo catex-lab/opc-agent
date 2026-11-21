@@ -2106,7 +2106,9 @@ cli: {
     },
     // P5：实测 `pi --version` 冷启动 2992ms（热态 1974ms），默认 3s 预算
     // 卡边缘——放宽到 10s，让这个能用的 Agent 不再被误标「存在异常」。
-    probeBudgetMs: 10000,
+    // 2026-11-21 实活复测：探测全链 7487ms（.cmd shim → node 冷启动），
+    // 开机期十余个 agent 并行探测抢磁盘时 10s 仍会破——放宽到 15s。
+    probeBudgetMs: 15000,
     cli: {
       bin: 'pi',
       buildArgs: (prompt, ctx) => {
