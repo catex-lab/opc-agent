@@ -192,30 +192,33 @@ console.log('\n[3] 执行过程：步骤时间线，不再是卡片');
   await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
   await page.waitForTimeout(900);
 
-  // 默认折叠，点汇总行展开
-  const bar = page.locator('[data-steps-bar]');
+  // 2026-11-22：单聊过程回合整轮交给 ProcessFlow，旧 `[data-steps-bar]` /
+  // `[data-tool-step]` 已退役。这里钉新流程的摘要行与步骤行，断言的仍是
+  // 原来那件事：步骤是行式时间线，不是卡片。
+  const bar = page.locator('[data-flow-summary]');
   if (await bar.count()) await bar.first().click();
   await page.waitForTimeout(300);
 
   const shape = await page.evaluate(() => {
-    const step = document.querySelector('[data-tool-step]');
+    const step = document.querySelector('[data-flow-row]');
     if (!step) return { missing: true };
-    const cs = getComputedStyle(step);
+    const head = step.querySelector('.pf-step-head') ?? step;
+    const cs = getComputedStyle(head);
     return {
       missing: false,
-      icon: !!step.querySelector('.tcv2-ic'),
+      icon: !!step.querySelector('.pf-ico'),
       cards: step.querySelectorAll('.tc-card').length,
       bg: cs.backgroundColor,
       radius: cs.borderTopLeftRadius,
     };
   });
-  ok(!shape.missing, '存在步骤节点');
+  ok(!shape.missing, '存在步骤节点（ProcessFlow 的 data-flow-row）');
   if (!shape.missing) {
-    ok(shape.icon, '每个步骤有类型图标（v2：图标即状态载体，圆点退役）');
+    ok(shape.icon, '每个步骤有类型图标（图标即状态载体，圆点退役）');
     ok(shape.cards === 0, '步骤内部没有卡片容器（.tc-card 数为 0）', String(shape.cards));
     ok(shape.bg === 'rgba(0, 0, 0, 0)', '步骤行本身透明（没有底色方块）', shape.bg);
-    // v2：行式不变（无底色无描边），圆角 8px 只为 hover 底色留形
-    ok(shape.radius === '8px', '步骤行行式外观（8px 圆角仅 hover 底色用）', shape.radius);
+    // 流程行沿用行式外观：无底色无描边，6px 圆角只为 hover 底色留形
+    ok(shape.radius === '6px', '步骤行行式外观（6px 圆角仅 hover 底色用）', shape.radius);
   }
 
   await page.screenshot({ path: join(OUT, 'a35-steps.png'), fullPage: false });
