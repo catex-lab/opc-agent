@@ -424,10 +424,51 @@ ok(
 ok(/data-fade=\{overflowing \? '1' : undefined\}/.test(dialogSrc), '滚动区按溢出状态挂 data-fade', '缺这条，渐隐永远不开');
 
 const traceSrc = fs.readFileSync(path.join(SRC, 'components', 'AgentTrace.tsx'), 'utf8');
+
+/**
+ * 轨迹滚动区的判据只钉「类清单里同时有 tc-scroll-fade 和 tc-trace-scroll」，
+ * 不钉类的顺序与数量 —— 11-22 的 v2 行容器在后面追加了 `tcv2-rows`，
+ * 旧断言写死整串 className 就把「多加一个布局类」误判成「换了第二套写法」。
+ * 先在 `data-trace-scroll` 所在的那个 <div> 标签内取 className，避免整文件正则
+ * 撞到别处的同类名。
+ */
+function traceScrollTag(src) {
+  // 文件头注释里也会提到 `[data-trace-scroll]`，必须跳过没有 <div/className 的那次命中。
+  for (const m of src.matchAll(/data-trace-scroll/g)) {
+    const start = src.lastIndexOf('<div', m.index);
+    const end = src.indexOf('>', m.index);
+    if (start < 0 || end <= start) continue;
+    const tag = src.slice(start, end);
+    if (/className="[^"]*"/.test(tag)) return tag;
+  }
+  return '';
+}
+
+function traceScrollTagUsesSharedFade(tag) {
+  const classes = (tag.match(/className="([^"]*)"/)?.[1] ?? '').split(/\s+/).filter(Boolean);
+  return classes.includes('tc-trace-scroll') &&
+    classes.includes('tc-scroll-fade') &&
+    /data-fade=\{overflowing \? '1' : undefined\}/.test(tag);
+}
+
+const traceTag = traceScrollTag(traceSrc);
 ok(
-  /className="tc-trace-scroll tc-scroll-fade"/.test(traceSrc),
+  traceScrollTagUsesSharedFade(traceTag),
   '轨迹滚动区复用同一个 tc-scroll-fade（不是第二套写法）',
-  '各写一套 = 用户说的「每改一个页面就出现一套新样式」'
+  '类清单里缺 tc-trace-scroll / tc-scroll-fade，或缺 data-fade 溢出态绑定'
+);
+
+// 反向探针：判据必须在「去掉共享类」与「去掉溢出态绑定」两种变异下变红，
+// 否则这条断言可能因为别处的同名文本而假绿。
+ok(
+  !traceScrollTagUsesSharedFade(traceTag.replace(/\btc-scroll-fade\b/, '')),
+  '反向探针：去掉 tc-scroll-fade 必须判红',
+  '探针仍然绿 = 上一条断言没真正钉住共享类'
+);
+ok(
+  !traceScrollTagUsesSharedFade(traceTag.replace(/data-fade=\{[^}]*\}/, '')),
+  '反向探针：去掉 data-fade 必须判红',
+  '探针仍然绿 = 上一条断言没真正钉住溢出态'
 );
 
 // 清单页里不许再逐张卡画「重新检测」：它是全局动作（全量 probe），
