@@ -178,6 +178,7 @@ const measure = () => page.evaluate(() => {
     input: inputCol ? rect(inputCol) : null,
     scrollContent: scroll ? scroll.clientWidth - pad : 0,
     scrollRight: scroll ? scroll.getBoundingClientRect().right : 0,
+    columnMax: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tc-chat-column-max')) || 768,
   };
 });
 
@@ -203,11 +204,12 @@ for (const width of [1440, 1080, 900]) {
      真正抓「撑满全宽」的是上面的同宽断言 + 宽窗口专属那条。 */
   ok(m.notice.right <= m.scrollRight - 4, `[${width}] 没有溢出消息滚动容器`,
     `right=${m.notice.right.toFixed(1)} <= ${m.scrollRight.toFixed(1)} - 4`);
-  /* 窄窗口下输入框本身就接近撑满，「比消息内容区窄」不成立也不该成立；
-     只有列宽封顶的宽窗口才用它钉「收住了」，坏版本在这里是 1018 vs 768。 */
+  /* 列宽上限从设计令牌读，不写死 768，也不拿「比内容区窄 100px」当代理：
+     右侧过程面板存在时内容区本身已被收窄，那个代理会把正确的 768 误判成红。
+     反向探针把状态条搬出列容器后宽度 = 内容区实测宽度，仍会超过上限。 */
   if (width >= 1200) {
-    ok(m.notice.width < m.scrollContent - 100, `[${width}] 列宽收住、没有撑满消息区`,
-      `${m.notice.width.toFixed(1)} < ${m.scrollContent.toFixed(1)} - 100`);
+    ok(m.notice.width <= m.columnMax + 1, `[${width}] 列宽按设计上限收住`,
+      `${m.notice.width.toFixed(1)} <= ${m.columnMax}`);
   }
 }
 

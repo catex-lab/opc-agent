@@ -420,11 +420,16 @@ export function ChatPage({
     container.scrollTop = container.scrollHeight;
   }, []);
 
+  const lastScrollHeightRef = useRef(0);
   const handleScrollFollow = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
     const gap = container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (gap > SCROLL_UNSTICK_GAP) {
+    // 输入浮层实测高度写回时 paddingBottom 会突然增大，scrollHeight 跟着涨；
+    // 这时的 gap 不是「用户上滑」，不能把贴底状态清掉（否则补一次贴底就没了）。
+    const grew = container.scrollHeight - lastScrollHeightRef.current > 8;
+    lastScrollHeightRef.current = container.scrollHeight;
+    if (gap > SCROLL_UNSTICK_GAP && !grew) {
       if (stickToBottomRef.current) {
         stickToBottomRef.current = false;
         setShowJumpToLatest(true);
@@ -588,6 +593,11 @@ export function ChatPage({
    * 会先看到一帧「消息停在顶部」，再被拽到底部 —— 会话越长这一帧越明显，
    * 观感就是「打开聊天记录时闪了一下」。`useLayoutEffect` 在绘制前把
    * 滚动位置定好，这一帧根本不存在。
+   *
+   * `inputHeight` 也必须在依赖里：切会话首帧先按 paddingBottom=0 贴底，
+   * 随后输入浮层实测高度写回、paddingBottom 增加 ~130px，滚动高度变大，
+   * 而 `[data-msg-list]` 本身高度没变 —— 只观察内容的 ResizeObserver
+   * 不会触发，底部就留下一条空档。输入高度进来后这里再贴一次。
    */
   useLayoutEffect(() => {
     const sessionId = currentSession?.id;
@@ -640,7 +650,7 @@ export function ChatPage({
      * 渲染都发生在消息数组不变的时候）。
      */
     if (stickToBottomRef.current) snapToBottom();
-  }, [currentSession?.id, currentSession?.messages, jumpToHashTarget]);
+  }, [currentSession?.id, currentSession?.messages, jumpToHashTarget, inputHeight]);
 
   /**
    * A1：内容高度变化时贴底。
@@ -987,7 +997,10 @@ export function ChatPage({
           从设置页切回消息栏时，这个页面**一次都不该**挂起来（见 App.tsx
           的 handleNavigate 注释）。 */}
       <div data-chat-page data-panel-mode={panelMode} className="relative flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col">
+        {/* 输入浮层是这一列的 absolute 子元素；这一列必须 relative，
+            否则它会以 data-chat-page 为包含块、铺到右侧面板底下。
+            2026-11-22：a215 量出的 121px 左右偏移就是这个原因。 */}
+        <div className="relative flex min-w-0 flex-1 flex-col">
           {/* A1：滚动区外面再包一层 `relative`，只为给「回到最新」提供定位
               基准 —— 按钮不能挂在滚动容器**内部**，那样它会跟着内容一起滚走。
               `flex-col + min-h-0` 与原结构等价，滚动容器仍然是唯一的
