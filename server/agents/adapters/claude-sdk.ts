@@ -65,6 +65,7 @@ import { SDK_PERMISSION_OPTIONS } from '../../../shared/permissions.js';
 import { createCanUseToolBridge } from './sdkApproval.js';
 import {
   createStreamTextState,
+  isDuplicateWholeMessage,
   mapStreamTextEvent,
   takeStreamedText,
   takeStreamedThinking,
@@ -743,6 +744,11 @@ export function mapClaudeSdkMessage(
   }
 
   if (m.type === 'assistant' || m.type === 'user') {
+    // 与 WorkBuddy 同一套整条签名去重：跨字符串/数组形状与 block index 变化。
+    if (m.type === 'assistant' && !m.parent_tool_use_id) {
+      const content = (m.message as { content?: unknown } | undefined)?.content;
+      if (isDuplicateWholeMessage(stream, content)) return 'continue';
+    }
     const payload = m.type === 'assistant' && !m.parent_tool_use_id ? dedupeAssistant(m, stream) : m;
     const events = mapClaudeCodeLine(payload);
     if (Array.isArray(events)) {
@@ -754,11 +760,17 @@ export function mapClaudeSdkMessage(
         queue.push(
           ev.type === 'tool' && m.parent_tool_use_id
             ? { ...ev, parentToolId: m.parent_tool_use_id }
-            : ev
+            : ev.type === 'text' && m.type === 'assistant' && !m.parent_tool_use_id
+              ? { ...ev, fullMessage: true }
+              : ev
         );
       }
     } else if (events) {
-      queue.push(events);
+      queue.push(
+        events.type === 'text' && m.type === 'assistant' && !m.parent_tool_use_id
+          ? { ...events, fullMessage: true }
+          : events
+      );
     }
     return 'continue';
   }

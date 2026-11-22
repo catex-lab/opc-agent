@@ -19,7 +19,7 @@ import {
   summarizeTrace,
   type TraceItem,
 } from '../shared/trace';
-import type { ToolBlock } from '../shared/blocks';
+import { mergeAdjacentDuplicateTextBlocks, type Block, type ToolBlock } from '../shared/blocks';
 
 const failures: string[] = [];
 const checks = { total: 0 };
@@ -162,6 +162,23 @@ const T0 = 1_700_000_000_000;
   ok(flowIcon('tool', 'bash', 'ls -la') === Terminal, '图标：普通命令 → terminal');
   ok(flowIcon('tool', 'task') === Bot, '图标：task → bot');
   ok(flowIcon('thinking', 'thinking') === Brain, '图标：思考 → brain');
+}
+
+// ── [8] 相邻重复正文合并（界面最后一道兜底） ──────────────────────
+{
+  const text = (id: string, t: string): Block =>
+    ({ id, type: 'text', text: t, state: 'done' }) as unknown as Block;
+  const tool = (id: string): Block =>
+    ({ id, type: 'tool', toolName: 'bash', state: 'done' }) as unknown as Block;
+
+  eq(mergeAdjacentDuplicateTextBlocks([text('a', '同一段正文'), text('b', '同一段正文')]).length, 1,
+    '相邻完全相同的正文块合并成一份');
+  eq(mergeAdjacentDuplicateTextBlocks([text('a', 'A'), text('b', 'B')]).length, 2,
+    '不同正文不合并');
+  eq(mergeAdjacentDuplicateTextBlocks([text('a', '同一段正文'), tool('t'), text('b', '同一段正文')]).length, 3,
+    '中间隔了工具块就不合并（不同阶段）');
+  eq(mergeAdjacentDuplicateTextBlocks([text('a', '   '), text('b', '   ')]).length, 2,
+    '空正文不参与合并');
 }
 
 console.log(`过程流容器模型断言：${checks.total - failures.length}/${checks.total} 通过`);

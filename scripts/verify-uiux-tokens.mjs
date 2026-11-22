@@ -607,6 +607,35 @@ if (DUMP) {
   console.log('');
 }
 
+/* 输入浮层遮罩：正文不许从输入卡两侧透出来。
+ * 判据钉两个不变量而不是像素值：① 遮罩覆盖整个浮层（height 100%）；
+ * ② 渐变在浮层顶部 20% 以内就到达页面实底（不是旧版 55% 才 85%）。
+ * 反向探针把这两点退回旧写法，必须判红。 */
+function inputMaskCoversOverlay(rule) {
+  if (!rule || !/linear-gradient/.test(rule)) return false;
+  if (!/height:\s*100%/.test(rule)) return false;
+  const flat = rule.replace(/\s+/g, ' ');
+  const stops = [...flat.matchAll(/(\d+)%/g)].map(m => Number(m[1]));
+  return /var\(--td-bg-color-page\) \d+%/.test(flat) && stops.some(p => p > 0 && p <= 20);
+}
+
+const maskStart = css.indexOf('.tcv2-inputwrap::before');
+const maskBlock = maskStart >= 0 ? css.slice(maskStart, css.indexOf('}', maskStart)) : '';
+ok(
+  inputMaskCoversOverlay(maskBlock),
+  '输入浮层遮罩覆盖整个浮层并在顶部变为页面实底',
+  '旧 90px / 55% 渐变会让正文从输入卡两侧透出来'
+);
+ok(
+  !inputMaskCoversOverlay(
+    maskBlock
+      .replace('height: 100%', 'height: 90px')
+      .replace('var(--td-bg-color-page) 14%', 'color-mix(in srgb, var(--td-bg-color-page) 85%, transparent) 55%')
+  ),
+  '反向探针：退回旧 90px / 55% 遮罩必须判红',
+  '探针仍绿 = 上一条没真正钉住遮罩不变量'
+);
+
 console.log(`\n设计系统写法审计：${total - failures.length}/${total} 通过`);
 if (failures.length) {
   console.log('\n失败项：');

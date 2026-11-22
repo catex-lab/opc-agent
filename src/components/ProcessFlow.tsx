@@ -30,7 +30,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Brain, FileText, Search, Globe, Pencil, FilePlus, FlaskConical, Terminal, Bot, Plug, ShieldAlert, MessageSquare, type LucideIcon } from 'lucide-react';
-import type { Block } from '../../shared/blocks';
+import { mergeAdjacentDuplicateTextBlocks, type Block } from '../../shared/blocks';
 import {
   baseName,
   buildDiffHunks,
@@ -151,18 +151,25 @@ type RowState = 'running' | 'done' | 'error' | 'interrupted' | 'wait';
 export function ProcessFlow({ blocks, isStreaming = false, durationMs, cwd, at }: ProcessFlowProps) {
   const { t, locale } = useTranslation();
 
+  // 后端去重漏网的老数据 / 跨形状重复仍可能在库里留下两份相邻正文；
+  // 渲染前合掉，界面只展示一份。落库数据不动，历史可追溯。
+  const visibleBlocks = useMemo(() => mergeAdjacentDuplicateTextBlocks(blocks), [blocks]);
+
   /** 答案 = 最后一个过程块（tool/thinking）之后的全部文本；其余文本是流内旁白 */
   let lastProcIdx = -1;
-  blocks.forEach((b, i) => {
+  visibleBlocks.forEach((b, i) => {
     if (b.type === 'tool' || b.type === 'thinking') lastProcIdx = i;
   });
-  const answerText = blocks
+  const answerText = visibleBlocks
     .filter((b, i) => b.type === 'text' && i > lastProcIdx)
     .map(b => (b.type === 'text' ? b.text : ''))
     .join('');
   const hasAnswer = answerText.trim().length > 0;
 
-  const flowBlocks = useMemo(() => blocks.slice(0, lastProcIdx + 1), [blocks, lastProcIdx]);
+  const flowBlocks = useMemo(
+    () => visibleBlocks.slice(0, lastProcIdx + 1),
+    [visibleBlocks, lastProcIdx]
+  );
   const rows = useMemo(
     () => buildTraceRows(flowBlocks, { streaming: !!isStreaming, contentStarted: true }),
     [flowBlocks, isStreaming]

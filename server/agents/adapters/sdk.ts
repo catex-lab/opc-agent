@@ -24,6 +24,7 @@ import { makeProvenance, type Provenance } from '../../../shared/provenance.js';
 import { createCanUseToolBridge } from './sdkApproval.js';
 import {
   createStreamTextState,
+  isDuplicateWholeMessage,
   mapStreamTextEvent,
   takeStreamedText,
   takeStreamedThinking,
@@ -1412,17 +1413,21 @@ export function mapSdkMessage(
 
   if (m.type === 'assistant') {
     const content = (m.message as { content?: unknown })?.content;
+    // 整条消息签名去重：WorkBuddy 会把同一条消息按「字符串→数组」或换一个
+    // block index 再下发一次，旧按 index / 按形状的去重都挡不住，整段翻倍。
+    // 子 Agent 是另一段正文，不共用这一轮的签名缓存。
+    if (!isSubAgent && isDuplicateWholeMessage(stream, content)) return 'continue';
     if (typeof content === 'string') {
       // 增量已推过的部分不再重复；否则同一条正文会翻倍。子 Agent 不参与去重。
       const text = isSubAgent ? content : takeStreamedTotalText(stream, content);
-      if (text) queue.push({ type: 'text', content: text });
+      if (text) queue.push({ type: 'text', content: text, fullMessage: true });
     } else if (Array.isArray(content)) {
       for (let index = 0; index < content.length; index += 1) {
         const block = content[index] as Record<string, unknown>;
         if (block.type === 'text') {
           const full = String(block.text ?? '');
           const text = isSubAgent ? full : takeStreamedText(stream, index, full);
-          if (text) queue.push({ type: 'text', content: text });
+          if (text) queue.push({ type: 'text', content: text, fullMessage: true });
         } else if (block.type === 'thinking') {
           // A111：思考块以前在这里被**静默丢弃** —— 这个循环只认 text / image /
           // tool_use，`{type:'thinking', thinking:'…'}` 落不到任何分支，然后就没了。

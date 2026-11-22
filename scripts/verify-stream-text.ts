@@ -17,8 +17,10 @@ import { SdkAdapter } from '../server/agents/adapters/sdk.js';
 import { mapClaudeSdkMessage } from '../server/agents/adapters/claude-sdk.js';
 import {
   createStreamTextState,
+  isDuplicateWholeMessage,
   mapStreamTextEvent,
   takeStreamedText,
+  wholeMessageTextKey,
   takeStreamedThinking,
   takeStreamedTotalText,
 } from '../server/agents/adapters/streamText.js';
@@ -182,6 +184,21 @@ function l1(): void {
   mapStreamTextEvent({ type: 'stream_event', event: { type: 'message_start', message: {} } }, s5);
   say('1-11 thinking 同样挡住重复下发', takeStreamedThinking(s5, 1, '先想一下') === '');
 
+  // 1-12~1-16：整条消息签名去重——WorkBuddy 会换形状 / 换 block index 重发。
+  const answer = '同一段天气结论，跨字符串与数组两种形状完全一致';
+  say(
+    '1-12 字符串与 text 块数组归一成同一签名',
+    wholeMessageTextKey(answer) === wholeMessageTextKey([{ type: 'text', text: answer }])
+  );
+  const s6 = createStreamTextState();
+  say('1-13 首次整条消息不拦', isDuplicateWholeMessage(s6, answer) === false);
+  say(
+    '1-14 换形状重发同一段被拦',
+    isDuplicateWholeMessage(s6, [{ type: 'thinking', thinking: 'x' }, { type: 'text', text: answer }]) === true
+  );
+  say('1-15 不同正文不受影响', isDuplicateWholeMessage(s6, '另一段正文') === false);
+  say('1-16 纯工具消息不参与去重', isDuplicateWholeMessage(s6, [{ type: 'tool_use', name: 'x' }]) === false);
+
   const p = new RunProjector({
     runId: 'r1',
     sessionId: 's1',
@@ -194,6 +211,20 @@ function l1(): void {
   const blocks = (p.snapshot() as { blocks: Array<Record<string, unknown>> }).blocks;
   const texts = blocks.filter((b) => b.type === 'text') as Array<{ text?: string }>;
   say('1-7 投影器只拼一个 text 块', texts.length === 1 && texts[0]?.text === 'ABCD', `blocks=${texts.length}`);
+
+  const p2 = new RunProjector({
+    runId: 'r2',
+    sessionId: 's2',
+    messageId: 'm2',
+    agentId: 'workbuddy',
+  });
+  p2.push({ type: 'text', content: '整条正文' , fullMessage: true });
+  p2.push({ type: 'text', content: '整条正文' , fullMessage: true });
+  p2.push({ type: 'text', content: '整条正文' });
+  p2.finish('done', { durationMs: 1 });
+  const p2Blocks = (p2.snapshot() as { blocks: Array<Record<string, unknown>> }).blocks;
+  const p2Text = p2Blocks.filter((b) => b.type === 'text') as Array<{ text?: string }>;
+  say('1-17 投影器丢弃整条重发、保留未标记的增量', p2Text.length === 1 && p2Text[0]?.text === '整条正文整条正文', `blocks=${p2Text.length}`);
 }
 
 // ============= L2：Tencent SDK 集成（桩 CLI） =============

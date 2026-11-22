@@ -577,6 +577,30 @@ export function textOfBlocks(blocks: readonly Block[]): string {
 }
 
 /**
+ * 合并**相邻且完全相同**的正文块（界面最后一道重复兜底）。
+ *
+ * 只在相邻时合并：中间隔了工具/思考块的同文正文属于不同阶段，不该吞。
+ * 空正文不参与，避免把两条空块合成一条。后端去重漏网时（例如老数据里
+ * 已经落了两份），渲染层仍能只展示一份。
+ */
+export function mergeAdjacentDuplicateTextBlocks(blocks: readonly Block[]): Block[] {
+  const out: Block[] = [];
+  for (const b of blocks) {
+    const prev = out[out.length - 1];
+    if (
+      b.type === 'text' &&
+      prev?.type === 'text' &&
+      prev.text.trim() &&
+      prev.text.trim() === b.text.trim()
+    ) {
+      continue;
+    }
+    out.push(b);
+  }
+  return out;
+}
+
+/**
  * 失败原因块的文案（取最后一条；没有则空串）。
  *
  * 失败回合常常只有这一块、没有任何正文，`content` 兼容字段会是空的 ——

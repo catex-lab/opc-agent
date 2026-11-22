@@ -6767,20 +6767,24 @@ html[data-opc-glass='1'] t-chat-sender {
   position: relative;
 }
 
-/* 底部锚定渐变：正文从输入卡两侧的缝隙里穿过去时收在页底色里，
-   卡片像「放在桌面上」而不是「飘在文字上」。只占底部 ~90px，
-   阅读区不再被一整块毛玻璃盖住。 */
+/* 底部锚定遮罩：正文从输入卡两侧的缝隙里穿过去时收在页底色里。
+   *
+   * 2026-11-22 修正：原来只有 90px 渐变、到 55% 才 85% 不透明，
+   * 卡片上沿附近仍能看见正文从两侧透出来。现在遮罩覆盖整个输入浮层，
+   * 顶部 8px 左右柔和过渡后立即变成页面实底 —— 正文仍可从卡片上方滚入，
+   * 但不会再出现在输入卡两侧。z-index 低于行内容，卡片投影保持不变。 */
 .tcv2-inputwrap::before {
   content: '';
   position: absolute;
   inset: auto 0 0 0;
-  height: 90px;
+  height: 100%;
   pointer-events: none;
   z-index: 0;
   background: linear-gradient(
     180deg,
     transparent 0%,
-    color-mix(in srgb, var(--td-bg-color-page) 85%, transparent) 55%,
+    color-mix(in srgb, var(--td-bg-color-page) 92%, transparent) 6%,
+    var(--td-bg-color-page) 14%,
     var(--td-bg-color-page) 100%
   );
 }

@@ -168,6 +168,12 @@ export class RunProjector {
    * 只有费用/token 这类不落块的数据才取自 done 载荷。
    */
   private observed = new Set<EventCapability>();
+  /**
+   * 最近一条「整条正文」事件的内容，用于最后一道重复兜底。
+   * 只有适配器明确标了 `fullMessage` 的事件参与；增量块不参与，避免把
+   * 用户明确要求的同句重复误吞。
+   */
+  private lastFullText = '';
 
   constructor(meta: RunMeta, now: () => number = Date.now) {
     this.meta = meta;
@@ -334,8 +340,13 @@ export class RunProjector {
         ];
       }
 
-      case 'text':
+      case 'text': {
+        // 最后一道兜底：适配器标了「整条正文」且内容与上一条整条完全相同，
+        // 视为同一次下发重复到达。增量事件不带标记，行为不变。
+        if (ev.fullMessage && ev.content && ev.content === this.lastFullText) return [];
+        if (ev.fullMessage) this.lastFullText = ev.content;
         return this.append('text', ev.content);
+      }
 
       case 'thinking': {
         const out = this.append('thinking', ev.content, {

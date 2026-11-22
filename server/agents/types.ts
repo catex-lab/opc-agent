@@ -49,7 +49,16 @@ export type AgentEvent =
        */
       invalidateResumeToken?: boolean;
     }
-  | { type: 'text'; content: string }
+  | {
+      type: 'text';
+      content: string;
+      /**
+       * 这条正文来自「整条 assistant 消息」，不是流式增量。
+       * 投影器据此做最后一道兜底：同一 run 内整条重发的同文块直接忽略。
+       * 增量块 / 逐块解析的 CLI 不带这个标记，行为与历史一致。
+       */
+      fullMessage?: boolean;
+    }
   /**
    * 思考过程（Hermes ACP 的 agent_thought_chunk）。与正文分开，前端折叠展示。
    *

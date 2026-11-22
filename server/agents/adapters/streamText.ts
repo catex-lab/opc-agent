@@ -32,16 +32,32 @@ export interface StreamTextState {
    */
   settled: Map<string, string>;
   settledTotal: string;
+  /**
+   * 本轮已下发过的「整条 assistant 消息」正文签名（生命周期 = 一轮）。
+   *
+   * 为什么还要这一层：`settled` 的 key 带 block index，`settledTotal` 只认
+   * 字符串正文。实测 WorkBuddy 会把同一条消息先按字符串、后按数组下发，
+   * 或两次的 text block index 不一样 —— 两种情况下旧去重都认不出来，
+   * 整段正文又被追加一遍。这里把两种形状归一化成同一个签名，跨
+   * `message_start` 保留；只拦「整条完全相同的消息再次到达」。
+   */
+  wholeMessages: Set<string>;
 }
 
 export function createStreamTextState(): StreamTextState {
-  return { blocks: new Map(), totalText: '', settled: new Map(), settledTotal: '' };
+  return {
+    blocks: new Map(),
+    totalText: '',
+    settled: new Map(),
+    settledTotal: '',
+    wholeMessages: new Set(),
+  };
 }
 
 function reset(state: StreamTextState): void {
   state.blocks.clear();
   state.totalText = '';
-  // settled 刻意不清：它挡的正是「重置之后同段再来一次」
+  // settled / wholeMessages 刻意不清：它们挡的正是「重置之后同一条再来一次」
 }
 
 function append(
@@ -152,4 +168,38 @@ export function takeStreamedTotalText(state: StreamTextState, full: string): str
   if (full && state.settledTotal === full) return '';
   state.settledTotal = full;
   return remainder(state.totalText, full);
+}
+
+/**
+ * 把 assistant.content 的两种形状归一化成一个正文签名：
+ * 字符串正文与 `[{type:'text',text:'…'}]` 只要文字相同就是同一个签名，
+ * 因此「先字符串后数组」「块索引变了」的重复下发也能认出来。
+ * 没有正文（纯工具 / 空消息）返回 null，不参与去重。
+ */
+export function wholeMessageTextKey(content: unknown): string | null {
+  let parts: string[];
+  if (typeof content === 'string') {
+    parts = [content];
+  } else if (Array.isArray(content)) {
+    parts = content
+      .filter((b): b is Record<string, unknown> => !!b && typeof b === 'object' && b.type === 'text')
+      .map(b => (typeof b.text === 'string' ? b.text : ''));
+  } else {
+    return null;
+  }
+  const text = parts.join('');
+  return text ? `text:${text}` : null;
+}
+
+/**
+ * 整条消息是否本轮已下发过。首次调用会记录签名；重复调用返回 true，
+ * 调用方应整条跳过，而不是逐块走 remainder —— 后者在形状/索引变化时
+ * 会误判成「新内容」。
+ */
+export function isDuplicateWholeMessage(state: StreamTextState, content: unknown): boolean {
+  const key = wholeMessageTextKey(content);
+  if (!key) return false;
+  if (state.wholeMessages.has(key)) return true;
+  state.wholeMessages.add(key);
+  return false;
 }
