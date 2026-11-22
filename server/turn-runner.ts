@@ -64,6 +64,20 @@ export interface TurnRunnerDeps {
   /** 中止信号：客户端断开时由调用方 abort */
   signal: AbortSignal;
   /**
+   * A244 群聊闸门：同一时刻最多多少棒并发（undefined = 不限）。
+   * broadcast 把 N 个成员同时压出去，N 个 CLI 子进程 + N 份模型并发，
+   * 本机和额度都吃不消；信号量把「同时跑」压到可预算的档位。
+   * 群聊路由传 3；工作流不传，保持原行为。
+   */
+  maxConcurrency?: number;
+  /**
+   * A244 群聊闸门：单棒空闲超时。一棒超过这么久没有任何事件就中止它。
+   * 没有它，一个挂死的成员会让 broadcast 的 Promise.all 永远等不齐，
+   * 群互斥锁也一直占着。群聊路由传 shared/timing.ts 的
+   * GROUP_TURN_IDLE_TIMEOUT_MS；工作流不传，保持原行为。
+   */
+  idleTimeoutMs?: number;
+  /**
    * A122：中止**整个请求**（群聊/工作流里一次「停止」要停下所有成员）。
    *
    * 与 signal 分开是因为 signal 只读：按 runId 即时中止的钩子必须能真的
@@ -106,6 +120,32 @@ function allowedToolsFor(scenarioId: string | undefined, sessionScenarioId?: str
 export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
   const activeRuns = new Set<string>();
   const { session } = deps;
+
+  // ── A244 闸门①：并发信号量 ──────────────────────────────────────
+  // 0/undefined = 不限（工作流路径保持原行为；群聊传 3）。
+  const maxConcurrent = deps.maxConcurrency ?? 0;
+  let activeCount = 0;
+  const waiters: Array<() => void> = [];
+  const acquireSlot = (): Promise<void> => {
+    if (!maxConcurrent) return Promise.resolve();
+    return new Promise(resolve => {
+      if (activeCount < maxConcurrent) {
+        activeCount += 1;
+        resolve();
+      } else {
+        waiters.push(resolve);
+      }
+    });
+  };
+  const releaseSlot = (): void => {
+    if (!maxConcurrent) return;
+    activeCount -= 1;
+    const next = waiters.shift();
+    if (next) {
+      activeCount += 1;
+      next();
+    }
+  };
   /**
    * A175：同一请求的首轮只检索一次。
    *
@@ -119,7 +159,7 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
     return kbMemo;
   };
 
-  const runAgent = async (
+  const runAgentImpl = async (
     agentId: string,
     prompt: string,
     phase: TurnPhase,
@@ -202,6 +242,29 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
         : null;
     const promptForAgent = kbInjection ? `${kbInjection.promptPrefix}\n\n${prompt}` : prompt;
 
+    // ── A244 闸门②：单棒空闲超时 ────────────────────────────────────
+    // 一棒超过 idleTimeoutMs 没有任何事件（首字、正文、工具都算事件）就中止它。
+    // 只杀这一棒（registry.abort 按 agentId+session 定位），不牵连同轮其他成员。
+    const idleMs = deps.idleTimeoutMs ?? 0;
+    let lastEventAt = Date.now();
+    let idleTimer: ReturnType<typeof setInterval> | null = null;
+    const armIdleWatch = () => {
+      if (!idleMs || idleTimer) return;
+      idleTimer = setInterval(() => {
+        if (Date.now() - lastEventAt <= idleMs) return;
+        if (!errorMsg) errorMsg = `空闲超时：${Math.round(idleMs / 60000)} 分钟内没有任何事件，已中止这一棒`;
+        console.error(`[Turn] ${agentId} ${errorMsg}`);
+        registry.abort(agentId, session.id);
+      }, 10_000);
+      idleTimer.unref?.();
+    };
+    const disarmIdleWatch = () => {
+      if (idleTimer) {
+        clearInterval(idleTimer);
+        idleTimer = null;
+      }
+    };
+
     const stream = registry.stream(agentId, {
       sessionId: session.id,
       prompt: promptForAgent,
@@ -237,6 +300,7 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
       const early = projector.finish('error');
       emit([...early.closes, early.end]);
     } else {
+      armIdleWatch();
       // run_start 额外带上 phase/round：前端据此把「路由/执行/汇总」区分开
       emit(
         projector
@@ -250,6 +314,7 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
           // A217：零产出恢复的控制事件。群聊/工作流这条路径本来就不落
           // sdk_session_id（没有半空令牌要清），也不该把它交给投影器。
           if (ev.type === 'init' && ev.invalidateResumeToken) continue;
+          lastEventAt = Date.now();
           if (ev.type === 'done') {
             turnDone = { durationMs: ev.durationMs, cost: ev.cost, tokens: ev.tokens };
           }
@@ -270,6 +335,8 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
         registry.recordError(agentId, errorMsg ?? '未知错误');
         maybeReprobeOnAuthError(agentId, errorMsg ?? '');
         emit(projector.push({ type: 'error', message: errorMsg ?? '未知错误' }));
+      } finally {
+        disarmIdleWatch();
       }
     }
 
@@ -365,7 +432,18 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
       });
     }
 
-    return { text, error: errorMsg };
+    return { text, error: errorMsg, status };
+  };
+
+  // 对外暴露的 runAgent：过并发信号量（A244 闸门①）。排队中的棒不计入
+  // activeRuns——它还没开始跑，断线宽限与「停止」都不需要看见它。
+  const runAgent: TurnRunner['runAgent'] = async (agentId, prompt, phase, round) => {
+    await acquireSlot();
+    try {
+      return await runAgentImpl(agentId, prompt, phase, round);
+    } finally {
+      releaseSlot();
+    }
   };
 
   return { runAgent, activeRuns };

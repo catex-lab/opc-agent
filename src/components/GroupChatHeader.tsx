@@ -115,8 +115,14 @@ export function GroupChatHeader({
    */
   const [isolateHintOpen, setIsolateHintOpen] = useState(false);
   const isolateHintRef = useRef<HTMLDivElement>(null);
-  // A225：并行隔离开关（sessionFlags 本机偏好，随每轮请求下发）
-  const worktreeOn = useGroupWorktree(sessionId);
+  // A225/A244：并行隔离开关三态（true 明确开 / false 明确关 / undefined 自动）。
+  // 显示口径：明确开、或（自动档 && 当前模式是并行模式）才亮——串行模式
+  // （分派/接力/辩论）即使自动档也不会建检出，显示成「关」不撒谎。
+  // @ 到几个人只有服务端知道，mention 自动档按「亮」显示（title 已说明）。
+  const worktreeState = useGroupWorktree(sessionId);
+  const worktreeOn =
+    worktreeState === true ||
+    (worktreeState === undefined && (orchestration === 'broadcast' || orchestration === 'leader' || orchestration === 'mention'));
   /**
    * 一次编辑是否已经收尾。
    *
@@ -279,7 +285,9 @@ export function GroupChatHeader({
               onClick={() => {
                 if (sessionId && worktreeAvailable) {
                   setIsolateHintOpen(false);
-                  setGroupWorktree(sessionId, !worktreeOn);
+                  // A244：点击在「明确开 / 明确关」之间切换。自动档（没动过）
+                  // 第一次点击 = 明确关（用户想退出自动策略）；关着再点 = 明确开。
+                  setGroupWorktree(sessionId, !(worktreeState !== false));
                 } else {
                   setIsolateHintOpen(v => !v);
                 }
@@ -291,9 +299,11 @@ export function GroupChatHeader({
               data-chat-worktree-available={worktreeAvailable ? '1' : '0'}
               title={
                 worktreeAvailable
-                  ? worktreeOn
-                    ? '并行隔离已开：本轮每个成员在独立检出中执行，结束后汇合'
-                    : '并行隔离已关：各成员在共享目录执行'
+                  ? worktreeState === false
+                    ? '并行隔离已关：各成员在共享目录执行，并行写文件可能互相覆盖'
+                    : worktreeState === true
+                      ? '并行隔离已开：本轮每个成员在独立检出中执行，结束后汇合'
+                      : '并行隔离为自动：并行模式（广播/带队/@多人）+ git 仓库时开启；点击可明确开或关'
                   : '先在群里绑定一个 git 仓库目录，才能开启并行隔离'
               }
               aria-label="并行隔离"

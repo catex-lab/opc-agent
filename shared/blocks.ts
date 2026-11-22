@@ -129,6 +129,11 @@ export interface ToolBlock {
   endedAt?: number;
   isError?: boolean;
   /**
+   * 子 Agent / 子任务（2026-11-22）：所属容器工具块（Task）的 toolId。
+   * 前端据此把子步骤归到子代理分组下；老数据没有该字段 → 平铺渲染。
+   */
+  parentToolId?: string;
+  /**
    * 这个工具事件是怎么来的。缺省 = 未知（老数据 / mock 适配器），
    * UI 对缺省值**不标注也不猜测**。
    */

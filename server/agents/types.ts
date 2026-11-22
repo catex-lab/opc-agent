@@ -66,7 +66,19 @@ export type AgentEvent =
       /** 内容被厂商隐去；此时 `content` 通常为空，但块仍必须存在 */
       redacted?: boolean;
     }
-  | { type: 'tool'; id: string; name: string; input?: unknown }
+  | {
+      type: 'tool';
+      id: string;
+      name: string;
+      input?: unknown;
+      /**
+       * 子 Agent / 子任务（2026-11-22）：Claude SDK 的 `parent_tool_use_id`。
+       * 它所属的 Task 工具块（toolId）的**容器** —— 前端据此把子步骤归到
+       * 子代理分组下。向后兼容：老事件不带，投影器落 `undefined`，前端平铺。
+       * 其他 Agent 没有统一子代理信号，不发这个字段。
+       */
+      parentToolId?: string;
+    }
   /**
    * 工具执行过程中的增量输出（E5）。
    *

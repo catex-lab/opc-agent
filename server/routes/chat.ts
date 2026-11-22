@@ -12,7 +12,7 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import * as db from '../db.js';
 import { startSseHeartbeat } from '../sse-heartbeat.js';
-import { REATTACH_GRACE_MS } from '../../shared/timing.js';
+import { REATTACH_GRACE_MS, GROUP_TURN_IDLE_TIMEOUT_MS } from '../../shared/timing.js';
 import {
   BUILTIN_NOTE,
   PERMISSION_RULES_PATH,
@@ -61,13 +61,13 @@ import { maybeReprobeOnAuthError } from '../agents/auth-recovery.js';
 import { validateDirectory } from '../workspaceDir.js';
 import { projectIdForCwd } from '../project-ownership.js';
 import { redactSecret } from '../log-redact.js';
-import { assembleHistory, HISTORY_TOKEN_BUDGET, historySummary } from '../history.js';
+import { assembleHistory, assembleGroupTranscript, HISTORY_TOKEN_BUDGET, historySummary } from '../history.js';
 import { buildKbInjection } from '../kb/inject.js';
 import { reconcileWorkbuddyResumeTokens } from '../agents/wbRootEpoch.js';
 import { normalizeSkillBody } from '../extensions/normalize.js';
 import { scanSensitive } from '../extensions/safety.js';
 import { createTurnRunner } from '../turn-runner.js';
-import { runOrchestration } from '../orchestrator.js';
+import { runOrchestration, extractMentioned } from '../orchestrator.js';
 import { WORKFLOW_TEMPLATE, runWorkflow } from '../workflow.js';
 import { createWorktrees, cleanupWorktrees, isGitWorkTree, mergeWorktree } from '../worktree.js';
 import { addGrant, listGrants, removeGrant } from '../permission-grants.js';
@@ -119,6 +119,14 @@ export interface ChatRoutesDeps {
 
 export function registerChatRoutes(app: Express, deps: ChatRoutesDeps): void {
 // ============= 聊天 API =============
+
+// ── A244 群聊闸门 ──────────────────────────────────────────────────
+// 同一个群上一轮还在执行时，新的 POST 直接 409。以前没有这把锁：同一个群
+// 并发两次 POST 会同时跑两套编排——两个 turn-runner、两份用户消息、两套
+// worktree 批次互相踩同一个主工作区的 index。
+const groupChatBusy = new Set<string>();
+/** 单轮里同时跑的棒数上限（A244）。串行模式（分派/接力/辩论）不受影响。 */
+const GROUP_MAX_CONCURRENCY = 3;
 
 /**
  * 清空会话的聊天记录（P7 群设置「删除聊天记录」）。
@@ -2008,9 +2016,14 @@ app.post("/api/group-chat", async (req, res) => {
     // P4：场景模板 id / 会话级系统提示词（可选）
     scenarioId,
     systemPrompt,
-    // A225：群聊并行隔离（git worktree）。true = 每个成员各检出一份，
-    // 结束后逐成员汇合回主工作区。只在会话绑定了 git 目录时生效。
-    worktree = false,
+    // A225：群聊并行隔离（git worktree）。三态（A244）：
+    //   true  = 强制开（任何模式，只要绑定了 git 目录）；
+    //   false = 强制关（用户明确不要隔离）；
+    //   undefined = 自动——并行模式（广播/带队/@多人）+ git 仓库 → 开，
+    //   其余情况不开。前端未动过开关时不发这个字段，走自动。
+    worktree,
+    // A244：主控成员（dispatch 的路由者 / leader 的队长）。缺省 = 成员列表第一个
+    controllerAgentId,
     // 群名。用户可能在建群后、发第一条消息之前就改过群名 ——
     // 那时会话还没落库（前端是本地空壳），改名只能攒着，随首条消息一起带上。
     // 不带的话，落库时会用「首条消息前 30 字」把用户起的名字盖掉。
@@ -2021,9 +2034,11 @@ app.post("/api/group-chat", async (req, res) => {
     return res.status(400).json({ error: "消息不能为空" });
   }
 
-  const members: string[] = Array.isArray(agentIds)
-    ? agentIds.filter((v: unknown): v is string => typeof v === 'string')
-    : [];
+  // A244：成员去重。以前重复 id 会让同一 Agent 并发跑两次——两个子进程
+  // 写同一个检出（worktree 槽位还按 agentId 收敛成一个 Map，第二批覆盖第一批）。
+  const members: string[] = [...new Set(
+    (Array.isArray(agentIds) ? agentIds : []).filter((v: unknown): v is string => typeof v === 'string')
+  )];
   if (members.length === 0) {
     return res.status(400).json({ error: "群聊至少需要一个成员" });
   }
@@ -2068,201 +2083,291 @@ app.post("/api/group-chat", async (req, res) => {
     session = { ...session, agent_ids: membersJson, orchestration };
   }
 
-  // 落库用户消息（无作者）
-  const userMessageId = uuidv4();
-  try {
-    db.createMessage({
-      id: userMessageId,
-      session_id: session.id,
-      role: 'user',
-      content: message,
-      model: null,
-      author_agent_id: null,
-      created_at: now,
-      tool_calls: null,
+  // ── A244 群互斥锁：同一群上一轮还在执行时直接 409 ─────────────────
+  // 检查与占位必须落在用户消息落库之前：被拒的请求不能留下半条记录。
+  // 锁的释放只在本函数唯一的 finally 里（所有早退路径都会经过）。
+  if (groupChatBusy.has(session.id)) {
+    return res.status(409).json({
+      error: '该群上一轮还在执行中（可在界面点「停止」中止）。稍候再发，或换一个群。',
     });
-  } catch (dbError: any) {
-    console.error(`[GroupChat] 保存用户消息失败:`, dbError);
-    return res.status(500).json({ error: "保存消息失败", detail: dbError?.message });
   }
-
-  // SSE 头
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  startSseHeartbeat(res);
-
-  const sse = (payload: Record<string, unknown>) => {
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
-  };
-
-  // 客户端断开 → 宽限 20 秒后中止**所有**正在跑的成员（群聊可能同时有多个子进程）。
-  // 宽限期内前端可以用各 run 的重放端点接回来（E5），期间事件不会丢。
-  const ac = new AbortController();
-  res.on('close', () => {
-    if (res.writableEnded) return;
-    console.log(`[GroupChat] 客户端断开，20s 内可重连`);
-    const timer = setTimeout(() => {
-      const reattached = [...turn.activeRuns].some(id => runHub.subscriberCount(id) > 0);
-      if (reattached || ac.signal.aborted) return;
-      console.log(`[GroupChat] 重连窗口结束，中止 ${members.length} 个成员`);
-      ac.abort();
-      for (const id of members) registry.abort(id, session!.id);
-    }, REATTACH_GRACE_MS);
-    timer.unref?.();
-  });
-
-  /**
-   * 「让某个 Agent 就给定 prompt 发言」搬到了 server/turn-runner.ts（A41）：
-   * 动态工作流的 dispatch/broadcast/relay/debate 走的是同一份实现，
-   * 群聊路由只留下 SSE 与断开口。
-   */
-  // A225：worktree 批次。在下面按需创建；createTurnRunner 的 cwdFor 用闭包取值
-  let wtBatch: Awaited<ReturnType<typeof createWorktrees>> | null = null;
-  const turn = createTurnRunner({
-    session,
-    model,
-    cwd,
-    // A225：worktree 隔离时按成员取各自的检出目录。wtBatch 在下面才创建，
-    // 用闭包取值（未启用时恒为 undefined，回落共享目录）
-    cwdFor: agentId => wtBatch?.slots.get(agentId)?.dir,
-    reasoningEffort: reasoningEffort || session.reasoning_effort || undefined,
-    // A123：每一棒也要吃会话里存的权限档（请求体没带时兜住），与一对一同一口径
-    permissionMode: permissionMode || session.permission_mode || undefined,
-    scenarioId,
-    triggerPrompt: message,
-    signal: ac.signal,
-    // A122：界面上的「停止」走这里按下 controller
-    abortTurn: () => {
-      if (!ac.signal.aborted) ac.abort();
-    },
-    emitBlocks: events => {
-      for (const e of events) {
-        try {
-          res.write(`id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`);
-        } catch {
-          // 客户端已断开：继续跑完并落库，事件仍在 runHub 里等重连
-        }
-      }
-    },
-    emitFrame: sse,
-  });
-  const runAgent = turn.runAgent;
-
-  sse({
-    type: 'group_init',
-    sessionId: session.id,
-    orchestration,
-    members,
-    userMessageId,
-  });
-
-  // P1：先让前端拿到 group_init，再等探测。
-  // 缓存热时不发 note，避免每轮都多一条噪声。
-  if (needsProbe) {
-    sse({ type: 'group_note', text: '正在检查成员状态，首次启动可能需要几秒…' });
-    await registry.ensureProbed(members);
-    // 探测期间用户可能已经点了停止/关掉面板；别再对着已关闭的 SSE 跑一整场。
-    if (ac.signal.aborted) {
-      console.log('[GroupChat] 探测期间客户端离开，跳过本轮');
-      return res.end();
-    }
-  }
-
+  groupChatBusy.add(session.id);
   try {
-    // ── A225：worktree 隔离的创建与汇合 ──────────────────────────────
-    // 生效条件（全部满足才启用，任一不满足都如实 note 并退回共享目录）：
-    //   显式开启 && 成员 > 1 && 会话绑定了目录 && 该目录是 git 工作树。
-    // 单成员的「群」没有并行互踩问题，不值得为它建检出。
-    const wantWorktree =
-      worktree === true && members.length > 1 && typeof session.cwd === 'string' && !!session.cwd;
-    if (wantWorktree) {
-      // wantWorktree 已确认 session.cwd 是非空字符串；TS 的收尾进不了分支，这里收一次
-      const repoDir = session.cwd as string;
-      const isRepo = await isGitWorkTree(repoDir);
-      if (!isRepo) {
-        sse({ type: 'group_note', text: `已开启并行隔离，但工作目录不是 git 仓库（${repoDir}），本轮退回共享目录执行` });
-      } else {
-        wtBatch = await createWorktrees(repoDir, members, session.id);
-        const made = wtBatch.slots.size;
-        for (const f of wtBatch.failures) {
-          sse({ type: 'group_note', text: `${registry.get(f.agentId)?.name || f.agentId} 的隔离检出创建失败（${f.reason}），退回共享目录` });
+    // 落库用户消息（无作者）
+    const userMessageId = uuidv4();
+    try {
+      db.createMessage({
+        id: userMessageId,
+        session_id: session.id,
+        role: 'user',
+        content: message,
+        model: null,
+        author_agent_id: null,
+        created_at: now,
+        tool_calls: null,
+      });
+    } catch (dbError: any) {
+      console.error(`[GroupChat] 保存用户消息失败:`, dbError);
+      return res.status(500).json({ error: "保存消息失败", detail: dbError?.message });
+    }
+
+    // SSE 头
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    startSseHeartbeat(res);
+
+    const sse = (payload: Record<string, unknown>) => {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    /** 成员展示名（note 与交接物里都用人话；查不到就退回 id） */
+    const displayNameOf = (id: string) => registry.get(id)?.name || id;
+
+    // 客户端断开 → 宽限 20 秒后中止**所有**正在跑的成员（群聊可能同时有多个子进程）。
+    // 宽限期内前端可以用各 run 的重放端点接回来（E5），期间事件不会丢。
+    const ac = new AbortController();
+    res.on('close', () => {
+      if (res.writableEnded) return;
+      console.log(`[GroupChat] 客户端断开，20s 内可重连`);
+      const timer = setTimeout(() => {
+        const reattached = [...turn.activeRuns].some(id => runHub.subscriberCount(id) > 0);
+        if (reattached || ac.signal.aborted) return;
+        console.log(`[GroupChat] 重连窗口结束，中止 ${members.length} 个成员`);
+        ac.abort();
+        for (const id of members) registry.abort(id, session!.id);
+      }, REATTACH_GRACE_MS);
+      timer.unref?.();
+    });
+
+    /**
+     * 「让某个 Agent 就给定 prompt 发言」搬到了 server/turn-runner.ts（A41）：
+     * 动态工作流的 dispatch/broadcast/relay/debate 走的是同一份实现，
+     * 群聊路由只留下 SSE 与断开口。
+     */
+    // A225：worktree 批次。在下面按需创建；createTurnRunner 的 cwdFor 用闭包取值
+    let wtBatch: Awaited<ReturnType<typeof createWorktrees>> | null = null;
+    const turn = createTurnRunner({
+      session,
+      model,
+      // A244：请求体 > 会话里存的目录（与一对一 /api/chat 同一口径）。
+      // 以前群聊只认请求体，会话里 PATCH 过的目录在第二轮就悄悄失效，
+      // 兜底直接退到服务进程目录——在那里写文件是事故。
+      cwd: cwd || session.cwd || undefined,
+      // A225：worktree 隔离时按成员取各自的检出目录。wtBatch 在下面才创建，
+      // 用闭包取值（未启用时恒为 undefined，回落共享目录）
+      cwdFor: agentId => wtBatch?.slots.get(agentId)?.dir,
+      reasoningEffort: reasoningEffort || session.reasoning_effort || undefined,
+      // A123：每一棒也要吃会话里存的权限档（请求体没带时兜住），与一对一同一口径
+      permissionMode: permissionMode || session.permission_mode || undefined,
+      scenarioId,
+      triggerPrompt: message,
+      signal: ac.signal,
+      // A244 闸门：并发信号量（默认 3 棒）+ 单棒空闲超时（shared/timing.ts，
+      // env OPC_GROUP_IDLE_TIMEOUT_MS 可覆盖——env 在消费方读，shared 常量
+      // 要跟客户端 watchdog 同文件打包，浏览器里没有 process）。
+      maxConcurrency: GROUP_MAX_CONCURRENCY,
+      idleTimeoutMs: Number(process.env.OPC_GROUP_IDLE_TIMEOUT_MS) || GROUP_TURN_IDLE_TIMEOUT_MS,
+      // A122：界面上的「停止」走这里按下 controller
+      abortTurn: () => {
+        if (!ac.signal.aborted) ac.abort();
+      },
+      emitBlocks: events => {
+        for (const e of events) {
+          try {
+            res.write(`id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`);
+          } catch {
+            // 客户端已断开：继续跑完并落库，事件仍在 runHub 里等重连
+          }
         }
-        if (made > 0) {
-          sse({ type: 'group_note', text: `已开启并行隔离：${made} 位成员各在独立检出中执行，结束后逐个汇合（绝不自动 push）` });
-        }
+      },
+      emitFrame: sse,
+    });
+    const runAgent = turn.runAgent;
+
+    sse({
+      type: 'group_init',
+      sessionId: session.id,
+      orchestration,
+      members,
+      userMessageId,
+    });
+
+    // P1：先让前端拿到 group_init，再等探测。
+    // 缓存热时不发 note，避免每轮都多一条噪声。
+    if (needsProbe) {
+      sse({ type: 'group_note', text: '正在检查成员状态，首次启动可能需要几秒…' });
+      await registry.ensureProbed(members);
+      // 探测期间用户可能已经点了停止/关掉面板；别再对着已关闭的 SSE 跑一整场。
+      if (ac.signal.aborted) {
+        console.log('[GroupChat] 探测期间客户端离开，跳过本轮');
+        return res.end();
       }
     }
 
-    // 成员完成标记：汇合时只处理真的跑完编排的成员（中止/失败的不汇合——
-    // 半途而废的改动也可能是有用的，但它没有走完编排，由用户自己在检出里看）
-    let orchestrationFinished = false;
+    // A244：群聊背景转录。取本轮提问之前的已完成发言（末尾悬空的 user 就是
+    // 本轮提问，装配器会跳过它），带 token 预算截断；读不到就不注入。
+    // 这解决「把刚才那个再改一下」里「刚才」无据可依的问题；
+    // CLI 会话续接依旧不做（取舍见 orchestrator.ts 头注释）。
+    let messageForOrchestration = message;
     try {
-      await runOrchestration(
-        { mode: orchestration, members, prompt: message },
-        {
-          runAgent,
-          note: text => sse({ type: 'group_note', text }),
-          displayName: id => registry.get(id)?.name || id,
-          skillScore: id => {
-            const agent = registry.get(id);
-            return agent ? scoreAgentSkills(agent.skills ?? [], message) : 0;
-          },
-          // 只把真正可用的 Agent 纳入编排：把任务派给一个必然失败的人，
-          // 只会浪费一轮调用并给用户一个空结果
-          isUsable: id => registry.get(id)?.status.availability === 'ready',
+      const transcript = assembleGroupTranscript(db.getMessagesBySession(session.id), displayNameOf);
+      if (transcript) {
+        messageForOrchestration = `${transcript}\n\n【本次请求】\n${message}`;
+        console.log(`[GroupChat] 注入群聊背景转录 ${transcript.length} 字`);
+      }
+    } catch (e: any) {
+      console.warn('[GroupChat] 群聊背景读取失败（不影响本轮）:', e?.message ?? e);
+    }
+
+    try {
+      // ── A225/A244：worktree 隔离的创建 ────────────────────────────
+      // 三态语义（见上文解构处注释）：
+      //   worktree === true   → 强制开（任何模式，只要绑定了 git 目录）；
+      //   worktree === false  → 强制关（用户明确不要隔离）；
+      //   undefined（前端没动过开关时不发这个字段）→ 自动：并行模式 +
+      //     git 仓库才开。并行 = 广播 / 带队 / @ 到多个成员；分派、接力、
+      //     辩论是串行的，不会同时写目录，不值得为它们建检出。
+      // 单成员的「群」没有并行互踩问题，同样跳过。
+      const isParallelMode =
+        orchestration === 'broadcast' ||
+        orchestration === 'leader' ||
+        (orchestration === 'mention' &&
+          extractMentioned(message, members, displayNameOf).length > 1);
+      const wantWorktree =
+        (worktree === true || (worktree === undefined && isParallelMode)) &&
+        members.length > 1 &&
+        typeof session.cwd === 'string' &&
+        !!session.cwd;
+      if (wantWorktree) {
+        // wantWorktree 已确认 session.cwd 是非空字符串；TS 的收尾进不了分支，这里收一次
+        const repoDir = session.cwd as string;
+        const isRepo = await isGitWorkTree(repoDir);
+        if (!isRepo) {
+          sse({
+            type: 'group_note',
+            text: isParallelMode
+              ? `并行执行但没有隔离可用（${repoDir} 不是 git 仓库）：成员将同时写同一目录，输出可能互相覆盖。` +
+                '建议先把目录提交进 git，或改用接力、分派这类串行模式'
+              : `已开启并行隔离，但工作目录不是 git 仓库（${repoDir}），本轮退回共享目录执行`,
+          });
+        } else {
+          wtBatch = await createWorktrees(repoDir, members, session.id);
+          for (const f of wtBatch.failures) {
+            sse({ type: 'group_note', text: `${displayNameOf(f.agentId)} 的隔离检出创建失败（${f.reason}），退回共享目录` });
+          }
+          if (wtBatch.hadLeftovers) {
+            sse({ type: 'group_note', text: `上次保留的隔离检出还在 ${wtBatch.root}（本轮用新检出，旧目录原样不动）` });
+          }
+          const made = wtBatch.slots.size;
+          if (made > 0) {
+            sse({ type: 'group_note', text: `已开启并行隔离：${made} 位成员各在独立检出中执行，结束后逐个汇合（绝不自动 push）` });
+          }
         }
-      );
-      orchestrationFinished = !ac.signal.aborted;
-    } finally {
-      // 汇合在 finally 里做：编排抛错时已产出改动的成员照样要收回来，
-      // 但**被中止**时不收（用户点了停止 = 别再动我的主区），只清检出。
-      if (wtBatch) {
-        if (orchestrationFinished) {
-          // 串行汇合：并发 merge 会互相踩主区的 index
-          const keep = new Set<string>();
-          for (const [agentId, slot] of wtBatch.slots) {
-            const outcome = await mergeWorktree(wtBatch, slot, registry.get(agentId)?.name || agentId);
-            switch (outcome.kind) {
-              case 'merged':
-                sse({
-                  type: 'group_note',
-                  text: `已汇合 ${registry.get(agentId)?.name || agentId} 的改动（${outcome.files} 个文件）`,
-                });
-                break;
-              case 'clean':
-                sse({ type: 'group_note', text: `${registry.get(agentId)?.name || agentId} 没有文件改动` });
-                break;
-              case 'conflict':
-                // 冲突现场保留：分支与检出都留着，用户自己去解
-                keep.add(agentId);
-                sse({
-                  type: 'group_note',
-                  text:
-                    `${registry.get(agentId)?.name || agentId} 的改动与主工作区冲突：${outcome.files.join('、')}。` +
-                    `已停止自动汇合，改动保留在分支 ${outcome.branch}（检出：${outcome.dir}），解完后自行合并或删除`,
-                });
-                break;
-              case 'failed':
-                sse({ type: 'group_note', text: `汇合 ${registry.get(agentId)?.name || agentId} 的改动失败：${outcome.reason}` });
-                break;
+      } else if (worktree === false && isParallelMode && members.length > 1 && session.cwd) {
+        // 用户明确关了隔离却要并行写目录：如实提醒一句（不是错误——
+        // 用户可能就是要对比式问答，多数成员并不会写文件）
+        sse({ type: 'group_note', text: '并行隔离已关闭：并行成员将在同一目录执行，写文件时可能互相覆盖' });
+      }
+
+      // 成员完成标记：汇合时只处理真的跑完编排的成员（中止/失败的不汇合——
+      // 半途而废的改动也可能是有用的，但它没有走完编排，由用户自己在检出里看）
+      let orchestrationFinished = false;
+      try {
+        await runOrchestration(
+          {
+            mode: orchestration,
+            members,
+            prompt: messageForOrchestration,
+            // A244：主控可指定；不合法（不在成员列表）时编排层自行回落第一个成员
+            controllerAgentId:
+              typeof controllerAgentId === 'string' && controllerAgentId.trim()
+                ? controllerAgentId.trim()
+                : undefined,
+          },
+          {
+            runAgent,
+            note: text => sse({ type: 'group_note', text }),
+            displayName: displayNameOf,
+            skillScore: id => {
+              const agent = registry.get(id);
+              return agent ? scoreAgentSkills(agent.skills ?? [], message) : 0;
+            },
+            // 只把真正可用的 Agent 纳入编排：把任务派给一个必然失败的人，
+            // 只会浪费一轮调用并给用户一个空结果
+            isUsable: id => registry.get(id)?.status.availability === 'ready',
+          }
+        );
+        orchestrationFinished = !ac.signal.aborted;
+      } finally {
+        // A244 清理规则（反转后）：只有 merged / clean 的槽位被清（在
+        // mergeWorktree 内部完成）；failed / conflict 进 keep——分支与检出
+        // 原样保留。中止 / 异常路径一个槽位都不删。
+        if (wtBatch) {
+          if (orchestrationFinished) {
+            // 串行汇合：并发 merge 会互相踩主区的 index
+            const keep = new Set<string>();
+            for (const [agentId, slot] of wtBatch.slots) {
+              const outcome = await mergeWorktree(wtBatch, slot, displayNameOf(agentId));
+              switch (outcome.kind) {
+                case 'merged':
+                  sse({
+                    type: 'group_note',
+                    text: `已汇合 ${displayNameOf(agentId)} 的改动（${outcome.files} 个文件）`,
+                  });
+                  break;
+                case 'clean':
+                  sse({ type: 'group_note', text: `${displayNameOf(agentId)} 没有文件改动` });
+                  break;
+                case 'conflict':
+                  // 冲突现场保留：分支与检出都留着，用户自己去解
+                  keep.add(agentId);
+                  sse({
+                    type: 'group_note',
+                    text:
+                      `${displayNameOf(agentId)} 的改动与主工作区冲突：${outcome.files.join('、')}。` +
+                      `已停止自动汇合，改动保留在分支 ${outcome.branch}（检出：${outcome.dir}），解完后自行合并或删除`,
+                  });
+                  break;
+                case 'failed':
+                  // A244：失败也保留。以前这里不进 keep，cleanupWorktrees 会把
+                  // 分支与检出连成果一起删掉（提交身份缺失 / 钩子拒绝 / 主区脏
+                  // 都会走到这里）。现在原样留下并告诉用户在哪。
+                  keep.add(agentId);
+                  sse({
+                    type: 'group_note',
+                    text: `汇合 ${displayNameOf(agentId)} 的改动失败：${outcome.reason}。` +
+                      `改动已原样保留——分支 ${slot.branch}，检出 ${slot.dir}；可自行取回或删除`,
+                  });
+                  break;
+              }
+            }
+            await cleanupWorktrees(wtBatch, keep);
+          } else {
+            // A244：被中止 / 编排抛异常——以前这里把所有检出连成果一起清掉。
+            // 现在一个都不删：现场原样保留，note 告诉用户去哪找。
+            if (wtBatch.slots.size > 0) {
+              sse({
+                type: 'group_note',
+                text: `${ac.signal.aborted ? '本轮已中止' : '编排异常中断'}：${wtBatch.slots.size} 个隔离检出与分支未合并、未删除，` +
+                  `原样保留在 ${wtBatch.root}，可自行取回或清理`,
+              });
             }
           }
-          await cleanupWorktrees(wtBatch, keep);
-        } else {
-          // 被中止：全部清掉，不碰主区
-          await cleanupWorktrees(wtBatch);
         }
       }
+    } catch (err: any) {
+      console.error(`[GroupChat] 编排失败:`, err);
+      sse({ type: 'error', message: err?.message || '编排失败' });
     }
-  } catch (err: any) {
-    console.error(`[GroupChat] 编排失败:`, err);
-    sse({ type: 'error', message: err?.message || '编排失败' });
-  }
 
-  sse({ type: 'done' });
-  console.log(`[GroupChat] 请求完成 ✓ (${orchestration})`);
-  res.end();
+    sse({ type: 'done' });
+    console.log(`[GroupChat] 请求完成 ✓ (${orchestration})`);
+    res.end();
+  } finally {
+    // A244：互斥锁只在真正结束时释放（探测期间离开、500、编排异常全都会经过）
+    groupChatBusy.delete(session.id);
+  }
 });
 
 /**
@@ -2302,9 +2407,10 @@ app.post("/api/workflow/run", async (req, res) => {
     title,
   } = req.body ?? {};
 
-  const members: string[] = Array.isArray(agentIds)
-    ? agentIds.filter((v: unknown): v is string => typeof v === 'string')
-    : [];
+  // A244：与群聊同口径——成员去重（重复 id 会让同一 Agent 并发跑两次）
+  const members: string[] = [...new Set(
+    (Array.isArray(agentIds) ? agentIds : []).filter((v: unknown): v is string => typeof v === 'string')
+  )];
 
   if (!sessionId) {
     return res.status(400).json({ error: "工作流必须挂在既有群会话上（缺 sessionId）" });
@@ -2351,7 +2457,9 @@ app.post("/api/workflow/run", async (req, res) => {
   const turn = createTurnRunner({
     session,
     model,
-    cwd,
+    // A244：与群聊同口径——请求体 > 会话里存的目录；工作流不启用群聊的
+    // 并发/空闲闸门（保持原行为，串行原语为主）
+    cwd: cwd || session.cwd || undefined,
     reasoningEffort: reasoningEffort || session.reasoning_effort || undefined,
     // A123：同群聊
     permissionMode: permissionMode || session.permission_mode || undefined,

@@ -746,7 +746,17 @@ export function mapClaudeSdkMessage(
     const payload = m.type === 'assistant' && !m.parent_tool_use_id ? dedupeAssistant(m, stream) : m;
     const events = mapClaudeCodeLine(payload);
     if (Array.isArray(events)) {
-      for (const ev of events) queue.push(ev);
+      for (const ev of events) {
+        // 子 Agent / 子任务（2026-11-22）：SDK 消息带 parent_tool_use_id 时，
+        // 本消息里的 tool_use 都属于那个父 Task 工具。事件后处理补上
+        // parentToolId，投影器落块，前端据此归到子代理分组。
+        // 其他适配器不产这个字段，前端对缺省值平铺（老数据同款）。
+        queue.push(
+          ev.type === 'tool' && m.parent_tool_use_id
+            ? { ...ev, parentToolId: m.parent_tool_use_id }
+            : ev
+        );
+      }
     } else if (events) {
       queue.push(events);
     }

@@ -365,6 +365,12 @@ export class RunProjector {
             ev.input && typeof ev.input === 'object'
               ? (ev.input as Record<string, unknown>)
               : undefined,
+          // 子 Agent / 子任务（2026-11-22）：Claude SDK 的 parent_tool_use_id。
+          // 其他适配器不报，缺省 undefined → 前端平铺（老数据同款）。
+          parentToolId:
+            'parentToolId' in ev && typeof ev.parentToolId === 'string' && ev.parentToolId
+              ? ev.parentToolId
+              : undefined,
           status: 'running',
           startedAt: this.now(),
           // A100：把「这个工具事件从哪来」烙在块上。投影器是唯一创建

@@ -36,3 +36,14 @@ export const FIRST_TOKEN_TIMEOUT_FLOOR_MS = 15_000;
 
 /** E5 断线宽限窗：客户端断开后留 20s 供 /api/runs/:id/stream?after=N 接回，超窗才 abort。 */
 export const REATTACH_GRACE_MS = 20_000;
+
+/**
+ * A244 群聊闸门：单棒空闲超时。一棒超过这么久**没有任何事件**就中止它——
+ * 没有它，broadcast 里一个挂死的成员会让整轮编排永远不结束（Promise.all 等齐），
+ * 群互斥锁也会一直占着。取 15 分钟与全局静默上限（abece2e 放宽值）对齐：
+ * CLI 长构建期间也常无事件，卡到这个点才认为是真挂死。
+ * env `OPC_GROUP_IDLE_TIMEOUT_MS` 可覆盖——**读 env 的动作在消费方**
+ * （routes/chat.ts）：本文件被客户端watchdog一起打包，浏览器里没有 process，
+ * 在这里读 env 等于把前端打死（实测：dev 下 ReferenceError 全页白屏）。
+ */
+export const GROUP_TURN_IDLE_TIMEOUT_MS = 15 * 60_000;

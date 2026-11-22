@@ -37,7 +37,8 @@ function makeDeps(overrides: Partial<w.WorkflowDeps> = {}) {
     members: ['a', 'b', 'c'],
     runAgent: async (agentId, prompt, phase) => {
       calls.push({ agentId, prompt, phase });
-      return { text: `${agentId}的答复`, error: undefined };
+      // A244：AgentTurnResult 增加了必填 status（编排层靠它做失败传播）
+      return { text: `${agentId}的答复`, error: undefined, status: 'ok' as const };
     },
     note: () => {},
     ...overrides,

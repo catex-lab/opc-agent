@@ -65,9 +65,11 @@ export interface SessionFlags {
   /** 群消息接收方式；缺省等同 'normal' */
   notifyMode?: NotifyMode;
   /**
-   * A225：群聊并行隔离（git worktree）。true = 每轮群聊各成员独立检出、
-   * 结束后逐个汇合。与同文件其他标记同理：「我这台机器上这个群怎么跑」的
-   * 偏好，不落 sessions 表；服务端每轮请求显式携带。
+   * A225/A244：群聊并行隔离（git worktree），三态：
+   *   true = 明确开；false = 明确关（占位，不再被 patch 清掉）；
+   *   undefined（字段不存在）= 用户没动过 → 请求里不发这个字段，
+   *   服务端走自动策略（并行模式 + git 仓库 → 开）。
+   * 与同文件其他标记同理：「我这台机器上这个群怎么跑」的偏好，不落 sessions 表。
    */
   groupWorktree?: boolean;
 }
@@ -113,8 +115,8 @@ function patch(sessionId: string, next: SessionFlags): void {
   if (!flags.avatarImage) delete flags.avatarImage;
   // 'normal' 是该字段的缺省值，不必占位
   if (!flags.notifyMode || flags.notifyMode === 'normal') delete flags.notifyMode;
-  // A225：false 是缺省值，不占位
-  if (!flags.groupWorktree) delete flags.groupWorktree;
+  // A244：groupWorktree 的 false 不再清掉——false 现在是「明确关闭」，
+  // 与「没动过」（undefined = 服务端自动策略）是两种语义，必须能存下 false。
 
   if (Object.keys(flags).length === 0) delete merged[sessionId];
   else merged[sessionId] = flags;
@@ -230,22 +232,29 @@ export function useGroupAvatarImage(sessionId: string | null | undefined): strin
   );
 }
 
-/** A225：读群并行隔离开关（非 Hook，供发请求的事件回调里读） */
-export function groupWorktree(sessionId: string): boolean {
-  return snapshot[sessionId]?.groupWorktree === true;
+/**
+ * A244：读群并行隔离开关的**三态**（非 Hook，供发请求的事件回调里读）。
+ *
+ *   true      = 用户明确要开；
+ *   false     = 用户明确要关（会原样随请求下发，服务端不启用隔离）；
+ *   undefined = 用户没动过开关 → 随请求**不发这个字段**（JSON.stringify 丢弃），
+ *               服务端走自动策略（并行模式 + git 仓库 → 开）。
+ */
+export function groupWorktreeState(sessionId: string | null | undefined): boolean | undefined {
+  return sessionId ? snapshot[sessionId]?.groupWorktree : undefined;
 }
 
-/** A225：设置群并行隔离开关。false = 关（缺省） */
+/** A225：设置群并行隔离开关（A244 起为三态存储：true 开 / false 明确关） */
 export function setGroupWorktree(sessionId: string, on: boolean): void {
   patch(sessionId, { groupWorktree: on });
 }
 
-/** A225：订群并行隔离开关（开关按钮用） */
-export function useGroupWorktree(sessionId: string | null | undefined): boolean {
+/** A225：订群并行隔离开关（开关按钮用）。A244 起返回三态 */
+export function useGroupWorktree(sessionId: string | null | undefined): boolean | undefined {
   return useSyncExternalStore(
     subscribeSessionFlags,
-    () => (sessionId ? snapshot[sessionId]?.groupWorktree === true : false),
-    () => false
+    () => (sessionId ? snapshot[sessionId]?.groupWorktree : undefined),
+    () => undefined
   );
 }
 
