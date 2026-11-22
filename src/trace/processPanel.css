@@ -1,0 +1,241 @@
+/**
+ * 单聊过程流 · 右侧常驻「过程」面板样式（2026-11-22，参考页 side 面板）。
+ *
+ * 宽 236px（与群成员/群设置面板同档），颜色只用 --td-* / --tc-* 变量，
+ * 亮暗两套自动跟随；prefers-reduced-motion 下停掉全部动效。
+ */
+
+.pf-panel {
+  flex-shrink: 0;
+  width: 236px;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  border-left: 1px solid var(--td-component-stroke);
+  padding: 12px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--td-text-color-secondary);
+  overflow: hidden;
+}
+
+.pf-panel-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+}
+
+.pf-panel-pill {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--td-text-color-placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 阶段图例 */
+.pf-panel-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--td-component-stroke);
+}
+
+.pf-panel-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pf-panel-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.pf-panel-legend i.is-understand,
+.pf-panel-legend i.is-0 {
+  background-color: var(--td-text-color-placeholder);
+}
+.pf-panel-legend i.is-change,
+.pf-panel-legend i.is-1 {
+  background-color: var(--td-brand-color);
+}
+.pf-panel-legend i.is-verify,
+.pf-panel-legend i.is-fix,
+.pf-panel-legend i.is-2,
+.pf-panel-legend i.is-3 {
+  background-color: var(--td-success-color);
+}
+.pf-panel-legend i.is-failed {
+  background-color: var(--td-error-color);
+}
+
+/* 横向时间轴 */
+.pf-panel-axis {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.pf-panel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  min-height: 26px;
+}
+
+.pf-panel-row:hover,
+.pf-panel-row.is-hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.pf-panel-row.is-sel {
+  background-color: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
+}
+
+.pf-panel-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--td-text-color-secondary);
+}
+
+.pf-panel-verb {
+  flex-shrink: 0;
+}
+
+.pf-panel-ico {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--td-text-color-placeholder);
+}
+
+.pf-panel-row.is-running .pf-panel-ico {
+  color: var(--td-brand-color);
+}
+
+.pf-panel-row.is-error .pf-panel-ico {
+  color: var(--td-error-color);
+}
+
+.pf-panel-target {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, Consolas, 'Courier New', monospace);
+  color: var(--td-text-color-placeholder);
+}
+
+/* 条形轨道：占满一行 */
+.pf-panel-track {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background-color: var(--tc-hover-chrome);
+}
+
+.pf-panel-track i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+}
+
+.pf-panel-track i.is-tool {
+  background-color: var(--td-brand-color);
+  opacity: 0.75;
+}
+
+.pf-panel-track i.is-thinking {
+  background-color: var(--td-text-color-placeholder);
+  opacity: 0.6;
+}
+
+.pf-panel-track i.is-running {
+  animation: pf-panel-pulse 1.4s ease-in-out infinite;
+  opacity: 1;
+}
+
+.pf-panel-track i.is-error {
+  background-color: var(--td-error-color);
+}
+
+/* 播放头：当前时刻一条竖线（运行中 = now，结束 = 窗尾） */
+.pf-panel-row .pf-panel-track .pf-panel-playhead {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background-color: var(--td-brand-color);
+  opacity: 0.8;
+}
+
+/* 详情区 */
+.pf-panel-detail {
+  min-height: 44px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background-color: var(--td-bg-color-secondarycontainer);
+  font-family: var(--font-mono, Consolas, 'Courier New', monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--td-text-color-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+}
+
+/* 底部时间滑块 */
+.pf-panel-slider {
+  padding-top: 4px;
+}
+
+.pf-panel-slider input[type='range'] {
+  width: 100%;
+  accent-color: var(--td-brand-color);
+}
+
+@keyframes pf-panel-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-panel-track i.is-running {
+    animation: none;
+  }
+}
+
+/* 窄屏兜底（2026-11-22）：窗口 < 900px 时不占右栏，过程信息走消息内吸顶 +
+   底部胶囊（与参考页一致：窄屏退回吸顶条和底部胶囊）。 */
+@media (max-width: 899px) {
+  .pf-panel {
+    display: none;
+  }
+}

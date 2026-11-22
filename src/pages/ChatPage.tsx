@@ -24,6 +24,7 @@ import { ChatInput } from '../components/ChatInput';
 import { GroupChatHeader } from '../components/GroupChatHeader';
 import { GroupMemberPanel } from '../components/GroupMemberPanel';
 import { GroupSettingsPanel } from '../components/GroupSettingsPanel';
+import { ProcessPanel } from '../components/ProcessPanel';
 import { AgentDetailModal } from '../components/AgentDetailModal';
 import { PermissionGapNotice } from '../components/PermissionGapNotice';
 import { WorkflowDialog } from '../components/WorkflowDialog';
@@ -271,6 +272,82 @@ export function ChatPage({
     const running = tools.filter(b => b?.status === 'running' || b?.status === 'pending').length;
     return { running, done: tools.length - running, total: tools.length };
   }, [currentSession]);
+
+  /**
+   * 2026-11-22：右侧「过程」面板的数据源 —— 当前会话**最后一条助手消息**的
+   * blocks（与 ProcessFlow 同一份数据，历史消息刷新还原也能渲染）。
+   * 面板只在单聊显示（群聊走群成员/群设置面板，同槽位）。
+   */
+  const panelBlocks = useMemo(() => {
+    if (!currentSession || currentSession.kind === 'group') return [];
+    const msgs = currentSession.messages ?? [];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i];
+      if (m?.role === 'assistant' && m.blocks && m.blocks.length > 0) return m.blocks;
+    }
+    return [];
+  }, [currentSession]);
+  /** 面板是否显示（P 键切换，默认显示） */
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelSelected, setPanelSelected] = useState<string | null>(null);
+  const panelStreaming = useMemo(() => {
+    if (!currentSession) return false;
+    const msgs = currentSession.messages ?? [];
+    return !!msgs[msgs.length - 1]?.isStreaming;
+  }, [currentSession]);
+  /**
+   * 2026-11-22 窄屏兜底：运行中用户翻到别处时，底部胶囊显示「执行中 · 步骤」。
+   * 取当前回合最后一个 running 的工具（命令优先，其次工具名）。
+   */
+  const runningStepLabel = useMemo(() => {
+    for (let i = panelBlocks.length - 1; i >= 0; i -= 1) {
+      const b = panelBlocks[i];
+      if (b?.type !== 'tool') continue;
+      if (b.status !== 'running' && b.status !== 'pending') continue;
+      const input = (b.input ?? {}) as Record<string, unknown>;
+      const cmd = typeof input.command === 'string' ? input.command.split('\n')[0] : '';
+      return cmd || b.name || '';
+    }
+    return '';
+  }, [panelBlocks]);
+  /**
+   * 快捷键（P 面板 / J K 上一步下一步 / 空格 跳当前步骤）。
+   * 参考页同款；输入框/文本框聚焦时不抢键（J/K/P 会让打字中断）。
+   * 步骤列表直接从 DOM 取（当前回合 ProcessFlow 渲染出的 data-flow-row）。
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const tag = (e.target as HTMLElement | null)?.tagName ?? '';
+      if (/INPUT|TEXTAREA/.test(tag)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'p') {
+        setPanelOpen(v => !v);
+        return;
+      }
+      if (!panelOpen) return;
+      const ids = [...document.querySelectorAll('[data-flow-row]')].map(el =>
+        el.getAttribute('data-flow-row') ?? ''
+      ).filter(Boolean);
+      if (ids.length === 0) return;
+      let i = ids.indexOf(panelSelected ?? '');
+      if (k === 'j') {
+        i = i < 0 ? 0 : Math.min(ids.length - 1, i + 1);
+        setPanelSelected(ids[i] ?? null);
+      } else if (k === 'k') {
+        i = i < 0 ? ids.length - 1 : Math.max(0, i - 1);
+        setPanelSelected(ids[i] ?? null);
+      } else if (e.key === ' ') {
+        // 空格：跳到当前正在运行的步骤（参考页「跳到当前」）
+        const run = ids.find(id =>
+          document.querySelector(`[data-flow-row="${id}"][data-flow-row-state="running"]`)
+        );
+        if (run) setPanelSelected(run);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [panelOpen, panelSelected]);
   /**
    * 2026-11-21：输入区改为**玻璃浮层**（内容从它底下滚过）后，滚动容器的
    * 底部内边距与「回到最新」按钮的位置都要跟随输入区的实测高度 ——
@@ -947,7 +1024,15 @@ export function ChatPage({
                 color: 'var(--td-text-color-secondary)',
               }}
             >
-              {t('chat.jumpToLatest')}
+              {/* 2026-11-22 窄屏兜底：运行中显示「执行中 · 步骤」，点击回到底部；
+                  非运行中仍是「回到最新」原语义。 */}
+              {panelStreaming ? (
+                <span data-running-pill>
+                  {t('chat.flow.runningPill', { step: runningStepLabel || t('chat.flow.panelRunning') })}
+                </span>
+              ) : (
+                t('chat.jumpToLatest')
+              )}
             </button>
           )}
           </div>
@@ -1048,7 +1133,9 @@ export function ChatPage({
         {/* 右栏：群成员栏 / 群设置面板，同一块位置只放一个。
             两者都是布局内的 `shrink-0` 右栏，宽 236px —— 打开时消息区与
             输入框一起收窄，这就是用户要的「输入框响应式与成员栏一致」。
-            2026-10-20：群设置面板不再浮在会话之上（那样会盖住输入框）。 */}
+            2026-10-20：群设置面板不再浮在会话之上（那样会盖住输入框）。
+            2026-11-22：单聊时同一槽位放「过程」面板（参考页 side 面板），
+            群聊仍是成员/设置面板。 */}
         {isGroup && !settingsOpen && (
           <GroupMemberPanel
             members={groupMembers}
@@ -1070,6 +1157,23 @@ export function ChatPage({
             onTogglePin={onTogglePin}
             onClearMessages={onClearMessages}
             onExitGroup={onDelete}
+          />
+        )}
+
+        {/* 单聊：右侧「过程」面板（P 键切换显示；默认开） */}
+        {!isGroup && currentSession && panelOpen && (
+          <ProcessPanel
+            blocks={panelBlocks}
+            isStreaming={panelStreaming}
+            open={panelOpen}
+            selectedId={panelSelected}
+            onSelectStep={setPanelSelected}
+            onSeek={id => {
+              setPanelSelected(id);
+              // 滚动聊天区到对应步骤行（参考页：点击时间轴 → 聊天滚动到该步）
+              const el = document.querySelector(`[data-flow-row="${id}"]`);
+              if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }}
           />
         )}
       </div>
