@@ -279,10 +279,9 @@ console.log('\n[2] 完成态默认收成一条摘要，点摘要线展开步骤�
   ok(summaryText.includes('6 步'), '步数 = 工具 5 + 思考 1（参考页口径）', summaryText);
   ok(!summaryText.includes('已工作'), '旧「已工作」收纳线文案退役', summaryText);
 
-  const flowPill = page.locator('[data-flow-pill]').first();
-  ok((await flowPill.getAttribute('data-flow-pill')) === 'unreturned', '状态胶囊落在「未回传」档（不是已完成）');
-  const pillText = ((await flowPill.innerText()) ?? '').trim();
-  ok(pillText.includes('结果未回传'), '胶囊文案「结果未回传」', pillText);
+  const flow = page.locator('[data-flow]').first();
+  ok((await flow.getAttribute('data-flow-pill')) === 'unreturned', '整轮状态数据落在「未回传」档（不是已完成）');
+  ok((await page.locator('.pf-pill').count()) === 0, '状态胶囊已删，未回传态不再画可见胶囊');
 
   const totalDiff = await page.locator('[data-flow-diff-total]').first().getAttribute('data-flow-diff-total');
   ok(totalDiff === '+139 -16', '摘要线上的汇总 diff 是各步骤之和（+109+30）', String(totalDiff));
@@ -520,8 +519,8 @@ console.log('\n[8b] 结果未回传与已隐去的思考');
   ok(gt3Row.state === 'interrupted', '未回传步挂 is-interrupted（不冒充运行中/完成）', JSON.stringify(gt3Row));
   ok(gt3Row.meta === '结果未回传', '未回传步的行内状态词', gt3Row.meta);
 
-  const flowPill = page.locator('[data-flow-pill="unreturned"]').first();
-  ok((await flowPill.count()) > 0, '整轮胶囊落在「结果未回传」档');
+  const flowState = page.locator('[data-flow][data-flow-pill="unreturned"]').first();
+  ok((await flowState.count()) > 0, '整轮状态数据落在「结果未回传」档');
 
   // A125：厂商隐去正文的思考 → 「已隐去」，不可展开（没有点了没反应的空折叠条）
   const red = page.locator('[data-flow-row="g3c"]').first();

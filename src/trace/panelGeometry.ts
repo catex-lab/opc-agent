@@ -35,31 +35,31 @@ export function clampPanelPos(pos: Pick<PanelRect, 'x' | 'y' | 'width' | 'height
 }
 
 /**
- * 松手吸附：距右缘 24px 内吸右栏，距上禁区 24px 内吸顶，否则保持浮动。
+ * 松手吸附：距右缘 40px 内吸右栏，距上禁区 40px 内吸顶，否则保持浮动。
  * 只有显式拖到边缘才吸附，避免从中间松手时面板乱跳。
  */
 export function snapPanelMode(pos: PanelRect, bounds: DragBounds): PanelMode {
   const m = bounds.margin ?? 8;
   const rightGap = bounds.viewportWidth - (pos.x + pos.width);
-  if (rightGap <= m + 24) return 'right';
-  if (pos.y - bounds.topGuard <= 24) return 'top';
+  if (rightGap <= m + 40) return 'right';
+  if (pos.y - bounds.topGuard <= 40) return 'top';
   return 'floating';
 }
 
 /**
  * 最小化胶囊松手落点 → 目标形态。
  *
- * 胶囊本身只有百来像素宽，判定「贴右」必须按**展开后**的面板宽度算，
- * 否则胶囊拖到屏幕最右时也永远差一截，切不回右吸附。
+ * 必须按**胶囊自己的宽度**判「碰到右缘」：上一版用展开后 260px 算，
+ * 胶囊离右缘还有 160px 就吸附，用户明确判为错。真碰到右缘才切右吸附。
  */
 export function snapMinimizedDrop(
   pos: Pick<PanelRect, 'x' | 'y'>,
   bounds: DragBounds,
-  panelSize: Pick<PanelRect, 'width' | 'height'>
+  pillSize: Pick<PanelRect, 'width' | 'height'>
 ): PanelMode {
   const m = bounds.margin ?? 8;
-  const rightGap = bounds.viewportWidth - (pos.x + panelSize.width);
-  if (rightGap <= m + 24) return 'right';
+  const rightGap = bounds.viewportWidth - (pos.x + pillSize.width);
+  if (rightGap <= m + 16) return 'right';
   if (pos.y - bounds.topGuard <= 24) return 'top';
   return 'floating';
 }

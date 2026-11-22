@@ -137,56 +137,8 @@
   background-color: var(--td-error-color);
 }
 
-/* ── 状态胶囊（参考页 pill，整轮唯一） ─────────────────────────── */
-
-.pf-pill-row {
-  display: flex;
-  align-items: center;
-  min-height: 26px;
-}
-
-.pf-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 100%;
-  font-size: 12px;
-  color: var(--td-text-color-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-.pf-pill > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pf-pill-dot {
-  flex-shrink: 0;
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-}
-
-.pf-pill-dot.is-running {
-  background-color: var(--td-brand-color);
-  animation: pf-pulse 1.4s ease-in-out infinite;
-}
-
-.pf-pill-dot.is-ok {
-  background-color: var(--td-success-color);
-}
-
-.pf-pill-dot.is-error {
-  background-color: var(--td-error-color);
-}
-
-/* 结果未回传：空心圈——不填状态色就是没有结论 */
-.pf-pill-dot.is-interrupted {
-  background-color: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--td-text-color-placeholder);
-}
+/* 状态胶囊（用户定版删除）：状态仍写在 [data-flow-pill] 上给闸门/无障碍读，
+   但不再有可见控件，也不再占一条 26px 行高。 */
 
 /* ── 摘要线（参考页 tc-steps-bar = 步骤区折叠开关） ─────────────── */
 
@@ -487,7 +439,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .pf-bar i.is-live,
-  .pf-pill-dot.is-running,
   .pf-step.is-running .pf-dot,
   .pf-caret {
     animation: none;
@@ -498,13 +449,10 @@
   }
 }
 
-/* 窄屏兜底（2026-11-22）：运行中，阶段条 + 胶囊在这条消息内吸顶。
-   sticky 相对最近的滚动祖先（聊天滚动容器）生效——只在这条消息还留在
-   视口内时吸住，消息滚出屏幕自然消失；已结束的历史消息不吸顶。
-   吸顶元素是滚动容器的直接后代（消息行内），不引入嵌套滚动。 */
+/* 窄屏兜底（2026-11-22）：运行中阶段条在这条消息内吸顶。
+   状态胶囊删除后不再有第三层 sticky，时钟 + 阶段条两层足够。 */
 .pf[data-flow-state='running'] > .pf-hdr,
-.pf[data-flow-state='running'] > .pf-bar-row,
-.pf[data-flow-state='running'] > .pf-pill-row {
+.pf[data-flow-state='running'] > .pf-bar-row {
   position: sticky;
   z-index: 2;
   background-color: var(--td-bg-color-container, var(--td-bg-color-page));
@@ -516,8 +464,4 @@
 
 .pf[data-flow-state='running'] > .pf-bar-row {
   top: calc(env(safe-area-inset-top, 0px) + 18px);
-}
-
-.pf[data-flow-state='running'] > .pf-pill-row {
-  top: calc(env(safe-area-inset-top, 0px) + 28px);
 }

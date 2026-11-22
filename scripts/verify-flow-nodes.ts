@@ -191,18 +191,22 @@ const T0 = 1_700_000_000_000;
   const clampedBottom = clampPanelPos({ x: 9999, y: 9999, ...size }, bounds);
   ok(clampedBottom.x === 1172 && clampedBottom.y === 476, '拖到底部被钳制在输入浮层之上', JSON.stringify(clampedBottom));
   eq(snapPanelMode({ x: 1172, y: 400, ...size }, bounds), 'right', '松手贴近右缘 → 吸附右侧');
-  eq(snapPanelMode({ x: 600, y: 100, ...size }, bounds), 'top', '松手贴近上禁区 → 吸顶');
+  eq(snapPanelMode({ x: 1135, y: 300, ...size }, bounds), 'right', '右缘 40px 内仍吸右');
+  eq(snapPanelMode({ x: 1120, y: 300, ...size }, bounds), 'floating', '右缘超过 40px → 不再误吸右');
+  eq(snapPanelMode({ x: 600, y: 124, ...size }, bounds), 'top', '上禁区 40px 内吸顶');
+  eq(snapPanelMode({ x: 600, y: 130, ...size }, bounds), 'floating', '上禁区超过 40px → 保持浮动');
   eq(snapPanelMode({ x: 600, y: 300, ...size }, bounds), 'floating', '松手在中间 → 保持浮动');
   eq(autoMinimizeMode(900, 'right'), 'minimized', '窄屏未手动设置 → 自动最小化');
   eq(autoMinimizeMode(900, 'top'), 'top', '用户手动吸顶 → 窄屏不强制改');
   eq(autoMinimizeMode(1440, 'right'), 'right', '宽屏保持右侧停靠');
 
-  // 最小化胶囊：判定贴右要按展开后的面板宽度算，不能按 100px 胶囊算
-  eq(snapMinimizedDrop({ x: 1170, y: 300 }, bounds, size), 'right', '胶囊拖到右缘 → 切右吸附');
-  eq(snapMinimizedDrop({ x: 600, y: 92 }, bounds, size), 'top', '胶囊拖到上禁区 → 切吸顶');
-  eq(snapMinimizedDrop({ x: 600, y: 300 }, bounds, size), 'floating', '胶囊拖到中间 → 切浮动');
-  eq(snapMinimizedDrop({ x: 1000, y: 300 }, bounds, size), 'floating',
-    '胶囊右缘距展开面板仍超过阈值 → 不误吸右');
+  // 最小化胶囊：贴右必须按胶囊自己的宽度，不能按展开后 260px 算
+  const pill = { width: 100, height: 30 };
+  eq(snapMinimizedDrop({ x: 1320, y: 300 }, bounds, pill), 'right', '胶囊真碰到右缘 → 切右吸附');
+  eq(snapMinimizedDrop({ x: 600, y: 92 }, bounds, pill), 'top', '胶囊拖到上禁区 → 切吸顶');
+  eq(snapMinimizedDrop({ x: 600, y: 300 }, bounds, pill), 'floating', '胶囊拖到中间 → 切浮动');
+  eq(snapMinimizedDrop({ x: 1170, y: 300 }, bounds, pill), 'floating',
+    '胶囊离右缘还远（旧口径会误吸右）→ 保持浮动');
 }
 
 console.log(`过程流容器模型断言：${checks.total - failures.length}/${checks.total} 通过`);

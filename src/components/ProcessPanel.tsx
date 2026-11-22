@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Minimize2, PanelRight, PanelTop, Square } from 'lucide-react';
 import type { Block } from '../../shared/blocks';
 import {
@@ -114,8 +115,6 @@ export interface ProcessPanelProps {
   /** 当前选中的步骤 id（点击聊天里的步骤 → 面板高亮对应行） */
   selectedId?: string | null;
   onSelectStep?: (id: string) => void;
-  /** 回放定位：滑块/快捷键把某个时间点映射到步骤，滚动聊天区 */
-  onSeek?: (id: string) => void;
   open: boolean;
   /** 停靠形态；缺省 right，保持历史调用方与闸门不变 */
   mode?: PanelMode;
@@ -142,7 +141,6 @@ export function ProcessPanel({
   isStreaming = false,
   selectedId,
   onSelectStep,
-  onSeek,
   open,
   mode = 'right',
   pos,
@@ -156,9 +154,12 @@ export function ProcessPanel({
   const { t } = useTranslation();
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [dragSize, setDragSize] = useState<{ width: number; height: number } | null>(null);
+  const [dragHint, setDragHint] = useState<PanelMode | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
+  const mainRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const pendingRef = useRef<{ x: number; y: number } | null>(null);
@@ -170,9 +171,12 @@ export function ProcessPanel({
     width: number;
     height: number;
     moved: boolean;
+    switched: boolean;
     latest: { x: number; y: number };
     kind: 'panel' | 'pill';
     apply: (p: { x: number; y: number }) => void;
+    fromMain: boolean;
+    originalMode: PanelMode;
   } | null>(null);
 
   const { rows, win } = useMemo(() => axisRows(blocks), [blocks]);
@@ -191,35 +195,12 @@ export function ProcessPanel({
   const span = win ? Math.max(win[1] - win[0], 1) : 0;
   const pct = (ms?: number) => (win && typeof ms === 'number' ? Math.min(Math.max((ms - win[0]) / span, 0), 1) * 100 : null);
 
-  // 回放滑块：0..1000 → 时间点 → 选中「该时刻正在运行/覆盖到它的行」
-  const seekTo = (ratio: number) => {
-    if (!win || !onSeek) return;
-    const t = win[0] + (ratio / 1000) * span;
-    // 找覆盖该时刻的行；没有就找该时刻之前最近结束的行
-    let hit: AxisRow | null = null;
-    for (const r of rows) {
-      const s = r.start;
-      const e = r.end;
-      if (s !== undefined && s <= t && (e === undefined || e >= t)) {
-        hit = r;
-        break;
-      }
-    }
-    if (!hit) {
-      for (const r of rows) {
-        if (r.start !== undefined && r.start <= t && (hit === null || (r.end ?? Infinity) > (hit.end ?? -Infinity))) {
-          hit = r;
-        }
-      }
-    }
-    if (hit) onSeek(hit.id);
-  };
-
   // 形态菜单：点外面 / Esc 关闭。必须挂在 return 之前，否则 minimized 早退会漏。
   useEffect(() => {
     if (!menuOpen) return;
     const onDown = (e: PointerEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+      const target = e.target as Node;
+      if (!menuRef.current?.contains(target) && !mainRef.current?.contains(target)) setMenuOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setMenuOpen(false);
@@ -264,40 +245,48 @@ export function ProcessPanel({
     if (next) apply(next);
   };
 
+  const openMenuAtMain = () => {
+    const r = mainRef.current?.getBoundingClientRect();
+    if (!r) return;
+    setMenuPos({
+      x: Math.max(8, Math.min(r.left, bounds.viewportWidth - 124)),
+      y: r.bottom + 4,
+    });
+    setMenuOpen(true);
+  };
+
   const startPanelDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest('[data-panel-mode-menu]')) return;
+    // 菜单项在 portal 里，不会命中这里；主图标允许按下，靠移动阈值区分「点开菜单」和「拖动」
+    if ((e.target as HTMLElement).closest('[data-panel-mode-btn]')) return;
     const el = panelRef.current;
     if (!el) return;
-    e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     const rect = el.getBoundingClientRect();
     const origin = { x: rect.left, y: rect.top };
     setMenuOpen(false);
     setDragging(true);
-    // 从停靠态拖走时先固定尺寸，避免「流里 768px → 浮层 260px」跳一下
-    setDragSize({ width: rect.width, height: rect.height });
+    // 从停靠态拖走时先量尺寸；真正切 floating 放到首次移动之后，
+    // 这样组件不会在 pointerdown 这一帧换 DOM 位置（吸顶此前就是这么断掉捕获的）。
     dragRef.current = {
       sx: e.clientX, sy: e.clientY, ox: origin.x, oy: origin.y,
-      width: rect.width, height: rect.height, moved: false, latest: origin,
-      kind: 'panel', apply: p => onPosChange?.(p),
+      width: rect.width, height: rect.height, moved: false, switched: false,
+      latest: origin, kind: 'panel', apply: p => onPosChange?.(p),
+      fromMain: !!(e.target as HTMLElement).closest('[data-panel-mode-main]'),
+      originalMode: mode,
     };
-    if (mode !== 'floating') {
-      onPosChange?.(origin);
-      onModeChange?.('floating');
-    }
   };
 
   const startPillDrag = (e: ReactPointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0) return;
-    e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     const rect = e.currentTarget.getBoundingClientRect();
     const origin = { x: rect.left, y: rect.top };
     dragRef.current = {
       sx: e.clientX, sy: e.clientY, ox: origin.x, oy: origin.y,
-      width: rect.width, height: rect.height, moved: false, latest: origin,
-      kind: 'pill', apply: p => onMinPosChange?.(p),
+      width: rect.width, height: rect.height, moved: false, switched: false,
+      latest: origin, kind: 'pill', apply: p => onMinPosChange?.(p),
+      fromMain: false, originalMode: 'minimized',
     };
   };
 
@@ -306,12 +295,28 @@ export function ProcessPanel({
     if (!d) return;
     const dx = e.clientX - d.sx;
     const dy = e.clientY - d.sy;
-    if (Math.abs(dx) + Math.abs(dy) > 4) d.moved = true;
+    if (Math.abs(dx) + Math.abs(dy) > 4) {
+      d.moved = true;
+      if (d.kind === 'panel' && !d.switched && d.originalMode !== 'floating') {
+        d.switched = true;
+        // 停靠态高度可达数百像素，若照搬进浮层会被底部禁区钳在顶部，
+        // 松手永远判成吸顶。切浮层时改用浮层自己的尺寸。
+        d.width = FLOAT_SIZE.width;
+        d.height = FLOAT_SIZE.height;
+        setDragSize({ ...FLOAT_SIZE });
+        onPosChange?.(d.latest);
+        onModeChange?.('floating');
+      }
+    }
     const next = clampPanelPos(
       { x: d.ox + dx, y: d.oy + dy, width: d.width, height: d.height },
       bounds
     );
     d.latest = next;
+    const hint = d.kind === 'pill'
+      ? snapMinimizedDrop(next, bounds, { width: d.width, height: d.height })
+      : snapPanelMode({ ...next, width: d.width, height: d.height }, bounds);
+    setDragHint(prev => prev === hint ? prev : hint);
     pendingRef.current = next;
     if (rafRef.current === null) {
       rafRef.current = requestAnimationFrame(() => {
@@ -331,13 +336,19 @@ export function ProcessPanel({
     dragRef.current = null;
     setDragging(false);
     setDragSize(null);
+    setDragHint(null);
 
+    // 主图标「按下没移动」= 点开菜单，不当成拖动，也不改形态
+    if (d.fromMain && !d.moved) {
+      openMenuAtMain();
+      return;
+    }
     if (d.kind === 'pill' && !d.moved) {
       onModeChange?.(restoreMode);
       return;
     }
     const snapped = d.kind === 'pill'
-      ? snapMinimizedDrop(d.latest, bounds, FLOAT_SIZE)
+      ? snapMinimizedDrop(d.latest, bounds, { width: d.width, height: d.height })
       : snapPanelMode({ ...d.latest, width: d.width, height: d.height }, bounds);
     if (snapped !== 'floating') {
       onModeChange?.(snapped);
@@ -381,8 +392,16 @@ export function ProcessPanel({
     onMinPosChange?.(clampPanelPos({ ...currentMinPos, x: currentMinPos.x + dx, y: currentMinPos.y + dy, width: 100, height: 30 }, bounds));
   };
 
+  const dropHintPortal = dragging && dragHint && typeof document !== 'undefined'
+    ? createPortal(
+        <div className={`pf-drop-hint is-${dragHint}`} data-panel-drop-hint aria-hidden="true" />,
+        document.body
+      )
+    : null;
+
   if (mode === 'minimized') {
     return (
+      <>
       <button
         type="button"
         className="pf-min-pill"
@@ -402,6 +421,8 @@ export function ProcessPanel({
         <PanelRight size={12} strokeWidth={1.75} aria-hidden="true" />
         <span>{t('chat.flow.panelTitle')} {rows.length}</span>
       </button>
+      {dropHintPortal}
+    </>
     );
   }
 
@@ -415,6 +436,7 @@ export function ProcessPanel({
   const detailHit = rows.find(r => r.id === (hoverId ?? selectedId));
 
   return (
+    <>
     <aside
       ref={panelRef}
       className={`pf-panel pf-${mode === 'floating' ? 'float' : `dock-${mode}`}`}
@@ -438,39 +460,23 @@ export function ProcessPanel({
         onPointerCancel={() => { dragRef.current = null; setDragging(false); setDragSize(null); }}
         onKeyDown={nudge}
       >
-        <div ref={menuRef} className="pf-mode-menu-wrap" data-panel-mode-menu>
-          <button
-            type="button"
-            className="pf-mode-main"
-            data-panel-mode-main
-            aria-expanded={menuOpen}
-            aria-label={t('chat.flow.panel.modes')}
-            title={t('chat.flow.panel.modes')}
-            onClick={() => setMenuOpen(v => !v)}
-          >
-            <MainIcon size={14} strokeWidth={1.75} aria-hidden="true" />
-          </button>
-          {menuOpen && (
-            <div className="pf-mode-menu" role="menu" aria-label={t('chat.flow.panel.modes')}>
-              {modeButtons.map(({ m, Icon, key }) => (
-                <button
-                  key={m}
-                  type="button"
-                  role="menuitemradio"
-                  data-panel-mode-btn={m}
-                  className={mode === m ? 'is-on' : ''}
-                  aria-label={t(key)}
-                  title={t(key)}
-                  aria-checked={mode === m}
-                  onClick={() => { onModeChange?.(m); setMenuOpen(false); }}
-                >
-                  <Icon size={13} strokeWidth={1.75} aria-hidden="true" />
-                  <span>{t(key)}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <button
+          ref={mainRef}
+          type="button"
+          className="pf-mode-main"
+          data-panel-mode-main
+          aria-expanded={menuOpen}
+          aria-label={t('chat.flow.panel.modes')}
+          title={`${t('chat.flow.panel.modes')} · ${t('chat.flow.panel.drag')}`}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              openMenuAtMain();
+            }
+          }}
+        >
+          <MainIcon size={14} strokeWidth={1.75} aria-hidden="true" />
+        </button>
         <b>{t('chat.flow.panelTitle')}</b>
         <span className="pf-panel-pill" data-panel-pill>
           {t('chat.flow.panel.stepCount', { n: rows.length })}
@@ -531,39 +537,52 @@ export function ProcessPanel({
         })}
       </div>
 
-      {/* 详情区：浮动形态不摆空态提示（红框里那句常驻说明已删），
-          只在真的选中/悬停某一步时才出现；停靠形态保留原提示。 */}
-      {(mode !== 'floating' || detailHit) && (
+      {/* 详情区：四种形态都不摆空态提示；只在悬停/点击某一步时出现 */}
+      {detailHit && (
         <div className="pf-panel-detail" data-panel-detail>
-          {detailHit ? (
-            <span>
-              {VERB_KEY[detailHit.verb] ? t(VERB_KEY[detailHit.verb]) : detailHit.verb}
-              {detailHit.target ? ` ${detailHit.target}` : ''}
-              {detailHit.start != null && detailHit.end != null
-                ? ` · ${formatStepDuration(detailHit.end - detailHit.start) ?? ''}`
-                : detailHit.running
-                  ? ` · ${t('chat.flow.panelRunning')}`
-                  : ''}
-            </span>
-          ) : t('chat.flow.panelHint')}
-        </div>
-      )}
-
-      {/* 底部时间滑块只在右侧停靠保留；吸顶/浮动都靠步骤条本身表达进度。 */}
-      {mode === 'right' && (
-        <div className="pf-panel-slider">
-          <input
-            type="range"
-            min={0}
-            max={1000}
-            defaultValue={1000}
-            aria-label={t('chat.flow.panelSeek')}
-            data-panel-seek
-            onInput={e => seekTo(Number((e.target as HTMLInputElement).value ?? 1000))}
-          />
+          <span>
+            {VERB_KEY[detailHit.verb] ? t(VERB_KEY[detailHit.verb]) : detailHit.verb}
+            {detailHit.target ? ` ${detailHit.target}` : ''}
+            {detailHit.start != null && detailHit.end != null
+              ? ` · ${formatStepDuration(detailHit.end - detailHit.start) ?? ''}`
+              : detailHit.running
+                ? ` · ${t('chat.flow.panelRunning')}`
+                : ''}
+          </span>
         </div>
       )}
     </aside>
+
+    {menuOpen && menuPos && typeof document !== 'undefined' && createPortal(
+      <div
+        ref={menuRef}
+        className="pf-mode-menu"
+        role="menu"
+        aria-label={t('chat.flow.panel.modes')}
+        style={{ left: menuPos.x, top: menuPos.y }}
+        data-panel-mode-menu
+      >
+        {modeButtons.map(({ m, Icon, key }) => (
+          <button
+            key={m}
+            type="button"
+            role="menuitemradio"
+            data-panel-mode-btn={m}
+            className={mode === m ? 'is-on' : ''}
+            aria-label={t(key)}
+            title={t(key)}
+            aria-checked={mode === m}
+            onClick={() => { onModeChange?.(m); setMenuOpen(false); }}
+          >
+            <Icon size={13} strokeWidth={1.75} aria-hidden="true" />
+            <span>{t(key)}</span>
+          </button>
+        ))}
+      </div>,
+      document.body
+    )}
+    {dropHintPortal}
+    </>
   );
 }
 

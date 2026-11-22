@@ -478,14 +478,14 @@ await page.press('textarea', 'Enter');
 
 // 轮询：SSE 每 80ms 一片，抓到一次就够。
 // 2026-11-22 起单聊过程回合整轮交给 ProcessFlow：旧的状态行 / 逐字 span
-// 不再出现在这一路径上，流式反馈的锚点是 data-flow-state / 时钟 / 胶囊。
+// 不再出现在这一路径上，流式反馈的锚点是 data-flow-state / 时钟 / 状态数据。
 let typing = { flowState: '', flowClock: '', flowPill: '' };
 for (let i = 0; i < 40; i++) {
   await page.waitForTimeout(100);
   const snap = await page.evaluate(() => ({
     flowState: document.querySelector('[data-flow]')?.getAttribute('data-flow-state') ?? '',
     flowClock: document.querySelector('[data-flow-clock]')?.textContent?.trim() ?? '',
-    flowPill: document.querySelector('[data-flow-pill]')?.textContent?.trim() ?? '',
+    flowPill: document.querySelector('[data-flow]')?.getAttribute('data-flow-pill') ?? '',
   }));
   if (snap.flowState) typing.flowState = snap.flowState;
   if (!typing.flowClock && snap.flowClock) typing.flowClock = snap.flowClock;
@@ -495,7 +495,7 @@ for (let i = 0; i < 40; i++) {
 
 ok(typing.flowState === 'running', '流式期间过程流进入 running 态', typing.flowState || '未找到');
 ok(/秒|分/.test(typing.flowClock), '整轮时钟按秒计时（不是旧的分片摘要）', typing.flowClock.slice(0, 40) || '无时钟');
-ok(typing.flowPill.length > 0, '状态胶囊给出实时动作/结果', typing.flowPill.slice(0, 40) || '无胶囊');
+ok(typing.flowPill.length > 0, '整轮状态数据给出实时动作/结果（无可见胶囊）', typing.flowPill.slice(0, 40) || '无状态');
 
 // 流式**进行中**截一张（等 1.2s 之后流已结束，时钟会定格成总耗时）
 await page.screenshot({ path: join(OUT, 'a83-typing.png') });

@@ -957,11 +957,6 @@ export function ChatPage({
     open: panelOpen,
     selectedId: panelSelected,
     onSelectStep: setPanelSelected,
-    onSeek: (id: string) => {
-      setPanelSelected(id);
-      const el = document.querySelector(`[data-flow-row="${id}"]`);
-      if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    },
     mode: panelMode,
     pos: panelPos,
     minPos: panelMinPos ?? undefined,
@@ -1029,21 +1024,17 @@ export function ChatPage({
         {/* 输入浮层是这一列的 absolute 子元素；这一列必须 relative，
             否则它会以 data-chat-page 为包含块、铺到右侧面板底下。
             2026-11-22：a215 量出的 121px 左右偏移就是这个原因。 */}
-        <div className="relative flex min-w-0 flex-1 flex-col">
+        <div
+          className="relative flex min-w-0 flex-1 flex-col"
+          /* 吸顶面板改为与四种形态共用同一个 DOM 实例后，不再在流里占位；
+             这里给正文列让出同样的高度，避免第一条消息被盖住。 */
+          style={!isGroup && panelMode === 'top' ? { paddingTop: 52 } : undefined}
+        >
           {/* A1：滚动区外面再包一层 `relative`，只为给「回到最新」提供定位
               基准 —— 按钮不能挂在滚动容器**内部**，那样它会跟着内容一起滚走。
               `flex-col + min-h-0` 与原结构等价，滚动容器仍然是唯一的
               `data-chat-scroll`。 */}
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          {/* 顶部吸顶：宽度与正文列同宽（.tc-chat-column 是唯一宽度来源），
-              在 flex 流里占位，正文从它下方开始，不靠覆盖实现。 */}
-          {!isGroup && currentSession && panelOpen && panelMode === 'top' && (
-            <div className="pf-top-slot">
-              <div className="tc-chat-column">
-                <ProcessPanel {...processPanelProps} />
-              </div>
-            </div>
-          )}
           {/* 消息区域。`data-chat-scroll` 是给打靶脚本量的：
               切换会话时这个容器的 scrollTop 变了几次（换成平滑滚动会动
               几十次，见 useLayoutEffect 里的 pendingJump 说明）。
@@ -1278,9 +1269,9 @@ export function ChatPage({
           />
         )}
 
-        {/* 单聊过程面板：右停靠是布局栏；浮动/最小化是 fixed 浮层，不占宽度；
-            顶部吸顶已渲染在正文列上方，这里不再重复。 */}
-        {!isGroup && currentSession && panelOpen && panelMode !== 'top' && (
+        {/* 单聊过程面板：四种形态共用同一个实例，绝对定位的吸顶也在这一层。
+            换形态时不换父节点，拖动捕获才不会断。 */}
+        {!isGroup && currentSession && panelOpen && (
           <ProcessPanel {...processPanelProps} />
         )}
       </div>

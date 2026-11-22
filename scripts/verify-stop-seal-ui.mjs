@@ -160,7 +160,7 @@ function resolveChrome() {
  * 2026-11-22：单聊过程回合整轮交给 ProcessFlow，旧的 `details.tc-thinking`
  * 摘要条不再渲染。同一组判据改钉新的过程流锚点：
  *   · 整轮时钟 `[data-flow-clock]` —— 停止前逐秒涨，停止后定格；
- *   · 状态胶囊 `[data-flow-pill]` + 运行圆点 —— 停止前的「正在转」；
+ *   · 状态数据 `[data-flow]@data-flow-pill` —— 停止前的「正在转」（不再画胶囊）；
  *   · 思考行的 `.pf-think-note` —— 肯定式，防止停止把正文一起删掉。
  */
 const FLOW_PROBE = `(() => {
@@ -168,13 +168,12 @@ const FLOW_PROBE = `(() => {
   const row = document.querySelector('[data-flow-row-kind="thinking"]');
   if (!flow || !row) return [];
   const clockEl = flow.querySelector('[data-flow-clock]');
-  const pillEl = flow.querySelector('[data-flow-pill]');
+  const pill = flow.getAttribute('data-flow-pill') || '';
   return [{
     clock: clockEl ? String(clockEl.textContent || '').trim() : '',
-    pill: pillEl ? String(pillEl.textContent || '').trim() : '',
-    text: [clockEl?.textContent, pillEl?.textContent].filter(Boolean).join(' · ').trim(),
+    pill,
+    text: [clockEl?.textContent, pill].filter(Boolean).join(' · ').trim(),
     live: flow.getAttribute('data-flow-state') === 'running',
-    runningDot: !!flow.querySelector('.pf-pill-dot.is-running'),
     runningRow: row.getAttribute('data-flow-row-state') === 'running',
     bodyLen: String(row.querySelector('.pf-think-note')?.textContent || '').trim().length,
   }];
@@ -213,9 +212,9 @@ async function sealedState(page, sampleGapMs = 1300) {
   const again = (await page.evaluate(FLOW_PROBE))[0];
   return {
     present: true,
-    // spinner 在新形态里 = 运行圆点 + 运行态步骤行；两者都要收
-    spinnerGone: !first.live && !first.runningDot && !first.runningRow,
-    noLiveLabel: !/思考中|处理中/.test(first.text),
+    // spinner 在新形态里 = 运行态整轮 + 运行态步骤行；两者都要收
+    spinnerGone: !first.live && !first.runningRow,
+    noLiveLabel: !/thinking|processing|思考中|处理中/.test(first.text),
     clockStopped: !!again && first.clock === again.clock,
     text: first.text,
     bodyLen: first.bodyLen,
@@ -252,7 +251,7 @@ async function startTurn(page) {
   let seen = false;
   while (Date.now() - t0 < 15000) {
     const f = (await page.evaluate(FLOW_PROBE))[0];
-    if (f && f.live && /思考/.test(f.pill) && /处理中/.test(f.clock)) { seen = true; break; }
+    if (f && f.live && f.pill === 'thinking' && /处理中/.test(f.clock)) { seen = true; break; }
     await page.waitForTimeout(150);
   }
   return seen;

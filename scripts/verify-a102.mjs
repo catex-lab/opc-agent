@@ -255,15 +255,15 @@ ok(dot.off <= 1.5, '图标中心与行头中心重合', `偏差 ${dot.off.toFixe
 
 console.log('\n[6] 整轮状态条同层级');
 /* 旧 AgentTrace v2 的「汇总行 + 验证条 + 核对条」在 2026-11-22 流程流改版中
-   合成一条摘要行；这里守的是「时钟 / 胶囊 / 摘要行都在场且同层」，
-   不再钉已经退役的三条并列结构。 */
+   合成一条摘要行；状态胶囊按用户定版删除，这里守「时钟 / 摘要行都在场且同层」。 */
 const bars = await page.evaluate(() =>
-  ['.pf-hdr', '.pf-pill', '.pf-steps-bar'].map(s => {
+  ['.pf-hdr', '.pf-steps-bar'].map(s => {
     const el = document.querySelector(s);
     return el ? Math.round(el.getBoundingClientRect().height) : 0;
   }));
-ok(bars.every(h => h > 0), '时钟 / 胶囊 / 摘要行三段都在', bars.join(' / '));
+ok(bars.every(h => h > 0), '时钟 / 摘要行两段都在', bars.join(' / '));
 ok(Math.max(...bars) - Math.min(...bars) <= 12, '同层级高度差不超过 12px', bars.join(' / '));
+ok((await page.locator('.pf-pill').count()) === 0, '状态胶囊已删（不再有可见完成/等待胶囊）');
 
 console.log('\n[7] A100 目标文本不回退（流程流形态）');
 const targets = await page.evaluate(() =>

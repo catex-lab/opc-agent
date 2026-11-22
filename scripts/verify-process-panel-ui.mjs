@@ -148,6 +148,8 @@ const mode = async page => page.locator('[data-process-panel]').first().getAttri
   const h = await open();
   const { page } = h;
   ok(await mode(page) === 'right', '页面打开后默认右停靠');
+  ok((await page.locator('.pf-pill').count()) === 0, '红框里的完成胶囊已删');
+  ok((await page.locator('[data-flow][data-flow-pill]').count()) > 0, '状态仍留在数据属性上给闸门读');
   const input = await rect(page, '.tcv2-inputwrap');
   const panel = await rect(page, '[data-process-panel]');
   ok(input.width > 400 && panel.width > 200, '输入区与面板都真实渲染', `input=${Math.round(input.width)} panel=${Math.round(panel.width)}`);
@@ -167,11 +169,35 @@ const mode = async page => page.locator('[data-process-panel]').first().getAttri
   ok(await page.locator('[data-panel-drag]').count() === 1, '标题栏仍是唯一可拖区域');
   ok(await page.locator('[data-panel-mode-main]').count() === 1, '形态收敛为一个主图标');
   ok(await page.locator('[data-panel-mode-btn]').count() === 0, '默认不展开形态菜单');
+  ok((await page.locator('[data-panel-detail]').count()) === 0, '右停靠也不摆空态提示');
+  ok((await page.locator('[data-panel-seek]').count()) === 0, '右停靠没有底部滑杆');
   await page.locator('[data-panel-mode-main]').click();
   ok(await page.locator('.pf-mode-menu [data-panel-mode-btn]').count() === 4, '点主图标展开四项形态菜单');
+  const menuRect = await rect(page, '.pf-mode-menu');
+  const menuVisible = await page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    return !!el && !!el.closest('.pf-mode-menu');
+  }, { x: menuRect.left + 20, y: menuRect.top + 12 });
+  ok(menuVisible, '菜单真能被鼠标命中（portal 没被 overflow 裁掉）', JSON.stringify(menuRect));
   await page.locator('[data-panel-mode-btn="top"]').click();
   ok(await mode(page) === 'top', '菜单里切吸顶真的生效');
   ok(h.errors.length === 0, '这一轮没有页面异常', h.errors.slice(0, 2).join(' | '));
+  await close(h);
+}
+
+// ── [1b] 右吸附拖到中间 → 浮动 ────────────────────────────────────
+{
+  console.log('\n[1b] 右吸附 → 自由浮动');
+  const h = await open();
+  const { page } = h;
+  const head = await rect(page, '[data-panel-drag]');
+  await page.mouse.move(head.left + head.width / 2, head.top + head.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(600, 300, { steps: 10 });
+  ok(await page.locator('[data-panel-drop-hint]').count() === 1, '拖动时有落点提示');
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  ok(await mode(page) === 'floating', '右吸附拖到中间松手 → 浮动', `实际 ${await mode(page)}`);
   await close(h);
 }
 
@@ -198,6 +224,29 @@ for (const count of [4, 14]) {
     ok(metrics.scroll > metrics.client, '步骤多时容器可横向滚动', `${metrics.scroll}>${metrics.client}`);
   }
   ok(await page.locator('[data-panel-seek]').count() === 0, '吸顶没有底部滑杆');
+  await close(h);
+}
+
+// ── [2b] 吸顶菜单可见 + 吸顶拖到右侧 → 右吸附 ─────────────────────
+{
+  console.log('\n[2b] 吸顶菜单与吸顶 → 右吸附');
+  const h = await open({ mode: 'top' });
+  const { page } = h;
+  await page.locator('[data-panel-mode-main]').click();
+  const r = await rect(page, '.pf-mode-menu');
+  const visible = await page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    return !!el && !!el.closest('.pf-mode-menu');
+  }, { x: r.left + 20, y: r.top + 12 });
+  ok(visible, '吸顶形态点图标后菜单真的可见', JSON.stringify(r));
+  await page.keyboard.press('Escape');
+  const head = await rect(page, '[data-panel-drag]');
+  await page.mouse.move(head.left + head.width / 2, head.top + head.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(1430, 250, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  ok(await mode(page) === 'right', '吸顶拖到右缘松手 → 右吸附', `实际 ${await mode(page)}`);
   await close(h);
 }
 
@@ -239,6 +288,7 @@ for (const count of [4, 14]) {
 
 for (const [target, expect] of [
   [{ x: 1420, y: 250 }, 'right'],
+  [{ x: 1300, y: 250 }, 'floating'],
   [{ x: 600, y: 90 }, 'top'],
   [{ x: 600, y: 300 }, 'floating'],
 ]) {

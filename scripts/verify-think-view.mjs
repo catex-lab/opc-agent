@@ -333,7 +333,7 @@ for (let i = 0; i < 46; i++) {
       streaming: last?.getAttribute('data-answer-streaming') ?? null,
       revealed: last ? Number(last.getAttribute('data-revealed')) : -1,
       flowAria: lastFlow?.querySelector('[data-flow-summary]')?.getAttribute('aria-expanded') ?? null,
-      pill: lastFlow?.querySelector('[data-flow-pill]')?.getAttribute('data-flow-pill') ?? null,
+      pill: lastFlow?.getAttribute('data-flow-pill') ?? null,
     };
   }));
   await page.waitForTimeout(80);
@@ -343,7 +343,7 @@ const streamingSamples = live.filter(s => s.streaming === '1');
 ok(streamingSamples.length >= 5, '抓到流式过程（不是一次性渲染）', String(streamingSamples.length));
 ok(
   live.some(s => s.pill === 'thinking'),
-  '思考流式时胶囊是「深度思考中」',
+  '思考流式时整轮状态是 thinking（胶囊已删）',
   live.find(s => s.pill === 'thinking')?.pill ?? '（没抓到）'
 );
 ok(

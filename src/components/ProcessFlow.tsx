@@ -386,7 +386,12 @@ export function ProcessFlow({ blocks, isStreaming = false, durationMs, cwd, at }
   const stepCount = toolCount + (hasThinking ? 1 : 0);
 
   return (
-    <div className="pf" data-flow data-flow-state={isStreaming ? 'running' : 'done'}>
+    <div
+      className="pf"
+      data-flow
+      data-flow-state={isStreaming ? 'running' : 'done'}
+      data-flow-pill={pill.state}
+    >
       {/* 整轮时钟：唯一的计时口径（旧「已工作」收纳线随 v2 封存） */}
       {clockText && (
         <div className="pf-hdr" data-flow-clock={clockMs ?? undefined}>
@@ -433,14 +438,6 @@ export function ProcessFlow({ blocks, isStreaming = false, durationMs, cwd, at }
           )}
         </>
       )}
-
-      {/* 状态胶囊：整轮唯一 */}
-      <div className="pf-pill-row">
-        <span className="pf-pill" data-flow-pill={pill.state}>
-          <i className={`pf-pill-dot is-${pill.tone}`} aria-hidden="true" />
-          <span aria-live="polite">{pill.text}</span>
-        </span>
-      </div>
 
       {/* 摘要线 = 步骤区的折叠开关（参考页形态） */}
       <div

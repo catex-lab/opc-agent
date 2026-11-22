@@ -39,16 +39,16 @@
   border-right: 0;
 }
 
-/* 顶部吸顶：宽度取正文列的唯一宽度来源，响应式居中；在 flex 流里占位 */
-.pf-top-slot {
-  flex-shrink: 0;
-  padding-top: 8px;
-  position: relative;
-  z-index: 3;
-}
+/* 顶部吸顶：绝对定位在 data-chat-page 内，与四种形态共用同一个 DOM 实例，
+   拖动切形态时不会换父节点、指针捕获不会断。正文列用 padding-top 让位。 */
 .pf-dock-top {
+  position: absolute;
+  top: 84px;
+  left: 0;
+  right: 0;
   width: min(var(--tc-chat-column-max), 100%);
   margin-inline: auto;
+  z-index: 41;
   flex-direction: row;
   align-items: center;
   min-height: 44px;
@@ -56,8 +56,7 @@
   border-radius: 10px;
 }
 .pf-dock-top .pf-panel-legend,
-.pf-dock-top .pf-panel-detail,
-.pf-dock-top .pf-panel-slider {
+.pf-dock-top .pf-panel-detail {
   display: none;
 }
 .pf-dock-top .pf-panel-axis {
@@ -140,11 +139,6 @@
 
 /* 形态收敛：一个主图标代表当前形态，点开才有四项带文字的菜单。
    十字箭头（Move）已彻底退役，不再出现在标题栏或菜单里。 */
-.pf-mode-menu-wrap {
-  position: relative;
-  display: inline-flex;
-  flex-shrink: 0;
-}
 .pf-mode-main {
   display: inline-flex;
   align-items: center;
@@ -163,11 +157,10 @@
   background-color: var(--tc-hover-chrome);
   color: var(--td-brand-color);
 }
+/* portal 到 body：绕开 .pf-panel 的 overflow:hidden（上一版菜单被裁掉是假绿） */
 .pf-mode-menu {
-  position: absolute;
-  top: 24px;
-  left: 0;
-  z-index: 60;
+  position: fixed;
+  z-index: 120;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -228,6 +221,40 @@
 @keyframes pf-mode-menu-in {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* 拖动落点提示：让「松手会切到哪个形态」在松手前就可见 */
+.pf-drop-hint {
+  position: fixed;
+  z-index: 110;
+  pointer-events: none;
+  border-color: var(--td-brand-color);
+  color: var(--td-brand-color);
+}
+.pf-drop-hint.is-right {
+  top: 84px;
+  right: 0;
+  bottom: 0;
+  width: 40px;
+  border-left: 2px solid;
+  background-color: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
+}
+.pf-drop-hint.is-top {
+  top: 84px;
+  left: 0;
+  right: 0;
+  height: 40px;
+  border-bottom: 2px solid;
+  background-color: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
+}
+.pf-drop-hint.is-floating {
+  top: 132px;
+  left: 48px;
+  right: 48px;
+  bottom: 132px;
+  border: 1px dashed color-mix(in srgb, var(--td-brand-color) 40%, transparent);
+  border-radius: 10px;
+  background-color: color-mix(in srgb, var(--td-brand-color) 3%, transparent);
 }
 
 .pf-panel-pill {
@@ -406,15 +433,8 @@
   overflow-y: auto;
 }
 
-/* 底部时间滑块 */
-.pf-panel-slider {
-  padding-top: 4px;
-}
-
-.pf-panel-slider input[type='range'] {
-  width: 100%;
-  accent-color: var(--td-brand-color);
-}
+/* 底部时间滑块（用户定版删除）：四种形态都不再渲染 range 控件；
+   步骤条自身就是只读进度/时长表达。 */
 
 @keyframes pf-panel-pulse {
   0%,
@@ -446,9 +466,6 @@
 @media (max-width: 899px) {
   .pf-dock-right {
     display: none;
-  }
-  .pf-top-slot {
-    padding-top: 4px;
   }
   .pf-dock-top .pf-panel-row {
     min-width: 88px;
