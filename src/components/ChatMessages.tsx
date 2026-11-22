@@ -5,6 +5,7 @@ import { Brain, Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, TextSelec
 import { Message, Model, RegisteredAgent, Block, ThinkingBlock, ToolBlock } from '../types';
 import { legacyToBlocks, runActivity, textOfBlocks, type KbCitationRef } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
+import { ProcessFlow } from './ProcessFlow';
 import { canGroupProcess } from '../trace/rows';
 import { shouldFoldProcess } from '../trace/fold';
 import { BackgroundTasksPill } from './BackgroundTasksPill';
@@ -306,6 +307,16 @@ function TurnStatusSlot({
   }, [active, message.error]);
 
   if (!active && !settle) return null;
+  // 2026-11-22 改版：单聊过程回合（块 ∈ raw/tool/thinking/text 且含过程块）
+  // 由 ProcessFlow 的整轮时钟接管（「处理中/已处理 X 秒」），粒子状态行退场——
+  // 「已工作 X 秒 + 工作中 X 秒」两套计时器并存正是被推翻的旧形态。
+  // 群聊叙述（note）/ 生图 / 含图消息不走流程，状态行照旧。
+  const procFlowTurn =
+    !imageMode &&
+    !!message.blocks &&
+    message.blocks.some(b => b.type === 'tool' || b.type === 'thinking') &&
+    message.blocks.every(b => b.type === 'raw' || b.type === 'tool' || b.type === 'thinking' || b.type === 'text');
+  if (procFlowTurn) return null;
   return (
     <StreamStatus
       startedAt={message.timestamp?.getTime()}
@@ -2141,6 +2152,35 @@ export function ChatMessages({
 
     // 失败块已提到 errorBlock，渲染用的块序列里去掉它
     const blocks = persistedError ? allBlocks.filter(b => b.type !== 'error') : allBlocks;
+
+    /**
+     * 2026-11-22 改版：单聊过程回合**整轮**交给 ProcessFlow（参考页：一轮 = 一条流）。
+     * 旧的「答案锚点 + 尾部工具另起轨迹段」拆段路径就此退役——中途旁白留在流内，
+     * 不再把每段旁白误判成答案、不再产生各自计时的碎片轨迹（那正是截图里
+     * 「已工作 20 秒 / 已工作 4 秒 / 工作中 38 秒」三个时钟并存的根源）。
+     * 含 image / artifact / note 的消息（生图 / 群聊叙述 / 证据块）不走流程，
+     * 保留旧的逐段路径不动。
+     */
+    const procFlowTurn =
+      !imageMode &&
+      blocks.some(b => b.type === 'tool' || b.type === 'thinking') &&
+      blocks.every(b => b.type === 'raw' || b.type === 'tool' || b.type === 'thinking' || b.type === 'text');
+    if (procFlowTurn) {
+      return (
+        <>
+          <ProcessFlow
+            blocks={blocks}
+            isStreaming={!!message.isStreaming}
+            durationMs={message.durationMs}
+            cwd={sessionCwd}
+            at={messageClock}
+          />
+          {message.kbRefs ? renderKbRefs(message.kbRefs) : null}
+          {errorBlock}
+        </>
+      );
+    }
+
     const processNodes: React.ReactNode[] = [];
     const answerNodes: React.ReactNode[] = [];
     /**

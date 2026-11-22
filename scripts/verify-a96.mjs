@@ -1,12 +1,11 @@
 /**
- * A96 行级 diff 的浏览器验证。
+ * A96 行级 diff 的浏览器验证（2026-11-22 改版：明细 = 参考页 mono 行，不再有 DiffView 面板）。
  *
- *   [1] 展开轨迹后，文件类步骤的展开区出现 .tc-diffview
- *   [2] edit 的 diff 行结构：上下文 / 删除 / 新增，数量与角标一致
- *   [3] 增删行有底色且**颜色不同**（不能都是灰的）
- *   [4] 行号：删除行只有旧行号、新增行只有新行号、上下文两者都有
- *   [5] write 类走 create 模式，并如实提示「旧内容不可知」
- *   [6] read 类没有 diff 数据时退回原明细（不能出现空 diff 框）
+ *   [1] 展开流程后，编辑步骤的明细区出现 +/- 行
+ *   [2] edit 的明细行结构：上下文 / 删除 / 新增，数量与角标一致
+ *   [3] 增删行颜色 = success / error 令牌（不能都是灰的）
+ *   [5] write 只报新增（+ 行，绝不编造 - 行——旧内容不在入参里）
+ *   [6] read 类没有 diff 数据时明细退回输出本身
  *   [7] 控制台无错误
  *
  * 全离线：静态服务器托管 dist/ + Playwright 拦 /api/** 喂夹具。
@@ -138,93 +137,119 @@ await ctx.route('**/api/**', async route => {
 await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
 await page.waitForTimeout(1000);
 
-// 完成态默认收起，先展开轨迹
-const bar = page.locator('[data-steps-bar]').first();
-await bar.click();
+// 2026-11-22 改版：过程回合 = 一条 ProcessFlow；答案在场 → 摘要线默认折叠。
+const summary = page.locator('[data-flow-summary]').first();
+await summary.click();
 await page.waitForTimeout(300);
 
-
-
-const steps = page.locator('[data-tool-step]');
+const steps = page.locator('[data-flow-row][data-flow-row-kind="tool"]');
 const stepCount = await steps.count();
 console.log('\n[1] 步骤与展开');
 ok(stepCount === 3, '3 个工具步骤', String(stepCount));
 
-// ---- 展开 Edit（2026-11-21 v2 定版：收纳线开合行清单；行明细由行自己点开）----
-await steps.nth(0).locator('.tcv2-rowhead').click();
+// ---- 展开 Edit（改版：明细 = 参考页 mono 行，+/- 着色，不再有 DiffView 面板）----
+await steps.nth(0).locator('.pf-step-head').click();
 await page.waitForTimeout(250);
 
-const dv = steps.nth(0).locator('.tc-diffview');
-ok((await dv.count()) === 1, 'Edit 展开后出现行级 diff 视图');
-ok((await dv.getAttribute('data-diffview')) === 'replace', 'edit 是 replace 模式（不是 create）');
+const dv = steps.nth(0).locator('[data-flow-detail]');
+ok((await dv.count()) === 1, 'Edit 展开后出现行级明细');
 
 // ---- [2] 行结构 ----
 const rows = await steps.nth(0).evaluate(el => {
-  const all = [...el.querySelectorAll('.tc-diffline')];
+  const all = [...el.querySelectorAll('.pf-line')];
   return all.map(r => ({
-    kind: r.getAttribute('data-kind'),
-    sign: r.querySelector('.tc-diffline-sign')?.textContent ?? '',
-    text: r.querySelector('.tc-diffline-text')?.textContent ?? '',
-    nums: [...r.querySelectorAll('.tc-diffline-no')].map(n => n.textContent.trim()),
-    bg: getComputedStyle(r).backgroundColor,
+    kind: r.classList.contains('is-add') ? 'add' : r.classList.contains('is-del') ? 'del' : 'ctx',
+    text: r.textContent.replace(/\n$/, ''),
+    color: getComputedStyle(r).color,
   }));
 });
 console.log('\n[2] 行结构');
 ok(rows.length === 4, '4 行（ctx / del / add / ctx）', `${rows.length} 行`);
-ok(rows.map(r => r.kind).join(',') === 'context,del,add,context', '顺序：上下文→删除→新增→上下文', rows.map(r => r.kind).join(','));
-ok(rows[1].text.includes('const b = 2;'), '删除行是旧内容', rows[1].text.trim());
-ok(rows[2].text.includes('const b = 999;'), '新增行是新内容', rows[2].text.trim());
-ok(rows[1].sign === '-' && rows[2].sign === '+', '符号正确（- / +）', `${rows[1].sign} ${rows[2].sign}`);
+ok(rows.map(r => r.kind).join(',') === 'ctx,del,add,ctx', '顺序：上下文→删除→新增→上下文', rows.map(r => r.kind).join(','));
+ok(rows[1].text.includes('- const b = 2;'), '删除行是旧内容（- 前缀）', rows[1].text.trim());
+ok(rows[2].text.includes('+ const b = 999;'), '新增行是新内容（+ 前缀）', rows[2].text.trim());
 
 // 角标与内容必须一致
-const badge = await steps.nth(0).locator('.tc-diff').getAttribute('data-diff');
+const badge = await steps.nth(0).locator('.pf-diff').getAttribute('data-flow-diff');
 const addCount = rows.filter(r => r.kind === 'add').length;
 const delCount = rows.filter(r => r.kind === 'del').length;
 ok(badge === `+${addCount} -${delCount}`, '角标数字与展开内容一致', `角标 ${badge} / 内容 +${addCount} -${delCount}`);
 
-// ---- [3] 底色 ----
-console.log('\n[3] 增删底色');
-const transparent = v => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
-ok(!transparent(rows[2].bg), '新增行有底色', rows[2].bg);
-ok(!transparent(rows[1].bg), '删除行有底色', rows[1].bg);
-ok(rows[2].bg !== rows[1].bg, '增删底色不同（不是同一种灰）', `${rows[2].bg} vs ${rows[1].bg}`);
-ok(transparent(rows[0].bg), '上下文行没有底色', rows[0].bg);
-
-// ---- [4] 行号 ----
-console.log('\n[4] 行号');
-ok(rows[1].nums[0] === '2' && rows[1].nums[1] === '', '删除行只有旧行号', rows[1].nums.join('|'));
-ok(rows[2].nums[0] === '' && rows[2].nums[1] === '2', '新增行只有新行号', rows[2].nums.join('|'));
-ok(rows[0].nums[0] === '1' && rows[0].nums[1] === '1', '上下文行新旧行号都有', rows[0].nums.join('|'));
+// ---- [3] 颜色（读令牌，不写死 hex）----
+console.log('\n[3] 增删颜色');
+const colors = await page.evaluate(() => {
+  const lines = [...document.querySelectorAll('[data-flow-row="t1"] .pf-line')].map(r => ({
+    add: r.classList.contains('is-add'),
+    del: r.classList.contains('is-del'),
+    color: getComputedStyle(r).color,
+    el: r,
+  }));
+  // 探针父级画像：页面上到底有几个 [data-flow]，各自的 var 与 color
+  const hosts = [...document.querySelectorAll('[data-flow]')].map(h => ({
+    cls: h.className.slice(0, 40),
+    var: getComputedStyle(h).getPropertyValue('--td-success-color').trim() || '(empty)',
+    color: getComputedStyle(h).color,
+    hasRow: !!h.querySelector('[data-flow-row="t1"]'),
+  }));
+  const cloneStyle = el => {
+    const c = el.cloneNode(false);
+    (el.parentElement ?? document.body).appendChild(c);
+    const color = getComputedStyle(c).color;
+    c.remove();
+    return color;
+  };
+  // 探针直接克隆真实的 .pf-line 元素——颜色是 CSS 规则解析后的真值
+  //（绕开「探针挂哪才能读到 var」这个位置陷阱，与断言对象的来源一致）
+  const addLine = document.querySelector('[data-flow-row="t1"] .pf-line.is-add');
+  const delLine = document.querySelector('[data-flow-row="t1"] .pf-line.is-del');
+  const cloneAdd = addLine ? cloneStyle(addLine) : null;
+  const cloneDel = delLine ? cloneStyle(delLine) : null;
+  return {
+    add: cloneAdd,
+    del: cloneDel,
+    lines: lines.map(({ add, del, color }) => ({ add, del, color })),
+  };
+});
+ok(colors.lines.some(l => l.add && l.color === colors.add), '新增行 = success 色（读令牌）', JSON.stringify({ probeAdd: colors.add, lines: colors.lines }));
+ok(colors.lines.some(l => l.del && l.color === colors.del), '删除行 = error 色（读令牌）', JSON.stringify({ probeDel: colors.del }));
+ok(colors.add !== colors.del, '增删颜色不同（不能都是同一种灰）');
+ok(
+  colors.lines.every(l => (l.add ? l.color === colors.add : true) && (l.del ? l.color === colors.del : true)),
+  '行色与行类一一对应（上下文行不着色）'
+);
 
 await page.screenshot({ path: join(OUT, 'a96-diff.png'), fullPage: false });
 
-// ---- [5] write → create ----
-console.log('\n[5] write 的 create 模式');
-// 2026-11-21 v2：逐行独立开合 —— Write 行自己点开
-await steps.nth(1).locator('.tcv2-rowhead').click();
+// ---- [5] write：create 口径（只有 + 行，绝不编造 - 行）----
+console.log('\n[5] write 只报新增（不编造删除）');
+// 2026-11-22 改版：逐行独立开合 —— Write 行自己点开
+await steps.nth(1).locator('.pf-step-head').click();
 await page.waitForTimeout(250);
-const dv2 = steps.nth(1).locator('.tc-diffview');
-ok((await dv2.count()) === 1, 'Write 也有 diff 视图');
-ok((await dv2.getAttribute('data-diffview')) === 'create', 'Write 标记为 create 模式');
-const note = await steps.nth(1).locator('[data-diffview-note]').textContent().catch(() => '');
-ok((note ?? '').includes('旧内容'), '明确提示旧内容不可知（不假装知道删了什么）', (note ?? '').trim());
-const wRows = await steps.nth(1).evaluate(el => [...el.querySelectorAll('.tc-diffline')].map(r => r.getAttribute('data-kind')));
-ok(wRows.every(k => k === 'add'), 'Write 全部是新增行', wRows.join(','));
+const wRows = await steps.nth(1).evaluate(el =>
+  [...el.querySelectorAll('.pf-line')].map(r => ({
+    add: r.classList.contains('is-add'),
+    text: r.textContent.trim(),
+  }))
+);
+ok(wRows.length === 2, 'Write 明细 = 写入内容的行数', String(wRows.length));
+ok(wRows.every(l => l.add && l.text.startsWith('+')), 'Write 全部是新增行（+ 前缀）', wRows.map(l => l.text).join(','));
+const wBadge = await steps.nth(1).locator('.pf-diff').getAttribute('data-flow-diff');
+ok(wBadge === '+2', 'Write 角标只有 +N（不假装知道删了什么）', String(wBadge));
 
-// ---- [6] read 退回原明细 ----
-console.log('\n[6] 无 diff 数据时退回原明细');
-await steps.nth(2).locator('.tcv2-rowhead').click();
+// ---- [6] read：无 diff 数据 → 明细退回输出，不出现编造的增删行 ----
+console.log('\n[6] 无 diff 数据时退回输出明细');
+await steps.nth(2).locator('.pf-step-head').click();
 await page.waitForTimeout(250);
-ok((await steps.nth(2).locator('.tc-diffview').count()) === 0, 'Read 不出现 diff 视图（不能是空框）');
 {
   const diag = await steps.nth(2).evaluate(el => ({
-    exp: el.getAttribute('data-expanded'),
-    detail: el.querySelectorAll('.tcv2-detail').length,
-    body: el.querySelectorAll('[data-step-body]').length,
-    pre: el.querySelectorAll('.tcv2-pre').length,
-    text: el.textContent.slice(0, 80),
+    detail: el.querySelectorAll('[data-flow-detail]').length,
+    add: el.querySelectorAll('.pf-line.is-add').length,
+    del: el.querySelectorAll('.pf-line.is-del').length,
+    text: el.querySelector('[data-flow-detail]')?.textContent?.slice(0, 60) ?? '',
   }));
-  ok(diag.detail === 1 && diag.pre >= 1, 'Read 退回详情面板渲染（v2 tcv2-detail）', JSON.stringify(diag).slice(0, 200));
+  ok(diag.detail === 1, 'Read 有明细（输出兜底，不是空白）');
+  ok(diag.add === 0 && diag.del === 0, 'Read 不出现编造的增删行', JSON.stringify(diag));
+  ok(diag.text.includes('export function readMe'), 'Read 明细是输出本身', diag.text);
 }
 
 

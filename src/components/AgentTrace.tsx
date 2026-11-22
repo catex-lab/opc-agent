@@ -31,6 +31,10 @@
  * `data-trace-totalms` / `data-trace-unreturned` 保留；
  * 新增 `[data-trace-group]`（组头）与 `data-trace-elapsed`（收纳线上的毫秒数）。
  * `.tc-step-dot` 随圆点形态退役（图标即状态载体）。
+ * 阶段条（2026-11-21）：`[data-trace-phases]`（整块）、`data-phase-segment`
+ * （段，值 = 阶段 kind）、`data-phase-failed`（段内有失败）、
+ * `[data-phase-legend]`（图例，可折叠）、`data-phase-toggle`（图例开关，
+ * aria-expanded）、`[data-trace-pill]`（状态胶囊，值 = 当前状态机档位）。
  *
  * ## 状态收口（不变）
  *
@@ -62,7 +66,10 @@ import {
   buildDiffHunks,
   formatHandledDurationText,
   formatStepDuration,
+  groupPhases,
   summarizeTrace,
+  type FlowPhase,
+  type FlowPhaseKind,
   type TraceDiff,
   type TraceItem,
 } from '../../shared/trace';
@@ -106,6 +113,35 @@ const OUTCOME_KEY: Record<string, MessageKey> = {
   interrupted: 'chat.trace.outcome.interrupted',
   ok: 'chat.trace.outcome.ok',
 };
+
+// ── 阶段条（2026-11-21，参考用户给的单聊过程流设计稿） ────────────────
+
+/** 图例的四阶段 + 失败标记（失败是运行时状态，不是阶段，但颜色要能对上图例） */
+const PHASE_LABEL: Record<FlowPhaseKind, MessageKey> = {
+  understand: 'chat.trace.phase.understand',
+  change: 'chat.trace.phase.change',
+  verify: 'chat.trace.phase.verify',
+  fix: 'chat.trace.phase.fix',
+};
+const PHASE_LEGEND_ORDER: ReadonlyArray<{ kind: FlowPhaseKind | 'failed'; key: MessageKey }> = [
+  { kind: 'understand', key: 'chat.trace.phase.understand' },
+  { kind: 'change', key: 'chat.trace.phase.change' },
+  { kind: 'verify', key: 'chat.trace.phase.verify' },
+  { kind: 'failed', key: 'chat.trace.failed' },
+  { kind: 'fix', key: 'chat.trace.phase.fix' },
+];
+
+/**
+ * 胶囊里运行中动词的特例：轨迹动词「已读取」是完成态措辞（行上是刻意的），
+ * 但胶囊带「正在」前缀，直接拼会变成「正在已读取」。给胶囊一个进行态动词。
+ */
+const PILL_VERB_KEY: Record<string, MessageKey> = {
+  ...VERB_KEY,
+  '已读取': 'chat.trace.verb.read',
+};
+
+/** 图例开合的本地偏好（跨消息共享一个偏好，不逐条记） */
+const LEGEND_PREF_KEY = 'opc.trace.phaseLegend';
 
 /** 命令行类工具：折叠行内容用等宽字体（命令 / 脚本一眼可辨） */
 const SHELL_TOOL_NAMES: ReadonlySet<string> = new Set(['bash', 'shell', 'execute']);
@@ -688,6 +724,29 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
   const unreturned = hasUnreturnedResult(steps);
   const running = rows.some(i => !isNarration(i) && i.status === 'running');
 
+  // ── 阶段条：扁平步骤 → 连续阶段段（纯函数；历史消息与流式同一套派生） ──
+  const phases = useMemo(() => groupPhases(steps), [steps]);
+
+  /** 图例开合：本地偏好（默认展开 = 参考稿形态），跨消息共享一个开关 */
+  const [legendOpen, setLegendOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(LEGEND_PREF_KEY) !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const toggleLegend = () => {
+    setLegendOpen(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem(LEGEND_PREF_KEY, next ? '1' : '0');
+      } catch {
+        /* 存不下就算了：本次会话内仍然生效，只是重启后回到默认 */
+      }
+      return next;
+    });
+  };
+
   /** 明细开合的唯一事实源（行点击都写这里） */
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(new Set());
   const toggleRow = (id: string) => {
@@ -817,8 +876,144 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
   const stepCount = steps.filter(i => i.kind === 'tool').length;
   const worked = formatHandledDurationText(elapsedMs, (locale ?? 'zh') as Locale);
 
+  // ── 阶段条的几何 ────────────────────────────────────────────────
+  // 有真实时间戳：按毫秒占比摆段（left/width 百分比）；段尾没回结果时窗口
+  // 延伸到「现在」（流式中每秒重渲染，秒跳由既有 tick 驱动）。
+  // 全无时间戳（legacyToBlocks 的老数据）：按段内步数等宽——顺序仍是事实，
+  // 编不出时间就不编。窄段保底 1.5%，保证一闪而过的验证也能被看见。
+  interface PhaseSeg extends FlowPhase {
+    left: number;
+    width: number;
+    /** 只有流式进行中且段未收尾才脉动；历史消息一律静止 */
+    live: boolean;
+  }
+  const phaseSegments: PhaseSeg[] = (() => {
+    const timed = phases.some(p => (p.startMs ?? 0) > 0);
+    if (!timed) {
+      const totalSteps = phases.reduce((s, p) => s + p.steps, 0) || 1;
+      let acc = 0;
+      return phases.map(p => {
+        const width = (p.steps / totalSteps) * 100;
+        const seg: PhaseSeg = { ...p, left: acc, width, live: false };
+        acc += width;
+        return seg;
+      });
+    }
+    const starts = phases.filter(p => (p.startMs ?? 0) > 0).map(p => p.startMs!) as number[];
+    const winStart = Math.min(...starts);
+    const maxEnd = Math.max(...phases.map(p => p.endMs ?? 0), winStart);
+    const hasOpen = phases.some(p => p.endMs === undefined);
+    const winEnd = hasOpen && isStreaming ? Date.now() : Math.max(maxEnd, winStart);
+    const span = Math.max(winEnd - winStart, 1);
+    return phases.map(p => {
+      const s = p.startMs ?? winStart;
+      const e = p.endMs ?? winEnd;
+      const left = Math.min(((s - winStart) / span) * 100, 98.5);
+      const width = Math.min(Math.max(((e - s) / span) * 100, 1.5), 100 - left);
+      return { ...p, left, width, live: isStreaming && p.endMs === undefined };
+    });
+  })();
+
+  // ── 状态胶囊：运行工具 → 思考中 → 输出中 → 已结束（如实给结论） ──
+  const runningTool = [...steps].reverse().find(i => i.kind === 'tool' && i.status === 'running');
+  const runningThink = !runningTool && steps.some(i => i.kind === 'thinking' && i.status === 'running');
+  const pill = (() => {
+    if (runningTool) {
+      const verbRaw = runningTool.verb;
+      const verbKey = PILL_VERB_KEY[verbRaw];
+      const verb = verbKey ? t(verbKey) : verbRaw;
+      const target = summaryOf(runningTool);
+      // 实时秒（用户口径）：块 startedAt → now 现算；老数据没有时间戳，
+      // 退回本行首次被看到的时刻（seenAt），再没有就不显示秒。
+      const startedAt = runningTool.block?.startedAt ?? 0;
+      const seen = seenAtOf(runningTool.id);
+      const liveMs = startedAt > 0 ? Date.now() - startedAt : seen > 0 ? Date.now() - seen : 0;
+      const secs = formatStepDuration(liveMs);
+      const prefix = t('chat.trace.pill.doingPrefix');
+      return {
+        state: 'tool' as const,
+        tone: 'running' as const,
+        text: `${prefix}${verb}${target ? ` ${target}` : ''}${secs ? ` · ${secs}` : ''}`,
+      };
+    }
+    if (runningThink) {
+      return { state: 'thinking' as const, tone: 'running' as const, text: t('chat.trace.thinkingLive') };
+    }
+    if (isStreaming && collapse) {
+      return { state: 'answering' as const, tone: 'running' as const, text: t('chat.trace.pill.answering') };
+    }
+    if (isStreaming) {
+      return { state: 'waiting' as const, tone: 'running' as const, text: t('chat.trace.executing') };
+    }
+    // 已结束：胶囊如实给结论——重试口径在这里与「已工作」收纳线互补。
+    if (unreturned) {
+      return { state: 'unreturned' as const, tone: 'interrupted' as const, text: t('chat.trace.noResult') };
+    }
+    if (summary.outcome === 'error') {
+      return {
+        state: 'failed' as const,
+        tone: 'error' as const,
+        text: worked ? `${t('chat.trace.outcome.error')} · ${t('chat.trace.pill.elapsed', { n: worked })}` : t('chat.trace.outcome.error'),
+      };
+    }
+    const retried = summary.retries > 0;
+    const doneWord = retried
+      ? t('chat.trace.outcome.okRetried', { n: summary.retries })
+      : t('chat.trace.pill.done');
+    return {
+      state: retried ? ('retried' as const) : ('done' as const),
+      tone: 'ok' as const,
+      text: worked ? `${doneWord} · ${t('chat.trace.pill.elapsed', { n: worked })}` : doneWord,
+    };
+  })();
+
   return (
     <div className="tc-trace tcv2-shell" data-trace data-trace-state={running ? 'running' : 'done'}>
+      {stepCount > 0 && phases.length > 0 && (
+        <div className="tcv2-phase" data-trace-phases>
+          <div className="tcv2-phase-bar-row">
+            {/* 阶段条：纯几何图形，语义交给下面的图例行与胶囊（aria-hidden） */}
+            <div className="tcv2-phase-bar" aria-hidden="true">
+              {phaseSegments.map((p, i) => (
+                <i
+                  key={`${p.kind}:${i}`}
+                  className={`tcv2-phase-seg is-${p.kind}${p.failed ? ' is-failed' : ''}${p.live ? ' is-live' : ''}`}
+                  data-phase-segment={p.kind}
+                  data-phase-failed={p.failed ? '1' : undefined}
+                  style={{ left: `${p.left}%`, width: `${p.width}%` }}
+                />
+              ))}
+            </div>
+            <button
+              type="button"
+              className="tcv2-phase-toggle"
+              data-phase-toggle
+              aria-expanded={legendOpen}
+              aria-label={t('chat.trace.phase.legend')}
+              title={t('chat.trace.phase.legend')}
+              onClick={toggleLegend}
+            >
+              <ChevronRight size={13} className={`tcv2-chev${legendOpen ? ' open' : ''}`} aria-hidden="true" />
+            </button>
+          </div>
+          {legendOpen && (
+            <div className="tcv2-phase-legend" data-phase-legend>
+              {PHASE_LEGEND_ORDER.map(it => (
+                <span key={it.kind} className="tcv2-phase-legend-item">
+                  <i className={`tcv2-phase-dot is-${it.kind}`} aria-hidden="true" />
+                  {t(it.key)}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="tcv2-pill-row">
+            <span className="tcv2-pill" data-trace-pill={pill.state}>
+              <i className={`tcv2-pill-dot is-${pill.tone}`} aria-hidden="true" />
+              <span aria-live="polite">{pill.text}</span>
+            </span>
+          </div>
+        </div>
+      )}
       <div
         className="tc-steps-bar tcv2-collapser"
         data-steps-bar
