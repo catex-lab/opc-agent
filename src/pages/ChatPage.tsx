@@ -35,6 +35,8 @@ import type { DanglingConfirmInfo } from '../hooks/useChat';
 // A115：群头像（群设置里换的，存在 sessionFlags）
 import { useGroupAvatar, useGroupAvatarImage } from '../sessionFlags';
 import { useTranslation, type MessageKey } from '../i18n';
+import { bootPref, pushPrefs } from '../prefs';
+import { autoMinimizeMode, type PanelMode } from '../trace/panelGeometry';
 
 /** 权限模式词在提示里也要跟着界面语言走；判定仍用 `PermissionMode` 原值 */
 const PERMISSION_MODE_TEXT: Record<PermissionMode, MessageKey> = {
@@ -290,6 +292,50 @@ export function ChatPage({
   /** 面板是否显示（P 键切换，默认显示） */
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelSelected, setPanelSelected] = useState<string | null>(null);
+  /**
+   * 2026-11-22：过程面板四态。初值来自 preferences.json（首帧同步注入），
+   * 没设过的人默认右侧停靠；窄屏默认最小化。用户一旦手动改过就不再自动改。
+   */
+  const [panelMode, setPanelMode] = useState<PanelMode>(() => {
+    const saved = bootPref('processPanel');
+    if (saved?.mode) return saved.mode;
+    return typeof window !== 'undefined' && window.innerWidth < 1100 ? 'minimized' : 'right';
+  });
+  const [panelPos, setPanelPos] = useState(() => {
+    const saved = bootPref('processPanel');
+    return { x: saved?.x ?? 0, y: saved?.y ?? 0 };
+  });
+  const [panelRestore, setPanelRestore] = useState<'right' | 'top' | 'floating'>(
+    () => bootPref('processPanel')?.lastMode ?? 'right'
+  );
+  const panelPrefTouched = useRef(!!bootPref('processPanel'));
+  const changePanelMode = useCallback((m: PanelMode) => {
+    const restore = panelMode === 'minimized' ? panelRestore : (panelMode === 'top' || panelMode === 'floating' ? panelMode : 'right');
+    if (m === 'minimized' && panelMode !== 'minimized') setPanelRestore(restore);
+    setPanelMode(m);
+    panelPrefTouched.current = true;
+    pushPrefs({
+      processPanel: {
+        mode: m,
+        x: panelPos.x,
+        y: panelPos.y,
+        ...(m === 'minimized' ? { lastMode: restore } : {}),
+      },
+    });
+  }, [panelMode, panelPos, panelRestore]);
+  const changePanelPos = useCallback((p: { x: number; y: number }) => {
+    setPanelPos(p);
+    panelPrefTouched.current = true;
+    pushPrefs({ processPanel: { mode: 'floating', x: p.x, y: p.y, lastMode: panelRestore } });
+  }, [panelRestore]);
+  // 窄屏响应式只在用户没显式选过停靠形态时生效，避免每次拉窗口都覆盖用户选择
+  useEffect(() => {
+    if (panelPrefTouched.current) return;
+    const onResize = () => setPanelMode(m => autoMinimizeMode(window.innerWidth, m));
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const panelStreaming = useMemo(() => {
     if (!currentSession) return false;
     const msgs = currentSession.messages ?? [];
@@ -322,7 +368,8 @@ export function ChatPage({
       if (/INPUT|TEXTAREA/.test(tag)) return;
       const k = e.key.toLowerCase();
       if (k === 'p') {
-        setPanelOpen(v => !v);
+        if (panelMode === 'minimized') changePanelMode(panelRestore);
+        else setPanelOpen(v => !v);
         return;
       }
       if (!panelOpen) return;
@@ -347,7 +394,7 @@ export function ChatPage({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [panelOpen, panelSelected]);
+  }, [panelOpen, panelSelected, panelMode, panelRestore, changePanelMode]);
   /**
    * 2026-11-21：输入区改为**玻璃浮层**（内容从它底下滚过）后，滚动容器的
    * 底部内边距与「回到最新」按钮的位置都要跟随输入区的实测高度 ——
@@ -866,6 +913,26 @@ export function ChatPage({
   // 2026-11-12：自定义图片头像，渲染链 image > 预设 > 拼贴。
   const groupAvatarImage = useGroupAvatarImage(currentSession?.id);
 
+  /** 过程面板四种形态共用同一份数据与回调，避免两处渲染口径漂移 */
+  const processPanelProps = {
+    blocks: panelBlocks,
+    isStreaming: panelStreaming,
+    open: panelOpen,
+    selectedId: panelSelected,
+    onSelectStep: setPanelSelected,
+    onSeek: (id: string) => {
+      setPanelSelected(id);
+      const el = document.querySelector(`[data-flow-row="${id}"]`);
+      if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    },
+    mode: panelMode,
+    pos: panelPos,
+    onModeChange: changePanelMode,
+    onPosChange: changePanelPos,
+    restoreMode: panelRestore,
+    inputHeight,
+  };
+
   return (
     <>
       {/* 群聊头部：群头像（图片/预设/成员拼贴）+ 编排模式切换，替代一对一的单人头部 */}
@@ -919,13 +986,22 @@ export function ChatPage({
           `data-chat-page`：打靶脚本用它数「会话页被挂载了几次」——
           从设置页切回消息栏时，这个页面**一次都不该**挂起来（见 App.tsx
           的 handleNavigate 注释）。 */}
-      <div data-chat-page className="relative flex min-h-0 flex-1">
+      <div data-chat-page data-panel-mode={panelMode} className="relative flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           {/* A1：滚动区外面再包一层 `relative`，只为给「回到最新」提供定位
               基准 —— 按钮不能挂在滚动容器**内部**，那样它会跟着内容一起滚走。
               `flex-col + min-h-0` 与原结构等价，滚动容器仍然是唯一的
               `data-chat-scroll`。 */}
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* 顶部吸顶：宽度与正文列同宽（.tc-chat-column 是唯一宽度来源），
+              在 flex 流里占位，正文从它下方开始，不靠覆盖实现。 */}
+          {!isGroup && currentSession && panelOpen && panelMode === 'top' && (
+            <div className="pf-top-slot">
+              <div className="tc-chat-column">
+                <ProcessPanel {...processPanelProps} />
+              </div>
+            </div>
+          )}
           {/* 消息区域。`data-chat-scroll` 是给打靶脚本量的：
               切换会话时这个容器的 scrollTop 变了几次（换成平滑滚动会动
               几十次，见 useLayoutEffect 里的 pendingJump 说明）。
@@ -1160,21 +1236,10 @@ export function ChatPage({
           />
         )}
 
-        {/* 单聊：右侧「过程」面板（P 键切换显示；默认开） */}
-        {!isGroup && currentSession && panelOpen && (
-          <ProcessPanel
-            blocks={panelBlocks}
-            isStreaming={panelStreaming}
-            open={panelOpen}
-            selectedId={panelSelected}
-            onSelectStep={setPanelSelected}
-            onSeek={id => {
-              setPanelSelected(id);
-              // 滚动聊天区到对应步骤行（参考页：点击时间轴 → 聊天滚动到该步）
-              const el = document.querySelector(`[data-flow-row="${id}"]`);
-              if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            }}
-          />
+        {/* 单聊过程面板：右停靠是布局栏；浮动/最小化是 fixed 浮层，不占宽度；
+            顶部吸顶已渲染在正文列上方，这里不再重复。 */}
+        {!isGroup && currentSession && panelOpen && panelMode !== 'top' && (
+          <ProcessPanel {...processPanelProps} />
         )}
       </div>
     </>

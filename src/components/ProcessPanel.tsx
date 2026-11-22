@@ -9,8 +9,14 @@
  * 不碰 SSE 事件流 —— 历史消息（刷新还原）也能渲染。
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { Minimize2, Move, PanelRight, PanelTop } from 'lucide-react';
 import type { Block } from '../../shared/blocks';
+import {
+  clampPanelPos,
+  snapPanelMode,
+  type PanelMode,
+} from '../trace/panelGeometry';
 import {
   baseName,
   formatStepDuration,
@@ -110,6 +116,16 @@ export interface ProcessPanelProps {
   /** 回放定位：滑块/快捷键把某个时间点映射到步骤，滚动聊天区 */
   onSeek?: (id: string) => void;
   open: boolean;
+  /** 停靠形态；缺省 right，保持历史调用方与闸门不变 */
+  mode?: PanelMode;
+  /** 浮动态视口坐标 */
+  pos?: { x: number; y: number };
+  onModeChange?: (mode: PanelMode) => void;
+  onPosChange?: (pos: { x: number; y: number }) => void;
+  /** 最小化时点胶囊回到的位置 */
+  restoreMode?: 'right' | 'top' | 'floating';
+  /** 输入浮层实测高度，用于拖动禁区下边界 */
+  inputHeight?: number;
 }
 
 /** 阶段色映射（与 processFlow.css 一致，面板内用同款） */
@@ -117,9 +133,24 @@ function phaseKey(p: FlowPhase): string {
   return p.kind;
 }
 
-export function ProcessPanel({ blocks, isStreaming = false, selectedId, onSelectStep, onSeek, open }: ProcessPanelProps) {
+export function ProcessPanel({
+  blocks,
+  isStreaming = false,
+  selectedId,
+  onSelectStep,
+  onSeek,
+  open,
+  mode = 'right',
+  pos,
+  onModeChange,
+  onPosChange,
+  restoreMode = 'right',
+  inputHeight = 0,
+}: ProcessPanelProps) {
   const { t } = useTranslation();
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
 
   const { rows, win } = useMemo(() => axisRows(blocks), [blocks]);
   const phases: FlowPhase[] = useMemo(
@@ -163,12 +194,123 @@ export function ProcessPanel({ blocks, isStreaming = false, selectedId, onSelect
 
   if (!open) return null;
 
+  // 拖动禁区：标题栏 + Agent 名称行在上方，输入浮层在下方。
+  const bounds = {
+    viewportWidth: typeof window === 'undefined' ? 1440 : window.innerWidth,
+    viewportHeight: typeof window === 'undefined' ? 900 : window.innerHeight,
+    topGuard: 84,
+    bottomGuard: inputHeight + 16,
+  };
+  const currentPos = pos ?? { x: Math.max(8, bounds.viewportWidth - 268), y: 92 };
+
+  const startDrag = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (mode !== 'floating') return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: currentPos.x, oy: currentPos.y };
+  };
+  const moveDrag = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = dragRef.current;
+    const el = panelRef.current;
+    if (!d || !el) return;
+    const next = clampPanelPos(
+      { x: d.ox + e.clientX - d.sx, y: d.oy + e.clientY - d.sy, width: el.offsetWidth, height: el.offsetHeight },
+      bounds
+    );
+    onPosChange?.(next);
+  };
+  const endDrag = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const el = panelRef.current;
+    if (!dragRef.current || !el) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    const snapped = snapPanelMode(
+      { ...currentPos, width: el.offsetWidth, height: el.offsetHeight },
+      bounds
+    );
+    dragRef.current = null;
+    if (snapped !== 'floating') onModeChange?.(snapped);
+  };
+  const nudge = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (mode !== 'floating') return;
+    const step = e.shiftKey ? 24 : 8;
+    const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+    const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+    if (!dx && !dy) {
+      if (e.key.toLowerCase() === 'm') onModeChange?.('minimized');
+      return;
+    }
+    e.preventDefault();
+    const el = panelRef.current;
+    if (el) onPosChange?.(clampPanelPos({ ...currentPos, x: currentPos.x + dx, y: currentPos.y + dy, width: el.offsetWidth, height: el.offsetHeight }, bounds));
+  };
+
+  if (mode === 'minimized') {
+    return (
+      <button
+        type="button"
+        className="pf-min-pill"
+        data-process-panel
+        data-panel-mode="minimized"
+        aria-label={t('chat.flow.panel.restore', { n: rows.length })}
+        title={t('chat.flow.panel.restore', { n: rows.length })}
+        onClick={() => onModeChange?.(restoreMode)}
+      >
+        <PanelRight size={12} strokeWidth={1.75} aria-hidden="true" />
+        <span>{t('chat.flow.panelTitle')} {rows.length}</span>
+      </button>
+    );
+  }
+
+  const modeButtons: Array<{ m: 'right' | 'top' | 'floating' | 'minimized'; Icon: typeof PanelRight; key: 'chat.flow.panel.modeRight' | 'chat.flow.panel.modeTop' | 'chat.flow.panel.modeFloat' | 'chat.flow.panel.modeMin' }> = [
+    { m: 'right', Icon: PanelRight, key: 'chat.flow.panel.modeRight' },
+    { m: 'top', Icon: PanelTop, key: 'chat.flow.panel.modeTop' },
+    { m: 'floating', Icon: Move, key: 'chat.flow.panel.modeFloat' },
+    { m: 'minimized', Icon: Minimize2, key: 'chat.flow.panel.modeMin' },
+  ];
+
   return (
-    <aside className="pf-panel" data-process-panel>
+    <aside
+      ref={panelRef}
+      className={`pf-panel pf-${mode === 'floating' ? 'float' : `dock-${mode}`}`}
+      data-process-panel
+      data-panel-mode={mode}
+      style={mode === 'floating' ? { left: currentPos.x, top: currentPos.y } : undefined}
+    >
       <div className="pf-panel-hd">
+        <button
+          type="button"
+          className="pf-panel-grip"
+          data-panel-drag
+          aria-label={t('chat.flow.panel.drag')}
+          title={t('chat.flow.panel.drag')}
+          tabIndex={mode === 'floating' ? 0 : -1}
+          onPointerDown={startDrag}
+          onPointerMove={moveDrag}
+          onPointerUp={endDrag}
+          onPointerCancel={() => { dragRef.current = null; }}
+          onKeyDown={nudge}
+        >
+          <Move size={12} strokeWidth={1.75} aria-hidden="true" />
+        </button>
         <b>{t('chat.flow.panelTitle')}</b>
         <span className="pf-panel-pill" data-panel-pill>
           {isStreaming ? t('chat.flow.processing', { n: '' }) : t('chat.flow.handled', { n: '' })}
+        </span>
+        <span className="pf-modebar" role="group" aria-label={t('chat.flow.panelTitle')}>
+          {modeButtons.map(({ m, Icon, key }) => (
+            <button
+              key={m}
+              type="button"
+              data-panel-mode-btn={m}
+              className={mode === m ? 'is-on' : ''}
+              aria-label={t(key)}
+              title={t(key)}
+              aria-pressed={mode === m}
+              onClick={() => onModeChange?.(m)}
+            >
+              <Icon size={12} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+          ))}
         </span>
       </div>
 

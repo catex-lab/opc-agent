@@ -20,6 +20,7 @@ import {
   type TraceItem,
 } from '../shared/trace';
 import { mergeAdjacentDuplicateTextBlocks, type Block, type ToolBlock } from '../shared/blocks';
+import { autoMinimizeMode, clampPanelPos, snapPanelMode } from '../src/trace/panelGeometry';
 
 const failures: string[] = [];
 const checks = { total: 0 };
@@ -179,6 +180,22 @@ const T0 = 1_700_000_000_000;
     '中间隔了工具块就不合并（不同阶段）');
   eq(mergeAdjacentDuplicateTextBlocks([text('a', '   '), text('b', '   ')]).length, 2,
     '空正文不参与合并');
+}
+
+// ── [9] 过程面板拖动几何：禁区钳制 / 边缘吸附 / 窄屏最小化 ──────────
+{
+  const bounds = { viewportWidth: 1440, viewportHeight: 900, topGuard: 84, bottomGuard: 96 };
+  const size = { width: 260, height: 320 };
+  const clamped = clampPanelPos({ x: -50, y: 0, ...size }, bounds);
+  ok(clamped.x === 8 && clamped.y === 92, '拖动越界被钳制在标题栏禁区之外', JSON.stringify(clamped));
+  const clampedBottom = clampPanelPos({ x: 9999, y: 9999, ...size }, bounds);
+  ok(clampedBottom.x === 1172 && clampedBottom.y === 476, '拖到底部被钳制在输入浮层之上', JSON.stringify(clampedBottom));
+  eq(snapPanelMode({ x: 1172, y: 400, ...size }, bounds), 'right', '松手贴近右缘 → 吸附右侧');
+  eq(snapPanelMode({ x: 600, y: 100, ...size }, bounds), 'top', '松手贴近上禁区 → 吸顶');
+  eq(snapPanelMode({ x: 600, y: 300, ...size }, bounds), 'floating', '松手在中间 → 保持浮动');
+  eq(autoMinimizeMode(900, 'right'), 'minimized', '窄屏未手动设置 → 自动最小化');
+  eq(autoMinimizeMode(900, 'top'), 'top', '用户手动吸顶 → 窄屏不强制改');
+  eq(autoMinimizeMode(1440, 'right'), 'right', '宽屏保持右侧停靠');
 }
 
 console.log(`过程流容器模型断言：${checks.total - failures.length}/${checks.total} 通过`);

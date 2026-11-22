@@ -103,11 +103,34 @@ export interface Prefs {
    * 尊重在意这一点的用户）。显式 false 才关；null = 回到默认开。
    */
   canaryEnabled?: boolean;
+  /** 单聊右侧过程面板的停靠形态与位置（2026-11-22） */
+  processPanel?: ProcessPanelPrefs;
 }
 
 export type LinkOpenMode = 'system' | 'in-app';
 
+/** 过程面板的停靠形态与浮动坐标。只存用户真的改过的键。 */
+export type ProcessPanelMode = 'right' | 'top' | 'floating' | 'minimized';
+export interface ProcessPanelPrefs {
+  mode: ProcessPanelMode;
+  /** 浮动态视口坐标；缺少时按右缘默认位置 */
+  x?: number;
+  y?: number;
+  /** 最小化之前的位置，点胶囊时回到这里 */
+  lastMode?: Exclude<ProcessPanelMode, 'minimized'>;
+}
+
 const isLinkOpenMode = (v: unknown): v is LinkOpenMode => v === 'system' || v === 'in-app';
+
+const PANEL_MODES: ProcessPanelMode[] = ['right', 'top', 'floating', 'minimized'];
+function isProcessPanelPrefs(v: unknown): v is ProcessPanelPrefs {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (!PANEL_MODES.includes(o.mode as ProcessPanelMode)) return false;
+  const coord = (x: unknown) => x === undefined || (typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= 10000);
+  if (!coord(o.x) || !coord(o.y)) return false;
+  return o.lastMode === undefined || (typeof o.lastMode === 'string' && PANEL_MODES.includes(o.lastMode as ProcessPanelMode) && o.lastMode !== 'minimized');
+}
 
 /** `null` 在补丁里表示**清空这一项**（回到「没设过」），与 `undefined`（不动）不同 */
 export type PrefsPatch = { [K in keyof Prefs]?: Prefs[K] | null };
@@ -217,6 +240,11 @@ export function validatePrefsPatch(input: unknown): PrefsValidation {
   for (const key of Object.keys(o)) {
     const v = o[key];
     switch (key) {
+      case 'processPanel':
+        if (v === null) patch.processPanel = null;
+        else if (isProcessPanelPrefs(v)) patch.processPanel = v;
+        else return { ok: false, error: 'processPanel 必须是 { mode, x?, y?, lastMode? }，mode 为 right/top/floating/minimized' };
+        break;
       case 'canaryEnabled':
         if (v === null) patch.canaryEnabled = null;
         else if (typeof v === 'boolean') patch.canaryEnabled = v;
