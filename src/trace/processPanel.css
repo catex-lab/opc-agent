@@ -366,6 +366,12 @@
   .pf-dock-right {
     display: none;
   }
+  /* 窄屏工作区是浮在右侧的 360px 抽屉，收起键就在右上角；最小化胶囊
+     若仍贴视口右缘会正好压住它（A86 C2 实测点不到）。抽屉在场时把胶囊
+     让到抽屉左侧，宁可浮在遮罩上也不覆盖别人的交互控件。 */
+  body:has([data-workspace-drawer='true']) .pf-min-pill {
+    right: 376px;
+  }
   .pf-top-slot {
     padding-top: 4px;
   }

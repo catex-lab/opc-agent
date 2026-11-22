@@ -32,7 +32,7 @@ import path from 'node:path';
 import { createServer } from 'node:net';
 import { chromium } from 'playwright-core';
 
-import { resolveChromePath } from './lib/chrome';
+import { resolveChromePath } from './lib/chrome.mjs';
 const CHROME = resolveChromePath();
 
 const failures: string[] = [];

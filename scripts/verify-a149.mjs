@@ -246,17 +246,15 @@ console.log('\n[2] 红框2：无总条/导轨/分隔线，整轮收成一条轨�
   ok((await page.locator('.tc-answer-divider').count()) === 0, '答案前没有分隔线');
   ok((await page.locator('.tc-proc-note').count()) === 0, '旁白不再降档（无 .tc-proc-note）');
 
-  // 新语义：答案前的思考/旁白/工具全部归入同一条轨迹，整轮收成一行摘要。
-  // 依据：src/trace/rows.ts 的 canGroupProcess/buildTraceRows + ChatMessages.tsx
-  // 的整轮归并分支；AgentTrace 收起态直接卸载步骤子树。
-  ok((await page.locator('[data-trace]').count()) === 1, '整轮只有一条轨迹（不再按工具段拆成多条）');
-  const traceBar = page.locator('[data-steps-bar]').first();
-  ok((await traceBar.count()) > 0, '轨迹汇总行在 DOM 里');
-  ok((await traceBar.getAttribute('aria-expanded')) === 'false', '有答案 → 轨迹默认收起');
-  // 2026-11-21 行式重设计：步骤行常驻（明细收起），不再卸载子树
-  // 2026-11-21 v2 定版：收纳线是唯一门面 —— 折叠态下步骤容器整个不挂载
-  ok((await page.locator('[data-trace-scroll]').count()) === 0, '完成态默认折叠（无步骤容器）');
-  ok((await page.locator('[data-trace-thinking]').count()) === 0, '折叠态无步骤行（思考行随轨迹折叠，展开见 [3]）');
+  // 2026-11-22：单聊过程回合整轮交给 ProcessFlow，旧的 [data-trace] /
+  // [data-steps-bar] 已退役。新形态同样守「整轮一条流 + 有答案即折叠」：
+  // 摘要行只有一条，步骤/旁白容器在折叠态不挂载，答案始终可见。
+  ok((await page.locator('[data-flow]').count()) === 1, '整轮只有一条过程流（不再按工具段拆成多条）');
+  const flowBar = page.locator('[data-flow-summary]').first();
+  ok((await flowBar.count()) > 0, '过程流摘要行在 DOM 里');
+  ok((await flowBar.getAttribute('aria-expanded')) === 'false', '有答案 → 过程流默认收起');
+  ok((await page.locator('[data-flow-steps]').count()) === 0, '完成态默认折叠（无步骤容器）');
+  ok((await page.locator('[data-flow-row]').count()) === 0, '折叠态无步骤行（展开见 [3]）');
 
   // 旁白属于过程：折叠态不渲染，展开后才随步骤一起出现（见 [3]）。
   const body = await page.evaluate(DEEP_TEXT);
@@ -281,62 +279,52 @@ console.log('\n[3] 红框2：旁白 14px 与答案同档；思考正文是浅灰
   });
   ok(answerSize === '14px', '答案正文 14px（--text-body-lg）', String(answerSize));
 
-  // 新语义：旁白已并入轨迹，答案仍走 AnswerMarkdown。
-  // 依据：src/trace/rows.ts 把 text 块转成 narration 行，AgentTrace 用
-  // .tc-trace-narration 渲染；traceFold.css 让它继承 .tc-trace 的 14px。
-  await page.click('[data-steps-bar]');
+  // 新语义：旁白与工具同在 ProcessFlow 内，答案仍走 AnswerMarkdown。
+  await page.locator('[data-flow-summary]').first().click();
   await page.waitForTimeout(400);
-  const thinkCollapsed = await page.evaluate(() => [...document.querySelectorAll('[data-trace-thinking]')].every(n => n.getAttribute('data-expanded') === '0'));
-  ok(thinkCollapsed, '正文已出现 → 轨迹内思考行默认收起（点开才看全文）', String(thinkCollapsed));
+  const thinkCollapsed = await page.evaluate(() =>
+    document.querySelectorAll('[data-flow-row-kind="thinking"]').length > 0 &&
+    document.querySelectorAll('.pf-think-note').length === 0);
+  ok(thinkCollapsed, '正文已出现 → 过程流内思考行默认收起（点开才看全文）', String(thinkCollapsed));
   const noteSize = await page.evaluate(() => {
     const answer = [...document.querySelectorAll('[data-answer-markdown]')].map(el => getComputedStyle(el).fontSize);
-    const narr = [...document.querySelectorAll('.tc-trace-narration')].map(el => getComputedStyle(el).fontSize);
+    const narr = [...document.querySelectorAll('.pf-narration')].map(el => getComputedStyle(el).fontSize);
     return { answer, narr };
   });
   ok(noteSize.answer.length === 1, `答案正文 1 块（旁白不再占用正文块）`, String(noteSize.answer.length));
-  ok(noteSize.narr.length === 3, `轨迹内 3 段旁白全部渲染`, String(noteSize.narr.length));
+  ok(noteSize.narr.length === 3, `过程流内 3 段旁白全部渲染`, String(noteSize.narr.length));
   ok(
     [...noteSize.answer, ...noteSize.narr].every(s => s === '14px'),
     '旁白与答案全部 14px 同档（不再有 13px 降档）',
     [...noteSize.answer, ...noteSize.narr].join(',')
   );
 
-  // 思考正文：展开轨迹后展开轨迹内思考，仍是浅灰圆角卡片，不是左细线。
-  // 依据：AgentTrace 的 ThinkingNode 用 .tc-think-note-body 渲染同一灰卡。
-  await page.locator('[data-trace-thinking] .tcv2-rowhead').first().click();
+  // 思考正文：展开过程流后再展开思考行。新版按参考页用左细线标记「这是过程」，
+  // 与答案正文区分；守的是「不冒充答案」，而不是沿用旧灰卡外形。
+  const thinkHead = page.locator('[data-flow-row-kind="thinking"] .pf-step-head[data-clickable="1"]');
+  if (await thinkHead.count()) await thinkHead.first().click();
   await page.waitForTimeout(300);
   const thinkCard = await page.evaluate(() => {
-    const el = document.querySelector('.tcv2-think-full');
+    const el = document.querySelector('.pf-think-note');
     if (!el) return null;
-    // v2：灰卡是外层详情面板（.tcv2-detail），全文本身透明
-    const cs = getComputedStyle(el.closest('.tcv2-detail') ?? el);
-    const probe = document.createElement('span');
-    probe.style.backgroundColor = 'var(--td-bg-color-secondarycontainer)';
-    document.body.appendChild(probe);
-    const cardToken = getComputedStyle(probe).backgroundColor;
-    probe.remove();
+    const cs = getComputedStyle(el);
     return {
-      fontSize: getComputedStyle(el).fontSize,
-      background: cs.backgroundColor,
-      cardToken,
-      panelRadius: (el.closest('.tcv2-detail') ? getComputedStyle(el.closest('.tcv2-detail')).borderTopLeftRadius : ''),
-      borderLeftWidth: getComputedStyle(el).borderLeftWidth,
-      borderLeftStyle: getComputedStyle(el).borderLeftStyle,
-      borderRadius: cs.borderTopLeftRadius,
+      fontSize: cs.fontSize,
+      color: cs.color,
+      borderLeftWidth: cs.borderLeftWidth,
+      borderLeftStyle: cs.borderLeftStyle,
     };
   });
-  ok(thinkCard != null, '思考正文展开后可见', JSON.stringify(thinkCard?.diag ?? {}).slice(0, 240));
+  ok(thinkCard != null, '思考正文展开后可见', JSON.stringify(thinkCard ?? {}).slice(0, 240));
   if (thinkCard) {
-    ok(parseFloat(thinkCard.fontSize) >= 12, '思考全文 ≥12px（v2 详情面板口径）', `思考 ${thinkCard.fontSize} / 答案 ${answerSize}`);
-    // v2：思考全文住在详情面板里，面板底色即灰卡（secondarycontainer）
-    ok(thinkCard.background === thinkCard.cardToken, '思考全文面板是灰卡（secondarycontainer 令牌）', thinkCard.background);
-    // 面板四边描边是有意设计（圆角卡）；要守的是全文本身不带 blockquote 左细线
+    ok(parseFloat(thinkCard.fontSize) >= 12, '思考全文 ≥12px（过程块口径）', `思考 ${thinkCard.fontSize} / 答案 ${answerSize}`);
+    // 左细线是参考页的有意设计：它标记过程，而不是把过程伪装成答案。
     ok(
-      thinkCard.borderLeftWidth === '0px' || thinkCard.borderLeftStyle === 'none',
-      '思考全文本身不带左细线（面板描边是圆角卡设计）',
+      parseFloat(thinkCard.borderLeftWidth) >= 1 && thinkCard.borderLeftStyle !== 'none',
+      '思考正文有过程标记（参考页左细线，不与答案混淆）',
       `${thinkCard.borderLeftWidth} ${thinkCard.borderLeftStyle}`
     );
-    ok(parseFloat(thinkCard.panelRadius) >= 6, '思考详情面板有圆角（≥6px）', thinkCard.panelRadius);
+    ok(!!thinkCard.color && thinkCard.color !== 'rgba(0, 0, 0, 0)', '思考正文有可见文字色', thinkCard.color);
   }
 
   await page.screenshot({ path: join(OUT, 'a149-expanded.png'), fullPage: false });

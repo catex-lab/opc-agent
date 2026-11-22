@@ -106,9 +106,9 @@ export const en: Record<MessageKey, string> = {
   'settings.linkOpen.label': 'Link opening',
   'settings.linkOpen.info': 'How body links open; in-app uses the workspace pane',
   'settings.linkOpen.system': 'System browser',
-  'settings.linkOpen.systemHint': 'Open in the system default browser (default)',
+  'settings.linkOpen.systemHint': 'Open in the system default browser',
   'settings.linkOpen.inApp': 'In-app',
-  'settings.linkOpen.inAppHint': 'Open in a browser tab in the right workspace',
+  'settings.linkOpen.inAppHint': 'Open in a browser tab in the right workspace (default)',
 
   'settings.transparency.label': 'Interface transparency',
   'settings.transparency.info': 'Higher = more transparent; 100% leaves frosted glass',

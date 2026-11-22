@@ -103,9 +103,9 @@ export const zh = {
   'settings.linkOpen.label': '链接打开方式',
   'settings.linkOpen.info': '正文链接用哪种方式打开；应用内打开会占用右侧工作区',
   'settings.linkOpen.system': '系统浏览器',
-  'settings.linkOpen.systemHint': '交给操作系统默认浏览器打开（默认）',
+  'settings.linkOpen.systemHint': '交给操作系统默认浏览器打开',
   'settings.linkOpen.inApp': '应用内打开',
-  'settings.linkOpen.inAppHint': '在右侧工作区的浏览标签页里打开',
+  'settings.linkOpen.inAppHint': '在右侧工作区的浏览标签页里打开（默认）',
 
   'settings.transparency.label': '界面透明度',
   'settings.transparency.info': '数值越大桌面越透；100% 只剩磨砂玻璃，文字仍清晰',
