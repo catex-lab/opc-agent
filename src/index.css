@@ -6769,10 +6769,10 @@ html[data-opc-glass='1'] t-chat-sender {
 
 /* 底部锚定遮罩：正文从输入卡两侧的缝隙里穿过去时收在页底色里。
    *
-   * 2026-11-22 修正：原来只有 90px 渐变、到 55% 才 85% 不透明，
-   * 卡片上沿附近仍能看见正文从两侧透出来。现在遮罩覆盖整个输入浮层，
-   * 顶部 8px 左右柔和过渡后立即变成页面实底 —— 正文仍可从卡片上方滚入，
-   * 但不会再出现在输入卡两侧。z-index 低于行内容，卡片投影保持不变。 */
+ * 2026-11-22 二修：早先「90px / 55%」漏字，「全高实底」又在聊天中部
+ * 画出一条浅灰带。现在改为毛玻璃遮罩：覆盖整个浮层，但只用极低不透明度
+ * 的 surface 色 + backdrop-filter 把下方文字糊掉 —— 视觉上接近透明，
+ * 正文仍读不出来，两个毛病一起收。z-index 低于行内容，卡片投影保持不变。 */
 .tcv2-inputwrap::before {
   content: '';
   position: absolute;
@@ -6783,10 +6783,12 @@ html[data-opc-glass='1'] t-chat-sender {
   background: linear-gradient(
     180deg,
     transparent 0%,
-    color-mix(in srgb, var(--td-bg-color-page) 92%, transparent) 6%,
-    var(--td-bg-color-page) 14%,
-    var(--td-bg-color-page) 100%
+    color-mix(in srgb, var(--tc-surface-content) 10%, transparent) 6%,
+    color-mix(in srgb, var(--tc-surface-content) 38%, transparent) 14%,
+    color-mix(in srgb, var(--tc-surface-content) 52%, transparent) 100%
   );
+  backdrop-filter: blur(12px) saturate(1.15);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
 }
 
 /* 渐变之上才是真正的行内容（玻璃行 / 提示行 / 输入卡） */

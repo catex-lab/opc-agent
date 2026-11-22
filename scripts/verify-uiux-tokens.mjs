@@ -607,33 +607,43 @@ if (DUMP) {
   console.log('');
 }
 
-/* 输入浮层遮罩：正文不许从输入卡两侧透出来。
- * 判据钉两个不变量而不是像素值：① 遮罩覆盖整个浮层（height 100%）；
- * ② 渐变在浮层顶部 20% 以内就到达页面实底（不是旧版 55% 才 85%）。
- * 反向探针把这两点退回旧写法，必须判红。 */
-function inputMaskCoversOverlay(rule) {
+/* 输入浮层遮罩：正文不许从输入卡两侧透出来，也不能在聊天中部画浅灰带。
+ * 判据钉三个不变量（不钉具体像素）：
+ *   ① 遮罩仍覆盖整个浮层（height 100%）；
+ *   ② 顶段有渐变过渡（20% 以内出现停靠点）；
+ *   ③ 靠 backdrop-filter 糊字，而不是刷页面实底。
+ * 两个反向探针分别退回「无毛玻璃」和「实底」，都必须判红。 */
+function inputMaskIsGlass(rule) {
   if (!rule || !/linear-gradient/.test(rule)) return false;
   if (!/height:\s*100%/.test(rule)) return false;
+  if (!/backdrop-filter\s*:\s*blur\(/.test(rule)) return false;
   const flat = rule.replace(/\s+/g, ' ');
+  if (/var\(--td-bg-color-page\)\s+\d+%/.test(flat)) return false;
   const stops = [...flat.matchAll(/(\d+)%/g)].map(m => Number(m[1]));
-  return /var\(--td-bg-color-page\) \d+%/.test(flat) && stops.some(p => p > 0 && p <= 20);
+  return stops.some(p => p > 0 && p <= 20);
 }
 
 const maskStart = css.indexOf('.tcv2-inputwrap::before');
 const maskBlock = maskStart >= 0 ? css.slice(maskStart, css.indexOf('}', maskStart)) : '';
 ok(
-  inputMaskCoversOverlay(maskBlock),
-  '输入浮层遮罩覆盖整个浮层并在顶部变为页面实底',
-  '旧 90px / 55% 渐变会让正文从输入卡两侧透出来'
+  inputMaskIsGlass(maskBlock),
+  '输入浮层遮罩覆盖全高、顶段柔和过渡且用毛玻璃而非实底',
+  '实底会画出浅灰带；90px 渐变会让正文从两侧透出来'
 );
 ok(
-  !inputMaskCoversOverlay(
-    maskBlock
-      .replace('height: 100%', 'height: 90px')
-      .replace('var(--td-bg-color-page) 14%', 'color-mix(in srgb, var(--td-bg-color-page) 85%, transparent) 55%')
+  !inputMaskIsGlass(maskBlock.replace(/(-webkit-)?backdrop-filter\s*:[^;]+;/g, '')),
+  '反向探针：去掉毛玻璃必须判红',
+  '探针仍绿 = 断言没真正钉住「靠模糊遮字」'
+);
+ok(
+  !inputMaskIsGlass(
+    maskBlock.replace(
+      'color-mix(in srgb, var(--tc-surface-content) 38%, transparent) 14%',
+      'var(--td-bg-color-page) 14%'
+    )
   ),
-  '反向探针：退回旧 90px / 55% 遮罩必须判红',
-  '探针仍绿 = 上一条没真正钉住遮罩不变量'
+  '反向探针：退回页面实底必须判红',
+  '探针仍绿 = 浅灰带会悄悄回来'
 );
 
 console.log(`\n设计系统写法审计：${total - failures.length}/${total} 通过`);

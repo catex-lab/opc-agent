@@ -60,6 +60,9 @@ export interface Prefs {
     mode: 'right' | 'top' | 'floating' | 'minimized';
     x?: number;
     y?: number;
+    /** 最小化胶囊的视口坐标（区别于浮动态坐标） */
+    minX?: number;
+    minY?: number;
     lastMode?: 'right' | 'top' | 'floating';
   };
 }

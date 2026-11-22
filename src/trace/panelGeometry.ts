@@ -46,6 +46,24 @@ export function snapPanelMode(pos: PanelRect, bounds: DragBounds): PanelMode {
   return 'floating';
 }
 
+/**
+ * 最小化胶囊松手落点 → 目标形态。
+ *
+ * 胶囊本身只有百来像素宽，判定「贴右」必须按**展开后**的面板宽度算，
+ * 否则胶囊拖到屏幕最右时也永远差一截，切不回右吸附。
+ */
+export function snapMinimizedDrop(
+  pos: Pick<PanelRect, 'x' | 'y'>,
+  bounds: DragBounds,
+  panelSize: Pick<PanelRect, 'width' | 'height'>
+): PanelMode {
+  const m = bounds.margin ?? 8;
+  const rightGap = bounds.viewportWidth - (pos.x + panelSize.width);
+  if (rightGap <= m + 24) return 'right';
+  if (pos.y - bounds.topGuard <= 24) return 'top';
+  return 'floating';
+}
+
 /** 窄屏自动最小化：只在用户没显式设过停靠形态时调用。 */
 export function autoMinimizeMode(width: number, current: PanelMode): PanelMode {
   return width < 1100 && current === 'right' ? 'minimized' : current;

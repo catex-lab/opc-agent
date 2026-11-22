@@ -20,7 +20,7 @@ import {
   type TraceItem,
 } from '../shared/trace';
 import { mergeAdjacentDuplicateTextBlocks, type Block, type ToolBlock } from '../shared/blocks';
-import { autoMinimizeMode, clampPanelPos, snapPanelMode } from '../src/trace/panelGeometry';
+import { autoMinimizeMode, clampPanelPos, snapMinimizedDrop, snapPanelMode } from '../src/trace/panelGeometry';
 
 const failures: string[] = [];
 const checks = { total: 0 };
@@ -196,6 +196,13 @@ const T0 = 1_700_000_000_000;
   eq(autoMinimizeMode(900, 'right'), 'minimized', '窄屏未手动设置 → 自动最小化');
   eq(autoMinimizeMode(900, 'top'), 'top', '用户手动吸顶 → 窄屏不强制改');
   eq(autoMinimizeMode(1440, 'right'), 'right', '宽屏保持右侧停靠');
+
+  // 最小化胶囊：判定贴右要按展开后的面板宽度算，不能按 100px 胶囊算
+  eq(snapMinimizedDrop({ x: 1170, y: 300 }, bounds, size), 'right', '胶囊拖到右缘 → 切右吸附');
+  eq(snapMinimizedDrop({ x: 600, y: 92 }, bounds, size), 'top', '胶囊拖到上禁区 → 切吸顶');
+  eq(snapMinimizedDrop({ x: 600, y: 300 }, bounds, size), 'floating', '胶囊拖到中间 → 切浮动');
+  eq(snapMinimizedDrop({ x: 1000, y: 300 }, bounds, size), 'floating',
+    '胶囊右缘距展开面板仍超过阈值 → 不误吸右');
 }
 
 console.log(`过程流容器模型断言：${checks.total - failures.length}/${checks.total} 通过`);

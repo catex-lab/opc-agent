@@ -68,8 +68,12 @@
   gap: 8px;
   align-items: center;
 }
+/* 步骤条按数量自适应：少则拉开占满，多则保底 96px 后横向滚动。
+   不再写死 132px —— 3 步时左右留白、14 步时挤成一条线都不对。 */
 .pf-dock-top .pf-panel-row {
-  flex: 0 0 132px;
+  flex: 1 1 0;
+  min-width: 96px;
+  max-width: 240px;
   min-height: 22px;
 }
 .pf-dock-top .pf-panel-track {
@@ -79,20 +83,25 @@
 /* 自由浮动：fixed 浮层，不占布局宽度；边界由 panelGeometry 钳制 */
 .pf-float {
   position: fixed;
+  left: 0;
+  top: 0;
   z-index: 40;
   width: 260px;
   height: 320px;
+  will-change: transform;
 }
-.pf-float .pf-panel-grip {
-  cursor: grab;
+/* 只在落点切换/菜单开合走短过渡；拖动过程禁掉，避免跟手延迟。
+   left/top 是最终落点，pointermove 的每一帧由 rAF 写，不叠 transition。 */
+.pf-panel[data-dragging='1'] {
+  transition: none;
 }
 
 /* 最小化胶囊 */
 .pf-min-pill {
   position: fixed;
+  left: 0;
+  top: 0;
   z-index: 40;
-  right: 16px;
-  top: 62px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -107,7 +116,10 @@
   color: var(--td-text-color-secondary);
   font: inherit;
   font-size: 12px;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  will-change: transform;
 }
 .pf-min-pill:hover {
   color: var(--td-text-color-primary);
@@ -117,45 +129,105 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  min-height: 18px;
   font-size: 13px;
   font-weight: 600;
   color: var(--td-text-color-primary);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
-.pf-panel-grip {
+
+/* 形态收敛：一个主图标代表当前形态，点开才有四项带文字的菜单。
+   十字箭头（Move）已彻底退役，不再出现在标题栏或菜单里。 */
+.pf-mode-menu-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.pf-mode-main {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--td-text-color-placeholder);
-  cursor: default;
-}
-.pf-modebar {
-  display: inline-flex;
-  gap: 2px;
-  margin-left: auto;
-}
-.pf-modebar button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
   color: var(--td-text-color-placeholder);
   cursor: pointer;
 }
-.pf-modebar button:hover,
-.pf-modebar button.is-on {
+.pf-mode-main:hover,
+.pf-mode-main[aria-expanded='true'] {
   background-color: var(--tc-hover-chrome);
   color: var(--td-brand-color);
+}
+.pf-mode-menu {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 116px;
+  padding: 4px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--tc-surface-content) 94%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-card);
+  animation: pf-mode-menu-in 140ms var(--ease-tencent) both;
+}
+.pf-mode-menu button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--td-text-color-secondary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.pf-mode-menu button:hover,
+.pf-mode-menu button.is-on {
+  background-color: var(--tc-hover-chrome);
+  color: var(--td-brand-color);
+}
+
+/* 轻量 live 指示：只在运行中出现的 14×2 扫描线，不抢正文注意力。 */
+.pf-live {
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  margin-left: auto;
+  overflow: hidden;
+  border-radius: 1px;
+  background-color: color-mix(in srgb, var(--td-brand-color) 24%, transparent);
+}
+.pf-live::after {
+  content: '';
+  display: block;
+  width: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background-color: var(--td-brand-color);
+  animation: pf-live-scan 1.4s ease-in-out infinite;
+}
+@keyframes pf-live-scan {
+  from { transform: translateX(-6px); }
+  to { transform: translateX(14px); }
+}
+@keyframes pf-mode-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .pf-panel-pill {
@@ -355,7 +427,16 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pf-panel-track i.is-running {
+  .pf-panel-track i.is-running,
+  .pf-live::after {
+    animation: none;
+  }
+  .pf-live::after {
+    width: 14px;
+    transform: none;
+    opacity: 0.6;
+  }
+  .pf-mode-menu {
     animation: none;
   }
 }
@@ -366,16 +447,11 @@
   .pf-dock-right {
     display: none;
   }
-  /* 窄屏工作区是浮在右侧的 360px 抽屉，收起键就在右上角；最小化胶囊
-     若仍贴视口右缘会正好压住它（A86 C2 实测点不到）。抽屉在场时把胶囊
-     让到抽屉左侧，宁可浮在遮罩上也不覆盖别人的交互控件。 */
-  body:has([data-workspace-drawer='true']) .pf-min-pill {
-    right: 376px;
-  }
   .pf-top-slot {
     padding-top: 4px;
   }
   .pf-dock-top .pf-panel-row {
-    flex-basis: 104px;
+    min-width: 88px;
+    max-width: 160px;
   }
 }

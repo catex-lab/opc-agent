@@ -116,6 +116,9 @@ export interface ProcessPanelPrefs {
   /** 浮动态视口坐标；缺少时按右缘默认位置 */
   x?: number;
   y?: number;
+  /** 最小化胶囊的视口坐标；缺少时按右上角默认位置 */
+  minX?: number;
+  minY?: number;
   /** 最小化之前的位置，点胶囊时回到这里 */
   lastMode?: Exclude<ProcessPanelMode, 'minimized'>;
 }
@@ -128,7 +131,7 @@ function isProcessPanelPrefs(v: unknown): v is ProcessPanelPrefs {
   const o = v as Record<string, unknown>;
   if (!PANEL_MODES.includes(o.mode as ProcessPanelMode)) return false;
   const coord = (x: unknown) => x === undefined || (typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= 10000);
-  if (!coord(o.x) || !coord(o.y)) return false;
+  if (!coord(o.x) || !coord(o.y) || !coord(o.minX) || !coord(o.minY)) return false;
   return o.lastMode === undefined || (typeof o.lastMode === 'string' && PANEL_MODES.includes(o.lastMode as ProcessPanelMode) && o.lastMode !== 'minimized');
 }
 
@@ -183,6 +186,8 @@ export function normalizePrefs(input: unknown): Prefs {
   if (isLinkOpenMode(o.linkOpenMode)) out.linkOpenMode = o.linkOpenMode;
   if (isAnswerLanguage(o.answerLanguage)) out.answerLanguage = o.answerLanguage;
   if (isInterfaceLanguage(o.interfaceLanguage)) out.interfaceLanguage = o.interfaceLanguage;
+  // 过程面板曾经在这里漏判：写入成功、重启后注入值却没有它，偏好看起来「存不上」。
+  if (isProcessPanelPrefs(o.processPanel)) out.processPanel = o.processPanel;
   const g = o.glow as Record<string, unknown> | undefined;
   if (g && typeof g === 'object') {
     const size = isIntIn(g.size, PREFS_LIMITS.glowSize) ? g.size : null;
@@ -243,7 +248,7 @@ export function validatePrefsPatch(input: unknown): PrefsValidation {
       case 'processPanel':
         if (v === null) patch.processPanel = null;
         else if (isProcessPanelPrefs(v)) patch.processPanel = v;
-        else return { ok: false, error: 'processPanel 必须是 { mode, x?, y?, lastMode? }，mode 为 right/top/floating/minimized' };
+        else return { ok: false, error: 'processPanel 必须是 { mode, x?, y?, minX?, minY?, lastMode? }，mode 为 right/top/floating/minimized' };
         break;
       case 'canaryEnabled':
         if (v === null) patch.canaryEnabled = null;

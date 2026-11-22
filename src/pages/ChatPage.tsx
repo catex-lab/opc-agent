@@ -305,6 +305,10 @@ export function ChatPage({
     const saved = bootPref('processPanel');
     return { x: saved?.x ?? 0, y: saved?.y ?? 0 };
   });
+  const [panelMinPos, setPanelMinPos] = useState<{ x: number; y: number } | null>(() => {
+    const saved = bootPref('processPanel');
+    return saved?.minX != null && saved?.minY != null ? { x: saved.minX, y: saved.minY } : null;
+  });
   const [panelRestore, setPanelRestore] = useState<'right' | 'top' | 'floating'>(
     () => bootPref('processPanel')?.lastMode ?? 'right'
   );
@@ -319,15 +323,38 @@ export function ChatPage({
         mode: m,
         x: panelPos.x,
         y: panelPos.y,
+        ...(panelMinPos ? { minX: panelMinPos.x, minY: panelMinPos.y } : {}),
         ...(m === 'minimized' ? { lastMode: restore } : {}),
       },
     });
-  }, [panelMode, panelPos, panelRestore]);
+  }, [panelMode, panelPos, panelMinPos, panelRestore]);
   const changePanelPos = useCallback((p: { x: number; y: number }) => {
     setPanelPos(p);
     panelPrefTouched.current = true;
-    pushPrefs({ processPanel: { mode: 'floating', x: p.x, y: p.y, lastMode: panelRestore } });
-  }, [panelRestore]);
+    pushPrefs({
+      processPanel: {
+        mode: 'floating',
+        x: p.x,
+        y: p.y,
+        ...(panelMinPos ? { minX: panelMinPos.x, minY: panelMinPos.y } : {}),
+        lastMode: panelRestore,
+      },
+    });
+  }, [panelMinPos, panelRestore]);
+  const changePanelMinPos = useCallback((p: { x: number; y: number }) => {
+    setPanelMinPos(p);
+    panelPrefTouched.current = true;
+    pushPrefs({
+      processPanel: {
+        mode: 'minimized',
+        x: panelPos.x,
+        y: panelPos.y,
+        minX: p.x,
+        minY: p.y,
+        lastMode: panelRestore,
+      },
+    });
+  }, [panelPos, panelRestore]);
   // 窄屏响应式只在用户没显式选过停靠形态时生效，避免每次拉窗口都覆盖用户选择
   useEffect(() => {
     if (panelPrefTouched.current) return;
@@ -937,8 +964,10 @@ export function ChatPage({
     },
     mode: panelMode,
     pos: panelPos,
+    minPos: panelMinPos ?? undefined,
     onModeChange: changePanelMode,
     onPosChange: changePanelPos,
+    onMinPosChange: changePanelMinPos,
     restoreMode: panelRestore,
     inputHeight,
   };
