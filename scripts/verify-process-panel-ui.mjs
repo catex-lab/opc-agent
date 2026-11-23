@@ -195,6 +195,17 @@ const mode = async page => page.locator('[data-process-panel]').first().getAttri
   await page.mouse.down();
   await page.mouse.move(600, 300, { steps: 10 });
   ok(await page.locator('[data-panel-drop-hint]').count() === 1, '拖动时有落点提示');
+  if (PROBE) {
+    // 反向探针：把小标签退回旧版整屏虚线框，下面必须判红
+    await page.addStyleTag({
+      content: '.pf-drop-hint { top:132px !important; left:48px !important; right:48px !important; bottom:132px !important; width:auto !important; height:auto !important; border:1px dashed !important; }',
+    });
+  }
+  const hintBox = await rect(page, '[data-panel-drop-hint]');
+  const small = hintBox.width < 220 && hintBox.height < 40;
+  ok(small, '落点提示是小标签而非巨大虚线框（探针退回旧大框必须判红）', `${Math.round(hintBox.width)}x${Math.round(hintBox.height)}`);
+  const hintText = await page.locator('[data-panel-drop-hint]').innerText();
+  ok(/自由浮动/.test(hintText), '小标签写明松手后的形态', hintText);
   await page.mouse.up();
   await page.waitForTimeout(200);
   ok(await mode(page) === 'floating', '右吸附拖到中间松手 → 浮动', `实际 ${await mode(page)}`);
@@ -224,6 +235,10 @@ for (const count of [4, 14]) {
     ok(metrics.scroll > metrics.client, '步骤多时容器可横向滚动', `${metrics.scroll}>${metrics.client}`);
   }
   ok(await page.locator('[data-panel-seek]').count() === 0, '吸顶没有底部滑杆');
+  // 吸顶必须紧贴会话头下边缘：data-chat-page 的顶边就是 header 底边
+  const pageTop = await page.locator('[data-chat-page]').evaluate(el => el.getBoundingClientRect().top);
+  const topRect = await rect(page, '.pf-dock-top');
+  ok(topRect.top - pageTop <= 8, '吸顶紧贴会话头下边缘', `gap=${Math.round(topRect.top - pageTop)}`);
   await close(h);
 }
 
@@ -288,9 +303,9 @@ for (const count of [4, 14]) {
 
 for (const [target, expect] of [
   [{ x: 1420, y: 250 }, 'right'],
-  [{ x: 1300, y: 250 }, 'floating'],
-  [{ x: 600, y: 90 }, 'top'],
-  [{ x: 600, y: 300 }, 'floating'],
+  [{ x: 1300, y: 250 }, 'minimized'],
+  [{ x: 600, y: 90 }, 'minimized'],
+  [{ x: 600, y: 300 }, 'minimized'],
 ]) {
   console.log(`\n[4] 胶囊拖到 (${target.x},${target.y}) → ${expect}`);
   const h = await open({ mode: 'minimized' });
@@ -302,6 +317,9 @@ for (const [target, expect] of [
   await page.mouse.up();
   await page.waitForTimeout(200);
   ok(await mode(page) === expect, `落点切到 ${expect}`, `实际 ${await mode(page)}`);
+  const moved = await rect(page, '[data-process-panel]');
+  ok(Math.abs(moved.left - pill.left) > 40 || Math.abs(moved.top - pill.top) > 40,
+    `拖动确实移动了胶囊位置（${expect}）`, `${Math.round(pill.left)},${Math.round(pill.top)}→${Math.round(moved.left)},${Math.round(moved.top)}`);
   await close(h);
 }
 
@@ -339,7 +357,7 @@ for (const [target, expect] of [
       const b = el.getBoundingClientRect();
       return cs.display === 'none' || (b.width === 0 && b.height === 0);
     });
-    ok(hidden !== PROBE, PROBE ? `反向探针：${modeCfg} 撤销隐藏必须判红` : `${modeCfg}：面板在设置模态期间不可见`);
+    ok(hidden, `${modeCfg}：面板在设置模态期间不可见（探针撤销隐藏必须判红）`);
 
     if (modeCfg === 'top' && !PROBE) {
       const hit = await page.evaluate(() => {

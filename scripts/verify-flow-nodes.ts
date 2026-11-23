@@ -203,10 +203,10 @@ const T0 = 1_700_000_000_000;
   // 最小化胶囊：贴右必须按胶囊自己的宽度，不能按展开后 260px 算
   const pill = { width: 100, height: 30 };
   eq(snapMinimizedDrop({ x: 1320, y: 300 }, bounds, pill), 'right', '胶囊真碰到右缘 → 切右吸附');
-  eq(snapMinimizedDrop({ x: 600, y: 92 }, bounds, pill), 'top', '胶囊拖到上禁区 → 切吸顶');
-  eq(snapMinimizedDrop({ x: 600, y: 300 }, bounds, pill), 'floating', '胶囊拖到中间 → 切浮动');
-  eq(snapMinimizedDrop({ x: 1170, y: 300 }, bounds, pill), 'floating',
-    '胶囊离右缘还远（旧口径会误吸右）→ 保持浮动');
+  eq(snapMinimizedDrop({ x: 600, y: 92 }, bounds, pill), 'minimized', '胶囊拖到上沿 → 保持最小化（不再误切吸顶）');
+  eq(snapMinimizedDrop({ x: 600, y: 300 }, bounds, pill), 'minimized', '胶囊拖到中间 → 保持最小化（不再误切浮动）');
+  eq(snapMinimizedDrop({ x: 1170, y: 300 }, bounds, pill), 'minimized',
+    '胶囊离右缘还远（旧口径会误吸右）→ 保持最小化');
 }
 
 console.log(`过程流容器模型断言：${checks.total - failures.length}/${checks.total} 通过`);

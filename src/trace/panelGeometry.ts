@@ -49,8 +49,12 @@ export function snapPanelMode(pos: PanelRect, bounds: DragBounds): PanelMode {
 /**
  * 最小化胶囊松手落点 → 目标形态。
  *
- * 必须按**胶囊自己的宽度**判「碰到右缘」：上一版用展开后 260px 算，
- * 胶囊离右缘还有 160px 就吸附，用户明确判为错。真碰到右缘才切右吸附。
+ * 「移动位置」和「切换形态」是两件事：普通拖动只改胶囊坐标、保持最小化，
+ * 只有真正碰到右缘才切右吸附 —— 这是用户明确要过的唯一入口，上沿和中间
+ * 都不再自动切形态（旧版一松手就跳走，用户判为误设计）。
+ *
+ * 判「碰到右缘」必须按**胶囊自己的宽度**：上一版用展开后 260px 算，
+ * 胶囊离右缘还有 160px 就吸附，同样被判为错。
  */
 export function snapMinimizedDrop(
   pos: Pick<PanelRect, 'x' | 'y'>,
@@ -59,9 +63,7 @@ export function snapMinimizedDrop(
 ): PanelMode {
   const m = bounds.margin ?? 8;
   const rightGap = bounds.viewportWidth - (pos.x + pillSize.width);
-  if (rightGap <= m + 16) return 'right';
-  if (pos.y - bounds.topGuard <= 24) return 'top';
-  return 'floating';
+  return rightGap <= m + 24 ? 'right' : 'minimized';
 }
 
 /** 窄屏自动最小化：只在用户没显式设过停靠形态时调用。 */
