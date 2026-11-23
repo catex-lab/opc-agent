@@ -61,6 +61,14 @@ files:
   # 这里的排除规则仍然存在。
   - '!node_modules/@openai/codex-win32-x64/**'
   - '!node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/**'
+  # ── 合规改造（2026-11-23）：Claude SDK 本体改「用户自装」────────────
+  # @anthropic-ai/claude-agent-sdk 本体约 5MB，许可是「All rights reserved」，
+  # 随包分发属于再分发专有副本。改为排除：用户自行 npm i -g 安装，应用只在
+  # 运行时用 server/agents/claudeSdkLocator.ts 定位并 import 那一份，全程不
+  # 碰副本、不代下载 —— 真正脱离分发链（对应 THIRD-PARTY.md 保守选择 B）。
+  # ⚠️ 排除本体后，adapter 的 probe/loadSdk 必须同步（已改），否则会「假绿」。
+  # 闸门 verify:claude-sdk-bundle 钉住此处 + probe 判据 + 引导文案。
+  - '!node_modules/@anthropic-ai/claude-agent-sdk/**'
   # 2026-10-31：把 @tencent-ai/agent-sdk 内嵌的 CLI（cli/）**打回安装包**。
   #
   # 此前（2026-10-30）因为 cli/package.json 写 "SEE LICENSE IN README.md"
