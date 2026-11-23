@@ -215,11 +215,23 @@ const PRESET_COLORS = [
   '#e34d59', '#834ec2', '#b0479e', '#0e7a8c',
 ];
 
-const PERMISSION_MODES: { value: PermissionMode; label: string; descKey: MessageKey }[] = [
-  { value: 'default', label: 'default', descKey: 'chat.permission.defaultDesc' },
-  { value: 'acceptEdits', label: 'acceptEdits', descKey: 'chat.permission.acceptEditsDesc' },
-  { value: 'plan', label: 'plan', descKey: 'chat.permission.planDesc' },
-  { value: 'bypassPermissions', label: 'bypassPermissions', descKey: 'chat.permission.bypassDesc' },
+// UI-审查 P1：选项名从英文原词改为中英一致的 label key（复用 ChatInput 的同一组文案），
+// 避免把「全放行」这种危险档显示成英文原词 + 绿色（绿=安全的暗示是误导）。
+const PERMISSION_MODES: {
+  value: PermissionMode;
+  labelKey: MessageKey;
+  descKey: MessageKey;
+  danger?: boolean;
+}[] = [
+  { value: 'default', labelKey: 'chat.permission.default', descKey: 'chat.permission.defaultDesc' },
+  { value: 'acceptEdits', labelKey: 'chat.permission.acceptEdits', descKey: 'chat.permission.acceptEditsDesc' },
+  { value: 'plan', labelKey: 'chat.permission.plan', descKey: 'chat.permission.planDesc' },
+  {
+    value: 'bypassPermissions',
+    labelKey: 'chat.permission.bypass',
+    descKey: 'chat.permission.bypassDesc',
+    danger: true,
+  },
 ];
 
 const PRESET_TEMPLATES: Array<{
@@ -1234,12 +1246,31 @@ export function SettingsPage({
                           style={{ width: '100%' }}
                         >
                           {PERMISSION_MODES.map(mode => (
-                            <Select.Option key={mode.value} value={mode.value} label={mode.label}>
+                            <Select.Option
+                              key={mode.value}
+                              value={mode.value}
+                              label={t(mode.labelKey)}
+                              data-permission-mode={mode.value}
+                            >
                               <div className="flex flex-col py-1">
-                                <span className="font-mono text-sm" style={{ color: 'var(--td-success-color)' }}>
-                                  {mode.label}
+                                <span
+                                  className="text-sm"
+                                  style={{
+                                    color: mode.danger
+                                      ? 'var(--tc-status-danger)'
+                                      : 'var(--td-text-color-primary)',
+                                  }}
+                                >
+                                  {t(mode.labelKey)}
                                 </span>
-                                <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                                <span
+                                  className="text-xs"
+                                  style={{
+                                    color: mode.danger
+                                      ? 'var(--tc-status-danger)'
+                                      : 'var(--td-text-color-placeholder)',
+                                  }}
+                                >
                                   {t(mode.descKey)}
                                 </span>
                               </div>
