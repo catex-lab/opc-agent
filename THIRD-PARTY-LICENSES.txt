@@ -234,7 +234,8 @@ OPC Agent — 随安装包分发的第三方组件许可清单
   版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
   来源：后端依赖（原样进 app.asar）
   内嵌子包（随父包一起进安装包，许可按各自的声明）：
-    @tencent-ai/codebuddy-code 2.184.0 —— 许可：SEE LICENSE IN README.md
+    @tencent-ai/codebuddy-code 2.184.0 —— 许可：MIT
+      元数据许可字段为「SEE LICENSE IN README.md」，但 README.md 无许可正文；已从同目录 LICENSE 文件推断为 MIT
 
 @tootallnate/once 2.0.1
   许可：MIT

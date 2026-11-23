@@ -66,6 +66,64 @@ function licenseOf(pkg) {
 const LICENSE_FILES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'LICENCE.md', 'license', 'NOTICE'];
 
 /**
+ * 从许可证正文推断 SPDX 标识。只用**正文里的特征句**，不猜版权人。
+ *
+ * 为什么需要：有些包（实测 @tencent-ai/codebuddy-code）的 package.json 写
+ * `SEE LICENSE IN README.md`，那个 README 也在包里，但 28 行全是安装说明、
+ * 没有许可正文 —— 真正的许可在 `LICENSE.txt`（标准 MIT 全文）。只信元数据
+ * 字段就会把 MIT 组件误标成「条款无法查证」，凭空制造一个合规风险。
+ *
+ * 特征句按「最宽松的先匹配」排列，匹配不到返回 null（如实保留原字段）。
+ */
+function inferLicenseFromText(text) {
+  const t = text.replace(/\r/g, '');
+  if (/Permission is hereby granted, free of charge/i.test(t)) return 'MIT';
+  if (/Apache License[\s\S]{0,80}Version 2\.0|Licensed under the Apache License/i.test(t)) return 'Apache-2.0';
+  if (/Redistribution and use in source and binary forms/i.test(t)) {
+    if (/Neither the name|endorse or promote/i.test(t)) return 'BSD-3-Clause';
+    return 'BSD-2-Clause';
+  }
+  if (/Permission to use, copy, modify, and\/or distribute this software/i.test(t)) return 'ISC';
+  if (/Mozilla Public License Version 2\.0/i.test(t)) return 'MPL-2.0';
+  return null;
+}
+
+/** 一个文件是否含许可正文（而非只有安装说明 / 版权行）。 */
+function hasLicenseBody(text) {
+  return inferLicenseFromText(text) !== null ||
+    /Permission is hereby|Redistribution and use|Licensed under|Mozilla Public License/i.test(text);
+}
+
+/**
+ * 权威许可判定：元数据是 `SEE LICENSE IN X` 时不能盲信 ——
+ * 若 X 不含许可正文，就扫目录里的 LICENSE* 文件，用正文推断真实许可。
+ * 这样既纠正误标，又不针对任何具体包写死。
+ */
+function resolvedLicense(dir, pkg) {
+  const declared = licenseOf(pkg);
+  const m = /^SEE LICEN[CS]E IN (\S+)$/i.exec(declared);
+  if (!m) return declared;
+
+  // 指向的文件存在且有许可正文 → 元数据可信，保留原样
+  try {
+    if (existsSync(join(dir, m[1])) && hasLicenseBody(readFileSync(join(dir, m[1]), 'utf8'))) {
+      return declared;
+    }
+  } catch { /* 读不到就走回退 */ }
+
+  // 指向的文件缺失/无正文 → 扫 LICENSE*，从正文推断
+  for (const f of LICENSE_FILES) {
+    const p = join(dir, f);
+    if (!existsSync(p)) continue;
+    try {
+      const inferred = inferLicenseFromText(readFileSync(p, 'utf8'));
+      if (inferred) return inferred;
+    } catch { /* 下一个候选 */ }
+  }
+  return declared; // 推断不出，如实保留
+}
+
+/**
  * 取版权行。
  *
  * ⚠️ 不能「匹配到 Copyright 就收」。Apache-2.0 正文里至少有三处含 copyright：
@@ -165,7 +223,7 @@ function nestedPackages(dir, parentName) {
             dir: sub,
             name: pkg.name,
             version: pkg.version || '?',
-            license: licenseOf(pkg),
+            license: resolvedLicense(sub, pkg),
             note: danglingLicenseNote(sub, pkg),
           });
           continue; // 子包内部不再拆
@@ -179,18 +237,30 @@ function nestedPackages(dir, parentName) {
 }
 
 /**
- * `SEE LICENSE IN README.md` 这类声明要验证目标文件真在包里。
+ * `SEE LICENSE IN X` 这类声明的核对与说明。
  *
- * 不验证就会把「许可见某文件」原样抄进清单，而那个文件根本不存在 —— 清单看起来
- * 齐全，实际拿不到条款。这条不是为某个包写死的：任何包只要许可字段是这种形式
- * 就适用。
+ * 三种情形：
+ *   ① X 存在且含许可正文 → 元数据可信，无需备注；
+ *   ② X 存在但无许可正文、就从同目录 LICENSE* 推断出了真实许可 → 说明偏差来源
+ *      （实测 codebuddy-code：字段指 README，条款实际在 LICENSE.txt 的 MIT 全文）；
+ *   ③ X 不存在且推断不出 → 真「无法查证」，报警告。
  */
 function danglingLicenseNote(dir, pkg) {
-  const m = /^SEE LICEN[CS]E IN (\S+)$/i.exec(licenseOf(pkg));
+  const declared = licenseOf(pkg);
+  const m = /^SEE LICEN[CS]E IN (\S+)$/i.exec(declared);
   if (!m) return '';
   const target = join(dir, m[1]);
-  if (existsSync(target)) return '';
-  return `⚠️ 该子包声明「许可见 ${m[1]}」，但 ${m[1]} 未随包提供 —— 许可条款无法从包内查证`;
+  let targetOk = false;
+  try {
+    targetOk = existsSync(target) && hasLicenseBody(readFileSync(target, 'utf8'));
+  } catch { /* 读不到按不存在处理 */ }
+  if (targetOk) return '';
+
+  const resolved = resolvedLicense(dir, pkg);
+  if (resolved !== declared) {
+    return `元数据许可字段为「${declared}」，但 ${m[1]} 无许可正文；已从同目录 LICENSE 文件推断为 ${resolved}`;
+  }
+  return `⚠️ 该子包声明「许可见 ${m[1]}」，但 ${m[1]} 未随包提供，且无其他 LICENSE 文件 —— 许可条款无法从包内查证`;
 }
 
 /**
@@ -322,7 +392,7 @@ function add(dir, pkg, origin) {
   seen.set(key, {
     name: pkg.name,
     version: pkg.version || '?',
-    license: licenseOf(pkg),
+    license: resolvedLicense(dir, pkg),
     copyright: copyrightOf(dir, pkg),
     origin: ON_DEMAND_PACKAGES.has(pkg.name)
       ? '按需下载（不随安装包，首次使用时从 npm 镜像取）'

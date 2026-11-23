@@ -81,26 +81,28 @@
 
 | 字段 | 值 |
 |---|---|
-| name / version | `@tencent-ai/codebuddy-code` 2.167.0 |
-| license | `SEE LICENSE IN README.md` |
-| 包里真的有 `README.md` 吗 | **没有** |
+| name / version | `@tencent-ai/codebuddy-code` 2.184.0 |
+| license 字段 | `SEE LICENSE IN README.md` |
+| README.md 里有许可条款吗 | **没有**（28 行纯安装说明） |
+| 实际许可文件 | **`cli/LICENSE.txt` —— 标准 MIT 全文，Copyright 2023 Tencent Cloud** |
 
-也就是说：外层包在 npm 元数据里声明 MIT，内嵌的 CLI 子包自述「许可见 README.md」，
-而那个 README 并没有随包发布 —— **许可条款无法从包内查证**。
+**2026-11-23 核实更正**：此前本文件与许可清单都写「条款无法查证」，那是**错的**。
+真相是元数据字段指向 README，而 README 只是安装说明；真正的许可正文在同目录的
+`LICENSE.txt`，内容是标准 MIT（"Permission is hereby granted, free of charge..."）。
+`cli/**` 在 `asarUnpack` 里，这份 LICENSE.txt **随包分发**。外层 `@tencent-ai/agent-sdk`
+也是 MIT。**结论：这一项是 MIT 组件，署名齐全，可以随包，不构成合规风险。**
 
-**2026-10-31 现状：随安装包分发。** `electron-builder.yml` 把它从安装包里**排除过一天**
-（理由就是上面那句「条款无法查证」），但实测后果是：打包版里 WorkBuddy 恒为「未安装」
-（本机 PATH 与常见目录都没有 `codebuddy`），而开发态因为 `node_modules` 里有这份 `cli/`
-所以正常 —— 典型的「dev 能用、装完不能用」。
+顺带修了生成器 `gen-third-party.mjs`：此前它只读 package.json 的 license 字段，
+误把该组件标成 `SEE LICENSE IN README.md`；现在遇到「字段指向的文件无许可正文」时
+会回退扫描同目录 LICENSE* 文件、从正文推断真实许可（本例推断为 MIT），并在清单里
+如实注明这个偏差来源。
 
-于是改回随包分发：`asarUnpack` 把 `cli/**` 放到 `app.asar.unpacked`（它要 spawn 同目录的
+**随包现状**：`asarUnpack` 把 `cli/**` 放到 `app.asar.unpacked`（它要 spawn 同目录的
 vendor 可执行文件，asar 内路径 spawn 不了），`bootstrap.cjs` 按
 「包内 → PATH → 常见目录」的顺序探测并注入 `CODEBUDDY_CODE_PATH`。代价是安装包 +约 109MB。
-
-**残余风险（fork 者需自己判断）**：这份 `cli/` 的许可条款**无法从包内查证**，
-再分发它同样属于「分发第三方副本」。保守做法与上面 Claude SDK 相同 ——
-从 `files` 里排除 `node_modules/@tencent-ai/agent-sdk/cli/**`，让用户自己装 `codebuddy` CLI；
-排除后 WorkBuddy 显示「未安装」并给安装提示，不会崩溃。
+历史上（2026-10-30）曾因「条款无法查证」把它排除过一天，实测打包版 WorkBuddy 恒为
+「未安装」（本机 PATH 与常见目录都没有 `codebuddy`），开发态却正常 —— 典型的
+「dev 能用、装完不能用」。既然已确认是 MIT，这个排除理由不再成立。
 
 ## 字体与图标
 
