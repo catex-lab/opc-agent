@@ -59,7 +59,7 @@
  * 其父元素的第一个子节点」，组标题必须在 hero 的父元素之外。
  * 版本号缺失时（浏览器开发态）如实显示「开发版」徽标，不再露出「v—」（T8-3）。
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Github,
   Star,
@@ -91,6 +91,7 @@ interface AppInfo {
 
 interface AboutBridge {
   appInfo?: () => Promise<AppInfo>;
+  openLicenseText?: () => Promise<string>;
 }
 
 function bridge(): AboutBridge | undefined {
@@ -202,6 +203,15 @@ const THIRD_PARTY: Array<{ name: string; license: string; licenseKey?: MessageKe
 export default function AboutPanel() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<AppInfo | null>(null);
+  const [licenseError, setLicenseError] = useState('');
+
+  const openLicense = useCallback(() => {
+    void bridge()?.openLicenseText?.().then(err => {
+      setLicenseError(err || '');
+    }).catch(() => {
+      setLicenseError(t('settings.about.licenseOpenFail'));
+    });
+  }, [t]);
 
   useEffect(() => {
     // 浏览器里跑（无 preload）时接口不存在，页面降级成纯说明文字。
@@ -362,6 +372,22 @@ export default function AboutPanel() {
             <p className="tc-about-lic-note">
               {t('settings.about.licenseNote')}
             </p>
+
+            <button
+              type="button"
+              className="tc-btn-secondary tc-about-lic-open"
+              onClick={openLicense}
+              data-about-license-open
+            >
+              <ExternalLink size={14} aria-hidden="true" />
+              {t('settings.about.licenseOpen')}
+            </button>
+            <p className="tc-about-lic-hint">{t('settings.about.licenseOpenHint')}</p>
+            {licenseError && (
+              <p className="tc-about-lic-error" role="alert">
+                {t('settings.about.licenseOpenFail')}{licenseError}
+              </p>
+            )}
           </details>
           <p className="tc-about-foot">Copyright © 2026 catex-lab · OPC Agent</p>
         </section>

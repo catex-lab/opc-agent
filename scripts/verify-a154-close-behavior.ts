@@ -66,6 +66,7 @@ function killTree(child: ReturnType<typeof spawn> | null) {
   spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
     stdio: 'ignore',
     windowsHide: true,
+    timeout: 10000, // 沙箱拦 reg.exe/sc.exe 时 taskkill 可能挂起，别让 spawnSync 永久阻塞
   });
 }
 

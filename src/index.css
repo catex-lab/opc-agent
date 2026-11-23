@@ -5700,6 +5700,26 @@ html[data-opc-glass='1'] t-chat-sender {
   color: var(--td-text-color-placeholder);
 }
 
+/* 完整许可清单：随安装包分发，点一下用系统程序打开。
+   按钮几何走 tc-btn-secondary 的令牌，这里只管与上方说明的间距。 */
+.tc-about-lic-open {
+  margin-top: 12px;
+}
+
+.tc-about-lic-hint {
+  margin-top: 6px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-about-lic-error {
+  margin-top: 6px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--td-error-color);
+}
+
 /* ===== 扩展开关 =====
  *
  * 全站唯一的一种「电源开关」：列表单条、分组头、以后详情页总开关都复用它。

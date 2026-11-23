@@ -165,6 +165,18 @@ contextBridge.exposeInMainWorld('opc', {
   },
 
   /**
+   * 关于页：打开随安装包分发的完整第三方许可清单（274 个组件的许可 + 版权行）。
+   *
+   * 主进程负责从 asar 读出内容、落到临时真实文件、交给系统默认程序打开；
+   * 前端不需要知道路径，也不参与拼路径。
+   *
+   * @returns {Promise<string>} 空串 = 成功；否则是失败原因，前端显示给人看
+   */
+  openLicenseText() {
+    return ipcRenderer.invoke('opc:open-license-text');
+  },
+
+  /**
    * 应用内检查更新。
    *
    * 状态机与主进程完全一致：idle / checking / latest / available /

@@ -154,7 +154,7 @@ function killAllLaunched(): void {
   for (const pid of readLaunches()) {
     try {
       if (process.platform === 'win32') {
-        spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+        spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', timeout: 10000 }); // 沙箱拦 reg/sc 时别让 spawnSync 永久阻塞
       } else {
         process.kill(pid, 'SIGKILL');
       }

@@ -66,6 +66,64 @@ function licenseOf(pkg) {
 const LICENSE_FILES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'LICENCE.md', 'license', 'NOTICE'];
 
 /**
+ * 从许可证正文推断 SPDX 标识。只用**正文里的特征句**，不猜版权人。
+ *
+ * 为什么需要：有些包（实测 @tencent-ai/codebuddy-code）的 package.json 写
+ * `SEE LICENSE IN README.md`，那个 README 也在包里，但 28 行全是安装说明、
+ * 没有许可正文 —— 真正的许可在 `LICENSE.txt`（标准 MIT 全文）。只信元数据
+ * 字段就会把 MIT 组件误标成「条款无法查证」，凭空制造一个合规风险。
+ *
+ * 特征句按「最宽松的先匹配」排列，匹配不到返回 null（如实保留原字段）。
+ */
+function inferLicenseFromText(text) {
+  const t = text.replace(/\r/g, '');
+  if (/Permission is hereby granted, free of charge/i.test(t)) return 'MIT';
+  if (/Apache License[\s\S]{0,80}Version 2\.0|Licensed under the Apache License/i.test(t)) return 'Apache-2.0';
+  if (/Redistribution and use in source and binary forms/i.test(t)) {
+    if (/Neither the name|endorse or promote/i.test(t)) return 'BSD-3-Clause';
+    return 'BSD-2-Clause';
+  }
+  if (/Permission to use, copy, modify, and\/or distribute this software/i.test(t)) return 'ISC';
+  if (/Mozilla Public License Version 2\.0/i.test(t)) return 'MPL-2.0';
+  return null;
+}
+
+/** 一个文件是否含许可正文（而非只有安装说明 / 版权行）。 */
+function hasLicenseBody(text) {
+  return inferLicenseFromText(text) !== null ||
+    /Permission is hereby|Redistribution and use|Licensed under|Mozilla Public License/i.test(text);
+}
+
+/**
+ * 权威许可判定：元数据是 `SEE LICENSE IN X` 时不能盲信 ——
+ * 若 X 不含许可正文，就扫目录里的 LICENSE* 文件，用正文推断真实许可。
+ * 这样既纠正误标，又不针对任何具体包写死。
+ */
+function resolvedLicense(dir, pkg) {
+  const declared = licenseOf(pkg);
+  const m = /^SEE LICEN[CS]E IN (\S+)$/i.exec(declared);
+  if (!m) return declared;
+
+  // 指向的文件存在且有许可正文 → 元数据可信，保留原样
+  try {
+    if (existsSync(join(dir, m[1])) && hasLicenseBody(readFileSync(join(dir, m[1]), 'utf8'))) {
+      return declared;
+    }
+  } catch { /* 读不到就走回退 */ }
+
+  // 指向的文件缺失/无正文 → 扫 LICENSE*，从正文推断
+  for (const f of LICENSE_FILES) {
+    const p = join(dir, f);
+    if (!existsSync(p)) continue;
+    try {
+      const inferred = inferLicenseFromText(readFileSync(p, 'utf8'));
+      if (inferred) return inferred;
+    } catch { /* 下一个候选 */ }
+  }
+  return declared; // 推断不出，如实保留
+}
+
+/**
  * 取版权行。
  *
  * ⚠️ 不能「匹配到 Copyright 就收」。Apache-2.0 正文里至少有三处含 copyright：
@@ -165,7 +223,7 @@ function nestedPackages(dir, parentName) {
             dir: sub,
             name: pkg.name,
             version: pkg.version || '?',
-            license: licenseOf(pkg),
+            license: resolvedLicense(sub, pkg),
             note: danglingLicenseNote(sub, pkg),
           });
           continue; // 子包内部不再拆
@@ -179,18 +237,30 @@ function nestedPackages(dir, parentName) {
 }
 
 /**
- * `SEE LICENSE IN README.md` 这类声明要验证目标文件真在包里。
+ * `SEE LICENSE IN X` 这类声明的核对与说明。
  *
- * 不验证就会把「许可见某文件」原样抄进清单，而那个文件根本不存在 —— 清单看起来
- * 齐全，实际拿不到条款。这条不是为某个包写死的：任何包只要许可字段是这种形式
- * 就适用。
+ * 三种情形：
+ *   ① X 存在且含许可正文 → 元数据可信，无需备注；
+ *   ② X 存在但无许可正文、就从同目录 LICENSE* 推断出了真实许可 → 说明偏差来源
+ *      （实测 codebuddy-code：字段指 README，条款实际在 LICENSE.txt 的 MIT 全文）；
+ *   ③ X 不存在且推断不出 → 真「无法查证」，报警告。
  */
 function danglingLicenseNote(dir, pkg) {
-  const m = /^SEE LICEN[CS]E IN (\S+)$/i.exec(licenseOf(pkg));
+  const declared = licenseOf(pkg);
+  const m = /^SEE LICEN[CS]E IN (\S+)$/i.exec(declared);
   if (!m) return '';
   const target = join(dir, m[1]);
-  if (existsSync(target)) return '';
-  return `⚠️ 该子包声明「许可见 ${m[1]}」，但 ${m[1]} 未随包提供 —— 许可条款无法从包内查证`;
+  let targetOk = false;
+  try {
+    targetOk = existsSync(target) && hasLicenseBody(readFileSync(target, 'utf8'));
+  } catch { /* 读不到按不存在处理 */ }
+  if (targetOk) return '';
+
+  const resolved = resolvedLicense(dir, pkg);
+  if (resolved !== declared) {
+    return `元数据许可字段为「${declared}」，但 ${m[1]} 无许可正文；已从同目录 LICENSE 文件推断为 ${resolved}`;
+  }
+  return `⚠️ 该子包声明「许可见 ${m[1]}」，但 ${m[1]} 未随包提供，且无其他 LICENSE 文件 —— 许可条款无法从包内查证`;
 }
 
 /**
@@ -300,17 +370,33 @@ function bundledDirs() {
   return out;
 }
 
+/**
+ * 这两个 npm 平台包虽在 dependencies 树里，但 2026-11-19 起被
+ * electron-builder.yml 的 `files` 排除，改为用户首次使用时从 npm 镜像
+ * 按需下载（vendorComponents.ts）。标注「原样进 asar」是过时信息 ——
+ * 清单仍列出它们（多列不违规、更保守），但来源必须如实写。
+ *
+ * ⚠️ 与 electron-builder.yml 的 files 排除规则、vendorComponents.ts 的
+ * 白名单三处必须同步；任一处改动都要回来核对这里。
+ */
+const ON_DEMAND_PACKAGES = new Set([
+  '@anthropic-ai/claude-agent-sdk-win32-x64',
+  '@openai/codex-win32-x64',
+]);
+
 const seen = new Map();
-/** 每一条带上「它凭什么随包分发」：后端原样打包 / 前端构建内联 / 运行时本体 */
+/** 每一条带上「它凭什么随包分发」：后端原样打包 / 前端构建内联 / 运行时本体 / 按需下载 */
 function add(dir, pkg, origin) {
   const key = `${pkg.name}@${pkg.version}`;
   if (seen.has(key)) return;
   seen.set(key, {
     name: pkg.name,
     version: pkg.version || '?',
-    license: licenseOf(pkg),
+    license: resolvedLicense(dir, pkg),
     copyright: copyrightOf(dir, pkg),
-    origin,
+    origin: ON_DEMAND_PACKAGES.has(pkg.name)
+      ? '按需下载（不随安装包，首次使用时从 npm 镜像取）'
+      : origin,
     nested: nestedPackages(dir, pkg.name),
   });
 }
@@ -352,13 +438,17 @@ const lines = [
   '',
   '本文件由 `node scripts/gen-third-party.mjs` 从 node_modules 自动生成，请勿手工编辑。',
   '',
-  '覆盖范围（三块，全部随安装包分发）：',
+  '覆盖范围（三块，随安装包分发；例外见下）：',
   '  1. 后端依赖 —— `npm ls --omit=dev` 的完整生产依赖树，原样打进 app.asar；',
   '  2. 前端打包 —— `src/` 里 import 到的包及其 dependencies 闭包，Vite 构建时',
   '     内联进 dist/assets/*.js。它们在 package.json 里写作 devDependencies，',
   '     但**代码确实在安装包里**（react / react-dom / tdesign-react / lucide-react',
   '     / xterm 等），因此同样需要署名；',
   '  3. Electron 运行时本体（内含 Chromium）。',
+  '',
+  '例外：codex / claude 的 npm 平台包虽在依赖树里，但自 2026-11-19 起不随包，',
+  '改为首次使用时从 npm 镜像按需下载；它们的「来源」字段如实标注，',
+  '仍列出是因为清单宁多勿少（多列不违规，漏列才丢署名）。',
   '',
   '不在此列的：vite / tailwindcss / electron-builder / tsx / playwright-core 等',
   '纯构建与测试工具 —— 它们只在开发机上运行，产物里没有它们的代码。',

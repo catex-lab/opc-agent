@@ -41,23 +41,46 @@ import type {
 import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 
 /**
- * 惰性动态加载 SDK。
+ * 惰性动态加载 SDK（2026-11-23 合规改造：用户自装）。
+ *
+ * `@anthropic-ai/claude-agent-sdk` 本体是专有许可（All rights reserved），
+ * 已从安装包排除，由用户自行 `npm i -g` 安装。应用全程不碰副本，只在运行时
+ * 用 locateClaudeSdk() 定位用户已装的那一份，按 **file:// 绝对路径** import。
+ *
+ * 为什么不用裸包名 import：ESM 的 import() 按 node_modules 解析，用户全局装的
+ * 包不在 app.asar/node_modules 里，且 ESM 不认 NODE_PATH —— 必须给绝对路径。
  *
  * 这个包的 `exports` 只有 types + default，入口是 `sdk.mjs`（纯 ESM）。
- * 打包态 esbuild 把外置依赖的静态导入降级成 `require()`，CJS require 一个
- * 纯 ESM 入口行为依 Node 版本而定（require(esm)），一旦入口含顶层 await
- * 就直接在**模块加载时**抛错 —— 与 codex-sdk 的 ERR_PACKAGE_PATH_NOT_EXPORTED
- * 同一类「安装包打不开」。动态 `import()` 在两种形态下都稳定。
+ * 动态 import(fileURL) 在开发态与打包态都稳定（避开 CJS require(esm) 的坑）。
  */
 type ClaudeSdkModule = typeof import('@anthropic-ai/claude-agent-sdk');
 let sdkPromise: Promise<ClaudeSdkModule> | null = null;
+
+/** SDK 本体未安装时抛这个，供上层转成清晰的中文引导（message 自带安装命令） */
+export class ClaudeSdkMissingError extends Error {
+  constructor() {
+    super(`Claude SDK 本体未安装。请在终端运行：${CLAUDE_SDK_INSTALL_HINT}`);
+    this.name = 'ClaudeSdkMissingError';
+  }
+}
+
 function loadSdk(): Promise<ClaudeSdkModule> {
-  sdkPromise ??= import('@anthropic-ai/claude-agent-sdk');
+  if (!sdkPromise) {
+    const located = locateClaudeSdk();
+    if (!located) {
+      // 不缓存失败：用户装好 SDK 后无需重启，下一次 send 会重新探测。
+      return Promise.reject(new ClaudeSdkMissingError());
+    }
+    sdkPromise = import(/* @vite-ignore */ located.url) as Promise<ClaudeSdkModule>;
+    // import 失败（装了但版本不兼容）也不缓存，给用户重试机会
+    sdkPromise.catch(() => { sdkPromise = null; });
+  }
   return sdkPromise;
 }
 import { AsyncQueue, PendingReplies, linkAbort } from '../channel.js';
 import { toUnpackedPath } from '../sdkRuntime.js';
 import { resolveVendorComponentBinary } from '../vendorComponents.js';
+import { locateClaudeSdk, CLAUDE_SDK_INSTALL_HINT } from '../claudeSdkLocator.js';
 import { withMemoryContext } from '../../memory.js';
 import { withAnswerLanguage } from '../../answer-language.js';
 import { withExtensionsContext } from '../../extensions/inject.js';
@@ -272,6 +295,20 @@ export class ClaudeSdkAdapter implements AgentProvider {
 
   async probe(): Promise<AgentStatus> {
     const now = new Date().toISOString();
+
+    // 2026-11-23 合规改造：SDK 本体为专有许可，已排除出安装包，由用户自装。
+    // 先查本体再查 exe —— 两者缺一都(true)不可用，且必须如实报「未安装」，
+    // 不能显示「已就绪」却在发消息时才抛错（假绿）。
+    if (!locateClaudeSdk()) {
+      this.status = {
+        availability: 'not-installed',
+        installed: false,
+        message: `Claude SDK 本体未安装。请在终端运行：${CLAUDE_SDK_INSTALL_HINT}`,
+        probedAt: now,
+      };
+      return this.status;
+    }
+
     const binary = bundledBinary();
     if (!binary) {
       this.status = {

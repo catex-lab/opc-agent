@@ -34,7 +34,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -92,9 +92,12 @@ async function waitReady(base, child, timeoutMs = 90000) {
 }
 
 async function startServer(port) {
-  const child = spawn('npx tsx server/index.ts', {
+  // 2026-11-23 根治卡死：不用 `shell:true` + `npx tsx`（那样 child.pid 是 cmd.exe，
+  // 既杀不到真正 listen 的 node，pipe 句柄也不释放 ⇒ taskkill 成唯一手段 ⇒ 被沙箱
+  // 拦 reg.exe/sc.exe 时挂死）。直接 spawn 当前 node + tsx 的 cli.mjs：pid 就是真
+  // node 进程，kill() 直接生效，stopServer 不再需要 taskkill。
+  const child = spawn(process.execPath, [path.join(ROOT, 'node_modules/tsx/dist/cli.mjs'), 'server/index.ts'], {
     cwd: ROOT,
-    shell: true,
     windowsHide: true,
     env: {
       ...process.env,
@@ -109,13 +112,59 @@ async function startServer(port) {
   return { child, ready, log };
 }
 
-function stopServer(child) {
+/**
+ * 停服务端（2026-11-23 根治整链卡死）。
+ *
+ * 旧实现用 `spawnSync('taskkill', ...)` 且**无 timeout**：本沙箱会拦截 taskkill
+ * 间接调用的 reg.exe/sc.exe，某些时序下 taskkill 子进程挂住不退出 ⇒ spawnSync
+ * **永久阻塞事件循环** ⇒ 整链跑到第 86 段本脚本收尾时卡死（15:10 那次 2h 无日志）。
+ * 断言本身 53/53 全绿，卡的只是清理逻辑。
+ *
+ * 根治分两层（2026-11-23）：
+ *   A. startServer 改为直接 `spawn(process.execPath, tsx-cli)`，不再 shell:true ——
+ *      pid 就是真正 listen 的 node，kill() 直接生效，根本不需要 taskkill。
+ *   B. 本函数：① kill()；② 等 exit 事件 + 15s 上限（kill 返回 ≠ 已死，A114/A140）；
+ *      ③ waitPortClosed 用 HTTP 自证端口真关。超时都不抛错——清理失败不误报成
+ *      产品红，但绝不无限等。
+ */
+async function stopServer(child, base) {
   if (!child || child.exitCode != null) return;
-  // 先礼后兵：SIGTERM 在 Windows 上不一定有人接，补一次 taskkill 兜底
-  spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
-    stdio: 'ignore',
-    windowsHide: true,
+  const pid = child.pid;
+  if (!pid) return;
+
+  // ① kill() 发 SIGTERM。startServer 已改为直接 spawn 真 node（非 shell:true），
+  //    pid 就是 listen 的那个进程，kill() 直接生效 —— 不再需要 taskkill，
+  //    从根上杜绝沙箱拦 reg.exe/sc.exe 导致的挂死。
+  try { child.kill('SIGTERM'); } catch { /* 已经退了 */ }
+
+  // ② 等进程真的退出（kill 返回 ≠ 已死），15s 上限绝不无限等。
+  await new Promise(resolve => {
+    if (child.exitCode != null) return resolve();
+    let done = false;
+    const finish = () => { if (!done) { done = true; clearInterval(iv); clearTimeout(to); resolve(); } };
+    const iv = setInterval(() => { if (child.exitCode != null) finish(); }, 50);
+    const to = setTimeout(finish, 15000);
+    child.once('exit', finish);
+    child.once('close', finish);
   });
+
+  // ③ 端口自证：exit 事件只说明进程退了，端口是否真关要以 HTTP 连不上为准
+  //    （防御性——即便哪天 startServer 又被改回 shell:true，这条也不会假绿）。
+  if (base) await waitPortClosed(base);
+}
+
+/** 等端口真的不再应答；超时返回 false 但不抛错（清理问题不误报成产品红）。 */
+async function waitPortClosed(base, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(`${base}/api/preferences`, { signal: AbortSignal.timeout(1000) });
+      await new Promise(r => setTimeout(r, 200));
+    } catch {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** 系统 Chrome 优先；没有就取 ms-playwright 里最新的 chromium 构建 */
@@ -185,7 +234,7 @@ try {
     ok(onDisk.theme === 'dark' && onDisk.sidebarWidth === 380, '磁盘内容 = 提交的值');
 
     // 真跨进程：进程内缓存 `cached` 会让「没落盘」也看起来是对的
-    stopServer(child);
+    await stopServer(child, base); // 传旧 base：确认旧进程端口真关，再换端口起新的
     child = null;
     port = await freePort();
     base = `http://127.0.0.1:${port}`;
@@ -385,7 +434,7 @@ try {
   console.log(`\n✗ 运行异常：${e?.stack || e}`);
   failures.push('运行异常');
 } finally {
-  stopServer(child);
+  await stopServer(child, base);
   try {
     fs.rmSync(TMP, { recursive: true, force: true });
   } catch {

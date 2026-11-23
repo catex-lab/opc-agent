@@ -229,6 +229,7 @@ interface Files {
   types: string; chatHeader: string; zh: string; en: string;
   agentLogin: string; chatMessages: string; detail: string;
   registryHook: string; indexCss: string; settings: string; settingsCss: string; custom: string;
+  enumSelect: string;
 }
 const REAL: Files = {
   index: code('server/index.ts'),
@@ -247,6 +248,9 @@ const REAL: Files = {
   indexCss: code('src/index.css'),
   settings: code('src/components/SettingsPage.tsx'),
   settingsCss: code('src/settings-select.css'),
+  // c850ec9 删掉 SettingsPage 的 note={current.hint}、cda7f3b 把 hint 移入
+  // EnumSelect 的 title={hint} 后，断言必须跟着实现搬家，否则钉旧字面量假红（记忆 §3/§30）。
+  enumSelect: code('src/components/EnumSelect.tsx'),
 };
 
 function contract(f: Files) {
@@ -310,7 +314,9 @@ function contract(f: Files) {
     noStandaloneHint:
       !/\.opc-enum-setting__hint\s*\{/.test(f.settingsCss) &&
       !/opc-enum-setting__hint/.test(f.settings) &&
-      /note=\{current\.hint\}/.test(f.settings),
+      // hint 已从 SettingsPage 的 note={current.hint} 搬到 EnumSelect 的 title={hint}
+      // （c850ec9 删 / cda7f3b 引）。钉实现载体本身，删掉 EnumSelect 的 title 就红。
+      /title=\{hint\}/.test(f.enumSelect),
   };
 }
 
