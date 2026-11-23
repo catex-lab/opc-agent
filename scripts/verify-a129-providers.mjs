@@ -154,7 +154,8 @@ function killTree(child) {
     // 同步等 taskkill 收工：异步 spawn 时旧进程可能还占着端口，
     // 新进程 bind 失败，而 waitReady 会被**旧服务端**应答成 ready ——
     // 于是后面所有断言都打在旧进程上（自建条目只在启动时注册）。
-    spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    // timeout 兜底：沙箱拦 reg.exe/sc.exe 时 taskkill 可能挂起，别让 spawnSync 永久阻塞。
+    spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 10000 });
   } else {
     child.kill('SIGTERM');
   }

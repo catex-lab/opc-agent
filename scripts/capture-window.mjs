@@ -236,5 +236,9 @@ try {
   // Electron 子进程不会随启动器一起退出，留着会占单实例锁 + 污染下一次取样。
   // ⚠️ 按 PID 连树杀，**不要** `taskkill /IM "OPC Agent.exe"` —— 那会把用户自己
   // 正在用的应用一起杀掉（同名）。
-  if (child.pid) spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F']);
+  // timeout 兜底：沙箱拦 taskkill 间接调用的 reg.exe/sc.exe 时可能挂起，
+  // 无上限的 spawnSync 会永久阻塞（同 2026-11-23 整链卡死根因）。
+  if (child.pid) spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+    stdio: 'ignore', windowsHide: true, timeout: 10000,
+  });
 }

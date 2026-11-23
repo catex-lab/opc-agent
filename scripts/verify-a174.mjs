@@ -136,7 +136,7 @@ const MESSAGES = [
 
 function killTree(child) {
   if (!child || child.exitCode != null) return;
-  spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 10000 }); // 沙箱拦 reg/sc 时别让 spawnSync 永久阻塞
 }
 
 let vite = null;

@@ -111,6 +111,7 @@ function killTree(proc) {
       spawnSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], {
         stdio: 'ignore',
         windowsHide: true,
+        timeout: 10000, // 沙箱拦 reg.exe/sc.exe 时 taskkill 可能挂起，别让 spawnSync 永久阻塞
       });
     } catch {
       /* taskkill 不可用就走下面的 kill */
