@@ -131,6 +131,13 @@ export interface ProcessPanelProps {
   inputHeight?: number;
 }
 
+/** 落点提示：跟随面板的小标签，不铺满整块 */
+const DROP_HINT_KEY = {
+  right: 'chat.flow.panel.hintRight',
+  top: 'chat.flow.panel.hintTop',
+  floating: 'chat.flow.panel.hintFloat',
+} as const;
+
 /** 阶段色映射（与 processFlow.css 一致，面板内用同款） */
 function phaseKey(p: FlowPhase): string {
   return p.kind;
@@ -157,7 +164,8 @@ export function ProcessPanel({
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [dragSize, setDragSize] = useState<{ width: number; height: number } | null>(null);
-  const [dragHint, setDragHint] = useState<PanelMode | null>(null);
+  const [dragHint, setDragHint] = useState<'right' | 'top' | 'floating' | null>(null);
+  const [hintPos, setHintPos] = useState<{ x: number; y: number } | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const mainRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -313,10 +321,13 @@ export function ProcessPanel({
       bounds
     );
     d.latest = next;
-    const hint = d.kind === 'pill'
+    const rawHint = d.kind === 'pill'
       ? snapMinimizedDrop(next, bounds, { width: d.width, height: d.height })
       : snapPanelMode({ ...next, width: d.width, height: d.height }, bounds);
+    // 胶囊「保持最小化」不是切换目标，不显示落点标签；只有真会切形态时才提示
+    const hint = rawHint === 'minimized' ? null : rawHint;
     setDragHint(prev => prev === hint ? prev : hint);
+    setHintPos(next);
     pendingRef.current = next;
     if (rafRef.current === null) {
       rafRef.current = requestAnimationFrame(() => {
@@ -337,6 +348,7 @@ export function ProcessPanel({
     setDragging(false);
     setDragSize(null);
     setDragHint(null);
+    setHintPos(null);
 
     // 主图标「按下没移动」= 点开菜单，不当成拖动，也不改形态
     if (d.fromMain && !d.moved) {
@@ -347,16 +359,18 @@ export function ProcessPanel({
       onModeChange?.(restoreMode);
       return;
     }
-    const snapped = d.kind === 'pill'
-      ? snapMinimizedDrop(d.latest, bounds, { width: d.width, height: d.height })
-      : snapPanelMode({ ...d.latest, width: d.width, height: d.height }, bounds);
-    if (snapped !== 'floating') {
-      onModeChange?.(snapped);
+    if (d.kind === 'pill') {
+      // 胶囊拖动只改位置；只有真碰到右缘才切右吸附，不再因为松手位置跳形态
+      if (snapMinimizedDrop(d.latest, bounds, { width: d.width, height: d.height }) === 'right') {
+        onModeChange?.('right');
+      } else {
+        onMinPosChange?.(d.latest);
+      }
       return;
     }
-    if (d.kind === 'pill') {
-      onModeChange?.('floating');
-      onPosChange?.(clampPanelPos({ ...d.latest, ...FLOAT_SIZE }, bounds));
+    const snapped = snapPanelMode({ ...d.latest, width: d.width, height: d.height }, bounds);
+    if (snapped !== 'floating') {
+      onModeChange?.(snapped);
       return;
     }
     onPosChange?.(d.latest);
@@ -392,9 +406,17 @@ export function ProcessPanel({
     onMinPosChange?.(clampPanelPos({ ...currentMinPos, x: currentMinPos.x + dx, y: currentMinPos.y + dy, width: 100, height: 30 }, bounds));
   };
 
-  const dropHintPortal = dragging && dragHint && typeof document !== 'undefined'
+  const dropHintPortal = dragging && dragHint && hintPos && typeof document !== 'undefined'
     ? createPortal(
-        <div className={`pf-drop-hint is-${dragHint}`} data-panel-drop-hint aria-hidden="true" />,
+        <div
+          className="pf-drop-hint"
+          data-panel-drop-hint
+          data-hint-mode={dragHint}
+          style={{ left: hintPos.x, top: Math.max(4, hintPos.y - 28) }}
+          aria-hidden="true"
+        >
+          {t(DROP_HINT_KEY[dragHint])}
+        </div>,
         document.body
       )
     : null;
