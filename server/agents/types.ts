@@ -49,7 +49,16 @@ export type AgentEvent =
        */
       invalidateResumeToken?: boolean;
     }
-  | { type: 'text'; content: string }
+  | {
+      type: 'text';
+      content: string;
+      /**
+       * 这条正文来自「整条 assistant 消息」，不是流式增量。
+       * 投影器据此做最后一道兜底：同一 run 内整条重发的同文块直接忽略。
+       * 增量块 / 逐块解析的 CLI 不带这个标记，行为与历史一致。
+       */
+      fullMessage?: boolean;
+    }
   /**
    * 思考过程（Hermes ACP 的 agent_thought_chunk）。与正文分开，前端折叠展示。
    *
@@ -66,7 +75,19 @@ export type AgentEvent =
       /** 内容被厂商隐去；此时 `content` 通常为空，但块仍必须存在 */
       redacted?: boolean;
     }
-  | { type: 'tool'; id: string; name: string; input?: unknown }
+  | {
+      type: 'tool';
+      id: string;
+      name: string;
+      input?: unknown;
+      /**
+       * 子 Agent / 子任务（2026-11-22）：Claude SDK 的 `parent_tool_use_id`。
+       * 它所属的 Task 工具块（toolId）的**容器** —— 前端据此把子步骤归到
+       * 子代理分组下。向后兼容：老事件不带，投影器落 `undefined`，前端平铺。
+       * 其他 Agent 没有统一子代理信号，不发这个字段。
+       */
+      parentToolId?: string;
+    }
   /**
    * 工具执行过程中的增量输出（E5）。
    *

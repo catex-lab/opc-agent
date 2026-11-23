@@ -9,6 +9,8 @@ import path from "path";
 import fs from "fs";
 import crypto from "node:crypto";
 import * as db from "./db.js";
+// M01：本机 token 鉴权常量（§7.5）。shared 无副作用，四方共用。
+import { OPC_HEALTH_PATH, OPC_LOCAL_TOKEN_ENV, OPC_TOKEN_HEADER } from "../shared/harness-protocol.js";
 // A98：项目层。命名导入是为了让路由里读起来更直接（`db.` 前缀在
 // 这些一次性调用上只是噪音）；`import * as db` 仍然保留给既有调用点。
 import {
@@ -313,6 +315,32 @@ const PORT = process.env.PORT !== undefined ? Number(process.env.PORT) : 3000;
 // 所以这条提前挂上后，下面的全局解析器会自动跳过已解析的请求。
 app.use("/api/avatars", express.json({ limit: "4mb" }));
 app.use(express.json());
+
+// ── 本机 token 鉴权（M01 / 设计 §7.5，必须在所有路由注册之前）──────────────
+//
+// 只有当环境带 OPC_LOCAL_TOKEN 时才启用 —— 也就是「harness 子进程被 main
+// 拉起」这一条链。三个豁免面：
+//   · `/api/health` —— main 看门狗与闸门要在**无 token** 时探活；
+//   · 静态资源（不在 /api 下）—— 窗口加载的就是本进程托管的页面，
+//     页面本身就是同一份信任边界，token 只护 API 数据面；
+//   · env 缺省（老路 / 浏览器 dev / 既有闸门）—— 完全不挂中间件，
+//     行为与改造前逐字节一致（flag 关闭回归的硬保证）。
+//
+// 比较用 sha256 后 timingSafeEqual：timingSafeEqual 要求等长输入，直接比
+// 会在长度不同时提前抛错泄漏长度信息；先哈希再比既等长又恒时。
+const localToken = process.env[OPC_LOCAL_TOKEN_ENV];
+if (localToken) {
+  const expectedTokenHash = crypto.createHash('sha256').update(localToken).digest();
+  app.use('/api', (req, res, next) => {
+    if (req.path === OPC_HEALTH_PATH.slice('/api'.length)) return next();
+    const got = req.header(OPC_TOKEN_HEADER);
+    if (got) {
+      const gotHash = crypto.createHash('sha256').update(got).digest();
+      if (crypto.timingSafeEqual(gotHash, expectedTokenHash)) return next();
+    }
+    res.status(401).json({ error: 'unauthorized' });
+  });
+}
 
 // SDK 模型缓存状态 + 统一失效入口抽在 server/model-cache.ts，
 // 让闸门能 import 到函数本体（内联在这里时单测拿不到）。
@@ -899,6 +927,15 @@ export function startServer() {
 // 前端加载地址本来就是 `http://127.0.0.1:<port>`（见 electron/main.ts），
 // vite 的 proxy target 也已同步改成 `127.0.0.1`。
 const HOST = process.env.OPC_HOST || '127.0.0.1';
+// M01：上一代进程没来得及收尾的 run 一律记 interrupted（「进行中的回合记
+// 中断、不假装完成」的落库终点）。老库没有 runs 表时这里也安全（CREATE
+// TABLE IF NOT EXISTS 已在建表块里）。失败不阻断启动。
+try {
+  const swept = db.sweepInterruptedRuns();
+  if (swept > 0) console.log(`[Runs] 启动清算：${swept} 条进行中回合已记为中断`);
+} catch (e) {
+  console.warn('[Runs] 启动清算失败（不影响启动）:', (e as Error).message);
+}
 // A38：索引自愈。文件是唯一事实来源，索引随时可重建，失败不阻断启动。
 bootMemory();
 // P1 知识库：建库 + 挂消息落库监听 + 后台回填最近 90 天。
@@ -981,7 +1018,11 @@ export { app };
 
 // 退出时回收 ACP 等长驻子进程，避免留下孤儿 Python 进程
 let shuttingDown = false;
-function shutdown(signal: string) {
+/**
+ * 优雅退出（M01 起导出给 harness 入口复用）：停调度 + 回收全部 agent
+ * 子进程。幂等；SIGINT/SIGTERM 与 harness 的「父进程死亡」都汇到这一处。
+ */
+export function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n[Server] 收到 ${signal}，正在清理...`);

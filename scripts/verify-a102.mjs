@@ -31,7 +31,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -154,34 +155,37 @@ await ctx.route('**/api/**', async route => {
 await page.goto(base + '/chat/s1', { waitUntil: 'networkidle' });
 await page.waitForTimeout(1000);
 // 完成态默认收起，先展开
-await page.locator('[data-steps-bar]').first().click();
+await page.locator('[data-flow-summary]').first().click();
 await page.waitForTimeout(400);
 
-console.log('\n[1] 步骤行内只有一档字号');
+console.log('\n[1] 步骤行字号两档（14 主 / 12 辅，ProcessFlow 定版）');
 const sizes = await page.evaluate(() => {
   const rows = [];
-  for (const head of document.querySelectorAll('.tc-step-head')) {
-    const vals = [...head.children].map(el => ({
+  for (const head of document.querySelectorAll('.pf-step-head')) {
+    rows.push([...head.children].map(el => ({
       cls: el.getAttribute('class') || el.tagName.toLowerCase(),
       fs: parseFloat(getComputedStyle(el).fontSize),
-      lh: getComputedStyle(el).lineHeight,
-    }));
-    rows.push(vals);
+    })));
   }
   return rows;
 });
 const distinct = [...new Set(sizes.flat().map(s => s.fs))].sort((a, b) => a - b);
-// 2026-10-30：从「两档（主信息 12 / 辅信息 11）」收紧到「一档」——
-// 用户口径是过程流全局同字号，所以行内不再允许任何小字。
-ok(distinct.length === 1, '一行之内只有一档字号（14px）', `实测 ${distinct.join(' / ')}px`);
+// 2026-11-22 ProcessFlow 定版：动词/目标/耗时 14px（主），diff 12px（辅）。
+const offenders = sizes.flat().filter(v => ![12, 14].includes(v.fs)).map(v => `${v.cls}=${v.fs}`);
+ok(
+  offenders.length === 0,
+  '行内只有 12/14 两档（14 主 / 12 辅，无 11px 回归）',
+  `实测 ${distinct.join(' / ')}px；越档：${offenders.join(', ') || '无'}`
+);
 const verbFs = await page.evaluate(() =>
-  parseFloat(getComputedStyle(document.querySelector('.tc-trace-verb')).fontSize));
-const targetFs = await page.evaluate(() =>
-  parseFloat(getComputedStyle(document.querySelector('.tc-trace-target')).fontSize));
-ok(verbFs === targetFs, '动词与目标同档', `${verbFs}px vs ${targetFs}px`);
+  parseFloat(getComputedStyle(document.querySelector('.pf-verb')).fontSize));
+const lineFs = await page.evaluate(() =>
+  parseFloat(getComputedStyle(document.querySelector('.pf-target:not(.mono)')).fontSize));
+ok(verbFs === 14, '动词 14px（流程行口径）', `实测 ${verbFs}px`);
+ok(lineFs === verbFs, '行内容与动词同档', `${lineFs}px vs ${verbFs}px`);
 
-console.log('\n[2] 动词不再继承 16px');
-ok(verbFs === 14, '动词钉在 14px', `实测 ${verbFs}px`);
+console.log('\n[2] 动词不再继承更大字号');
+ok(verbFs < 16, '动词不再继承 16px（流程行 = 14px）', `实测 ${verbFs}px`);
 // 行高统一到 1.7（比值而非像素：不同元素的行盒高度本就由字号决定，
 // 真正决定基线是否对齐的是**行高与字号同比**）。
 const ratios = await page.evaluate(() => {
@@ -191,21 +195,21 @@ const ratios = await page.evaluate(() => {
     const cs = getComputedStyle(el);
     return parseFloat(cs.lineHeight) / parseFloat(cs.fontSize);
   };
-  return { verb: pick('.tc-trace-verb'), target: pick('.tc-trace-target'), diff: pick('.tc-diff') };
+  return { verb: pick('.pf-verb'), line: pick('.pf-target'), diff: pick('.pf-diff') };
 });
 ok(
-  Math.abs(ratios.verb - 1.7) < 0.01 && Math.abs(ratios.target - 1.7) < 0.01 && Math.abs(ratios.diff - 1.7) < 0.01,
-  '动词 / 目标 / diff 行高都与字号同比（1.7）',
-  `${ratios.verb} / ${ratios.target} / ${ratios.diff}`
+  ratios.verb != null && Math.abs(ratios.verb - ratios.line) < 0.01 && Math.abs(ratios.verb - ratios.diff) < 0.01,
+  '动词 / 行内容 / diff 行高同比一致（同一继承源）',
+  `${ratios.verb} / ${ratios.line} / ${ratios.diff}`
 );
 
 console.log('\n[3] 所有步骤行的耗时贴同一右缘');
 const edges = await page.evaluate(() => {
   const out = [];
-  for (const step of document.querySelectorAll('[data-tool-step]')) {
-    const meta = step.querySelector('.tc-trace-meta');
+  for (const step of document.querySelectorAll('[data-flow-row]')) {
+    const meta = step.querySelector('.pf-meta');
     if (!meta) continue;
-    const head = step.querySelector('.tc-step-head').getBoundingClientRect();
+    const head = step.querySelector('.pf-step-head').getBoundingClientRect();
     const m = meta.getBoundingClientRect();
     out.push(Math.round(head.right - m.right));
   }
@@ -214,62 +218,58 @@ const edges = await page.evaluate(() => {
 ok(edges.length >= 2, '取到多个步骤行', `${edges.length} 行`);
 ok(Math.max(...edges) - Math.min(...edges) <= 1, '各行耗时距右缘一致',
   edges.map(e => `${e}px`).join(' / '));
-const shortStep = await page.evaluate(() => {
-  const step = document.querySelector('[data-tool-step="t3"]');
-  return step ? !!step.querySelector('.tc-trace-meta') : true;
-});
-ok(shortStep === false, 'F3：<3s 的步骤不挂耗时（t3 只有 200ms）');
+// 单步耗时全量显示（<1s 用 ms 口径）
+const shortStep = await page.evaluate(() =>
+  document.querySelector('[data-flow-row="t3"]')?.querySelector('.pf-meta')?.textContent?.trim() ?? null);
+ok(shortStep === '200ms', '单步耗时全量显示（t3 200ms → 200ms）', String(shortStep));
 
-console.log('\n[4] 来源标签不抢右缘');
+console.log('\n[4] 一行动词/目标/耗时不再抢自动边距');
 const srcGeo = await page.evaluate(() => {
-  const step = document.querySelector('[data-tool-step]:has([data-trace-source])');
-  if (!step) return null;
-  const head = step.querySelector('.tc-step-head').getBoundingClientRect();
-  const src = step.querySelector('[data-trace-source]').getBoundingClientRect();
-  const meta = step.querySelector('.tc-trace-meta').getBoundingClientRect();
+  const row = document.querySelector('[data-flow-row]');
+  if (!row) return null;
+  const head = row.querySelector('.pf-step-head').getBoundingClientRect();
+  const target = row.querySelector('.pf-target')?.getBoundingClientRect() ?? null;
+  const meta = row.querySelector('.pf-meta')?.getBoundingClientRect() ?? null;
   return {
-    srcFromRight: Math.round(head.right - src.right),
-    metaFromRight: Math.round(head.right - meta.right),
-    srcLeftOfMeta: src.right <= meta.left + 1,
+    sourceTags: document.querySelectorAll('[data-trace-source]').length,
+    targetFromLeft: target ? Math.round(target.left - head.left) : null,
+    metaFromRight: meta ? Math.round(head.right - meta.right) : null,
   };
 });
-ok(srcGeo !== null, '存在带来源标签的步骤行');
-ok(srcGeo.srcFromRight > 20, '标签不在右缘上', `距右缘 ${srcGeo.srcFromRight}px`);
-ok(srcGeo.srcLeftOfMeta, '标签在耗时左侧（不再和耗时抢自动边距）');
+ok(srcGeo !== null && srcGeo.sourceTags === 0, '来源标签随流程流改版退役（不再出现第三枚自动边距）', String(srcGeo?.sourceTags));
+ok(srcGeo && srcGeo.targetFromLeft !== null && srcGeo.targetFromLeft > 20, '动词后仍有目标文本占位', `距左 ${srcGeo?.targetFromLeft}px`);
+ok(srcGeo && srcGeo.metaFromRight !== null && srcGeo.metaFromRight <= 8, '耗时仍贴右缘（行内 6px 内边距）', `距右 ${srcGeo?.metaFromRight}px`);
 
-console.log('\n[5] 圆点几何跟随行高');
+console.log('\n[5] 图标几何跟随行高（圆点退役）');
 const dot = await page.evaluate(() => {
-  const step = document.querySelector('[data-tool-step]');
-  const head = step.querySelector('.tc-step-head').getBoundingClientRect();
-  const d = step.querySelector('.tc-step-dot').getBoundingClientRect();
+  const row = document.querySelector('[data-flow-row]');
+  const head = row.querySelector('.pf-step-head').getBoundingClientRect();
+  const d = row.querySelector('.pf-ico').getBoundingClientRect();
   return {
     headH: Math.round(head.height),
     off: Math.abs((d.top + d.height / 2) - (head.top + head.height / 2)),
   };
 });
-ok(dot.headH === 28, '行头高度 28px（14px 字 / 行高 1.7 + 4px 内边距）', `实测 ${dot.headH}px`);
-ok(dot.off <= 1.5, '圆点圆心与行头中心重合', `偏差 ${dot.off.toFixed(1)}px`);
+ok(dot.headH === 28, '行高 28px（流程行单行）', `实测 ${dot.headH}px`);
+ok(dot.off <= 1.5, '图标中心与行头中心重合', `偏差 ${dot.off.toFixed(1)}px`);
 
-console.log('\n[6] 状态条高度一致');
-/* D1 改口径：
-   原期望：`bars.length >= 3`（汇总行 + 验证条 + 文件核对条三条并列）
-   新期望：`bars.length >= 2`（汇总行 + 「本轮核对」合并条）
-   依据：验证与文件核对并成一条，默认收起时分层面板不在 DOM 里；
-         这条断言守的是「摘要行与核对行高度一致」，而不是行数。 */
+console.log('\n[6] 整轮状态条同层级');
+/* 旧 AgentTrace v2 的「汇总行 + 验证条 + 核对条」在 2026-11-22 流程流改版中
+   合成一条摘要行；状态胶囊按用户定版删除，这里守「时钟 / 摘要行都在场且同层」。 */
 const bars = await page.evaluate(() =>
-  [...document.querySelectorAll('[data-steps-bar], .tc-verify-bar')].map(b =>
-    Math.round(b.getBoundingClientRect().height)));
-ok(bars.length >= 2, '取到汇总行 + 本轮核对条', `${bars.length} 条`);
-ok(Math.max(...bars) - Math.min(...bars) <= 1, '高度一致', bars.join(' / '));
+  ['.pf-hdr', '.pf-steps-bar'].map(s => {
+    const el = document.querySelector(s);
+    return el ? Math.round(el.getBoundingClientRect().height) : 0;
+  }));
+ok(bars.every(h => h > 0), '时钟 / 摘要行两段都在', bars.join(' / '));
+ok(Math.max(...bars) - Math.min(...bars) <= 12, '同层级高度差不超过 12px', bars.join(' / '));
+ok((await page.locator('.pf-pill').count()) === 0, '状态胶囊已删（不再有可见完成/等待胶囊）');
 
-console.log('\n[7] A100 来源标注行为不回退');
-const tags = page.locator('[data-trace-source]');
-ok((await tags.count()) === 1, '只有 1 个步骤带来源标签', String(await tags.count()));
-const tagCls = await tags.first().getAttribute('class');
-ok(tagCls === 'tc-trace-src', '标签用专属类（不再复用带 auto 边距的 tc-trace-meta）', tagCls);
-const tagColor = await tags.first().evaluate(el => getComputedStyle(el).color);
-ok(/rgb\(?2?3?/, tagColor) // 非空即有色，具体值由警告色令牌决定
-;
+console.log('\n[7] A100 目标文本不回退（流程流形态）');
+const targets = await page.evaluate(() =>
+  [...document.querySelectorAll('[data-flow-row] .pf-target')].map(el => el.textContent?.trim() ?? ''));
+ok(targets.length >= 3, '每行目标文本都在（来源标签退役不等于目标丢失）', `${targets.length} 行`);
+ok(targets[0] === 'npm test', '首行目标仍是命令本身', targets[0] ?? '');
 
 console.log('\n[8] 控制台');
 ok(errors.length === 0, '无控制台错误', errors.slice(0, 3).join(' | '));

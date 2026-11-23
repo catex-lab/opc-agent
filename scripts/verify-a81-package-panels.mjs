@@ -212,7 +212,12 @@ async function run() {
 
     console.log('  · 连接 ①（驱动打包态应用的渲染进程）…');
     harness = await connectCdp(port);
-    const appPage = harness.contexts().flatMap(c => c.pages())[0];
+    // M01：窗口等 harness 握手后才 loadURL —— CDP 连上时页面可能还没出生，轮询等
+    let appPage = null;
+    for (let i = 0; i < 50 && !appPage; i++) {
+      appPage = harness.contexts().flatMap(c => c.pages())[0] ?? null;
+      if (!appPage) await SLEEP(300);
+    }
     if (!appPage) throw new Error('没找到应用窗口的 page');
     await appPage.waitForFunction(() => document.querySelector('nav') !== null, { timeout: 60_000 });
 
@@ -389,7 +394,12 @@ async function run() {
     if (!port2) throw new Error('没拿到调试端口\n' + log2().slice(-1500));
 
     harness2 = await connectCdp(port2);
-    const page2 = harness2.contexts().flatMap(c => c.pages())[0];
+    // M01：窗口等 harness 握手后才 loadURL —— CDP 连上时页面可能还没出生，轮询等
+    let page2 = null;
+    for (let i = 0; i < 50 && !page2; i++) {
+      page2 = harness2.contexts().flatMap(c => c.pages())[0] ?? null;
+      if (!page2) await SLEEP(300);
+    }
     if (!page2) throw new Error('没找到应用窗口的 page');
     await page2.waitForFunction(() => document.querySelector('nav') !== null, { timeout: 60_000 });
 

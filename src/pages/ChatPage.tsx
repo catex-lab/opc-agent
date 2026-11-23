@@ -24,6 +24,7 @@ import { ChatInput } from '../components/ChatInput';
 import { GroupChatHeader } from '../components/GroupChatHeader';
 import { GroupMemberPanel } from '../components/GroupMemberPanel';
 import { GroupSettingsPanel } from '../components/GroupSettingsPanel';
+import { ProcessPanel } from '../components/ProcessPanel';
 import { AgentDetailModal } from '../components/AgentDetailModal';
 import { PermissionGapNotice } from '../components/PermissionGapNotice';
 import { WorkflowDialog } from '../components/WorkflowDialog';
@@ -34,6 +35,8 @@ import type { DanglingConfirmInfo } from '../hooks/useChat';
 // A115：群头像（群设置里换的，存在 sessionFlags）
 import { useGroupAvatar, useGroupAvatarImage } from '../sessionFlags';
 import { useTranslation, type MessageKey } from '../i18n';
+import { bootPref, pushPrefs } from '../prefs';
+import { autoMinimizeMode, type PanelMode } from '../trace/panelGeometry';
 
 /** 权限模式词在提示里也要跟着界面语言走；判定仍用 `PermissionMode` 原值 */
 const PERMISSION_MODE_TEXT: Record<PermissionMode, MessageKey> = {
@@ -246,6 +249,194 @@ export function ChatPage({
    */
   const stickToBottomRef = useRef(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  /**
+   * 2026-11-21 对齐 ZCode：回合进行中在右下角**悬浮进度 chips**
+   * （执行中 x · 完成 y）—— 从最后一条助手消息的工具块实时统计，
+   * 指令发出即出现（有步骤后），回合结束随 isStreaming 消失。
+   */
+  const turnChips = useMemo(() => {
+    if (!currentSession) return { running: 0, done: 0, total: 0 };
+    const last = currentSession.messages[currentSession.messages.length - 1];
+    // 块的两种形态：会话内是数组，落库后是 JSON 字符串（与 ChatMessages 的
+    // toBlocks 同一容错，这里只数工具块的状态，不需要完整解析）
+    const raw = (last as unknown as { blocks?: unknown } | undefined)?.blocks;
+    let blocks: Array<{ type?: string; status?: string }> = [];
+    if (Array.isArray(raw)) blocks = raw as Array<{ type?: string; status?: string }>;
+    else if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) blocks = parsed;
+      } catch {
+        /* 半截 JSON（流式中）就当没有 */
+      }
+    }
+    const tools = blocks.filter(b => b?.type === 'tool');
+    const running = tools.filter(b => b?.status === 'running' || b?.status === 'pending').length;
+    return { running, done: tools.length - running, total: tools.length };
+  }, [currentSession]);
+
+  /**
+   * 2026-11-22：右侧「过程」面板的数据源 —— 当前会话**最后一条助手消息**的
+   * blocks（与 ProcessFlow 同一份数据，历史消息刷新还原也能渲染）。
+   * 面板只在单聊显示（群聊走群成员/群设置面板，同槽位）。
+   */
+  const panelBlocks = useMemo(() => {
+    if (!currentSession || currentSession.kind === 'group') return [];
+    const msgs = currentSession.messages ?? [];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i];
+      if (m?.role === 'assistant' && m.blocks && m.blocks.length > 0) return m.blocks;
+    }
+    return [];
+  }, [currentSession]);
+  /** 面板是否显示（P 键切换，默认显示） */
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelSelected, setPanelSelected] = useState<string | null>(null);
+  /**
+   * 2026-11-22：过程面板四态。初值来自 preferences.json（首帧同步注入），
+   * 没设过的人默认右侧停靠；窄屏默认最小化。用户一旦手动改过就不再自动改。
+   */
+  const [panelMode, setPanelMode] = useState<PanelMode>(() => {
+    const saved = bootPref('processPanel');
+    if (saved?.mode) return saved.mode;
+    return typeof window !== 'undefined' && window.innerWidth < 1100 ? 'minimized' : 'right';
+  });
+  const [panelPos, setPanelPos] = useState(() => {
+    const saved = bootPref('processPanel');
+    return { x: saved?.x ?? 0, y: saved?.y ?? 0 };
+  });
+  const [panelMinPos, setPanelMinPos] = useState<{ x: number; y: number } | null>(() => {
+    const saved = bootPref('processPanel');
+    return saved?.minX != null && saved?.minY != null ? { x: saved.minX, y: saved.minY } : null;
+  });
+  const [panelRestore, setPanelRestore] = useState<'right' | 'top' | 'floating'>(
+    () => bootPref('processPanel')?.lastMode ?? 'right'
+  );
+  const panelPrefTouched = useRef(!!bootPref('processPanel'));
+  const changePanelMode = useCallback((m: PanelMode) => {
+    const restore = panelMode === 'minimized' ? panelRestore : (panelMode === 'top' || panelMode === 'floating' ? panelMode : 'right');
+    if (m === 'minimized' && panelMode !== 'minimized') setPanelRestore(restore);
+    setPanelMode(m);
+    panelPrefTouched.current = true;
+    pushPrefs({
+      processPanel: {
+        mode: m,
+        x: panelPos.x,
+        y: panelPos.y,
+        ...(panelMinPos ? { minX: panelMinPos.x, minY: panelMinPos.y } : {}),
+        ...(m === 'minimized' ? { lastMode: restore } : {}),
+      },
+    });
+  }, [panelMode, panelPos, panelMinPos, panelRestore]);
+  const changePanelPos = useCallback((p: { x: number; y: number }) => {
+    setPanelPos(p);
+    panelPrefTouched.current = true;
+    pushPrefs({
+      processPanel: {
+        mode: 'floating',
+        x: p.x,
+        y: p.y,
+        ...(panelMinPos ? { minX: panelMinPos.x, minY: panelMinPos.y } : {}),
+        lastMode: panelRestore,
+      },
+    });
+  }, [panelMinPos, panelRestore]);
+  const changePanelMinPos = useCallback((p: { x: number; y: number }) => {
+    setPanelMinPos(p);
+    panelPrefTouched.current = true;
+    pushPrefs({
+      processPanel: {
+        mode: 'minimized',
+        x: panelPos.x,
+        y: panelPos.y,
+        minX: p.x,
+        minY: p.y,
+        lastMode: panelRestore,
+      },
+    });
+  }, [panelPos, panelRestore]);
+  // 窄屏响应式只在用户没显式选过停靠形态时生效，避免每次拉窗口都覆盖用户选择
+  useEffect(() => {
+    if (panelPrefTouched.current) return;
+    const onResize = () => setPanelMode(m => autoMinimizeMode(window.innerWidth, m));
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const panelStreaming = useMemo(() => {
+    if (!currentSession) return false;
+    const msgs = currentSession.messages ?? [];
+    return !!msgs[msgs.length - 1]?.isStreaming;
+  }, [currentSession]);
+  /**
+   * 2026-11-22 窄屏兜底：运行中用户翻到别处时，底部胶囊显示「执行中 · 步骤」。
+   * 取当前回合最后一个 running 的工具（命令优先，其次工具名）。
+   */
+  const runningStepLabel = useMemo(() => {
+    for (let i = panelBlocks.length - 1; i >= 0; i -= 1) {
+      const b = panelBlocks[i];
+      if (b?.type !== 'tool') continue;
+      if (b.status !== 'running' && b.status !== 'pending') continue;
+      const input = (b.input ?? {}) as Record<string, unknown>;
+      const cmd = typeof input.command === 'string' ? input.command.split('\n')[0] : '';
+      return cmd || b.name || '';
+    }
+    return '';
+  }, [panelBlocks]);
+  /**
+   * 快捷键（P 面板 / J K 上一步下一步 / 空格 跳当前步骤）。
+   * 参考页同款；输入框/文本框聚焦时不抢键（J/K/P 会让打字中断）。
+   * 步骤列表直接从 DOM 取（当前回合 ProcessFlow 渲染出的 data-flow-row）。
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const tag = (e.target as HTMLElement | null)?.tagName ?? '';
+      if (/INPUT|TEXTAREA/.test(tag)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'p') {
+        if (panelMode === 'minimized') changePanelMode(panelRestore);
+        else setPanelOpen(v => !v);
+        return;
+      }
+      if (!panelOpen) return;
+      const ids = [...document.querySelectorAll('[data-flow-row]')].map(el =>
+        el.getAttribute('data-flow-row') ?? ''
+      ).filter(Boolean);
+      if (ids.length === 0) return;
+      let i = ids.indexOf(panelSelected ?? '');
+      if (k === 'j') {
+        i = i < 0 ? 0 : Math.min(ids.length - 1, i + 1);
+        setPanelSelected(ids[i] ?? null);
+      } else if (k === 'k') {
+        i = i < 0 ? ids.length - 1 : Math.max(0, i - 1);
+        setPanelSelected(ids[i] ?? null);
+      } else if (e.key === ' ') {
+        // 空格：跳到当前正在运行的步骤（参考页「跳到当前」）
+        const run = ids.find(id =>
+          document.querySelector(`[data-flow-row="${id}"][data-flow-row-state="running"]`)
+        );
+        if (run) setPanelSelected(run);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [panelOpen, panelSelected, panelMode, panelRestore, changePanelMode]);
+  /**
+   * 2026-11-21：输入区改为**玻璃浮层**（内容从它底下滚过）后，滚动容器的
+   * 底部内边距与「回到最新」按钮的位置都要跟随输入区的实测高度 ——
+   * autosize + 附件条会变高，写死必错，ResizeObserver 现测。
+   */
+  const [inputHeight, setInputHeight] = useState(0);
+  const inputWrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = inputWrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setInputHeight(el.offsetHeight));
+    ro.observe(el);
+    setInputHeight(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
   /** 当前观察的内容根节点（`[data-msg-list]`），切视图时会被替换 */
   const observedContentRef = useRef<HTMLElement | null>(null);
 
@@ -256,11 +447,16 @@ export function ChatPage({
     container.scrollTop = container.scrollHeight;
   }, []);
 
+  const lastScrollHeightRef = useRef(0);
   const handleScrollFollow = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
     const gap = container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (gap > SCROLL_UNSTICK_GAP) {
+    // 输入浮层实测高度写回时 paddingBottom 会突然增大，scrollHeight 跟着涨；
+    // 这时的 gap 不是「用户上滑」，不能把贴底状态清掉（否则补一次贴底就没了）。
+    const grew = container.scrollHeight - lastScrollHeightRef.current > 8;
+    lastScrollHeightRef.current = container.scrollHeight;
+    if (gap > SCROLL_UNSTICK_GAP && !grew) {
       if (stickToBottomRef.current) {
         stickToBottomRef.current = false;
         setShowJumpToLatest(true);
@@ -424,6 +620,11 @@ export function ChatPage({
    * 会先看到一帧「消息停在顶部」，再被拽到底部 —— 会话越长这一帧越明显，
    * 观感就是「打开聊天记录时闪了一下」。`useLayoutEffect` 在绘制前把
    * 滚动位置定好，这一帧根本不存在。
+   *
+   * `inputHeight` 也必须在依赖里：切会话首帧先按 paddingBottom=0 贴底，
+   * 随后输入浮层实测高度写回、paddingBottom 增加 ~130px，滚动高度变大，
+   * 而 `[data-msg-list]` 本身高度没变 —— 只观察内容的 ResizeObserver
+   * 不会触发，底部就留下一条空档。输入高度进来后这里再贴一次。
    */
   useLayoutEffect(() => {
     const sessionId = currentSession?.id;
@@ -476,7 +677,7 @@ export function ChatPage({
      * 渲染都发生在消息数组不变的时候）。
      */
     if (stickToBottomRef.current) snapToBottom();
-  }, [currentSession?.id, currentSession?.messages, jumpToHashTarget]);
+  }, [currentSession?.id, currentSession?.messages, jumpToHashTarget, inputHeight]);
 
   /**
    * A1：内容高度变化时贴底。
@@ -749,6 +950,23 @@ export function ChatPage({
   // 2026-11-12：自定义图片头像，渲染链 image > 预设 > 拼贴。
   const groupAvatarImage = useGroupAvatarImage(currentSession?.id);
 
+  /** 过程面板四种形态共用同一份数据与回调，避免两处渲染口径漂移 */
+  const processPanelProps = {
+    blocks: panelBlocks,
+    isStreaming: panelStreaming,
+    open: panelOpen,
+    selectedId: panelSelected,
+    onSelectStep: setPanelSelected,
+    mode: panelMode,
+    pos: panelPos,
+    minPos: panelMinPos ?? undefined,
+    onModeChange: changePanelMode,
+    onPosChange: changePanelPos,
+    onMinPosChange: changePanelMinPos,
+    restoreMode: panelRestore,
+    inputHeight,
+  };
+
   return (
     <>
       {/* 群聊头部：群头像（图片/预设/成员拼贴）+ 编排模式切换，替代一对一的单人头部 */}
@@ -802,8 +1020,16 @@ export function ChatPage({
           `data-chat-page`：打靶脚本用它数「会话页被挂载了几次」——
           从设置页切回消息栏时，这个页面**一次都不该**挂起来（见 App.tsx
           的 handleNavigate 注释）。 */}
-      <div data-chat-page className="relative flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col">
+      <div data-chat-page data-panel-mode={panelMode} className="relative flex min-h-0 flex-1">
+        {/* 输入浮层是这一列的 absolute 子元素；这一列必须 relative，
+            否则它会以 data-chat-page 为包含块、铺到右侧面板底下。
+            2026-11-22：a215 量出的 121px 左右偏移就是这个原因。 */}
+        <div
+          className="relative flex min-w-0 flex-1 flex-col"
+          /* 吸顶面板改为与四种形态共用同一个 DOM 实例后，不再在流里占位；
+             这里给正文列让出同样的高度，避免第一条消息被盖住。 */
+          style={!isGroup && panelMode === 'top' ? { paddingTop: 52 } : undefined}
+        >
           {/* A1：滚动区外面再包一层 `relative`，只为给「回到最新」提供定位
               基准 —— 按钮不能挂在滚动容器**内部**，那样它会跟着内容一起滚走。
               `flex-col + min-h-0` 与原结构等价，滚动容器仍然是唯一的
@@ -822,6 +1048,7 @@ export function ChatPage({
             ref={scrollContainerRef}
             data-chat-scroll
             className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-6 [overflow-anchor:none] [scrollbar-gutter:stable]"
+            style={{ paddingBottom: inputHeight ? inputHeight + 8 : undefined }}
             onScroll={handleScrollFollow}
           >
             {showNewChatView ? (
@@ -896,14 +1123,25 @@ export function ChatPage({
                 setShowJumpToLatest(false);
                 pinToLatest();
               }}
-              className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5 text-caption shadow-md transition-colors"
+              className="absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5 text-caption shadow-md transition-colors"
               style={{
+                /* 2026-11-21：输入区改为玻璃浮层后，按钮要浮在玻璃上方而不是
+                    被它盖住 —— bottom 跟随输入区实测高度。 */
+                bottom: inputHeight ? inputHeight + 16 : 16,
                 backgroundColor: 'var(--tc-surface-content)',
                 border: '1px solid var(--tc-hairline)',
                 color: 'var(--td-text-color-secondary)',
               }}
             >
-              {t('chat.jumpToLatest')}
+              {/* 2026-11-22 窄屏兜底：运行中显示「执行中 · 步骤」，点击回到底部；
+                  非运行中仍是「回到最新」原语义。 */}
+              {panelStreaming ? (
+                <span data-running-pill>
+                  {t('chat.flow.runningPill', { step: runningStepLabel || t('chat.flow.panelRunning') })}
+                </span>
+              ) : (
+                t('chat.jumpToLatest')
+              )}
             </button>
           )}
           </div>
@@ -915,19 +1153,55 @@ export function ChatPage({
               `dangling` 是**加载时**的快照，这一轮跑成功后不会自动消失，
               所以再拿本地消息顺序校验一次：最后一条真的是 user 才显示。
               没有这道校验，用户发完新消息、回答到了，横幅还会再冒出来。 */}
-          {!isGroup &&
-            currentSession?.dangling &&
-            !loading &&
-            currentSession.messages[currentSession.messages.length - 1]?.role === 'user' && (
-              <DanglingNotice at={currentSession.dangling.at} />
-            )}
-
           {/*
             输入区域。
             A62：思考强度两颗 prop 见下面 —— 既有会话读库里的值，改了立刻 PATCH；
             没接 onReasoningEffortChange、或当前模型没有档位表时，
             ChatInput 内部不渲染那颗下拉。
           */}
+          {/* 2026-11-21 对齐 ZCode：回合进行中的悬浮进度 chips（右下角，
+              跟随玻璃输入浮层上缘）。数据来自最后一条助手消息的工具块。 */}
+          {loading && turnChips.total > 0 && (
+            <div
+              className="absolute right-4 z-20 flex items-center gap-1.5"
+              style={{ bottom: (inputHeight || 0) + 12 }}
+              data-turn-chips
+            >
+              {turnChips.running > 0 && (
+                <span
+                  className="flex items-center rounded-full px-3 py-1.5 text-caption shadow-md"
+                  style={{
+                    backgroundColor: 'var(--tc-surface-content)',
+                    border: '1px solid var(--tc-hairline)',
+                    color: 'var(--td-text-color-secondary)',
+                  }}
+                >
+                  {t('chat.trace.chipRunning', { n: turnChips.running })}
+                </span>
+              )}
+              <span
+                className="flex items-center rounded-full px-3 py-1.5 text-caption shadow-md"
+                style={{
+                  backgroundColor: 'var(--tc-surface-content)',
+                  border: '1px solid var(--tc-hairline)',
+                  color: 'var(--td-text-color-secondary)',
+                }}
+              >
+                {t('chat.trace.chipDoneShort', { n: turnChips.done })}
+              </span>
+            </div>
+          )}
+
+          {/* 2026-11-21：输入区改为玻璃浮层（absolute 覆在滚动内容之上，
+              圆角只在上方）—— 滚动区加等高内边距，正文从玻璃底下滚过。
+              「上一轮指令未完成」横幅也搬进浮层：留在流里会被玻璃盖住。 */}
+          <div ref={inputWrapRef} className="absolute inset-x-0 bottom-0 z-10">
+          {!isGroup &&
+            currentSession?.dangling &&
+            !loading &&
+            currentSession.messages[currentSession.messages.length - 1]?.role === 'user' && (
+              <DanglingNotice at={currentSession.dangling.at} />
+            )}
           <ChatInput
             inputValue={inputValue}
             selectedModel={selectedModel}
@@ -962,12 +1236,15 @@ export function ChatPage({
             // A73：模型浮层底部的「添加模型」—— 去设置页刷新模型清单
             onAddModel={() => navigate('/settings?section=models')}
           />
+          </div>
         </div>
 
         {/* 右栏：群成员栏 / 群设置面板，同一块位置只放一个。
             两者都是布局内的 `shrink-0` 右栏，宽 236px —— 打开时消息区与
             输入框一起收窄，这就是用户要的「输入框响应式与成员栏一致」。
-            2026-10-20：群设置面板不再浮在会话之上（那样会盖住输入框）。 */}
+            2026-10-20：群设置面板不再浮在会话之上（那样会盖住输入框）。
+            2026-11-22：单聊时同一槽位放「过程」面板（参考页 side 面板），
+            群聊仍是成员/设置面板。 */}
         {isGroup && !settingsOpen && (
           <GroupMemberPanel
             members={groupMembers}
@@ -990,6 +1267,12 @@ export function ChatPage({
             onClearMessages={onClearMessages}
             onExitGroup={onDelete}
           />
+        )}
+
+        {/* 单聊过程面板：四种形态共用同一个实例，绝对定位的吸顶也在这一层。
+            换形态时不换父节点，拖动捕获才不会断。 */}
+        {!isGroup && currentSession && panelOpen && (
+          <ProcessPanel {...processPanelProps} />
         )}
       </div>
     </>

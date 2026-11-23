@@ -29,6 +29,8 @@ interface AgentDetailPanelProps {
   onOpenCredential?: (agentId: string) => void;
   /** 删除自建 Agent（A114）。只有 `agent.custom` 为真时才出现 */
   onDeleteCustom?: (agentId: string) => void;
+  /** 内置 Agent「从列表移除」（可恢复）。只有非自定义条目才出现 */
+  onHideBuiltin?: (agentId: string) => void;
   /** A160：Logo 变更后刷新注册表（列表 / 名片 / 头部一起变） */
   onAvatarChanged?: () => void;
   /** P1：canary 触发后刷新名册（把 checking/结论带回来） */
@@ -65,6 +67,7 @@ export function AgentDetailPanel({
   probeFeedback,
   onOpenCredential,
   onDeleteCustom,
+  onHideBuiltin,
   /** P1：canary 触发后刷新名册（把 checking/结论带回来） */
   onRequestRefresh,
   onAvatarChanged,
@@ -81,9 +84,12 @@ export function AgentDetailPanel({
    * （未登录 / 未安装…）状态词本来就诚实，不需要这层覆盖。
    */
   const unverifiedReady = canChat && !agent.status.lastCanary;
-  // A114：自建 Agent 才有删除。内置条目是编译进应用的，删了也回不来。
+  // A114：自建 Agent 才有删除。内置条目是编译进应用的，只能从列表移除
+  //（隐藏状态可恢复，可在「+ → 获取 Agent」里加回来）。
   const canDelete = !!agent.custom && !!onDeleteCustom;
+  const canHide = !agent.custom && !!onHideBuiltin;
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmHide, setConfirmHide] = useState(false);
   // A160：Logo 上传（裁剪 → 上传 → 刷新注册表）
   const [cropFile, setCropFile] = useState<File | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -380,6 +386,54 @@ export function AgentDetailPanel({
                 >
                   <Trash2 size={14} />
                   删除这个自建 Agent
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* 内置 Agent：只从列表移除（可恢复）。文案必须说清「还能加回来」，
+              否则用户会以为内置条目被卸载了。 */}
+          {canHide && (
+            <div className="mt-6 flex justify-center">
+              {confirmHide ? (
+                <div
+                  className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-secondary"
+                  style={{
+                    color: 'var(--td-error-color)',
+                    backgroundColor: 'var(--td-error-color-light)',
+                  }}
+                  data-hide-agent-confirm
+                >
+                  <span>{t('contacts.hideAgentFromDetailConfirm')}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onHideBuiltin?.(agent.id);
+                      setConfirmHide(false);
+                    }}
+                    className="font-medium underline"
+                    data-hide-agent-ok
+                  >
+                    {t('contacts.confirmHide')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmHide(false)}
+                    style={{ color: 'var(--td-text-color-secondary)' }}
+                  >
+                    {t('addcli.cancel')}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmHide(true)}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-secondary transition-colors hover:bg-[var(--tc-hover-chrome)]"
+                  style={{ color: 'var(--td-text-color-placeholder)' }}
+                  data-hide-agent
+                >
+                  <Trash2 size={14} />
+                  {t('contacts.hideAgentFromDetail')}
                 </button>
               )}
             </div>

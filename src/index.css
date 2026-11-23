@@ -6754,3 +6754,56 @@ html[data-opc-glass='1'] t-chat-sender {
     animation: none;
   }
 }
+
+/* ══════════ 输入区 v2（2026-11-21 定版四图）══════════
+ *
+ * 整块常驻毛玻璃退役：输入卡本体（t-chat-sender 的
+ * ::part(t-chat__input__content)）本来就是实底卡，wrapper（.tcv2-inputwrap）
+ * 只做定位；半透明只留给「按需出现的行」—— 附件行 / 待发送排队行。
+ * 只有粘贴上传附件、图片、待发送时才有半透明行（用户定版口径）。
+ */
+
+.tcv2-inputwrap {
+  position: relative;
+}
+
+/* 底部锚定遮罩：正文从输入卡两侧的缝隙里穿过去时收在页底色里。
+   *
+ * 2026-11-22 二修：早先「90px / 55%」漏字，「全高实底」又在聊天中部
+ * 画出一条浅灰带。现在改为毛玻璃遮罩：覆盖整个浮层，但只用极低不透明度
+ * 的 surface 色 + backdrop-filter 把下方文字糊掉 —— 视觉上接近透明，
+ * 正文仍读不出来，两个毛病一起收。z-index 低于行内容，卡片投影保持不变。 */
+.tcv2-inputwrap::before {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    color-mix(in srgb, var(--tc-surface-content) 10%, transparent) 6%,
+    color-mix(in srgb, var(--tc-surface-content) 38%, transparent) 14%,
+    color-mix(in srgb, var(--tc-surface-content) 52%, transparent) 100%
+  );
+  backdrop-filter: blur(12px) saturate(1.15);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
+}
+
+/* 渐变之上才是真正的行内容（玻璃行 / 提示行 / 输入卡） */
+.tcv2-inputwrap > .tc-chat-column {
+  position: relative;
+  z-index: 1;
+}
+
+/* 半透明行：毛玻璃 72% + blur12 —— 附件行 / 待发送排队行共用。
+   行是薄的（约 38-60px），只在有内容时挂载，发完/撤掉即消失。 */
+.tcv2-glassrow {
+  background-color: color-mix(in srgb, var(--tc-surface-content) 72%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.15);
+  backdrop-filter: blur(12px) saturate(1.15);
+  border: 1px solid var(--tc-glass-border);
+  border-radius: 12px;
+  box-shadow: 0 1px 8px rgb(0 0 0 / 0.07);
+}

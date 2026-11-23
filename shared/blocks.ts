@@ -129,6 +129,11 @@ export interface ToolBlock {
   endedAt?: number;
   isError?: boolean;
   /**
+   * 子 Agent / 子任务（2026-11-22）：所属容器工具块（Task）的 toolId。
+   * 前端据此把子步骤归到子代理分组下；老数据没有该字段 → 平铺渲染。
+   */
+  parentToolId?: string;
+  /**
    * 这个工具事件是怎么来的。缺省 = 未知（老数据 / mock 适配器），
    * UI 对缺省值**不标注也不猜测**。
    */
@@ -569,6 +574,30 @@ export function textOfBlocks(blocks: readonly Block[]): string {
     .filter((b): b is TextBlock => b.type === 'text')
     .map(b => b.text)
     .join('');
+}
+
+/**
+ * 合并**相邻且完全相同**的正文块（界面最后一道重复兜底）。
+ *
+ * 只在相邻时合并：中间隔了工具/思考块的同文正文属于不同阶段，不该吞。
+ * 空正文不参与，避免把两条空块合成一条。后端去重漏网时（例如老数据里
+ * 已经落了两份），渲染层仍能只展示一份。
+ */
+export function mergeAdjacentDuplicateTextBlocks(blocks: readonly Block[]): Block[] {
+  const out: Block[] = [];
+  for (const b of blocks) {
+    const prev = out[out.length - 1];
+    if (
+      b.type === 'text' &&
+      prev?.type === 'text' &&
+      prev.text.trim() &&
+      prev.text.trim() === b.text.trim()
+    ) {
+      continue;
+    }
+    out.push(b);
+  }
+  return out;
 }
 
 /**

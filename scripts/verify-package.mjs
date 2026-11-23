@@ -33,7 +33,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -211,14 +211,38 @@ function launch() {
       reject(new Error(`启动超时（30s）。已捕获输出：\n${buf.slice(-800)}`));
     }, 30000);
 
+    // M01：server 搬进 harness 子进程后，横幅经 main 转发（stdout），而
+    // [CDP] 行走 stderr —— 两个流的 chunk 到达顺序不保证与内容顺序一致，
+    // 实测 stderr 的 CDP 行会先一步被「第一个 127.0.0.1」抓走（那端口打
+    // 出去全是 404）。所以分两档：握手行/就绪行 = 强匹配立即结算；裸
+    // 「主机:端口」= 弱匹配，延迟 1.2s 再结算（给强匹配留出窗口）。
+    const strongMatch = () => {
+      const hm = /@@OPC-HARNESS@@[^\n]*?"port":(\d+)/.exec(buf);
+      const ready = /\[Harness\] 就绪：127\.0\.0\.1:(\d+)/.exec(buf);
+      return hm || ready;
+    };
+    let fallbackPort = null;
     const onData = d => {
       buf += String(d);
-      // 端口从启动横幅里取。横幅地址随 HOST 变（现在绑 127.0.0.1，
-      // 早先是 0.0.0.0），所以匹配「主机:端口」而不是写死 localhost。
-      const m = /(?:127\.0\.0\.1|localhost):(\d+)/.exec(buf);
-      if (m) {
+      const strong = strongMatch();
+      if (strong) {
         clearTimeout(timer);
-        resolve({ child, port: Number(m[1]), log: () => buf });
+        resolve({ child, port: Number(strong[1]), log: () => buf });
+        return;
+      }
+      if (fallbackPort == null) {
+        const generic = /(?:127\.0\.0\.1|localhost):(\d+)/.exec(buf);
+        if (generic) {
+          fallbackPort = generic[1];
+          setTimeout(() => {
+            const late = strongMatch();
+            resolve({ child, port: Number((late || generic)[1]), log: () => buf });
+            // 8000ms（2026-11-21 v1.0.24 冒烟实测）：冷启动的首个临时库要跑完
+            // 全部建表迁移，握手行可能比 CDP 行晚好几秒——旧的 1.2s 宽限会把
+            // 端口锁在 CDP 口上（[CDP] 行走 stderr、先到），打出去全是 404。
+            // 强匹配在任何时刻到达都会先走上面的 onData 分支，这里只是兜底。
+          }, 8000);
+        }
       }
     };
     child.stdout.on('data', onData);
@@ -265,8 +289,36 @@ async function waitForAppPage(browser, port, timeoutMs = 15000) {
   throw new Error(`找不到应用窗口页面（现有：${urls.join(' , ') || '无'}）`);
 }
 
+/**
+ * M01：harness 模式下 /api/* 需要 `x-opc-token`（main 每次拉起都换新令牌，
+ * 写在 dataDir/harness-token.json）。每次现读 —— [5] 的重启验收会换新令牌，
+ * 缓存会拿到上一代的旧值。文件尚不存在（探针在握手前打）返回 null；
+ * /api/health 有豁免，不受影响。
+ */
+function apiToken() {
+  try {
+    const raw = readFileSync(path.join(dataDir, 'harness-token.json'), 'utf8');
+    const parsed = JSON.parse(raw);
+    if (apiToken._loggedGen !== parsed.startedAt) {
+      // 只记代次与时间，不记 token 本体（红线：token 不进日志）
+      apiToken._loggedGen = parsed.startedAt;
+      console.log(`  [pkg-gate] token 已换代（${parsed.startedAt}）`);
+    }
+    return parsed.token ?? null;
+  } catch (e) {
+    if (apiToken._errLogged !== true) {
+      apiToken._errLogged = true;
+      console.log(`  [pkg-gate] token 文件读取失败: ${e.message}`);
+    }
+    return null;
+  }
+}
+
 const get = async (port, p) => {
-  const r = await fetch(`http://127.0.0.1:${port}${p}`);
+  const headers = {};
+  const token = apiToken();
+  if (token) headers['x-opc-token'] = token;
+  const r = await fetch(`http://127.0.0.1:${port}${p}`, { headers });
   const text = await r.text();
   let json = null;
   try {
@@ -278,9 +330,12 @@ const get = async (port, p) => {
 };
 
 const post = async (port, p, body) => {
+  const headers = { 'Content-Type': 'application/json' };
+  const token = apiToken();
+  if (token) headers['x-opc-token'] = token;
   const r = await fetch(`http://127.0.0.1:${port}${p}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
   const text = await r.text();
@@ -320,7 +375,11 @@ try {
   // P4-5：能力矩阵必须随 /api/agents 下发 —— 否则打包版 UI 不会提示「只读落不了地」
   const agentsRes = await get(first.port, '/api/agents');
   const agents = agentsRes.json?.agents ?? [];
-  ok(agents.length > 0, '/api/agents 返回 Agent 列表', `${agents.length} 个`);
+  ok(
+    agents.length > 0,
+    '/api/agents 返回 Agent 列表',
+    `status=${agentsRes.status} len=${agents.length} tokenFile=${existsSync(path.join(dataDir, 'harness-token.json'))} head=${agentsRes.text.slice(0, 60)}`
+  );
   ok(
     agents.every(a => a.permissionSupport && Array.isArray(a.permissionSupport.enforced)),
     '每个 Agent 都带 permissionSupport（P4-5 代码已进包）'
@@ -513,7 +572,7 @@ try {
   );
 } catch (err) {
   console.error(`\n✗ 冒烟中断: ${err.message}`);
-  const tail = logTail().slice(-700).trim();
+  const tail = logTail().slice(-2500).trim();
   if (tail) console.error(`\n--- 应用最后输出 ---\n${tail}\n--------------------`);
   results.push({ pass: false, name: '冒烟流程未中断', extra: err.message.slice(0, 120) });
 } finally {

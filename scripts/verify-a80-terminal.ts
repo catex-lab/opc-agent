@@ -215,7 +215,12 @@ async function runSmoke() {
     if (!port) throw new Error('没读到 DevToolsActivePort\n' + log.slice(-1500));
 
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 20_000 });
-    page = browser.contexts().flatMap(c => c.pages())[0];
+    // M01：窗口等 harness 握手后才 loadURL —— 页面可能还没出生，轮询等
+    page = null;
+    for (let i = 0; i < 50 && !page; i++) {
+      page = browser.contexts().flatMap(c => c.pages())[0] ?? null;
+      if (!page) await SLEEP(300);
+    }
     if (!page) throw new Error('没找到应用窗口');
     await page.waitForFunction(() => document.querySelector('nav') !== null, { timeout: 40_000 });
 

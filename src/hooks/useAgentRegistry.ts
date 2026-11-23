@@ -19,6 +19,13 @@ import { api } from '../api';
  */
 export function useAgentRegistry() {
   const [agents, setAgents] = useState<RegisteredAgent[]>([]);
+  /**
+   * 用户从列表移除的内置 Agent。
+   *
+   * 与 agents 同源但**分开保存**：它们不出现在通讯录、新建会话等任何正常
+   * 消费方里，只给「获取 Agent」弹窗的「已从列表移除」分组用。
+   */
+  const [hiddenAgents, setHiddenAgents] = useState<RegisteredAgent[]>([]);
   const [loading, setLoading] = useState(false);
   const [probing, setProbing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +50,7 @@ export function useAgentRegistry() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAgents(Array.isArray(data.agents) ? data.agents : []);
+      setHiddenAgents(Array.isArray(data.hiddenAgents) ? data.hiddenAgents : []);
       setComingSoon(Array.isArray(data.comingSoon) ? data.comingSoon : []);
     } catch (err) {
       setError((err as Error).message || '获取 Agent 列表失败');
@@ -108,6 +116,7 @@ export function useAgentRegistry() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAgents(Array.isArray(data.agents) ? data.agents : []);
+      setHiddenAgents(Array.isArray(data.hiddenAgents) ? data.hiddenAgents : []);
       setComingSoon(Array.isArray(data.comingSoon) ? data.comingSoon : []);
       setProbeFeedback({});
     } catch (err) {
@@ -162,9 +171,44 @@ export function useAgentRegistry() {
     void load();
   }, [load]);
 
+  /**
+   * 把内置 Agent 移出 / 放回列表。
+   *
+   * 成功后必须重拉名册：隐藏状态是服务端下发的分区结果，本地直接挪数组
+   * 会和「已移除」分组各存一份，容易漏同步。失败返回 false，由调用方提示。
+   */
+  const hideAgent = useCallback(
+    async (agentId: string): Promise<boolean> => {
+      try {
+        const res = await api.post(`/api/agents/${encodeURIComponent(agentId)}/hide`);
+        if (!res.ok) return false;
+        await load();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [load]
+  );
+
+  const showAgent = useCallback(
+    async (agentId: string): Promise<boolean> => {
+      try {
+        const res = await api.post(`/api/agents/${encodeURIComponent(agentId)}/show`);
+        if (!res.ok) return false;
+        await load();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [load]
+  );
+
   const getAgent = useCallback(
-    (id: string | undefined) => (id ? agents.find(a => a.id === id) : undefined),
-    [agents]
+    (id: string | undefined) =>
+      id ? agents.find(a => a.id === id) ?? hiddenAgents.find(a => a.id === id) : undefined,
+    [agents, hiddenAgents]
   );
 
   /**
@@ -216,6 +260,7 @@ export function useAgentRegistry() {
 
   return {
     agents,
+    hiddenAgents,
     comingSoon,
     grouped,
     readyCount,
@@ -226,6 +271,8 @@ export function useAgentRegistry() {
     probe,
     canaryAll,
     probeOne,
+    hideAgent,
+    showAgent,
     probingIds,
     probeFeedback,
     getAgent,

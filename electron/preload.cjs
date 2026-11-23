@@ -388,4 +388,30 @@ contextBridge.exposeInMainWorld('opc', {
     ipcRenderer.on('opc:permission-focus', handler);
     return () => ipcRenderer.removeListener('opc:permission-focus', handler);
   },
+
+  /**
+   * M01：取本机 API token（harness 进程壳的鉴权头）。
+   *
+   * 调用方拉一次后存内存（api.ts 缓存），每个 /api 请求带 `x-opc-token`。
+   * **不落 localStorage**：token 随重启轮换，且持久化明文等于白给。
+   * 浏览器开发态 / 老路（OPC_HARNESS=0）返回 null，前端零行为差异。
+   *
+   * @returns {Promise<string | null>}
+   */
+  getApiToken() {
+    return ipcRenderer.invoke('opc:api-token').catch(() => null);
+  },
+
+  /**
+   * M01：订阅 harness 进程壳状态（重启中 / 已恢复 / 重启放弃）。
+   * 返回取消订阅函数 —— React 的 effect 清理要用它。
+   *
+   * @param {(ev: {type: string, port?: number}) => void} cb
+   * @returns {() => void}
+   */
+  onHarnessEvent(cb) {
+    const handler = (_e, ev) => { try { cb(ev); } catch { /* 回调自己炸不该拖垮桥 */ } };
+    ipcRenderer.on('opc:harness-event', handler);
+    return () => ipcRenderer.removeListener('opc:harness-event', handler);
+  },
 });

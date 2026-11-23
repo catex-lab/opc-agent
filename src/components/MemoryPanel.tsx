@@ -65,8 +65,6 @@ interface ProjectBrief {
   sessionCount: number;
 }
 
-const BUDGET_HINT_KEY = 'settings.memory.budgetHint';
-
 export function MemoryPanel() {
   const { t, locale } = useTranslation();
   const [core, setCore] = useState('');
@@ -318,9 +316,6 @@ export function MemoryPanel() {
         {/* A98：作用域切换 —— T2-3：移到核心记忆编辑器正上方，紧挨它实际控制的东西 */}
         <div className="mb-4">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs" style={{ color: 'var(--td-text-color-secondary)' }}>
-              {t('settings.memory.scope')}
-            </span>
             {/* 英文的「Global (shared by all projects)」比中文长一半：给下拉多留 40px，
                 中文仍是 260px，不改变既有布局 */}
             <div style={{ width: locale === 'en' ? 300 : 260 }}>
@@ -349,10 +344,6 @@ export function MemoryPanel() {
               </span>
             )}
           </div>
-          {/* T2-2：作用域说明从 ⓘ 改为常驻小字（切换作用域时正需要看的一句话） */}
-          <p className="mt-1 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-            {t('settings.memory.scopeHint')}
-          </p>
         </div>
         <h3 className="mb-1 text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
           {isProject ? t('settings.memory.coreTitleProject') : t('settings.memory.coreTitleGlobal')}
@@ -374,10 +365,6 @@ export function MemoryPanel() {
             {isProject ? t('settings.memory.saveProject') : t('settings.memory.saveGlobal')}
           </Button>
         </div>
-        {/* T2-2：预算说明从 ⓘ 改为常驻小字 */}
-        <p className="mt-1 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          {t(BUDGET_HINT_KEY)}
-        </p>
       </section>
 
       {/* L2 用户画像 —— T2-3：「始终全局」徽标常驻（这条事实原本只藏在 ⓘ 里，
@@ -417,9 +404,6 @@ export function MemoryPanel() {
         <h3 className="mb-1 text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
           {t('settings.memory.searchTitle')}
         </h3>
-        <p className="mb-2 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          {t('settings.memory.searchScope')}
-        </p>
         <div className="flex items-center gap-2">
           <Input
             value={query}

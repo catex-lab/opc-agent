@@ -3,7 +3,8 @@
  *
  * ## 场景
  *
- * 用户报「点了停止，`⟳ 思考中 已用 144s 47 字` 还在转」。要复现它，夹具必须
+ * 用户报「点了停止，`⟳ 思考中 已用 144s 47 字` 还在转」（旧形态；2026-11-22
+ * 后同一件事在过程流里表现为「处理中 144 秒 / 深度思考中」）。要复现它，夹具必须
  * 做到一件事：**服务端开一个 thinking 块之后既不发 block_close、也不发 run_end**，
  * 把 SSE 挂住；然后由用户亲手点界面上的停止键掐断它。这正是 `handleStop`
  * 之后的真实序列 —— 服务端 `finish()` 补发的 closes 已经没人收了。
@@ -13,9 +14,9 @@
  *
  * ## 断言纪律
  *
- * [1] 是 [2] 的反向探针：同一套探针在**没点停止**时必须看见「思考中 / 已用 Ns」
- * 且秒数在涨、判据为假。否则 [2] 的「不再转圈」很可能只是元素根本没渲染出来。
- * [2] 里「spinner 消失」「不再有已用」是**否定式**，必须配「思考块还在、
+ * [1] 是 [2] 的反向探针：同一套探针在**没点停止**时必须看见「处理中 / 思考中」
+ * 且时钟在涨、判据为假。否则 [2] 的「不再转圈」很可能只是元素根本没渲染出来。
+ * [2] 里「运行圆点消失」「不再有处理中」是**否定式**，必须配「思考块还在、
  * 47 字正文还在」这两条肯定式，防止把整块删掉比改对了更绿。
  *
  * 运行：先 npm run build，再 node scripts/verify-stop-seal-ui.mjs
@@ -155,23 +156,27 @@ function resolveChrome() {
   return null;
 }
 
-/** 遍历普通 DOM + shadowRoot，抓思考块摘要条 */
-const THINK_PROBE = `(() => {
-  const found = [];
-  const walk = root => {
-    for (const el of root.querySelectorAll('details.tc-thinking')) {
-      const s = el.querySelector('summary');
-      const text = s ? String(s.textContent || '').trim().replace(/\\s+/g, ' ') : '';
-      found.push({
-        text,
-        hasSpinner: !!(s && s.querySelector('.t-loading, [class*="t-loading"]')),
-        bodyLen: String(el.querySelector('.tc-think-body')?.textContent || '').trim().length,
-      });
-    }
-    for (const el of root.querySelectorAll('*')) if (el.shadowRoot) walk(el.shadowRoot);
-  };
-  walk(document);
-  return found;
+/**
+ * 2026-11-22：单聊过程回合整轮交给 ProcessFlow，旧的 `details.tc-thinking`
+ * 摘要条不再渲染。同一组判据改钉新的过程流锚点：
+ *   · 整轮时钟 `[data-flow-clock]` —— 停止前逐秒涨，停止后定格；
+ *   · 状态数据 `[data-flow]@data-flow-pill` —— 停止前的「正在转」（不再画胶囊）；
+ *   · 思考行的 `.pf-think-note` —— 肯定式，防止停止把正文一起删掉。
+ */
+const FLOW_PROBE = `(() => {
+  const flow = document.querySelector('[data-flow]');
+  const row = document.querySelector('[data-flow-row-kind="thinking"]');
+  if (!flow || !row) return [];
+  const clockEl = flow.querySelector('[data-flow-clock]');
+  const pill = flow.getAttribute('data-flow-pill') || '';
+  return [{
+    clock: clockEl ? String(clockEl.textContent || '').trim() : '',
+    pill,
+    text: [clockEl?.textContent, pill].filter(Boolean).join(' · ').trim(),
+    live: flow.getAttribute('data-flow-state') === 'running',
+    runningRow: row.getAttribute('data-flow-row-state') === 'running',
+    bodyLen: String(row.querySelector('.pf-think-note')?.textContent || '').trim().length,
+  }];
 })()`;
 
 /** TDesign chat sender 是 open shadow DOM，停止/发送态都在影子里 */
@@ -201,15 +206,16 @@ async function clickSenderButton(page) {
 
 /** 「已经收干净」的复合判据；[1] 反向探针与 [2] 正样本共用同一个函数 */
 async function sealedState(page, sampleGapMs = 1300) {
-  const first = (await page.evaluate(THINK_PROBE))[0];
+  const first = (await page.evaluate(FLOW_PROBE))[0];
   if (!first) return { present: false, spinnerGone: false, noLiveLabel: false, clockStopped: false, text: '', bodyLen: 0 };
   await page.waitForTimeout(sampleGapMs);
-  const again = (await page.evaluate(THINK_PROBE))[0];
+  const again = (await page.evaluate(FLOW_PROBE))[0];
   return {
     present: true,
-    spinnerGone: !first.hasSpinner,
-    noLiveLabel: !/思考中/.test(first.text) && !/已用/.test(first.text),
-    clockStopped: !!again && first.text === again.text,
+    // spinner 在新形态里 = 运行态整轮 + 运行态步骤行；两者都要收
+    spinnerGone: !first.live && !first.runningRow,
+    noLiveLabel: !/thinking|processing|思考中|处理中/.test(first.text),
+    clockStopped: !!again && first.clock === again.clock,
     text: first.text,
     bodyLen: first.bodyLen,
   };
@@ -244,8 +250,8 @@ async function startTurn(page) {
   const t0 = Date.now();
   let seen = false;
   while (Date.now() - t0 < 15000) {
-    const f = (await page.evaluate(THINK_PROBE))[0];
-    if (f && /思考中/.test(f.text) && /已用/.test(f.text)) { seen = true; break; }
+    const f = (await page.evaluate(FLOW_PROBE))[0];
+    if (f && f.live && f.pill === 'thinking' && /处理中/.test(f.clock)) { seen = true; break; }
     await page.waitForTimeout(150);
   }
   return seen;
@@ -256,7 +262,7 @@ console.log('\n[1] 反向探针（不点停止，判据必须为假）');
 {
   const { ctx, page } = await newStage();
   const started = await startTurn(page);
-  ok(started, '[1] 夹具真的渲染出「思考中 · 已用 Ns」');
+  ok(started, '[1] 夹具真的渲染出「处理中 · 深度思考中」');
   const probe = await sealedState(page);
   console.log(`      现场摘要条：${probe.text || '(没抓到)'}  body=${probe.bodyLen}`);
   ok(probe.present, '[1] 思考块确实在页面上（肯定式前提）');
@@ -285,12 +291,18 @@ console.log('\n[2] 用户点停止后的收口');
   const stopBefore = stopCalls;
   await clickSenderButton(page);
   await page.waitForTimeout(400);
+  // 过程流在回合结束后会把思考正文折起来（旧 details 是 DOM 里仍在、只是
+  // 视觉收起；新 pf-think-note 是展开才渲染）。展开同一行再取样，才能守住
+  // 「数据没被停止抹掉」这条肯定式，而不是把折叠误判成丢数据。
+  const thinkHead = page.locator('[data-flow-row-kind="thinking"] .pf-step-head[data-clickable="1"]');
+  if (await thinkHead.count()) await thinkHead.first().click();
+  await page.waitForTimeout(200);
   const sealed = await sealedState(page);
   console.log(`      停止后摘要条：${sealed.text || '(没抓到)'}  body=${sealed.bodyLen}`);
   ok(sealed.present, '[2] 思考块仍在（否定式断言的前提：不是整块被删掉）');
   ok(sealed.bodyLen >= 40, '[2] 47 字思考正文仍可见（肯定式）', `${sealed.bodyLen} 字`);
   ok(sealed.spinnerGone, '[2] spinner 不再出现');
-  ok(sealed.noLiveLabel, '[2] 不再显示「思考中 / 已用 Ns」', sealed.text);
+  ok(sealed.noLiveLabel, '[2] 不再显示「处理中 / 思考中」', sealed.text);
   ok(sealed.clockStopped, '[2] 秒表停住（1.3s 后文本不变）');
   ok(stopCalls === stopBefore + 1, '[2] 停止请求真的发到了服务端', `${stopBefore}→${stopCalls}`);
   const sender = await page.evaluate(SENDER_PROBE);

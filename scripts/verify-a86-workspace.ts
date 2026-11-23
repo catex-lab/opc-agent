@@ -32,7 +32,8 @@ import path from 'node:path';
 import { createServer } from 'node:net';
 import { chromium } from 'playwright-core';
 
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 const failures: string[] = [];
 const checks = { total: 0 };

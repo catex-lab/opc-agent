@@ -30,7 +30,8 @@ const ROOT = process.cwd();
 const TMP = path.join(ROOT, '.tmp', `a152-account-${Date.now()}`);
 const DATA = path.join(TMP, 'data');
 const SHOTS = path.join(ROOT, '.tmp', 'a152-account');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 const STALE_MS = 24 * 60 * 60 * 1000;
 
 let pass = 0;

@@ -134,13 +134,23 @@ export interface CliSpec {
   /** 从一行 JSON 中提取续接上下文的令牌 */
   extractResumeToken?(obj: unknown): string | null;
   /**
-   * 整体超时（毫秒）。默认 8 分钟。
+   * 总墙钟兜底（毫秒，含全部工具步骤）。默认 60 分钟。
    *
    * 为什么必须有：这些 CLI 在遇到网络故障时会**无限重连**而不是退出
    * （codex 实测会一直打印 "Reconnecting... waiting for network"）。
    * 没有超时的话，一次对话就能把 HTTP 请求永久挂住。
+   *
+   * 2026-11-20 重定义：生死判定走 idleTimeoutMs（静默上限）—— 流式协议
+   * 下任何输出都重置计时器，长任务（23 步改 5 个文件）不再被「整条指令」
+   * 墙钟误杀。本值只是「哪怕一直有输出也最多跑这么久」的失控兜底。
    */
   timeoutMs?: number;
+  /**
+   * 静默上限（毫秒，流式协议专用）：连续这么久没有任何 stdout/stderr
+   * 输出才判死。默认 8 分钟（DEFAULT_IDLE_TIMEOUT_MS）。
+   * `json-object` 单次模式（无增量输出）不适用 —— 只受 timeoutMs 约束。
+   */
+  idleTimeoutMs?: number;
   /**
    * A106：stdio 双向模式（目前只有 claude 的 control 协议）。
    *
@@ -2096,7 +2106,9 @@ cli: {
     },
     // P5：实测 `pi --version` 冷启动 2992ms（热态 1974ms），默认 3s 预算
     // 卡边缘——放宽到 10s，让这个能用的 Agent 不再被误标「存在异常」。
-    probeBudgetMs: 10000,
+    // 2026-11-21 实活复测：探测全链 7487ms（.cmd shim → node 冷启动），
+    // 开机期十余个 agent 并行探测抢磁盘时 10s 仍会破——放宽到 15s。
+    probeBudgetMs: 15000,
     cli: {
       bin: 'pi',
       buildArgs: (prompt, ctx) => {
@@ -2122,6 +2134,10 @@ cli: {
       },
       parse: 'jsonl',
       mapLine: mapPiLine,
+      // 2026-11-21：Pi 的三层静默叠加（tool_execution_start→end 之间零输出、
+      // 第三方网关可能非流式、请求级失败塞消息体不吐 stderr）——静默单独放宽
+      // 到 20 分钟，其余 CLI 仍吃全局 15 分钟默认。
+      idleTimeoutMs: 20 * 60 * 1000,
       extractResumeToken: obj => {
         const o = obj as { type?: string; id?: unknown };
         return o.type === 'session' && typeof o.id === 'string' ? o.id : null;

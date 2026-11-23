@@ -26,7 +26,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { once, EventEmitter } from 'node:events';
 import { AGENT_DEFS } from '../server/agents/definitions.js';
-import { CliAdapter, terminateGracefully, DEFAULT_TIMEOUT_MS } from '../server/agents/adapters/cli.js';
+import { CliAdapter, terminateGracefully, DEFAULT_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS } from '../server/agents/adapters/cli.js';
 import { withCliShellQuoteHint } from '../shared/blocks.js';
 import {
   buildStdinUserMessage,
@@ -605,15 +605,17 @@ setInterval(() => {}, 1000);
   // ── A205：Qoder 家族超时默认值 + 引号提示归类 ─────────────────────────
   console.log('\nA106-9 超时默认值与引号提示');
   {
-    eq(findDef('qoder').cli!.timeoutMs, 1_200_000, 'qoder 放宽到 20 分钟');
+    eq(findDef('qoder').cli!.timeoutMs, 1_200_000, 'qoder 放宽到 20 分钟（现口径 = 总墙钟兜底）');
     eq(findDef('qoder-cn').cli!.timeoutMs, 1_200_000, 'qoder-cn 放宽到 20 分钟');
     eq(findDef('zcode').cli!.timeoutMs, 900_000, 'zcode 仍是 15 分钟');
-    eq(DEFAULT_TIMEOUT_MS, 480_000, 'DEFAULT_TIMEOUT_MS 未被改动');
+    eq(DEFAULT_TIMEOUT_MS, 3_600_000, '总墙钟兜底默认 60 分钟（2026-11-20 重定义）');
+    eq(DEFAULT_IDLE_TIMEOUT_MS, 900_000, '静默上限默认 15 分钟（2026-11-21 用户拍板放宽，无人值守场景）');
+    eq(findDef('pi').cli!.idleTimeoutMs, 1_200_000, 'pi 静默单独放宽到 20 分钟（三层静默叠加）');
     const uncovered = AGENT_DEFS.filter(
       d => d.cli && d.descriptor.id !== 'qoder' && d.descriptor.id !== 'qoder-cn' && d.descriptor.id !== 'zcode'
     );
     for (const d of uncovered) {
-      eq(d.cli!.timeoutMs ?? DEFAULT_TIMEOUT_MS, 480_000, `${d.descriptor.id} 仍是默认 480 秒`);
+      eq(d.cli!.timeoutMs ?? DEFAULT_TIMEOUT_MS, 3_600_000, `${d.descriptor.id} 总墙钟 = 默认 60 分钟`);
     }
 
     const msg = 'bash: line 1: unexpected EOF looking for matching "';
@@ -624,6 +626,56 @@ setInterval(() => {}, 1000);
     ok(hinted.includes("-File 'C:\\path"), '示例用单引号路径（双引号正是踩雷写法）');
     ok(withCliShellQuoteHint(hinted) === hinted, '提示幂等，不重复追加');
     ok(withCliShellQuoteHint('all good') === 'all good', '非引号错误不加提示');
+  }
+
+  // ── 2026-11-20：静默看门狗（整条指令墙钟 → 输出活性）─────────────────
+  // 用户实测：Pi 跑 23 步改 5 个文件在 480 秒被整轮墙钟误杀。新口径下
+  // 「有输出就活着」，只有彻底静默才判死；总墙钟只是失控兜底。
+  console.log('\nA106-10 静默看门狗');
+  {
+    const versionGuard = `if (process.argv.includes('--version')) { console.log('9.9.9'); process.exit(0); }`;
+
+    // 桩 1：打一行 init 后彻底静默 → 静默上限（1.5s）判死，总墙钟（60s）不触发
+    const silentSrc = `${versionGuard}
+console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'idle-1' }));
+process.on('SIGTERM', () => {});
+setInterval(() => {}, 1000);
+`;
+    const silentPath = path.join(root, 'stub-silent.cjs');
+    fs.writeFileSync(silentPath, silentSrc, 'utf8');
+    const silentDef = { ...claudeDef, cli: { ...claudeDef.cli!, bin: silentPath, timeoutMs: 60_000, idleTimeoutMs: 1500 } };
+    const evs1: AgentEvent[] = [];
+    const t1 = Date.now();
+    for await (const ev of new CliAdapter(silentDef).send(ctx({}))) evs1.push(ev);
+    const silentElapsed = Date.now() - t1;
+    const silentErr = evs1.filter(e => e.type === 'error') as Array<{ message?: string }>;
+    ok(silentErr.length === 1 && String(silentErr[0].message).includes('静默'),
+      '彻底静默 → 静默文案（区分于总墙钟）', silentErr[0]?.message ?? String(silentErr.length));
+    ok(silentElapsed >= 1500 && silentElapsed <= 6000,
+      '静默判死在 idle 上限附近（1.5s）而非 60s 总墙钟', `${silentElapsed}ms`);
+
+    // 桩 2：每 300ms 持续输出 3.5 秒后停 → 每次输出都重置静默计时器，
+    // 活到 3.5s + idle(1s) 才死 —— 旧「有输出也在 idle 内被杀」的回归探针。
+    // 总墙钟（10s）不应先触发。
+    const steadySrc = `${versionGuard}
+let n = 0;
+const t = setInterval(() => { n++; console.log('tick ' + n); }, 300);
+setTimeout(() => clearInterval(t), 3500);
+process.on('SIGTERM', () => {});
+setInterval(() => {}, 1000);
+`;
+    const steadyPath = path.join(root, 'stub-steady.cjs');
+    fs.writeFileSync(steadyPath, steadySrc, 'utf8');
+    const steadyDef = { ...claudeDef, cli: { ...claudeDef.cli!, bin: steadyPath, timeoutMs: 10_000, idleTimeoutMs: 1000 } };
+    const evs2: AgentEvent[] = [];
+    const t2 = Date.now();
+    for await (const ev of new CliAdapter(steadyDef).send(ctx({}))) evs2.push(ev);
+    const steadyElapsed = Date.now() - t2;
+    const steadyErr = evs2.filter(e => e.type === 'error') as Array<{ message?: string }>;
+    ok(steadyErr.length === 1 && String(steadyErr[0].message).includes('静默'),
+      '停止输出后才被静默判死（而非总墙钟）', steadyErr[0]?.message ?? String(steadyErr.length));
+    ok(steadyElapsed >= 4_000 && steadyElapsed <= 8_000,
+      '持续输出把存活时间撑到 3.5s+1s（输出重置生效，未被 1s idle 误杀）', `${steadyElapsed}ms`);
   }
 } finally {
   fs.rmSync(root, { recursive: true, force: true });

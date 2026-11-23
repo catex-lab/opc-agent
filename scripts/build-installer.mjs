@@ -235,6 +235,36 @@ function hideDefaultAppAsar() {
   }
 }
 
+/**
+ * 自愈（2026-11-20 实测教训）：上一次打包被硬杀（SIGKILL / 断电 / 管道超时
+ * 强杀，restore 的 SIGTERM 钩子没机会跑）时，default_app.asar 会停在
+ * `.packaging-aside` 状态。下一轮 hideDefaultAppAsar 看到主文件不在就跳过、
+ * restore 也跟着跳过 —— 坏状态**自我延续**，且症状极其隐蔽：
+ * `node_modules/electron/dist/electron.exe` 浏览器模式（含 `electron .`、
+ * `--version`）一律静默 exit 1（default_app 是 Electron CLI 加载链的入口，
+ * 不在就死），只有 ELECTRON_RUN_AS_NODE 纯 Node 模式还活着。所有打包型
+ * 闸门因此全灭而毫无报错。入口处先还原，保证每次构建都从健康状态出发。
+ */
+function healDefaultAppAsar() {
+  const aside = DEFAULT_APP_ASAR + ASIDE_SUFFIX;
+  if (fs.existsSync(aside) && !fs.existsSync(DEFAULT_APP_ASAR)) {
+    try {
+      fs.renameSync(aside, DEFAULT_APP_ASAR);
+      console.log('[build-installer] ★ 自愈：还原上次被打断的 default_app.asar（上次打包异常终止）');
+    } catch (e) {
+      console.warn(`[build-installer] ★ 自愈失败（${e.code}）—— electron 将无法以应用模式启动，请手动还原 ${aside}`);
+    }
+  } else if (fs.existsSync(aside) && fs.existsSync(DEFAULT_APP_ASAR)) {
+    // 双份并存（极少见）：旁置份是多余的，删掉免得误导后续排查
+    try {
+      fs.rmSync(aside);
+    } catch {
+      /* 删不掉就算了 */
+    }
+  }
+}
+healDefaultAppAsar();
+
 function restoreDefaultAppAsar(hidden) {
   if (!hidden) return;
   try {

@@ -66,6 +66,20 @@ export interface TraceItem {
 const lower = (name: unknown): string => (typeof name === 'string' ? name.toLowerCase() : '');
 
 /**
+ * 「验证类命令」词表：shell 工具的 command 命中其中之一即视为 verify 步骤。
+ *
+ * 为什么收敛成一份：阶段条（groupPhases）的 verify 归类与 `verbOf` 的
+ * 「检查」动词必须**同一口径**——否则会出现「动词写着『执行』、阶段条
+ * 却把它染成验证段」的错位。用户的口径：跑测试/lint/构建/类型检查才算
+ * 验证；`ls`、启动 dev server 这类普通命令不是验证。
+ */
+export const VERIFY_CMD_RE = /\b(test|tests|build|lint|tsc|pytest|typecheck|vitest|jest)\b/i;
+/** 这是不是一次 shell 调用（bash / shell / execute） */
+function isShellTool(name: string): boolean {
+  return name === 'bash' || name === 'shell' || name === 'execute';
+}
+
+/**
  * 「会改动文件」的工具名（小写）。
  *
  * 为什么收敛成一份：这个名字集合原本在 `hasFileEdits` 里写了一份、在
@@ -122,8 +136,9 @@ function verbOf(name: string, input?: Record<string, unknown>): string {
   if (name === 'bash' || name === 'shell' || name === 'execute') {
     // 跑测试 / 构建 / 类型检查是「检查」，其余是「执行」——
     // 参考图里「检查」这个词专指这类验证动作，混进普通命令会失焦。
+    // 词表与阶段条共用（VERIFY_CMD_RE），两处口径不许漂移。
     const cmd = typeof input?.command === 'string' ? input.command : '';
-    return /\b(test|build|lint|tsc|pytest|typecheck|vitest|jest)\b/i.test(cmd) ? '检查' : '执行';
+    return VERIFY_CMD_RE.test(cmd) ? '检查' : '执行';
   }
   if (name === 'websearch') return '搜索';
   if (name === 'webfetch') return '获取';
@@ -145,6 +160,14 @@ function targetOf(name: string, input?: Record<string, unknown>): string {
     if (desc) return desc;
     const cmd = typeof input?.command === 'string' ? input.command : '';
     return cmd.split('\n')[0].slice(0, 80) || '命令';
+  }
+  if (name === 'task') {
+    // 子代理容器：目标行显示任务描述（参考页「改主题模块」），没有才回退命令
+    const desc = typeof input?.description === 'string' ? input.description.trim() : '';
+    if (desc) return desc;
+    const task = typeof input?.task === 'string' ? input.task.trim() : '';
+    if (task) return task;
+    return '子任务';
   }
   if (name === 'websearch') {
     return typeof input?.query === 'string' ? input.query.slice(0, 60) : '网页';
@@ -318,6 +341,241 @@ export function buildTrace(blocks: readonly Block[]): TraceItem[] {
   return items;
 }
 
+// ============= 阶段条（阶段分组） =============
+
+/**
+ * 过程流的四个阶段（参考用户给的单聊过程流设计稿）：
+ *   understand 理解（读/搜/看）→ change 修改（编辑/写入）→
+ *   verify 验证（跑测试/构建/lint）→ fix 修复（验证失败之后的修改）
+ */
+export type FlowPhaseKind = 'understand' | 'change' | 'verify' | 'fix';
+
+export interface FlowPhase {
+  kind: FlowPhaseKind;
+  /** 段内工具步骤数（思考块不占步） */
+  steps: number;
+  /** 段起点（epoch ms）。缺省 = 老数据没有时间戳（UI 退化为等宽分段） */
+  startMs?: number;
+  /** 段终点。缺省 = 段仍在进行（运行中）或没有时间戳 */
+  endMs?: number;
+  /** 段内真实增删行数（只累计 known 的 diff，不编造） */
+  added: number;
+  removed: number;
+  /** 段内是否有失败的工具（verify 段据此染红） */
+  failed: boolean;
+}
+
+/**
+ * 单个轨迹步骤属于哪个阶段。返回 null = 不参与阶段（思考块）。
+ *
+ * 分类口径（用户定版，顺序即优先级）：
+ *   1. 会改文件的工具（EDIT / WRITE）→ change；
+ *   2. shell 工具且命令命中验证词表 → verify；其余 shell 命令（ls、启动服务等）
+ *      是普通执行 → understand；
+ *   3. 其余（读 / 搜 / 看目录 / 网络）→ understand。
+ */
+export function classifyFlowPhase(item: TraceItem): FlowPhaseKind | null {
+  if (item.kind !== 'tool') return null;
+  const name = item.toolName;
+  if (WRITE_TOOL_NAMES.has(name) || EDIT_TOOL_NAMES.has(name)) return 'change';
+  if (isShellTool(name)) {
+    const cmd = typeof item.block?.input?.command === 'string' ? item.block.input.command : '';
+    return VERIFY_CMD_RE.test(cmd) ? 'verify' : 'understand';
+  }
+  return 'understand';
+}
+
+/**
+ * 扁平的轨迹步骤 → 连续阶段段。
+ *
+ * ## 状态机（fix 的归属）
+ *
+ * 「verify 失败之后的修改归为 fix」不是看局部，而是看**到目前为止**有没有
+ * 一次失败且未被收复的验证：
+ *   - verify 步骤报错 → 进入「待修复」状态，此后的 edit/write 都归 fix；
+ *   - verify 步骤通过 → 复位，此后的 edit/write 回到 change；
+ *   - verify 还在跑 → 不下结论，维持现状（等结果落地）。
+ *
+ * ## 合并
+ *
+ * 连续同类合并成一段（思考/旁白不占段，插在两个同段工具之间不打断合并——
+ * 阶段条上没有它们的位置，时间上它们本来也落在两步之间的缝隙里）。
+ * 段的起止 = 段内最早 startedAt → 最晚 endedAt；段尾还在跑 → endMs 缺省。
+ */
+export function groupPhases(items: readonly TraceItem[]): FlowPhase[] {
+  const phases: FlowPhase[] = [];
+  let afterFailedVerify = false;
+
+  for (const item of items) {
+    const base = classifyFlowPhase(item);
+    if (!base) continue;
+
+    const kind: FlowPhaseKind = base === 'change' && afterFailedVerify ? 'fix' : base;
+
+    if (base === 'verify') {
+      if (item.status === 'error') afterFailedVerify = true;
+      else if (item.status === 'done') afterFailedVerify = false;
+    }
+
+    const startedAt = item.block?.startedAt ?? 0;
+    const endedAt = item.block?.endedAt ?? 0;
+    // TraceStatus 没有 pending 档（那只是 ToolBlockStatus 的方言），这里统一按 running 处理
+    const running = item.status === 'running';
+    const last = phases[phases.length - 1];
+
+    if (last && last.kind === kind) {
+      last.steps += 1;
+      last.failed = last.failed || item.status === 'error';
+      if (item.diff?.known) {
+        last.added += item.diff.added;
+        last.removed += item.diff.removed;
+      }
+      if (startedAt > 0 && (last.startMs === undefined || startedAt < last.startMs)) {
+        last.startMs = startedAt;
+      }
+      if (endedAt > 0) {
+        last.endMs = Math.max(last.endMs ?? 0, endedAt);
+      } else if (running) {
+        // 段尾还没回结果：段保持「进行中」（endMs 缺省），不能拿旧值冒充终点
+        last.endMs = undefined;
+      }
+    } else {
+      phases.push({
+        kind,
+        steps: 1,
+        startMs: startedAt > 0 ? startedAt : undefined,
+        endMs: endedAt > 0 ? endedAt : undefined,
+        added: item.diff?.known ? item.diff.added : 0,
+        removed: item.diff?.known ? item.diff.removed : 0,
+        failed: item.status === 'error',
+      });
+    }
+  }
+  return phases;
+}
+
+// ============= 容器模型（子代理 / 群聊 Agent，2026-11-22） =============
+
+/**
+ * 过程流里的**容器**：子代理（ToolBlock name === 'task'，含 Claude 的 Task 工具）
+ * 或群聊里某个 Agent 的一次 turn。子步骤 = parentToolId === 容器 toolId 的块。
+ * 老数据没有 parentToolId → 没有容器，全部平铺（向后兼容）。
+ */
+export interface FlowNode {
+  /** 容器工具块的 toolId（或群聊 turn 的 id） */
+  id: string;
+  /** 容器名：子代理 = 任务描述，群聊 = Agent 名 */
+  name: string;
+  /** 容器下的叶子步骤 */
+  children: TraceItem[];
+  /** 容器行自身的状态（由孩子推导） */
+  status: 'running' | 'done' | 'error' | 'interrupted';
+  startedAt?: number;
+  endedAt?: number;
+  /** 是否有任一孩子在 running */
+  running: boolean;
+}
+
+/**
+ * 从工具步骤推导容器 + 平铺剩余。
+ *
+ * 规则（2026-11-22 方案）：
+ *   · name === 'task' 的 ToolBlock = 容器；
+ *   · parentToolId === 该容器 toolId 的块 = 子步骤（叶子，不参与顶层摘要的
+ *     失败计数；容器失败不重复计入「重试次数」）；
+ *   · 其他块平铺。
+ * 并行判断：同一时间（起止时间窗重叠）有多个容器在 running → 并行。
+ */
+export function deriveFlowNodes(
+  items: readonly TraceItem[]
+): { nodes: FlowNode[]; leaves: TraceItem[] } {
+  const byId = new Map<string, TraceItem>();
+  const parents = new Map<string, TraceItem[]>();
+
+  for (const it of items) {
+    if (it.kind !== 'tool') continue;
+    if (it.toolName === 'task' && it.block) {
+      byId.set(it.block.toolId, it);
+    }
+    const parentId = it.block?.parentToolId;
+    if (parentId) {
+      const arr = parents.get(parentId) ?? [];
+      arr.push(it);
+      parents.set(parentId, arr);
+    }
+  }
+
+  const nodes: FlowNode[] = [];
+  const leaves: TraceItem[] = [];
+  const seen = new Set<string>();
+
+  for (const [pid, kids] of parents) {
+    const container = byId.get(pid);
+    if (!container) {
+      // 父找不到（老数据/断链）→ 子步骤平铺
+      leaves.push(...kids);
+      continue;
+    }
+    seen.add(container.block!.toolId);
+    const st = container.block!.startedAt || 0;
+    const en = container.block!.endedAt || 0;
+    nodes.push({
+      id: container.block!.toolId,
+      name: container.target || container.block!.name || '子代理',
+      children: kids,
+      status: kids.some(k => k.status === 'error')
+        ? 'error'
+        : kids.some(k => k.status === 'running')
+          ? 'running'
+          : kids.some(k => k.status === 'interrupted')
+            ? 'interrupted'
+            : 'done',
+      startedAt: st > 0 ? st : undefined,
+      endedAt: en > 0 ? en : undefined,
+      running: kids.some(k => k.status === 'running'),
+    });
+  }
+
+  // 顶层平铺：非容器的块 + 没有成为任何孩子的容器
+  for (const it of items) {
+    if (it.kind !== 'tool') {
+      leaves.push(it);
+      continue;
+    }
+    const pid = it.block?.parentToolId;
+    if (pid && parents.has(pid)) continue; // 已在 children 里
+    if (
+      it.toolName === 'task' &&
+      it.block &&
+      byId.has(it.block.toolId) &&
+      !seen.has(it.block.toolId)
+    ) {
+      // 容器没有孩子 → 还是平铺（空容器不值得占一层）
+      leaves.push(it);
+      continue;
+    }
+    if (it.toolName === 'task' && seen.has(it.block!.toolId)) continue; // 容器行由 nodes 表达
+    leaves.push(it);
+  }
+
+  return { nodes, leaves };
+}
+
+/** 是否并行：同一时间有 ≥2 个容器的时间窗重叠（不管是否还活着，重叠即并行） */
+export function hasParallelContainers(nodes: readonly FlowNode[]): boolean {
+  for (let i = 0; i < nodes.length; i += 1) {
+    for (let j = i + 1; j < nodes.length; j += 1) {
+      const a = nodes[i]!;
+      const b = nodes[j]!;
+      if (a.startedAt === undefined || b.startedAt === undefined) return true;
+      const aEnd = a.endedAt ?? Infinity;
+      const bEnd = b.endedAt ?? Infinity;
+      if (aEnd >= b.startedAt && bEnd >= a.startedAt) return true;
+    }
+  }
+  return false;
+}
+
 // ============= 活动摘要 =============
 
 /** F1：会写盘的动词 —— 摘要里算作「改了 N 个文件」的那一档 */
@@ -334,6 +592,11 @@ export interface TraceSummary {
   editedFiles: string[];
   /** 结果档位：界面层用它与 `text` 等价的 i18n 文案 */
   outcome: 'running' | 'error' | 'interrupted' | 'ok';
+  /**
+   * 重试口径（2026-11-21）：最后一次失败之后有通过的验证时 > 0，
+   * 值 = 被收复的失败步数。界面据此把「成功」升级成「成功 · 重试 N 次」。
+   */
+  retries: number;
   diff: { added: number; removed: number };
 }
 
@@ -346,8 +609,13 @@ export interface TraceSummary {
  * 动词退到「改 / 读」两档，宾语换成数量，句尾直接给结论；
  * 具体改了哪个文件、跑了什么命令，都在下一层的步骤列表里（没有丢）。
  *
- * 结果词按最坏情况取：还在跑就不说成功，有一步报错就是失败，
- * 有一步没回传就如实写「结果未回传」。
+ * 结果词的口径（2026-11-21 重试口径修订）：
+ *   · 还在跑 → 「进行中」，绝不提前说成功；
+ *   · **中间失败、但最后一次失败之后有一次通过的验证 → 「成功 · 重试 N 次」**。
+ *     以前按最坏情况报「失败」——修好了却顶着红字，和事实不符；
+ *     N = 被后续验证收复的失败步骤数。
+ *   · 收复之后又有没回传结果的步骤 → 落回「结果未回传」，不谎称成功；
+ *   · 确实没修好（最后一次失败之后没有通过的验证）→ 「失败」。
  */
 export function summarizeTrace(items: readonly TraceItem[]): TraceSummary {
   const verbs: string[] = [];
@@ -358,6 +626,8 @@ export function summarizeTrace(items: readonly TraceItem[]): TraceSummary {
   let hasError = false;
   let hasRunning = false;
   let hasInterrupted = false;
+  /** 按出现顺序收集的工具步骤（重试口径要的是顺序，不是有无） */
+  const toolSeq: TraceItem[] = [];
 
   const walk = (list: readonly TraceItem[]) => {
     for (const it of list) {
@@ -366,6 +636,7 @@ export function summarizeTrace(items: readonly TraceItem[]): TraceSummary {
         if (it.status === 'error') hasError = true;
         if (it.status === 'running') hasRunning = true;
         if (it.status === 'interrupted') hasInterrupted = true;
+        toolSeq.push(it);
         if (it.path) {
           const name = baseName(it.path);
           if (!files.includes(name)) files.push(name);
@@ -384,14 +655,47 @@ export function summarizeTrace(items: readonly TraceItem[]): TraceSummary {
   };
   walk(items);
 
+  // ── 重试口径：失败 → 修复 → 验证通过 ─────────────────────────────
+  let lastErrorIdx = -1;
+  let lastPassVerifyIdx = -1;
+  toolSeq.forEach((t, i) => {
+    if (t.status === 'error') {
+      lastErrorIdx = i;
+      return;
+    }
+    if (
+      t.status === 'done' &&
+      isShellTool(t.toolName) &&
+      VERIFY_CMD_RE.test(typeof t.block?.input?.command === 'string' ? t.block.input.command : '')
+    ) {
+      lastPassVerifyIdx = i;
+    }
+  });
+  /** 最后一次失败之后有通过的验证 = 失败已被收复 */
+  const recovered = lastErrorIdx >= 0 && lastPassVerifyIdx > lastErrorIdx;
+  /** 收复之后又出现没回传结果的步骤：结尾状态是「未回传」，不是成功 */
+  const unreturnedAfterRecovery =
+    recovered && toolSeq.some((t, i) => t.status === 'interrupted' && i > lastPassVerifyIdx);
+  /** 被收复的失败次数 = 最后那次通过的验证之前的失败步数 */
+  const retries = recovered
+    ? toolSeq.filter((t, i) => t.status === 'error' && i < lastPassVerifyIdx).length
+    : 0;
+  const outcomeOkRetried = recovered && !unreturnedAfterRecovery && !hasRunning;
+
   const verbsText = verbs.slice(0, 3).join('、') + (verbs.length > 3 ? ' 等' : '');
-  const outcome = hasRunning
+  const outcomeText = hasRunning
     ? '进行中'
-    : hasError
-      ? '失败'
-      : hasInterrupted
+    : outcomeOkRetried
+      ? `成功${retries > 0 ? ` · 重试 ${retries} 次` : ''}`
+      : // 收复之后又出现未回传步骤：结尾状态是「未回传」，不能拿更早的失败盖成「失败」，
+        // 也不能谎称成功——这一档必须排在 hasError 之前
+        unreturnedAfterRecovery
         ? '结果未回传'
-        : '成功';
+        : hasError
+          ? '失败'
+          : hasInterrupted
+            ? '结果未回传'
+            : '成功';
 
   // 有了「改」就不再提「读」：改文件前必然读过它，两个数一起说反而要用户自己减。
   const head = editedFiles.length
@@ -401,11 +705,22 @@ export function summarizeTrace(items: readonly TraceItem[]): TraceSummary {
       : verbsText;
 
   return {
-    text: head ? `${head} · ${outcome}` : outcome,
+    text: head ? `${head} · ${outcomeText}` : outcomeText,
     verbs,
     files,
     editedFiles,
-    outcome: hasRunning ? 'running' : hasError ? 'error' : hasInterrupted ? 'interrupted' : 'ok',
+    outcome: hasRunning
+      ? 'running'
+      : outcomeOkRetried
+        ? 'ok'
+        : unreturnedAfterRecovery
+          ? 'interrupted'
+          : hasError
+            ? 'error'
+            : hasInterrupted
+              ? 'interrupted'
+              : 'ok',
+    retries,
     diff: { added, removed },
   };
 }
@@ -420,15 +735,17 @@ export function formatStepDuration(ms?: number): string | null {
 }
 
 /**
- * 本轮总耗时（头部「已处理 47m42s」）。
+ * 本轮总耗时（头部「已处理 47m42s」），**en/中性口径**。
  *
  * 与单步不同，这里要**进位到分钟**：47 分钟写成 2862.4s 没人读得下去。
  * 超过一分钟省掉秒的小数（47m42s），超过一小时再进位到小时（1h02m）。
+ * 2026-11-20：分钟以内不再带小数（63.7s → 64s）—— 用户口径「不满 1 分钟
+ * 按秒计」；一位小数是另一个口径，留着会让人以为是两种数据。
  */
 export function formatHandledDuration(ms?: number): string | null {
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return null;
   const total = Math.round(ms / 1000);
-  if (total < 60) return `${(ms / 1000).toFixed(1)}s`;
+  if (total < 60) return `${total}s`;
   if (total < 3600) {
     const m = Math.floor(total / 60);
     const s = total % 60;
@@ -437,6 +754,32 @@ export function formatHandledDuration(ms?: number): string | null {
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   return `${h}h${String(m).padStart(2, '0')}m`;
+}
+
+/**
+ * 本轮总耗时，**按语言出文案**（2026-11-20 统一口径，用户拍板）：
+ *
+ *   zh：<1 分钟 → 「N 秒」；≥1 分钟 → 「M 分 S 秒」（整分 → 「M 分钟」）；
+ *       ≥1 小时 → 「H 小时 M 分钟」（整点 → 「H 小时」）。
+ *   en：走 formatHandledDuration（32s / 47m42s / 1h02m）。
+ *
+ * 全站唯一的回合耗时文案出口 —— 消息头部、状态行定格、用量小字都必须走
+ * 这里，不许再各自手搓（之前「63.7s」「已处理 8 分钟」「用时 480 秒」
+ * 三种口径并存，就是三处各写各的后果）。
+ */
+export function formatHandledDurationText(ms: number | undefined, locale: 'zh' | 'en'): string | null {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return null;
+  if (locale !== 'zh') return formatHandledDuration(ms);
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total} 秒`;
+  if (total < 3600) {
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return s ? `${m} 分 ${s} 秒` : `${m} 分钟`;
+  }
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  return m ? `${h} 小时 ${m} 分钟` : `${h} 小时`;
 }
 
 /**

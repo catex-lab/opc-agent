@@ -64,9 +64,24 @@ function read(rel: string): string {
 
 const SLEEP = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-/** 带超时的 fetch。API 卡住时不能把整个冒烟无限期拖住（实测挂住过）。 */
+/**
+ * 带超时的 fetch。API 卡住时不能把整个冒烟无限期拖住（实测挂住过）。
+ *
+ * M01：harness 模式下 /api/* 需要 x-opc-token —— runSmoke 把令牌文件路径
+ * 挂到 harnessTokenFile，这里每请求现读（重启会换代）。
+ */
+let harnessTokenFile: string | null = null;
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+  const headers: Record<string, string> = { ...((init?.headers as Record<string, string>) ?? {}) };
+  if (harnessTokenFile) {
+    try {
+      const token = (JSON.parse(fs.readFileSync(harnessTokenFile, 'utf8')) as { token?: string }).token;
+      if (token) headers['x-opc-token'] = token;
+    } catch {
+      /* 令牌文件还没落（探针在握手前打）→ 无头请求；/api/health 有豁免 */
+    }
+  }
+  const res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(20_000) });
   return (await res.json()) as T;
 }
 
@@ -280,6 +295,7 @@ async function runSmoke() {
   const probeUrl = `http://127.0.0.1:${probePort}/`;
 
   const { child, dataDir, log } = launchApp();
+  harnessTokenFile = path.join(dataDir, 'harness-token.json');
   let harness: Browser | null = null;
   let agent: Browser | null = null;
 
@@ -323,7 +339,12 @@ async function runSmoke() {
     console.log('  · 连接 ①（驱动应用渲染进程）…');
     /* ── 连接 ①：本脚本，驱动应用自己的渲染进程 ── */
     harness = await chromium.connectOverCDP(`http://127.0.0.1:${active.port}`, { timeout: 20_000 });
-    const appPage = harness.contexts().flatMap(c => c.pages())[0];
+    // M01：窗口等 harness 握手后才 loadURL —— CDP 连上时页面可能还没出生，轮询等
+    let appPage = null;
+    for (let i = 0; i < 50 && !appPage; i++) {
+      appPage = harness.contexts().flatMap(c => c.pages())[0] ?? null;
+      if (!appPage) await SLEEP(300);
+    }
     if (!appPage) throw new Error('没找到应用窗口的 page');
     await appPage.waitForFunction(() => document.querySelector('nav') !== null, { timeout: 40_000 });
 

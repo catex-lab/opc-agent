@@ -24,7 +24,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -305,13 +306,12 @@ console.log('\n[3] 外观：去说明文字 / 主题按钮只留标签 / 描边 
   await ctx.close();
 }
 
-// ============= [4] 说明收进提示图标 =============
-console.log('\n[4] 四个说明收进提示图标');
+// ============= [4] 外观页提示图标 =============
+console.log('\n[4] 外观页提示图标：常驻说明已删，只留滑杆参数提示');
 {
   const { ctx, page } = await newPage();
   // A66 起光斑默认关闭，「光斑大小 / 光斑亮度」两条滑杆与它们的提示图标都只在
-  // 开关打开时渲染。这里要数的是**四个**提示图标，所以先把它打开
-  // （等价于用户去过设置页打开光斑），否则只会看到透明度那一个。
+  // 开关打开时渲染。先打开光斑，才能验到这两条保留下来的参数提示。
   await ctx.addInitScript(() => {
     localStorage.setItem('opc.glow', JSON.stringify({ enabled: true, size: null, brightness: null }));
   });
@@ -327,11 +327,14 @@ console.log('\n[4] 四个说明收进提示图标');
   const tips = await page.evaluate(() =>
     [...document.querySelectorAll('[data-info-hint]')].map(el => el.getAttribute('data-info-hint'))
   );
-  ok(tips.length >= 4, '至少有 4 个提示图标', String(tips.length));
-  ok(tips.some(t => t && t.includes('界面透明度')), '界面透明度有提示图标', tips.join(' / '));
-  ok(tips.some(t => t && t.includes('鼠标光斑')), '鼠标光斑有提示图标');
-  ok(tips.some(t => t && t.includes('光斑大小')), '光斑大小有提示图标');
-  ok(tips.some(t => t && t.includes('光斑亮度')), '光斑亮度有提示图标');
+  // 2026-11-21 c850ec9：用户圈删外观页五个常驻 ⓘ（界面语言 / 回答语言 /
+  // 界面透明度 / 鼠标光斑 / 关闭窗口时）。滑杆自己的「光斑大小 / 亮度」
+  // 说明仍保留 —— 那是调参时才需要的上下文，不属于被圈删的常驻说明。
+  ok(tips.length === 2, '外观页只剩 2 个参数提示图标', tips.join(' / '));
+  ok(!tips.some(t => t && t.includes('界面透明度')), '界面透明度 ⓘ 已按用户圈删移除', tips.join(' / '));
+  ok(!tips.some(t => t && t.includes('鼠标光斑')), '鼠标光斑 ⓘ 已按用户圈删移除');
+  ok(tips.some(t => t && t.includes('光斑大小')), '光斑大小仍有参数提示图标');
+  ok(tips.some(t => t && t.includes('光斑亮度')), '光斑亮度仍有参数提示图标');
 
   // 悬停出文案
   const sizeTip = page.locator('[data-info-hint="光斑大小说明"]');
@@ -367,7 +370,10 @@ console.log('\n[5] 自定义 Agent：去小字');
   // 13 号效果图翻转：描述必须在（原 A37 断言「描述也去掉了」）。「我的 Agent」
   // 列表行仍无描述小字（上一条断言继续钉住）。
   ok(text.includes('专注于编程和代码相关任务'), '模板卡描述小字常驻可见（T7-2，原 A37 只留悬停）');
-  ok(text.includes('使用模板'), '模板卡右侧有「使用模板」入口（T7-2）');
+  // 2026-11-21 df31f4d：整卡本来就可点，「使用模板」只是重复动作，用户圈删。
+  // 这里反向钉住它已消失，同时肯定式确认模板卡还在、仍是可点入口。
+  ok(!text.includes('使用模板'), '模板卡不再重复「使用模板」按钮');
+  ok((await page.locator('[data-agent-template]').count()) >= 4, '四张模板卡仍在（整卡即入口）');
 
   // ── [6] 创建按钮 ──
   const btn = await page.evaluate(() => {

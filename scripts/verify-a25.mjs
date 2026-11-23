@@ -20,7 +20,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -547,7 +548,18 @@ console.log('\n[4] 鼠标光斑：跟随 / 离开淡出 / 非玻璃模式不亮'
     ok(/radial-gradient/.test(style.bg), '只留极淡的白色底（不是主体提亮手段）', style.bg.slice(0, 60));
     ok(/radial-gradient/.test(style.mask), '圆形边缘用 mask 渐隐（不会出现硬圆）', style.mask.slice(0, 60));
 
-    const bubble = await page.locator('.tc-bubble-assistant').first().boundingBox();
+    // 2026-11-22：单聊含工具/思考的回合整轮交给 ProcessFlow 渲染，正文
+    // 不再挂 `.tc-bubble-assistant`。这里钉「页面上真实可见的答案正文」，
+    // 旧纯文本回合仍由前一个选择器承担；不能只读旧壳子，否则截图这一步
+    // 会等一个永远不存在的节点，把整条闸门拖成超时红。
+    const answer = page.locator('[data-flow-answer] .tc-answer, .tc-bubble-assistant').first();
+    await answer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+    const bubble = await answer.boundingBox();
+    ok(
+      !!bubble && bubble.width > 0 && bubble.height > 0,
+      '光斑可压在可见正文上（答案锚点存在）',
+      bubble ? `${Math.round(bubble.width)}x${Math.round(bubble.height)}` : '未找到答案正文'
+    );
     if (bubble) {
       const bx = Math.round(bubble.x + bubble.width / 2);
       const by = Math.round(bubble.y + bubble.height / 2);

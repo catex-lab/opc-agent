@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Select, Tooltip, MessagePlugin } from 'tdesign-react';
+import { Select, Tooltip, MessagePlugin, ImageViewer } from 'tdesign-react';
 import { ChatSender } from '@tdesign-react/chat';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import {
@@ -27,6 +27,7 @@ import {
   Unlock,
   PencilLine,
   ListChecks,
+  ExternalLink,
 } from 'lucide-react';
 import { Model, PermissionMode, RegisteredAgent, AgentModelSource, CliConfiguredModel } from '../types';
 import { IMAGE_SIZES, IMAGE_MODELS } from '../imageOptions';
@@ -36,6 +37,8 @@ import { MENU_ITEM_SM_CLASS } from './menuItem';
 // A93：输入框字号对齐正文。CSS 穿不过 TDesign 的两层 shadow，只能往那层
 // shadow root 里注入样式表 —— 为什么以及踩过哪些坑，见该文件开头。
 import { applySenderTypography } from '../senderTextarea';
+// 2026-11-20：输入框 URL 高亮（透明文字 + 镜像层）与光标处的 URL 识别。
+import { applySenderHighlight, findUrlAt } from '../senderHighlight';
 // A113：输入框右键菜单的执行体。穿透两层 shadow 找 textarea、下编辑命令。
 import { senderEdit } from '../senderEdit';
 import { useTranslation, type MessageKey } from '../i18n';
@@ -150,6 +153,12 @@ interface Attachment {
   name: string;
   size: number;
   kind: AttachmentKind;
+  /**
+   * 图片缩略/点击预览用（`URL.createObjectURL`，2026-11-20 用户拍板做成
+   * 缩略卡）。渲染进程 sandbox 且无 file 协议，本地绝对路径进不了
+   * `<img src>`，必须用 blob URL；随附件移除/清空/发送撤销。
+   */
+  previewUrl?: string;
 }
 
 const MAX_ATTACHMENTS = 10;
@@ -347,6 +356,34 @@ export function ChatInput({
   /* ── 附件（A35）── */
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   /**
+   * 图片附件的点击预览（2026-11-20 用户拍板做成缩略卡 + 预览）。
+   * TDesign ImageViewer 自带遮罩/Esc/缩放，不新造灯箱。
+   */
+  const [previewing, setPreviewing] = useState<string | null>(null);
+  /**
+   * 撤销 blob URL（缩略/预览的生命周期跟草稿走）。
+   * 移除 / 清空 / 发送三个出口各自撤销；卸载时兜底清剩余。
+   */
+  const revokePreview = useCallback((a?: Attachment) => {
+    if (a?.previewUrl) {
+      try {
+        URL.revokeObjectURL(a.previewUrl);
+      } catch {
+        /* 已撤销 */
+      }
+    }
+  }, []);
+  const attachmentsRef = useRef<Attachment[]>([]);
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+  useEffect(
+    () => () => {
+      for (const a of attachmentsRef.current) revokePreview(a);
+    },
+    [revokePreview]
+  );
+  /**
    * 附件菜单。存的是**视口坐标**而不是布尔值 —— 菜单要 portal 到 body，
    * 原因见下面 attachMenu 的渲染处（ChatSender 里点不动）。
    */
@@ -391,7 +428,14 @@ export function ChatInput({
     } else {
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
-        picked.push({ path: filePathOf(f), name: f.name, size: f.size, kind: kindOf(f) });
+        const kind = kindOf(f);
+        picked.push({
+          path: filePathOf(f),
+          name: f.name,
+          size: f.size,
+          kind,
+          previewUrl: kind === 'image' ? URL.createObjectURL(f) : undefined,
+        });
       }
     }
 
@@ -461,6 +505,7 @@ export function ChatInput({
         name: f.name && f.name !== 'image.png' ? f.name : t('chat.input.pastedImageName', { ext }),
         size: f.size,
         kind: 'image',
+        previewUrl: URL.createObjectURL(f),
       });
     }
     if (picked.length === 0) return;
@@ -504,6 +549,10 @@ export function ChatInput({
   // 为什么只能这么做、为什么 CSS 的三条路都不通，见 src/senderTextarea.ts。
   useEffect(() => applySenderTypography(), []);
 
+  // 2026-11-20：URL 高亮镜像层（textarea 文字透明 + 同位镜像染色）。
+  // 挂载/重试/清理全在 applySenderHighlight 里，这里只负责装上。
+  useEffect(() => applySenderHighlight(), []);
+
   /* ── A113：输入框右键菜单 ────────────────────────────────────────────
    *
    * 需求「输入框内要支持右键弹窗的完整功能」。之所以必须自己做一份菜单，
@@ -518,19 +567,27 @@ export function ChatInput({
    *  3. 撤销/重做走 execCommand：浏览器自己维护 undo 栈，自己拼插入逻辑会把
    *     用户的撤销历史打碎。 */
   const [editMenu, setEditMenu] = useState<{ x: number; y: number } | null>(null);
+  /** 光标处的 URL（右键时算一次）：有值时菜单多一项「打开链接」 */
+  const [caretUrl, setCaretUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const el = chatSenderRef.current as HTMLElement | null;
     if (!el?.addEventListener) return;
     const onContextMenu = (e: MouseEvent) => {
       const path = e.composedPath();
-      const inTextarea = path.some(n => n instanceof HTMLTextAreaElement);
-      if (!inTextarea) return;
+      const ta = path.find(n => n instanceof HTMLTextAreaElement) as HTMLTextAreaElement | undefined;
+      if (!ta) return;
       e.preventDefault();
+      setCaretUrl(findUrlAt(ta, ta.selectionStart ?? 0));
       setEditMenu({ x: e.clientX, y: e.clientY });
     };
     el.addEventListener('contextmenu', onContextMenu);
     return () => el.removeEventListener('contextmenu', onContextMenu);
+  }, []);
+
+  const openExternal = useCallback((url: string) => {
+    const opc = (window as unknown as { opc?: { externalOpen?: (url: string) => Promise<unknown> } }).opc;
+    void opc?.externalOpen?.(url);
   }, []);
 
   const runEdit = useCallback(async (action: Parameters<typeof senderEdit>[0]) => {
@@ -633,7 +690,10 @@ export function ChatInput({
     const hasSomething = !!text || attachments.length > 0;
     if (hasSomething && (!modelRequired || selectedModel)) {
       onSend(withAttachments(text));
-      setAttachments([]);
+      setAttachments(prev => {
+        for (const a of prev) revokePreview(a);
+        return [];
+      });
     }
   }, [inputValue, selectedModel, modelRequired, onSend, attachments, withAttachments]);
 
@@ -660,9 +720,14 @@ export function ChatInput({
 
   return (
     <div
-      className="px-4 pb-6 pt-4"
+      className="tcv2-inputwrap px-4 pb-3 pt-2"
       style={{
-        backgroundColor: 'var(--tc-surface-content)'
+        /* 2026-11-21 v2（定版四图）：整块常驻毛玻璃退役 —— 输入卡本体
+           （t-chat-sender 的 ::part(t-chat__input__content)）本来就是实底
+           卡（底色 + 16px 圆角 + 投影），wrapper 只做定位；半透明只留给
+           「按需出现的行」：附件行（下方 .tcv2-glassrow）、待发送排队行
+           （排队功能落地后同款）。底部锚定渐变见 index.css
+           .tcv2-inputwrap::before。 */
       }}
     >
       {/* A215：内容列宽度与居中规则的唯一来源（.tc-chat-column，见 index.css）。
@@ -742,10 +807,58 @@ export function ChatInput({
           </div>
         )}
 
-        {/* 附件条（A35）：与 @ 成员条同一层 —— 都是「这次发什么」的前置信息 */}
+        {/* 附件条（A35）→ v2 玻璃行（2026-11-21 定版）：从输入卡内部搬出来，
+            成为输入卡上方**按需出现**的半透明行（毛玻璃 72% + blur12）——
+            只有粘贴/上传附件、图片时才存在，发完即撤。图片附件（有
+            previewUrl）保持缩略卡 —— 点击预览（ImageViewer）、悬停出删除钮；
+            文件/目录/视频保持原 chip。 */}
         {attachments.length > 0 && (
-          <div className="mb-2 flex flex-wrap items-center gap-1.5" data-attachments>
+          <div
+            className="tcv2-glassrow mb-2 flex flex-wrap items-center gap-1.5 px-3 py-2"
+            data-attachments
+          >
             {attachments.map(a => {
+              if (a.kind === 'image' && a.previewUrl) {
+                return (
+                  <span
+                    key={a.path}
+                    title={a.path}
+                    data-attachment={a.path}
+                    data-attachment-kind={a.kind}
+                    className="group relative h-14 w-14 overflow-hidden rounded-lg border"
+                    style={{ borderColor: 'var(--td-component-border)' }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setPreviewing(a.previewUrl ?? null)}
+                      title={t('chat.input.previewImage', { name: a.name })}
+                      aria-label={t('chat.input.previewImage', { name: a.name })}
+                      className="h-full w-full"
+                    >
+                      <img
+                        src={a.previewUrl}
+                        alt={a.name}
+                        className="h-full w-full object-cover"
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAttachments(prev => {
+                          revokePreview(prev.find(x => x.path === a.path));
+                          return prev.filter(x => x.path !== a.path);
+                        })
+                      }
+                      title={t('chat.input.removeAttachment')}
+                      aria-label={t('chat.input.removeAttachmentNamed', { name: a.name })}
+                      className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full transition-opacity hover:bg-[var(--tc-hover-chrome)] sm:opacity-0 sm:group-hover:opacity-100"
+                      style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
+                    >
+                      <X size={10} />
+                    </button>
+                  </span>
+                );
+              }
               const Icon = iconOf(a.kind);
               return (
                 <span
@@ -766,7 +879,12 @@ export function ChatInput({
                   )}
                   <button
                     type="button"
-                    onClick={() => setAttachments(prev => prev.filter(x => x.path !== a.path))}
+                    onClick={() =>
+                      setAttachments(prev => {
+                        revokePreview(prev.find(x => x.path === a.path));
+                        return prev.filter(x => x.path !== a.path);
+                      })
+                    }
                     title={t('chat.input.removeAttachment')}
                     aria-label={t('chat.input.removeAttachmentNamed', { name: a.name })}
                     className="ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--tc-hover-chrome)]"
@@ -778,7 +896,12 @@ export function ChatInput({
             })}
             <button
               type="button"
-              onClick={() => setAttachments([])}
+              onClick={() =>
+                setAttachments(prev => {
+                  for (const a of prev) revokePreview(a);
+                  return [];
+                })
+              }
               className="text-caption underline-offset-2 hover:underline"
               style={{ color: 'var(--td-text-color-placeholder)' }}
               data-attach-clear
@@ -1275,6 +1398,17 @@ export function ChatInput({
           y={editMenu.y}
           onClose={() => setEditMenu(null)}
           items={[
+            ...(caretUrl
+              ? [
+                  {
+                    key: 'openurl',
+                    label: t('chat.edit.openLink'),
+                    icon: <ExternalLink size={14} />,
+                    onSelect: () => openExternal(caretUrl),
+                    divider: true,
+                  },
+                ]
+              : []),
             { key: 'undo', label: t('chat.edit.undo'), icon: <Undo2 size={14} />, onSelect: () => void runEdit('undo') },
             { key: 'redo', label: t('chat.edit.redo'), icon: <Redo2 size={14} />, onSelect: () => void runEdit('redo') },
             { key: 'cut', label: t('chat.edit.cut'), icon: <Scissors size={14} />, onSelect: () => void runEdit('cut'), divider: true },
@@ -1297,6 +1431,13 @@ export function ChatInput({
           ] satisfies ContextMenuItem[]}
         />
       )}
+
+      {/* 图片附件点击预览（2026-11-20）：缩略卡/消息图共用的 TDesign 灯箱 */}
+      <ImageViewer
+        images={previewing ? [previewing] : []}
+        visible={!!previewing}
+        onClose={() => setPreviewing(null)}
+      />
     </div>
   );
 }

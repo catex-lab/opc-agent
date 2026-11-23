@@ -23,7 +23,8 @@ const ROOT = process.cwd();
 /** 每次用独立临时目录：本机删除会进回收站，固定目录会被上一轮的锁咬住。 */
 const TMP = path.join(ROOT, '.tmp', `a150-retire-${Date.now()}`);
 const DATA = path.join(TMP, 'data');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 let pass = 0;
 let fail = 0;

@@ -1,0 +1,467 @@
+/**
+ * 单聊过程流样式（2026-11-22 改版）——按 HTML 参考页移植，`pf-*` 命名空间。
+ *
+ * 颜色只用项目 --td-* / --tc-* 变量（参考页的 --t1/t2/t3/--brand/--ok/--err
+ * 一一映射到 text-color-primary/secondary/placeholder、brand、success、error），
+ * 亮暗两套自动跟随；prefers-reduced-motion 下停掉全部动效。
+ * 与旧方案零共用类名（旧 .tc-* 规则随 AgentTrace v2 封存，互不影响）。
+ */
+
+.pf {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin: 8px 0;
+  font-size: var(--text-body-lg);
+  line-height: 1.7;
+}
+
+/* ── 整轮时钟（参考页 hdr） ─────────────────────────────────────── */
+
+.pf-hdr {
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  margin-bottom: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 阶段条 + 图例（参考页 pb / pl） ───────────────────────────── */
+
+.pf-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pf-bar {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  min-width: 0;
+  border-radius: 4px;
+  background-color: var(--tc-hover-chrome);
+  overflow: hidden;
+}
+
+.pf-bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+}
+
+.pf-bar i.is-understand {
+  background-color: var(--td-text-color-placeholder);
+}
+.pf-bar i.is-change {
+  background-color: var(--td-brand-color);
+}
+.pf-bar i.is-verify,
+.pf-bar i.is-fix {
+  background-color: var(--td-success-color);
+}
+.pf-bar i.is-failed {
+  background-color: var(--td-error-color);
+}
+.pf-bar i.is-live {
+  animation: pf-pulse 1.8s ease-in-out infinite;
+}
+
+.pf-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-right: -6px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--td-text-color-placeholder);
+  cursor: pointer;
+}
+
+.pf-toggle:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.pf-chev {
+  flex-shrink: 0;
+  color: var(--td-text-color-placeholder);
+  transition: transform 0.15s var(--ease-tencent);
+}
+
+.pf-chev.open {
+  transform: rotate(90deg);
+}
+
+/* 图例：独立一行（用户拍板），窄屏允许换行 */
+.pf-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 14px;
+  min-height: 26px;
+  padding: 2px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--td-text-color-secondary);
+}
+
+.pf-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.pf-legend-item i {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.pf-legend-item i.is-understand {
+  background-color: var(--td-text-color-placeholder);
+}
+.pf-legend-item i.is-change {
+  background-color: var(--td-brand-color);
+}
+.pf-legend-item i.is-verify,
+.pf-legend-item i.is-fix {
+  background-color: var(--td-success-color);
+}
+.pf-legend-item i.is-failed {
+  background-color: var(--td-error-color);
+}
+
+/* 状态胶囊（用户定版删除）：状态仍写在 [data-flow-pill] 上给闸门/无障碍读，
+   但不再有可见控件，也不再占一条 26px 行高。 */
+
+/* ── 摘要线（参考页 tc-steps-bar = 步骤区折叠开关） ─────────────── */
+
+.pf-steps-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 4px 6px 4px 2px;
+  border-radius: 6px;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-tencent);
+}
+
+.pf-steps-bar:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.pf-trace-summary {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-foldtag {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background-color: var(--tc-hover-chrome);
+  color: var(--td-text-color-secondary);
+}
+
+.pf-count {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-diff {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono, 'SF Mono', Consolas, 'Courier New', monospace);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.65;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.pf-steps-bar:hover .pf-diff {
+  opacity: 1;
+}
+
+.pf-diff-add {
+  color: var(--td-success-color);
+}
+
+.pf-diff-del {
+  color: var(--td-error-color);
+}
+
+.pf-diff-none {
+  color: var(--td-text-color-placeholder);
+  opacity: 0.75;
+}
+
+/* ── 步骤流（参考页 tc-trace / tc-step） ───────────────────────── */
+
+.pf-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pf-step {
+  position: relative;
+  padding-left: 24px;
+  min-width: 0;
+}
+
+/* 连接竖线：首行从圆点下沿起、末行到圆点上沿止，单步不画 */
+.pf-step::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: var(--td-component-stroke);
+}
+
+.pf-step:first-child::before {
+  top: 14px;
+}
+
+.pf-step:last-child::before {
+  bottom: calc(100% - 14px);
+}
+
+.pf-step:only-child::before {
+  display: none;
+}
+
+/* 节点图标（2026-11-22，参考页 §4）：替换 7px 圆点，14px / stroke 1.75。
+   颜色只表达状态（完成灰 / 运行中品牌脉冲 / 失败红 / 等待确认琥珀），
+   类型靠形状（图标映射见 trace/icons.tsx）。 */
+.pf-ico {
+  position: absolute;
+  left: -1px;
+  top: 7px;
+  width: 14px;
+  height: 14px;
+  color: var(--td-text-color-placeholder);
+  transition: color var(--duration-base) var(--ease-tencent);
+}
+
+.pf-step.is-running .pf-ico {
+  color: var(--td-brand-color);
+  animation: pf-pulse 1.4s ease-in-out infinite;
+}
+
+.pf-step.is-error .pf-ico {
+  color: var(--td-error-color);
+}
+
+/* 等待确认：琥珀（参考页 is-wait） */
+.pf-step.is-wait .pf-ico {
+  color: var(--td-warning-color);
+  animation: pf-pulse 1.4s ease-in-out infinite;
+}
+
+/* 结果未回传：placeholder 灰（不冒充完成/失败） */
+.pf-step.is-interrupted .pf-ico {
+  color: var(--td-text-color-placeholder);
+  opacity: 0.6;
+}
+
+.pf-step-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 2px 6px 2px 4px;
+  margin-left: -4px;
+  border-radius: 6px;
+  transition: background-color var(--duration-fast) var(--ease-tencent);
+}
+
+.pf-step-head[data-clickable='1'] {
+  cursor: pointer;
+}
+
+.pf-step-head:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.pf-verb {
+  flex-shrink: 0;
+  color: var(--td-text-color-placeholder);
+}
+
+/* 思考的「摘要」角标（A126）：厂商只给了摘要时标注，不让用户误以为是完整思维链 */
+.pf-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 0 5px;
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
+  color: var(--td-brand-color);
+}
+
+.pf-target {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, 'SF Mono', Consolas, 'Courier New', monospace);
+  color: var(--td-text-color-secondary);
+}
+
+.pf-meta {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--td-text-color-placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-step.is-error .pf-meta {
+  color: var(--td-error-color);
+}
+
+/* 详情（参考页 tc-step-detail）：mono、浅底、行内着色 */
+.pf-detail {
+  margin: 3px 0 5px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background-color: color-mix(in srgb, var(--td-text-color-primary) 3%, transparent);
+  font-family: var(--font-mono, 'SF Mono', Consolas, 'Courier New', monospace);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 14rem;
+  overflow-y: auto;
+  color: var(--td-text-color-placeholder);
+  scrollbar-width: thin;
+  scrollbar-color: var(--td-component-stroke) transparent;
+}
+
+.pf-detail .pf-line.is-add {
+  color: var(--td-success-color);
+}
+
+.pf-detail .pf-line.is-del {
+  color: var(--td-error-color);
+}
+
+.pf-detail .pf-line-more {
+  color: var(--td-text-color-placeholder);
+}
+
+.pf-detail-cmd {
+  margin-bottom: 4px;
+  color: var(--td-text-color-secondary);
+}
+
+/* 思考正文（参考页 tc-think-note-body）：左竖线 + 次级灰 */
+.pf-think-note {
+  margin: 3px 0 5px;
+  padding-left: 8px;
+  border-left: 2px solid var(--td-component-stroke);
+  color: var(--td-text-color-secondary);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 旁白（参考页 tc-trace-narration）：流内散文段 */
+.pf-narration {
+  margin: 0;
+  padding: 7px 10px 7px 0;
+  color: var(--td-text-color-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ── 答案（参考页 .ans）：流末尾，不折进摘要线 ─────────────────── */
+
+.pf-ans {
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.pf-caret {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background-color: var(--td-brand-color);
+  vertical-align: -2px;
+  margin-left: 2px;
+  animation: pf-caret-blink 1s steps(1) infinite;
+}
+
+@keyframes pf-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.72);
+  }
+}
+
+@keyframes pf-caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-bar i.is-live,
+  .pf-step.is-running .pf-dot,
+  .pf-caret {
+    animation: none;
+  }
+
+  .pf-caret {
+    width: 2px;
+  }
+}
+
+/* 窄屏兜底（2026-11-22）：运行中阶段条在这条消息内吸顶。
+   状态胶囊删除后不再有第三层 sticky，时钟 + 阶段条两层足够。 */
+.pf[data-flow-state='running'] > .pf-hdr,
+.pf[data-flow-state='running'] > .pf-bar-row {
+  position: sticky;
+  z-index: 2;
+  background-color: var(--td-bg-color-container, var(--td-bg-color-page));
+}
+
+.pf[data-flow-state='running'] > .pf-hdr {
+  top: env(safe-area-inset-top, 0px);
+}
+
+.pf[data-flow-state='running'] > .pf-bar-row {
+  top: calc(env(safe-area-inset-top, 0px) + 18px);
+}

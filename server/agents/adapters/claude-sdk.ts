@@ -65,6 +65,7 @@ import { SDK_PERMISSION_OPTIONS } from '../../../shared/permissions.js';
 import { createCanUseToolBridge } from './sdkApproval.js';
 import {
   createStreamTextState,
+  isDuplicateWholeMessage,
   mapStreamTextEvent,
   takeStreamedText,
   takeStreamedThinking,
@@ -743,12 +744,33 @@ export function mapClaudeSdkMessage(
   }
 
   if (m.type === 'assistant' || m.type === 'user') {
+    // 与 WorkBuddy 同一套整条签名去重：跨字符串/数组形状与 block index 变化。
+    if (m.type === 'assistant' && !m.parent_tool_use_id) {
+      const content = (m.message as { content?: unknown } | undefined)?.content;
+      if (isDuplicateWholeMessage(stream, content)) return 'continue';
+    }
     const payload = m.type === 'assistant' && !m.parent_tool_use_id ? dedupeAssistant(m, stream) : m;
     const events = mapClaudeCodeLine(payload);
     if (Array.isArray(events)) {
-      for (const ev of events) queue.push(ev);
+      for (const ev of events) {
+        // 子 Agent / 子任务（2026-11-22）：SDK 消息带 parent_tool_use_id 时，
+        // 本消息里的 tool_use 都属于那个父 Task 工具。事件后处理补上
+        // parentToolId，投影器落块，前端据此归到子代理分组。
+        // 其他适配器不产这个字段，前端对缺省值平铺（老数据同款）。
+        queue.push(
+          ev.type === 'tool' && m.parent_tool_use_id
+            ? { ...ev, parentToolId: m.parent_tool_use_id }
+            : ev.type === 'text' && m.type === 'assistant' && !m.parent_tool_use_id
+              ? { ...ev, fullMessage: true }
+              : ev
+        );
+      }
     } else if (events) {
-      queue.push(events);
+      queue.push(
+        events.type === 'text' && m.type === 'assistant' && !m.parent_tool_use_id
+          ? { ...events, fullMessage: true }
+          : events
+      );
     }
     return 'continue';
   }

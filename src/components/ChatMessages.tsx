@@ -5,11 +5,12 @@ import { Brain, Copy, GitBranch, PencilLine, Quote, RefreshCw, Share2, TextSelec
 import { Message, Model, RegisteredAgent, Block, ThinkingBlock, ToolBlock } from '../types';
 import { legacyToBlocks, runActivity, textOfBlocks, type KbCitationRef } from '../../shared/blocks';
 import { AgentTrace } from './AgentTrace';
+import { ProcessFlow } from './ProcessFlow';
 import { canGroupProcess } from '../trace/rows';
 import { shouldFoldProcess } from '../trace/fold';
 import { BackgroundTasksPill } from './BackgroundTasksPill';
 import { useBackgroundTasks } from '../hooks/useBackgroundTasks';
-import { formatHandledDuration, hasFileEdits, lingeringToolBlocks } from '../../shared/trace';
+import { formatHandledDurationText, hasFileEdits, lingeringToolBlocks } from '../../shared/trace';
 import { RoundAudit } from './RoundAudit';
 import { useVerifications } from '../hooks/useVerifications';
 import { installCherryCodeIconFix } from './cherryCodeIcon';
@@ -50,26 +51,10 @@ function useElapsed(startedAt: number | undefined, active: boolean): number | nu
 }
 
 /**
- * S2-4 / S1-2：本轮总耗时按**界面语言**格式化 —— 中文统一
- * 「32 秒 / 1 分 36 秒 / 2 小时 5 分钟」（单聊与群聊同一函数，见审查报告
- * S2-4「全应用统一为中文格式」），英文沿用 shared/trace 的 32.0s / 1m36s。
- * 数据源与埋点不动（shared/trace.formatHandledDuration 仍归它管，
- * 服务端 skill-distill 也用同一份），这里只做显示层的换算。
+ * S2-4 / S1-2：本轮总耗时按界面语言格式化 —— 2026-11-20 起收口到
+ * shared/trace.formatHandledDurationText（全站唯一出口，用量小字/状态行/
+ * 头部同一份），本文件不再持有本地实现。
  */
-function formatHandledDurationText(ms: number | undefined, locale: 'zh' | 'en'): string | null {
-  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return null;
-  if (locale !== 'zh') return formatHandledDuration(ms);
-  const total = Math.round(ms / 1000);
-  if (total < 60) return `${total} 秒`;
-  if (total < 3600) {
-    const m = Math.floor(total / 60);
-    const s = total % 60;
-    return s ? `${m} 分 ${s} 秒` : `${m} 分钟`;
-  }
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  return m ? `${h} 小时 ${m} 分钟` : `${h} 小时`;
-}
 
 /**
  * 思考块。
@@ -198,22 +183,12 @@ function StreamStatus({
   const { t, locale } = useTranslation();
   const elapsed = useElapsed(startedAt, !ended);
   const activity = imageMode ? 'image' : runActivity(blocks ?? []);
-  const runningToolName = [...(blocks ?? [])]
-    .reverse()
-    .find((b): b is ToolBlock => b.type === 'tool' && (b.status === 'running' || b.status === 'pending'))?.name;
-  /** 与 shared/blocks 的 streamPhaseLabel 同一套判据，只把文案交给 i18n。
-      静默与散开两态不走阶段文案 —— 它们各自有更准确的话（见上方三态注释）。 */
+  /** 2026-11-21 对齐 ZCode：状态行改**计时器语义**（「工作中 · 累计时长」
+      固定不变），「正在思考/调用什么」由上方活跃步骤行表达 —— 动作信息
+      不再在这里与活跃行重复。生图模式保留专属文案。 */
   const label = imageMode
     ? t('chat.status.image')
-    : activity === 'thinking'
-      ? t('chat.status.thinking')
-      : activity === 'tool'
-        ? runningToolName
-          ? t('chat.status.calling', { name: runningToolName })
-          : t('chat.status.callingTool')
-        : activity === 'writing'
-          ? t('chat.status.writing')
-          : t('chat.status.processing');
+    : t('chat.status.workingShort');
 
   /** 散开定格的总耗时（S1-2 单口径）：run_end 的 durationMs 优先 */
   const settleMs = (() => {
@@ -248,13 +223,15 @@ function StreamStatus({
           {t('chat.msg.handled', { duration: formatHandledDurationText(settleMs, locale) ?? '' })}
         </span>
       ) : reconnecting ? (
-        /* 静默 >60s（看门狗）：已等待 N 秒（未收到内容）。数字每秒递增，
-           不包 TypingText —— 与「用时 N 秒」同一理由，避免整行每秒重打。 */
-        <span>{t('chat.status.silentWait', { n: elapsed ?? 0 })}</span>
+        /* 静默 >60s（看门狗）：已等待 N（未收到内容）。每秒递增，
+           不包 TypingText —— 与「用时 N」同一理由，避免整行每秒重打。
+           2026-11-20：耗时统一走 formatHandledDurationText（<1 分按秒、
+           ≥1 分分+秒），状态行不再独走「N 秒」裸口径。 */
+        <span>{t('chat.status.silentWait', { n: formatHandledDurationText((elapsed ?? 0) * 1000, locale) ?? '' })}</span>
       ) : (
         <span>
           {/* A83：阶段文案走打字机（模糊渐显 + 逐字错开）。
-              只包 label、不包后面的「用时 N 秒」—— 那个数字每秒都变，
+              只包 label、不包后面的「用时 N」—— 那个数字每秒都变，
               一起包进去会让整行每秒重打一遍（startsWith 断在数字上）。
               阶段切换（思考 → 调用工具 → 生成）时才重播，正好对应
               「换了一件事在做」这个语义。
@@ -264,7 +241,7 @@ function StreamStatus({
               （逗号前多一个空格）。套一层之后 gap 只作用在「指示灯 ↔ 文字」之间，
               文字内部是普通行内流，标点紧贴。 */}
           <TypingText text={label} />
-          <span>{t('chat.status.elapsed', { n: elapsed ?? 0 })}</span>
+          <span>{t('chat.status.elapsed', { n: formatHandledDurationText((elapsed ?? 0) * 1000, locale) ?? '' })}</span>
         </span>
       )}
     </span>
@@ -330,6 +307,16 @@ function TurnStatusSlot({
   }, [active, message.error]);
 
   if (!active && !settle) return null;
+  // 2026-11-22 改版：单聊过程回合（块 ∈ raw/tool/thinking/text 且含过程块）
+  // 由 ProcessFlow 的整轮时钟接管（「处理中/已处理 X 秒」），粒子状态行退场——
+  // 「已工作 X 秒 + 工作中 X 秒」两套计时器并存正是被推翻的旧形态。
+  // 群聊叙述（note）/ 生图 / 含图消息不走流程，状态行照旧。
+  const procFlowTurn =
+    !imageMode &&
+    !!message.blocks &&
+    message.blocks.some(b => b.type === 'tool' || b.type === 'thinking') &&
+    message.blocks.every(b => b.type === 'raw' || b.type === 'tool' || b.type === 'thinking' || b.type === 'text');
+  if (procFlowTurn) return null;
   return (
     <StreamStatus
       startedAt={message.timestamp?.getTime()}
@@ -1563,23 +1550,10 @@ const MessageRow = memo(function MessageRow({
               · {formatModelName(message.model)}
             </span>
           )}
-          {/* A36：本轮总耗时。参考图把它放在头部右端（「已处理 47m42s」）——
-              它描述的是**这一轮**，不是某一步，放在步骤里反而会被误读成单步耗时。
-              流式中不显示：那一刻还没跑完，写死一个不断变大的数会和下面
-              状态行的秒数打架。
-              S2-4（审查报告）：中文界面统一「已处理 1 分 36 秒 / 32 秒」格式
-              （单聊与群聊同一函数），英文沿用 1m36s。 */}
-          {!msgIsImage && !message.isStreaming && formatHandledDurationText(message.durationMs, locale) && (
-            <span
-              className="ml-auto shrink-0 text-caption tabular-nums"
-              style={{ color: 'var(--td-text-color-placeholder)' }}
-              data-msg-duration
-            >
-              {t('chat.msg.handled', {
-                duration: formatHandledDurationText(message.durationMs, locale) ?? '',
-              })}
-            </span>
-          )}
+          {/* 2026-11-20 用户拍板：头部右上角的总耗时移除（A36 引入）。
+              回合耗时只保留在两个不打扰阅读的位置：流式/散开的状态行
+              （「已处理 X」，由 StreamStatus 承担）与用量小字（有费用或
+              token 时）。data-msg-duration 随之退役，verify:a36 [1] 已跟随。 */}
         </div>
       )}
 
@@ -2178,6 +2152,35 @@ export function ChatMessages({
 
     // 失败块已提到 errorBlock，渲染用的块序列里去掉它
     const blocks = persistedError ? allBlocks.filter(b => b.type !== 'error') : allBlocks;
+
+    /**
+     * 2026-11-22 改版：单聊过程回合**整轮**交给 ProcessFlow（参考页：一轮 = 一条流）。
+     * 旧的「答案锚点 + 尾部工具另起轨迹段」拆段路径就此退役——中途旁白留在流内，
+     * 不再把每段旁白误判成答案、不再产生各自计时的碎片轨迹（那正是截图里
+     * 「已工作 20 秒 / 已工作 4 秒 / 工作中 38 秒」三个时钟并存的根源）。
+     * 含 image / artifact / note 的消息（生图 / 群聊叙述 / 证据块）不走流程，
+     * 保留旧的逐段路径不动。
+     */
+    const procFlowTurn =
+      !imageMode &&
+      blocks.some(b => b.type === 'tool' || b.type === 'thinking') &&
+      blocks.every(b => b.type === 'raw' || b.type === 'tool' || b.type === 'thinking' || b.type === 'text');
+    if (procFlowTurn) {
+      return (
+        <>
+          <ProcessFlow
+            blocks={blocks}
+            isStreaming={!!message.isStreaming}
+            durationMs={message.durationMs}
+            cwd={sessionCwd}
+            at={messageClock}
+          />
+          {message.kbRefs ? renderKbRefs(message.kbRefs) : null}
+          {errorBlock}
+        </>
+      );
+    }
+
     const processNodes: React.ReactNode[] = [];
     const answerNodes: React.ReactNode[] = [];
     /**

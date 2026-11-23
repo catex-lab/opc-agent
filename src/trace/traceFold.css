@@ -1,17 +1,16 @@
 /**
- * 过程流折叠（生产落地）—— 只补 AgentTrace 需要、而 `index.css` 里
- * 尚未具备的三件事。刻意不覆盖字号 / 行距 / 颜色体系：
+ * 过程流样式（v2 定版形态，2026-11-21 五图口径）。
  *
- *   1. 单步明细的高度过渡（120–200ms），让「每步完成即折叠」不是硬切；
- *   2. 状态点收敛为**形状**（空心=运行中、实心圆=完成、实心方=报错、
- *      空心空心圈=结果未回传），不再用绿/红/品牌色；
- *   3. 关键步骤的「常驻」标记与摘要条的「已收拢」出口。
+ * 结构：`.tcv2-collapser`（「已工作 X 秒」收纳线，无框）→ 展开时
+ * `.tcv2-rows`（扁平单行 / 组，全员贴左缘）→ 行下 `.tcv2-detail`
+ * （详情面板，唯一带边框的地方）。
  *
- * 选择器都带 `.tc-trace` 前缀：`index.css` 在 main.tsx 里晚于组件导入，
- * 同特异性会被它压回去，必须提高一档才能稳定生效。
+ * 与 index.css 的叠加关系：本文件在组件里导入，index.css 在 main.tsx
+ * 里更晚导入 —— 同特异性会被它压回去。所以要么用**新类名**（.tcv2-*，
+ * 无冲突），要么把特异性提高一档（.tc-trace 前缀 + 双类）。
  */
 
-/* ---------- 单步明细折叠 ---------- */
+/* ---------- 单步明细折叠（沿用 v1 的高度过渡） ---------- */
 
 .tc-step-body {
   display: grid;
@@ -45,44 +44,77 @@
 }
 
 /* 滚动锚定保持浏览器默认的 auto —— 明细在视口上方收起时，
-   Chromium 会自己补偿 scrollTop，内容不会往上跳。
-   这里显式写出来是给后来者一个「不要改成 none」的路标。 */
+   Chromium 会自己补偿 scrollTop，内容不会往上跳。 */
 .tc-trace .tc-trace-scroll {
   overflow-anchor: auto;
 }
 
-/* ---------- 状态只用形状区分（单色） ---------- */
+/* ---------- 文字扫光（ZCode 同款机制：不转 loading，动文字） ---------- */
 
-.tc-trace .tc-step.is-running .tc-step-dot {
-  background-color: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--td-text-color-secondary);
-  animation: tc-step-pulse 1.4s ease-in-out infinite;
+@keyframes opc-text-sweep {
+  from {
+    background-position: 200% center;
+  }
+  to {
+    background-position: -200% center;
+  }
 }
 
-.tc-trace .tc-step.is-done .tc-step-dot {
+.opc-sweep-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--td-text-color-secondary) 0%,
+    var(--td-text-color-secondary) 38%,
+    var(--td-text-color-primary) 50%,
+    var(--td-text-color-secondary) 62%,
+    var(--td-text-color-secondary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: opc-text-sweep 2.4s linear infinite;
+}
+
+/* 弱一档的扫光：实时内容与耗时用（动词是主角，它们是配角） */
+.opc-sweep-soft {
+  background-image: linear-gradient(
+    90deg,
+    var(--td-text-color-placeholder) 0%,
+    var(--td-text-color-secondary) 50%,
+    var(--td-text-color-placeholder) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: opc-text-sweep 2.4s linear infinite;
+}
+
+/* 流式光标：实时尾部末尾的一根闪动竖线 */
+@keyframes opc-caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.opc-caret {
+  display: inline-block;
+  width: 2px;
+  height: 12px;
+  margin-left: 3px;
+  vertical-align: -1px;
   background-color: var(--td-text-color-placeholder);
-  box-shadow: none;
+  animation: opc-caret-blink 1.1s steps(1) infinite;
 }
 
-/* 方点 = 报错。形状本身就是区分，不借红色。 */
-.tc-trace .tc-step.is-error .tc-step-dot {
-  background-color: var(--td-text-color-primary);
-  border-radius: 1.5px;
-  box-shadow: none;
-}
+/* ---------- 关键步骤标记（沿用 v1：左竖条 + 7px 方块） ---------- */
 
-/* 空心圈 = 结果未回传；与运行中的区别是静止。 */
-.tc-trace .tc-step.is-interrupted .tc-step-dot {
-  background-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--td-text-color-placeholder);
-  animation: none;
-}
-
-/* ---------- 关键步骤与收拢出口 ---------- */
-
-/* F2：关键步骤不再写「常驻」两个字。
-   行头的左侧 3px 竖条 + 行尾一个 7px 方块 —— 竖条说「这一步被钉住了」，
-   方块是它的锚点；两个形状都用主文本色，单色、无彩色。 */
 .tc-trace .tc-trace-pin {
   flex-shrink: 0;
   width: 7px;
@@ -91,36 +123,14 @@
   background-color: var(--td-text-color-primary);
 }
 
-/* 只给「行头」加竖条：直接加在 `.tc-step` 上会和左侧 20px 位置上的
-   圆点/连接线撞在一起（圆点在 left: 1px，正好压在竖条上）。 */
-.tc-trace .tc-step[data-trace-critical] .tc-step-head {
+.tc-trace .tcv2-step[data-trace-critical] .tcv2-rowhead {
   box-shadow: inset 3px 0 0 var(--td-text-color-primary);
   padding-left: 7px;
+  border-radius: 2px;
 }
 
-.tc-trace .tc-trace-foldtag {
-  flex-shrink: 0;
-  color: var(--td-text-color-placeholder);
-  letter-spacing: 0.01em;
-}
+/* ---------- 「结果未回传」胶囊（收纳线上） ---------- */
 
-/* ---------- 轨迹内部旁白 ---------- */
-
-/* 旁白属于过程，不是答案：颜色退到 secondary，字号/行高继续继承
-   `.tc-trace`（14px / 1.7），不另起一档。 */
-.tc-trace .tc-trace-narration {
-  margin: 0;
-  padding: 1px 0 1px 2px;
-  color: var(--td-text-color-secondary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/* ---------- 摘要条上的「结果未回传」 ---------- */
-
-/* 与步骤行尾的胶囊同一形态（单色底 + 灰字），但**不带**
-   `margin-left:auto` —— 摘要条的自动边距留给耗时，两个 auto 会把
-   剩余空间对半分，右缘就对不齐了。 */
 .tc-trace .tc-trace-unreturned {
   flex-shrink: 0;
   padding: 0 6px;
@@ -131,6 +141,545 @@
   letter-spacing: 0.01em;
 }
 
+/* ═══════════ v2 定版形态 ═══════════ */
+
+/* 2026-11-21 修订（用户定版）：整壳退役 —— 步骤行直接躺在消息流里，
+   无外框、无底色；唯一带边框的地方是单步详情面板。 */
+.tc-trace.tcv2-shell {
+  display: block;
+}
+
+/* 收纳线：唯一的门面 ——「已工作 X 秒」 */
+.tc-trace .tc-steps-bar.tcv2-collapser {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px 0 0;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+  max-width: 100%;
+}
+
+.tc-trace .tc-steps-bar.tcv2-collapser:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.tc-trace .tcv2-collapser .tcv2-chev {
+  flex-shrink: 0;
+  color: var(--td-text-color-placeholder);
+  transition: transform 0.15s var(--ease-tencent);
+}
+
+.tc-trace .tcv2-collapser .tcv2-chev.open {
+  transform: rotate(90deg);
+}
+
+.tc-trace .tcv2-worked {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.tc-trace .tcv2-hint {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 阶段条 + 状态胶囊（2026-11-21，参考单聊过程流设计稿） ----------
+   收纳线上方两块：8px 阶段条（段按毫秒占比）+ 一行实时状态胶囊；
+   图例独立成行、可折叠（开关在条行右端，偏好存 localStorage）。 */
+
+.tc-trace .tcv2-phase {
+  margin: 2px 0;
+}
+
+.tc-trace .tcv2-phase-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tc-trace .tcv2-phase-bar {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  min-width: 0;
+  border-radius: 4px;
+  background-color: var(--tc-hover-chrome);
+  overflow: hidden;
+}
+
+.tc-trace .tcv2-phase-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+}
+
+/* 四阶段配色：只用主题变量，亮暗自动跟随。理解=灰（中性）、修改=品牌、
+   验证/修复=成功绿、失败=错误红（失败是事实不是风格，任何段失败都染红）。 */
+.tc-trace .tcv2-phase-seg.is-understand {
+  background-color: var(--td-text-color-placeholder);
+}
+.tc-trace .tcv2-phase-seg.is-change {
+  background-color: var(--td-brand-color);
+}
+.tc-trace .tcv2-phase-seg.is-verify,
+.tc-trace .tcv2-phase-seg.is-fix {
+  background-color: var(--td-success-color);
+}
+.tc-trace .tcv2-phase-seg.is-failed {
+  background-color: var(--td-error-color);
+}
+
+/* 运行中的段呼吸一档（弱于行级光晕）；reduced-motion 由下方统一关停 */
+.tc-trace .tcv2-phase-seg.is-live {
+  animation: opc-bar-pulse 1.8s ease-in-out infinite;
+}
+
+/* 图例开关：右端一枚小箭头；32px 可点区域（窄屏手指的最小舒适值） */
+.tc-trace .tcv2-phase-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-right: -6px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--td-text-color-placeholder);
+  cursor: pointer;
+}
+
+.tc-trace .tcv2-phase-toggle:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.tc-trace .tcv2-phase-toggle .tcv2-chev {
+  transition: transform 0.15s var(--ease-tencent);
+}
+
+.tc-trace .tcv2-phase-toggle .tcv2-chev.open {
+  transform: rotate(90deg);
+}
+
+/* 图例：独立一行，色点 + 名称；窄屏允许换行 */
+.tc-trace .tcv2-phase-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 14px;
+  min-height: 26px;
+  padding: 2px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-trace .tcv2-phase-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tc-trace .tcv2-phase-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.tc-trace .tcv2-phase-dot.is-understand {
+  background-color: var(--td-text-color-placeholder);
+}
+.tc-trace .tcv2-phase-dot.is-change {
+  background-color: var(--td-brand-color);
+}
+.tc-trace .tcv2-phase-dot.is-verify,
+.tc-trace .tcv2-phase-dot.is-fix {
+  background-color: var(--td-success-color);
+}
+.tc-trace .tcv2-phase-dot.is-failed {
+  background-color: var(--td-error-color);
+}
+
+/* 状态胶囊行：与收纳线同高节奏；文字 12.5px 辅档，超长省略不折行 */
+.tc-trace .tcv2-pill-row {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+.tc-trace .tcv2-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 12.5px;
+  color: var(--td-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tc-trace .tcv2-pill > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tc-trace .tcv2-pill-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.tc-trace .tcv2-pill-dot.is-running {
+  background-color: var(--td-brand-color);
+  animation: tc-step-pulse 1.4s ease-in-out infinite;
+}
+
+.tc-trace .tcv2-pill-dot.is-ok {
+  background-color: var(--td-success-color);
+}
+
+.tc-trace .tcv2-pill-dot.is-error {
+  background-color: var(--td-error-color);
+}
+
+/* 结果未回传：空心圈，与步骤行同口径——不填状态色就是没有结论 */
+.tc-trace .tcv2-pill-dot.is-interrupted {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--td-text-color-placeholder);
+}
+
+/* 展开时的行容器：沿用 .tc-trace-scroll 的限高滚动（index.css 320px） */
+.tc-trace .tcv2-rows {
+  margin-top: 4px;
+}
+
+/* ---------- 单行步骤行 ----------
+   .tcv2-step = 块级包装（承载 data-* 与 hover 底色，详情面板是它的块级
+   子节点落在行下方）；.tcv2-row = 纯 flex 单行。 */
+
+.tc-trace .tcv2-step {
+  padding: 0 10px 0 0;
+  border-radius: 8px;
+}
+
+.tc-trace .tcv2-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.tc-trace .tcv2-step:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+/* 箭头：hover 浮现，展开旋转 90°（ZCode 同款） */
+.tc-trace .tcv2-row .tcv2-chev {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--td-text-color-placeholder);
+  opacity: 0;
+  transition:
+    opacity 0.12s linear,
+    transform 0.15s var(--ease-tencent);
+}
+
+.tc-trace .tcv2-step:hover .tcv2-chev,
+.tc-trace .tcv2-step[data-expanded='1'] .tcv2-chev {
+  opacity: 1;
+}
+
+.tc-trace .tcv2-step[data-expanded='1'] .tcv2-chev {
+  transform: translateY(-50%) rotate(90deg);
+}
+
+/* .tcv2-chev-blank 已随浮层箭头退役（DOM 保留占位空 span，display:none） */
+.tc-trace .tcv2-chev-blank {
+  display: none;
+}
+
+.tc-trace .tcv2-ic {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-trace .tcv2-step:hover .tcv2-ic {
+  color: var(--td-text-color-secondary);
+}
+
+/* 行头：动词 + 单行内容 + 右侧列 */
+.tc-trace .tcv2-rowhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  cursor: default;
+}
+
+.tc-trace .tcv2-row[data-clickable='1'] .tcv2-rowhead {
+  cursor: pointer;
+}
+
+.tc-trace .tcv2-verb {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+}
+
+/* 单行内容：永不折行 —— nowrap + ellipsis（「两端到边」的根源） */
+.tc-trace .tcv2-line {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+}
+
+.tc-trace .tcv2-line.mono {
+  font-family: var(--font-mono, Consolas, 'Courier New', monospace);
+  font-size: 12.5px;
+}
+
+.tc-trace .tcv2-chip {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--td-text-color-placeholder);
+}
+
+/* ---------- 运行中三件套：行级光晕 + 左缘光晕条 ---------- */
+
+@keyframes opc-bar-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 光晕自左而右循环（行背景上的一层移动亮带） */
+.tc-trace .tcv2-row.is-running::after,
+.tc-trace .tcv2-group.is-running .tcv2-gh::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  pointer-events: none;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--td-text-color-primary) 4%, transparent) 42%,
+    color-mix(in srgb, var(--td-text-color-primary) 9%, transparent) 50%,
+    color-mix(in srgb, var(--td-text-color-primary) 4%, transparent) 58%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  animation: opc-text-sweep 2.2s linear infinite;
+}
+
+/* 左缘光晕条：脉动的 3px 竖线，标记「这一行是活的」 */
+.tc-trace .tcv2-row.is-running::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    var(--td-text-color-secondary) 30%,
+    var(--td-text-color-primary) 50%,
+    var(--td-text-color-secondary) 70%,
+    transparent
+  );
+  animation: opc-bar-pulse 1.8s ease-in-out infinite;
+}
+
+/* ---------- 连续同类型步骤的组 ---------- */
+
+.tc-trace .tcv2-group {
+  margin: 0 10px 4px 0;
+}
+
+.tc-trace .tcv2-gh {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 10px 0 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.tc-trace .tcv2-gh:hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.tc-trace .tcv2-gh .tcv2-chev {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--td-text-color-placeholder);
+  opacity: 0;
+  transition:
+    opacity 0.12s linear,
+    transform 0.15s var(--ease-tencent);
+}
+
+.tc-trace .tcv2-gh:hover .tcv2-chev,
+.tc-trace .tcv2-gh[aria-expanded='true'] .tcv2-chev {
+  opacity: 1;
+}
+
+.tc-trace .tcv2-gh[aria-expanded='true'] .tcv2-chev {
+  transform: translateY(-50%) rotate(90deg);
+}
+
+.tc-trace .tcv2-gh .tcv2-line {
+  flex: 1;
+  font-size: 12.5px;
+}
+
+.tc-trace .tcv2-gbody {
+  padding: 0 0 2px 0;
+}
+
+/* 组内行：缩进一级（详情面板内部才允许的层级，这里是最外的一层） */
+.tc-trace .tcv2-gbody .tcv2-step {
+  margin: 0 10px 0 26px;
+}
+
+/* ---------- 详情面板 ---------- */
+
+.tc-trace .tcv2-body {
+  margin: 2px 10px 8px 0;
+}
+
+.tc-trace .tcv2-gbody .tcv2-body {
+  margin-left: 0;
+}
+
+.tc-trace .tcv2-detail {
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 12px;
+  background-color: var(--td-bg-color-secondarycontainer);
+  padding: 10px 14px 12px;
+}
+
+.tc-trace .tcv2-dlabel {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-trace .tcv2-detail > .tcv2-dlabel:first-child,
+.tc-trace .tcv2-out-wrap .tcv2-dlabel {
+  margin-top: 0;
+}
+
+.tc-trace .tcv2-dhint {
+  color: var(--td-text-color-placeholder);
+  letter-spacing: 0;
+  opacity: 0.8;
+}
+
+/* 面板内的预格式文本：pre-wrap + break-anywhere —— 长 token 只在超行时
+   按字符断（两端对齐观感的来源），行内不再出现大段空白 */
+.tc-trace .tcv2-pre {
+  margin: 0;
+  font-family: var(--font-mono, Consolas, 'Courier New', monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--td-text-color-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tc-trace .tcv2-prompt {
+  margin-right: 4px;
+  color: var(--td-text-color-placeholder);
+}
+
+.tc-trace .tcv2-think-full {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+  text-align: justify;
+  text-justify: inter-ideograph;
+}
+
+/* 输出区：上限 5 行区内滚动 + 吸底跟随（组件里写 scrollTop） */
+.tc-trace .tcv2-out-wrap {
+  min-width: 0;
+}
+
+.tc-trace .tcv2-out {
+  max-height: calc(5 * 1.6em);
+  overflow-y: auto;
+  margin: 0;
+  font-family: var(--font-mono, Consolas, 'Courier New', monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--td-text-color-secondary);
+  scrollbar-width: thin;
+  scrollbar-color: var(--td-component-stroke) transparent;
+}
+
+/* ---------- 轨迹内部旁白（散文段：留在壳内、不参与折叠） ---------- */
+
+.tc-trace .tc-trace-narration {
+  margin: 0;
+  padding: 7px 10px 7px 0;
+  color: var(--td-text-color-secondary);
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: justify;
+  text-justify: inter-ideograph;
+}
+
+/* ---------- 降级 ---------- */
+
 @media (prefers-reduced-motion: reduce) {
   .tc-step-body,
   .tc-step-body[data-open='0'] {
@@ -138,7 +687,41 @@
     transition: none;
   }
 
-  .tc-trace .tc-step.is-running .tc-step-dot {
+  .opc-sweep-text,
+  .opc-sweep-soft,
+  .opc-caret {
+    animation: none;
+    background: none;
+    color: var(--td-text-color-secondary);
+  }
+
+  .opc-caret {
+    width: 0;
+    margin: 0;
+  }
+
+  .tc-trace .tcv2-row.is-running::after,
+  .tc-trace .tcv2-row.is-running::before,
+  .tc-trace .tcv2-group.is-running .tcv2-gh::after {
+    animation: none;
+    content: none;
+  }
+
+  /* 阶段条运行段与胶囊圆点同口径：静止，但不隐藏（状态仍靠颜色表达） */
+  .tc-trace .tcv2-phase-seg.is-live,
+  .tc-trace .tcv2-pill-dot.is-running {
     animation: none;
   }
+}
+
+/* v2：来源徽章并入 12px 辅档（旧口径继承 14px 会把行内字号打散） */
+.tc-trace .tc-trace-src {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+/* v2：行内 diff 角标与 pin 归入 13px 主档（旧口径继承壳的 14px 会把行内字号打散） */
+.tc-trace .tcv2-rowhead .tc-diff,
+.tc-trace .tcv2-rowhead .tc-trace-pin {
+  font-size: 13px;
 }

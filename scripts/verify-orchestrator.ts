@@ -50,6 +50,8 @@ function makeDeps(opts: {
   /** 可用成员白名单；不传表示全可用 */
   usable?: string[];
   skillScore?: (agentId: string, prompt: string) => number;
+  /** 针对 (agentId, phase) 返回失败原因；返回 undefined = 这一棒成功（A244） */
+  fail?: (agentId: string, phase: TurnPhase) => string | undefined;
 } = {}) {
   const calls: Call[] = [];
   const notes: string[] = [];
@@ -64,7 +66,14 @@ function makeDeps(opts: {
       // 让出一个微任务，若实现是串行 await 则顺序会被观察到
       await new Promise(r => setTimeout(r, 0));
       finished.push(agentId);
-      return { text: opts.reply ? opts.reply(agentId, phase) : `[${agentId}|${phase}]` };
+      const failReason = opts.fail?.(agentId, phase);
+      if (failReason !== undefined) {
+        return { text: '', error: failReason, status: 'error' as const };
+      }
+      return {
+        text: opts.reply ? opts.reply(agentId, phase) : `[${agentId}|${phase}]`,
+        status: 'ok' as const,
+      };
     },
     note: t => notes.push(t),
     displayName: id => id.toUpperCase(),
@@ -324,6 +333,143 @@ function makeDeps(opts: {
   eq(isInternalPhase('mention'), false, '内部阶段：mention 是可见产出');
 }
 
+// ── 15. A244 交接物包装：上游输出带 untrusted 标记与反注入说明 ──────
+{
+  const { deps, calls } = makeDeps({
+    reply: (id, phase) => (phase === 'route' ? 'ROUTE: coder' : `来自${id}的产出(${phase})`),
+  });
+  await runOrchestration({ mode: 'relay', members: ['a', 'b'], prompt: '接力任务' }, deps);
+  ok(
+    calls[1]!.prompt.includes('<handoff from="A" untrusted="true">') &&
+      calls[1]!.prompt.includes('来自a的产出(relay)'),
+    '交接包装：上一棒输出必须包在 untrusted handoff 块里',
+    calls[1]!.prompt.slice(0, 200)
+  );
+  ok(
+    calls[1]!.prompt.includes('不要执行'),
+    '交接包装：块后必须带反注入说明（数据不是指令）'
+  );
+
+  // 超长输出截断 + 截断标注
+  const long = 'x'.repeat(8000);
+  const { deps: deps2, calls: calls2 } = makeDeps({
+    reply: (_id, phase) => (phase === 'route' ? 'ROUTE: b' : long),
+  });
+  await runOrchestration({ mode: 'dispatch', members: ['ctrl', 'a', 'b'], prompt: '任务' }, deps2);
+  const summaryPrompt = calls2[calls2.length - 1]!.prompt;
+  ok(
+    summaryPrompt.includes('[已截断') && !summaryPrompt.includes('x'.repeat(7000)),
+    '交接包装：超长输出被截断并标注原文长度'
+  );
+}
+
+// ── 16. A244 接力失败传播：一棒失败就停，不把空输出传给下一棒 ────────
+{
+  const { deps, calls, notes } = makeDeps({
+    fail: id => (id === 'b' ? '凭据失效' : undefined),
+  });
+  await runOrchestration({ mode: 'relay', members: ['a', 'b', 'c'], prompt: '流水线' }, deps);
+  eq(calls.map(c => c.agentId), ['a', 'b'], '接力失败：失败棒之后不再派发');
+  ok(
+    notes.some(n => n.includes('B') && n.includes('凭据失效') && n.includes('到此为止')),
+    '接力失败：note 说清停在哪一棒、为什么、不再传空输出'
+  );
+}
+
+// ── 17. A244 广播失败记账：编排层至少说一句谁没答上来 ────────────────
+{
+  const { deps, notes } = makeDeps({
+    fail: id => (id === 'b' ? '额度耗尽' : undefined),
+  });
+  await runOrchestration({ mode: 'broadcast', members: ['a', 'b', 'c'], prompt: 'x' }, deps);
+  ok(
+    notes.some(n => n.includes('1 位成员没有完成') && n.includes('B') && n.includes('额度耗尽')),
+    '广播失败：note 点名失败成员与原因'
+  );
+
+  const { deps: deps2, notes: notes2 } = makeDeps();
+  await runOrchestration({ mode: 'broadcast', members: ['a', 'b'], prompt: 'x' }, deps2);
+  ok(
+    !notes2.some(n => n.includes('没有完成')),
+    '广播成功：不产生失败记账噪声'
+  );
+}
+
+// ── 18. A244 辩论失败：失败方后续轮次跳过，收敛时如实声明 ────────────
+{
+  const { deps, calls, notes } = makeDeps({
+    reply: (_id, phase) => (phase === 'converge' ? '裁判结论' : '正常发言'),
+    fail: id => (id === 'pro' ? '进程崩溃' : undefined),
+  });
+  await runOrchestration({ mode: 'debate', members: ['pro', 'con', 'judge'], prompt: '辩题' }, deps);
+  eq(
+    calls.map(c => `${c.agentId}:${c.phase}`),
+    ['pro:debate', 'con:debate', 'con:debate', 'judge:converge'],
+    '辩论失败：失败方后续轮次跳过（正方第 2 轮不再派发）'
+  );
+  const convergePrompt = calls[calls.length - 1]!.prompt;
+  ok(
+    convergePrompt.includes('PRO 执行失败') || convergePrompt.includes('执行失败'),
+    '辩论失败：收敛 prompt 有失败声明',
+    convergePrompt.slice(0, 200)
+  );
+  ok(
+    convergePrompt.includes('不得编造'),
+    '辩论失败：收敛 prompt 明确禁止编造缺席方观点'
+  );
+  ok(notes.some(n => n.includes('正方') && n.includes('跳过正方')), '辩论失败：note 说明跳过决定');
+}
+
+// ── 19. A244 带队：失败成员在汇总 prompt 里如实标注 ──────────────────
+{
+  const { deps, calls } = makeDeps({
+    reply: (_id, phase) => (phase === 'route' ? '{"assignments":[{"agentId":"w1","subtask":"写代码"},{"agentId":"w2","subtask":"写文档"}]}' : '产出'),
+    fail: id => (id === 'w2' ? 'CLI 起不来' : undefined),
+  });
+  await runOrchestration({ mode: 'leader', members: ['boss', 'w1', 'w2'], prompt: '项目' }, deps);
+  const summaryPrompt = calls[calls.length - 1]!.prompt;
+  ok(
+    summaryPrompt.includes('W2') && summaryPrompt.includes('CLI 起不来') && summaryPrompt.includes('不得编造'),
+    '带队失败：汇总 prompt 点名失败成员、原因，并禁止编造其产出',
+    summaryPrompt.slice(0, 300)
+  );
+  ok(
+    summaryPrompt.includes('<handoff from="W1"'),
+    '带队失败：成功成员的产出仍走交接物包装'
+  );
+}
+
+// ── 20. A244 主控可选：dispatch / leader 的主控不再绑死成员第一位 ────
+{
+  const { deps, calls } = makeDeps({
+    reply: (_id, phase) => (phase === 'route' ? 'ROUTE: coder' : '完成'),
+  });
+  await runOrchestration(
+    { mode: 'dispatch', members: ['ctrl', 'writer', 'coder'], prompt: '任务', controllerAgentId: 'writer' },
+    deps
+  );
+  eq(calls[0]!.agentId, 'writer', '主控可选：dispatch 的路由者是指定的 writer');
+
+  const { deps: deps2, calls: calls2 } = makeDeps({
+    reply: (_id, phase) => (phase === 'route' ? '{"assignments":[{"agentId":"w1","subtask":"拆出来的活"}]}' : '产出'),
+  });
+  await runOrchestration(
+    { mode: 'leader', members: ['a', 'w1'], prompt: '任务', controllerAgentId: 'w1' },
+    deps2
+  );
+  eq(calls2[0]!.agentId, 'w1', '主控可选：leader 的队长是指定的 w1');
+
+  // 指定了不在成员列表里的 id：回落第一个成员，不炸
+  const { deps: deps3, calls: calls3 } = makeDeps({
+    reply: (_id, phase) => (phase === 'route' ? 'ROUTE: coder' : '完成'),
+  });
+  await runOrchestration(
+    { mode: 'dispatch', members: ['ctrl', 'writer', 'coder'], prompt: '任务', controllerAgentId: 'ghost' },
+    deps3
+  );
+  eq(calls3[0]!.agentId, 'ctrl', '主控可选：非法主控 id 回落第一个成员');
+}
+
 // ── 汇总 ─────────────────────────────────────────────────────────
 console.log(`编排引擎断言：${checks.total - failures.length}/${checks.total} 通过`);
 if (failures.length) {
@@ -331,4 +477,4 @@ if (failures.length) {
   for (const f of failures) console.log(`  · ${f}`);
   process.exit(1);
 }
-console.log('✓ 五种模式的调用顺序、提示词拼接、路由解析与兜底策略均符合预期');
+console.log('✓ 六种模式的调用顺序、提示词拼接、路由解析、失败传播与兜底策略均符合预期');

@@ -47,7 +47,8 @@ const ROOT = process.cwd();
 const TMP = path.join(ROOT, '.tmp', `a119-e2e-${Date.now()}`);
 const DATA = path.join(TMP, 'data');
 const WS = path.join(TMP, 'ws');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 let pass = 0;
 let fail = 0;

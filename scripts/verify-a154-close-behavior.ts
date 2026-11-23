@@ -402,7 +402,8 @@ try {
         '链接打开方式：combobox + 两档 + 默认收起',
         `${linkTrigger.role}/${linkTrigger.count}/${linkTrigger.expanded}`
       );
-      ok(linkTrigger.selected === 'system', '链接打开方式默认选中系统浏览器', linkTrigger.selected);
+      // 2026-11-21 用户拍板：正文链接默认走右侧工作区，不再默认系统浏览器。
+      ok(linkTrigger.selected === 'in-app', '链接打开方式默认选中应用内打开', linkTrigger.selected);
 
       await page.screenshot({ path: path.join(SHOTS, 'settings-appearance.png') });
       ok(errors.length === 0, '页面零控制台错误', errors.slice(0, 2).join(' | ') || '干净');

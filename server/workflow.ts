@@ -38,7 +38,7 @@
 
 import ts from 'typescript';
 import vm from 'node:vm';
-import { runOrchestration, type TurnPhase } from './orchestrator.js';
+import { runOrchestration, type AgentTurnResult, type TurnPhase } from './orchestrator.js';
 
 /** 一个原语调用的记录（用于回放与测试断言） */
 export interface WorkflowStep {
@@ -83,7 +83,7 @@ export interface WorkflowDeps {
     prompt: string,
     phase: TurnPhase,
     round?: number
-  ): Promise<{ text: string; error?: string }>;
+  ): Promise<AgentTurnResult>;
   /** 可用成员 */
   members: readonly string[];
   /** 记忆检索。缺省时 ctx.memorySearch 返回空数组（不假装有） */

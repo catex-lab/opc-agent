@@ -23,7 +23,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -168,7 +169,9 @@ await page.goto(base, { waitUntil: 'networkidle' });
   ok(usageCount === 1, '整页只有一个 usage 行（只有一条有用量的消息）', `count=${usageCount}`);
   if (usageCount === 1) {
     const text = (await usageEl.first().getAttribute('data-usage')) ?? '';
-    ok(text === '2.3s · $0.05 · 12.3k tokens', 'usage 文案与 formatUsage 一致', text);
+    // 2026-11-20：耗时段走 formatHandledDurationText 统一口径（<1 分按秒、
+    // ≥1 分分+秒），2340ms → 「2 秒」。夹具三列是 2340ms / $0.05 / 12345。
+    ok(text === '2 秒 · $0.05 · 12.3k tokens', 'usage 文案与 formatUsage 一致', text);
   }
   // 老消息（没有三列）不能出现 usage 行 —— 这是「不假装花了 0 元」的断言
   const oldBubble = page.locator('.tc-bubble-assistant:has-text("迁移前的老回复")');

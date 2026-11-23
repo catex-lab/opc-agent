@@ -4,6 +4,8 @@ import { useSmoothText } from '../hooks/useSmoothText';
 import { stripEmoji } from '../utils/plainText';
 import { useTranslation } from '../i18n';
 import { chartOf, planAnswer, type AnswerSegment } from '../answer/renderPlan';
+// 2026-11-21：dev-server 回环 URL 自动预览（用户拍板「首现即开」→ 右侧工作区）
+import { autoOpenLoopbackPreview, firstLoopbackUrl } from '../answer/linkRouter';
 import { AnswerChartCard, AnswerCodeCard, AnswerEvidence, AnswerLinkCards, AnswerTableCard } from './AnswerCards';
 
 /**
@@ -81,6 +83,18 @@ div[data-type='codeBlock']:last-child {
   margin-bottom: 0 !important;
 }
 `;
+
+/**
+ * 代码块外层 wrapper（div[data-type=codeBlock]）的 16px 下边距归一。
+ *
+ * Cherry 影子样式给 wrapper `margin-bottom: var(--spacing-lg)`（16px），而应用
+ * 侧 `::part(md_pre)` 只命中内部 pre（12px）——wrapper 是 inline-block 形成
+ * BFC，两段不折叠，每个代码块底部实际 12+16=28px，段落只有 0.6em（≈8.4px），
+ * 代码块前后「行距明显大一档」（2026-11-20 用户反馈的行距不一致主因之一）。
+ * app 侧没有能只命中 codeBlock wrapper 的 ::part 选择器（part 按标签名加），
+ * 所以同样走影子根注入；幂等标记与 FLUSH_TAIL 的通道独立（后者随末段增删）。
+ */
+const CODEBLOCK_MARGIN_CSS = `div[data-type='codeBlock'] { margin-bottom: 0 !important; }`;
 
 /**
  * 单个 markdown 片段的外壳。
@@ -203,6 +217,12 @@ function MarkdownSegment({ text, flushTail }: { text: string; flushTail: boolean
       const handler = (event: Event) => onClick(event, sr);
       roots.push({ sr, handler });
       sr.addEventListener('click', handler, true);
+      if (!sr.querySelector('style[data-tc-md-margin]')) {
+        const marginStyle = document.createElement('style');
+        marginStyle.setAttribute('data-tc-md-margin', '1');
+        marginStyle.textContent = CODEBLOCK_MARGIN_CSS;
+        sr.appendChild(marginStyle);
+      }
       if (flushTail && !sr.querySelector('style[data-tc-md-flush]')) {
         const style = document.createElement('style');
         style.setAttribute('data-tc-md-flush', '1');
@@ -278,6 +298,25 @@ function MarkdownSegment({ text, flushTail }: { text: string; flushTail: boolean
  * 表格只有「两列标签+数值、≥3 行、全非负」时才升级成图表卡，其余一律
  * 表格卡；图卡里也保留「查看表格」的回退路径。
  */
+/**
+ * 流式态：把正文尾部「未闭合且体内还没有内容」的围栏从**渲染文本**里剪掉。
+ *
+ * Cherry 的流式管线会把未闭合围栏自动闭合渲染 —— 揭示停在「```bash」而代码
+ * 体还没到时，正文和光标之间会出现一个空的代码块面板（padding+边框+margin
+ * ≈ 60px，深色底与气泡同色），看起来就是正文中段一大块空白（2026-11-20
+ * 用户反馈的行距不一致主因）。文本本体不动：下一个 delta 让围栏体有了首行
+ * 内容后自然恢复显示。
+ */
+function trimTrailingEmptyFence(text: string): string {
+  const fences = [...text.matchAll(/^[ \t]{0,3}(?:```+|~~~+)/gm)];
+  if (fences.length % 2 === 0) return text; // 围栏都闭合（或成对）
+  const last = fences[fences.length - 1];
+  const lineEnd = text.indexOf('\n', last.index);
+  const body = lineEnd === -1 ? '' : text.slice(lineEnd + 1);
+  if (/^\s*$/.test(body)) return text.slice(0, last.index); // 围栏体还是空的
+  return text;
+}
+
 function AnswerMarkdownImpl({
   text,
   streaming,
@@ -297,9 +336,19 @@ function AnswerMarkdownImpl({
   // 未闭合的表格/列表当成已收尾的结构（否则会闪一下卡片再变回去）
   const planStreaming = streaming || settling;
   const segments = useMemo(
-    () => planAnswer(shown, { streaming: planStreaming }),
+    () => planAnswer(planStreaming ? trimTrailingEmptyFence(shown) : shown, { streaming: planStreaming }),
     [shown, planStreaming]
   );
+  // 2026-11-21 用户拍板「回环 URL 首现即开」：正在增长的正文里首次稳定出现
+  // dev-server 地址（1.5s 不再变化）→ 自动在右侧工作区浏览器打开。只在正在
+  // 增长的块上生效 —— 历史消息滚动进视口不会把旧预览拉起来；同源只开一次。
+  useEffect(() => {
+    if (!streaming) return;
+    const found = firstLoopbackUrl(shown);
+    if (!found) return;
+    const timer = window.setTimeout(() => void autoOpenLoopbackPreview(found), 1500);
+    return () => window.clearTimeout(timer);
+  }, [shown, streaming]);
   const keys = useMemo(() => segmentKeys(segments), [segments]);
   return (
     <div

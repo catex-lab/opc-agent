@@ -1,4 +1,5 @@
 import type { Message } from '../types';
+import { formatHandledDurationText } from '../../shared/trace';
 
 /**
  * 把一条助手消息的用量格式化成一行小字（P6 成本统计）。
@@ -14,18 +15,27 @@ import type { Message } from '../types';
  * 适配器没上报，后者是真的免费。显示 `$0.00` 会把前者伪装成后者，
  * 成本统计当场变成假数据。没有就是没有，整项省掉。
  *
+ * ## 耗时段为什么走 formatHandledDurationText（2026-11-20）
+ *
+ * 这里原来手搓一位小数（`63.7s`），与消息头部的「已处理 1 分 36 秒」并存
+ * 时像两种数据（A36 审查意见）。全站回合耗时已收口到 shared/trace 的统一
+ * 出口（<1 分按秒、≥1 分分+秒），本行必须跟随。亚秒仍显示 ms —— 那是
+ * 「毫秒级调用」的真实量级，秒以下没有更好的单位。
+ *
  * 纯函数、不依赖 React —— 验证脚本可以直接 import 它跑断言。
+ * locale 缺省 'zh'（界面主语言），旧断言脚本不传参也拿得到稳定输出。
  */
 export function formatUsage(
-  message: Pick<Message, 'durationMs' | 'cost' | 'tokens'>
+  message: Pick<Message, 'durationMs' | 'cost' | 'tokens'>,
+  locale: 'zh' | 'en' = 'zh'
 ): string | null {
   const parts: string[] = [];
 
   if (typeof message.durationMs === 'number' && message.durationMs > 0) {
     parts.push(
-      message.durationMs >= 1000
-        ? `${(message.durationMs / 1000).toFixed(1)}s`
-        : `${message.durationMs}ms`
+      message.durationMs < 1000
+        ? `${message.durationMs}ms`
+        : formatHandledDurationText(message.durationMs, locale) ?? ''
     );
   }
 

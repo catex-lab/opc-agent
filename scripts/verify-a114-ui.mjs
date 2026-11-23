@@ -21,7 +21,8 @@ import { chromium } from 'playwright-core';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 const OUT = join(ROOT, '.render-check');
 
 const MIME = {

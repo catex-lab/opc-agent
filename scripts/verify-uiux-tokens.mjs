@@ -424,10 +424,51 @@ ok(
 ok(/data-fade=\{overflowing \? '1' : undefined\}/.test(dialogSrc), '滚动区按溢出状态挂 data-fade', '缺这条，渐隐永远不开');
 
 const traceSrc = fs.readFileSync(path.join(SRC, 'components', 'AgentTrace.tsx'), 'utf8');
+
+/**
+ * 轨迹滚动区的判据只钉「类清单里同时有 tc-scroll-fade 和 tc-trace-scroll」，
+ * 不钉类的顺序与数量 —— 11-22 的 v2 行容器在后面追加了 `tcv2-rows`，
+ * 旧断言写死整串 className 就把「多加一个布局类」误判成「换了第二套写法」。
+ * 先在 `data-trace-scroll` 所在的那个 <div> 标签内取 className，避免整文件正则
+ * 撞到别处的同类名。
+ */
+function traceScrollTag(src) {
+  // 文件头注释里也会提到 `[data-trace-scroll]`，必须跳过没有 <div/className 的那次命中。
+  for (const m of src.matchAll(/data-trace-scroll/g)) {
+    const start = src.lastIndexOf('<div', m.index);
+    const end = src.indexOf('>', m.index);
+    if (start < 0 || end <= start) continue;
+    const tag = src.slice(start, end);
+    if (/className="[^"]*"/.test(tag)) return tag;
+  }
+  return '';
+}
+
+function traceScrollTagUsesSharedFade(tag) {
+  const classes = (tag.match(/className="([^"]*)"/)?.[1] ?? '').split(/\s+/).filter(Boolean);
+  return classes.includes('tc-trace-scroll') &&
+    classes.includes('tc-scroll-fade') &&
+    /data-fade=\{overflowing \? '1' : undefined\}/.test(tag);
+}
+
+const traceTag = traceScrollTag(traceSrc);
 ok(
-  /className="tc-trace-scroll tc-scroll-fade"/.test(traceSrc),
+  traceScrollTagUsesSharedFade(traceTag),
   '轨迹滚动区复用同一个 tc-scroll-fade（不是第二套写法）',
-  '各写一套 = 用户说的「每改一个页面就出现一套新样式」'
+  '类清单里缺 tc-trace-scroll / tc-scroll-fade，或缺 data-fade 溢出态绑定'
+);
+
+// 反向探针：判据必须在「去掉共享类」与「去掉溢出态绑定」两种变异下变红，
+// 否则这条断言可能因为别处的同名文本而假绿。
+ok(
+  !traceScrollTagUsesSharedFade(traceTag.replace(/\btc-scroll-fade\b/, '')),
+  '反向探针：去掉 tc-scroll-fade 必须判红',
+  '探针仍然绿 = 上一条断言没真正钉住共享类'
+);
+ok(
+  !traceScrollTagUsesSharedFade(traceTag.replace(/data-fade=\{[^}]*\}/, '')),
+  '反向探针：去掉 data-fade 必须判红',
+  '探针仍然绿 = 上一条断言没真正钉住溢出态'
 );
 
 // 清单页里不许再逐张卡画「重新检测」：它是全局动作（全量 probe），
@@ -565,6 +606,45 @@ if (DUMP) {
   }
   console.log('');
 }
+
+/* 输入浮层遮罩：正文不许从输入卡两侧透出来，也不能在聊天中部画浅灰带。
+ * 判据钉三个不变量（不钉具体像素）：
+ *   ① 遮罩仍覆盖整个浮层（height 100%）；
+ *   ② 顶段有渐变过渡（20% 以内出现停靠点）；
+ *   ③ 靠 backdrop-filter 糊字，而不是刷页面实底。
+ * 两个反向探针分别退回「无毛玻璃」和「实底」，都必须判红。 */
+function inputMaskIsGlass(rule) {
+  if (!rule || !/linear-gradient/.test(rule)) return false;
+  if (!/height:\s*100%/.test(rule)) return false;
+  if (!/backdrop-filter\s*:\s*blur\(/.test(rule)) return false;
+  const flat = rule.replace(/\s+/g, ' ');
+  if (/var\(--td-bg-color-page\)\s+\d+%/.test(flat)) return false;
+  const stops = [...flat.matchAll(/(\d+)%/g)].map(m => Number(m[1]));
+  return stops.some(p => p > 0 && p <= 20);
+}
+
+const maskStart = css.indexOf('.tcv2-inputwrap::before');
+const maskBlock = maskStart >= 0 ? css.slice(maskStart, css.indexOf('}', maskStart)) : '';
+ok(
+  inputMaskIsGlass(maskBlock),
+  '输入浮层遮罩覆盖全高、顶段柔和过渡且用毛玻璃而非实底',
+  '实底会画出浅灰带；90px 渐变会让正文从两侧透出来'
+);
+ok(
+  !inputMaskIsGlass(maskBlock.replace(/(-webkit-)?backdrop-filter\s*:[^;]+;/g, '')),
+  '反向探针：去掉毛玻璃必须判红',
+  '探针仍绿 = 断言没真正钉住「靠模糊遮字」'
+);
+ok(
+  !inputMaskIsGlass(
+    maskBlock.replace(
+      'color-mix(in srgb, var(--tc-surface-content) 38%, transparent) 14%',
+      'var(--td-bg-color-page) 14%'
+    )
+  ),
+  '反向探针：退回页面实底必须判红',
+  '探针仍绿 = 浅灰带会悄悄回来'
+);
 
 console.log(`\n设计系统写法审计：${total - failures.length}/${total} 通过`);
 if (failures.length) {

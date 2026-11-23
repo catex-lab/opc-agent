@@ -24,7 +24,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check', 'permission-scope');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -367,9 +368,12 @@ console.log('\n[5] 设置→权限管理：授权行、撤销即消失、空态�
     '撤销成功后该行消失（不是假装删了）'
   );
 
-  // 边界说明永远在场：会话级授权列不了就直说
-  const hint = await page.locator('[data-permission-mgr-hint]').innerText();
-  ok(/内存|重启/.test(hint), '分区底部说明会话级授权的如实边界', hint);
+  // 2026-11-21 df31f4d：用户圈删了这行常驻边界说明（内容重复且占两行）。
+  // 边界口径没有丢 —— [3] 已钉在「永久允许」按钮的 title 上；这里反向确认
+  // 底部不再常驻，避免旧文案被顺手加回来。
+  const hintCount = await page.locator('[data-permission-mgr-hint]').count();
+  const hint = hintCount ? await page.locator('[data-permission-mgr-hint]').innerText() : '';
+  ok(!/内存|重启/.test(hint), '分区底部常驻边界说明已按用户圈删移除', hint || '(空)');
   await page.screenshot({ path: join(OUT, 'settings-grants.png'), fullPage: false });
   await ctx.close();
 

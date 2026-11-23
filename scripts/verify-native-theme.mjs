@@ -362,7 +362,12 @@ try {
   browser = await chromium.connectOverCDP(await cdpEndpoint('http://127.0.0.1:9333'), {
     timeout: 25000,
   });
-  const page = browser.contexts().flatMap(c => c.pages())[0];
+  // M01：窗口等 harness 握手后才 loadURL —— CDP 连上时页面可能还没出生，轮询等
+  let page = null;
+  for (let i = 0; i < 50 && !page; i++) {
+    page = browser.contexts().flatMap(c => c.pages())[0] ?? null;
+    if (!page) await SLEEP(300);
+  }
   ok(!!page, 'CDP 连上并拿到渲染进程页面', page?.url() ?? 'n/a');
   await page.waitForFunction(() => document.querySelector('nav') !== null, { timeout: 25000 });
 

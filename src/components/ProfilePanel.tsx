@@ -116,7 +116,6 @@ export function ProfilePanel() {
             image={profile.avatarImage}
             size={72}
           />
-          <span className="tc-hint">{t('settings.profile.avatarSeenHint')}</span>
         </div>
 
         <div className="min-w-0 flex-1 space-y-4">
@@ -168,7 +167,6 @@ export function ProfilePanel() {
                 超长输入时才被 slice 截断，事前没有任何提示。ⓘ 里只留
                 「下一轮起 Agent 可直接称呼你」这条它独有的信息。 */}
             <div className="mt-1 flex items-center justify-between">
-              <span className="tc-hint">{t('settings.profile.nicknameMax')}</span>
               <span className="tc-hint tabular-nums">
                 {draft.length} / 24
               </span>

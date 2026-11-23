@@ -1,0 +1,474 @@
+/**
+ * 单聊过程流 · 右侧常驻「过程」面板样式（2026-11-22，参考页 side 面板）。
+ *
+ * 宽 236px（与群成员/群设置面板同档），颜色只用 --td-* / --tc-* 变量，
+ * 亮暗两套自动跟随；prefers-reduced-motion 下停掉全部动效。
+ */
+
+/*
+ * 四种形态共用这一层：半透明毛玻璃 + 主题令牌（亮暗自动跟随）。
+ * 具体定位交给 pf-dock-right / pf-dock-top / pf-float / pf-min-pill，
+ * 这里不再写死任何颜色，也不承担「不遮挡」——遮挡靠布局让位与拖动禁区。
+ */
+.pf-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 12px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--td-text-color-secondary);
+  overflow: hidden;
+  background-color: color-mix(in srgb, var(--tc-surface-content) 78%, transparent);
+  backdrop-filter: blur(16px) saturate(125%);
+  -webkit-backdrop-filter: blur(16px) saturate(125%);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+}
+
+/* 右侧停靠：与群成员栏同宽的布局栏，输入框随正文列收窄 */
+.pf-dock-right {
+  flex-shrink: 0;
+  width: 236px;
+  align-self: stretch;
+  border-radius: 0;
+  border-top: 0;
+  border-bottom: 0;
+  border-right: 0;
+}
+
+/* 顶部吸顶：绝对定位在 data-chat-page 内，与四种形态共用同一个 DOM 实例，
+   拖动切形态时不会换父节点、指针捕获不会断。正文列用 padding-top 让位。 */
+.pf-dock-top {
+  position: absolute;
+  top: 84px;
+  left: 0;
+  right: 0;
+  width: min(var(--tc-chat-column-max), 100%);
+  margin-inline: auto;
+  z-index: 41;
+  flex-direction: row;
+  align-items: center;
+  min-height: 44px;
+  padding: 6px 12px;
+  border-radius: 10px;
+}
+.pf-dock-top .pf-panel-legend,
+.pf-dock-top .pf-panel-detail {
+  display: none;
+}
+.pf-dock-top .pf-panel-axis {
+  flex-direction: row;
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  gap: 8px;
+  align-items: center;
+}
+/* 步骤条按数量自适应：少则拉开占满，多则保底 96px 后横向滚动。
+   不再写死 132px —— 3 步时左右留白、14 步时挤成一条线都不对。 */
+.pf-dock-top .pf-panel-row {
+  flex: 1 1 0;
+  min-width: 96px;
+  max-width: 240px;
+  min-height: 22px;
+}
+.pf-dock-top .pf-panel-track {
+  width: 100%;
+}
+
+/* 自由浮动：fixed 浮层，不占布局宽度；边界由 panelGeometry 钳制 */
+.pf-float {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  width: 260px;
+  height: 320px;
+  will-change: transform;
+}
+/* 只在落点切换/菜单开合走短过渡；拖动过程禁掉，避免跟手延迟。
+   left/top 是最终落点，pointermove 的每一帧由 rAF 写，不叠 transition。 */
+.pf-panel[data-dragging='1'] {
+  transition: none;
+}
+
+/* 最小化胶囊 */
+.pf-min-pill {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 16px;
+  border: 1px solid var(--td-component-stroke);
+  background-color: color-mix(in srgb, var(--tc-surface-content) 78%, transparent);
+  backdrop-filter: blur(16px) saturate(125%);
+  -webkit-backdrop-filter: blur(16px) saturate(125%);
+  box-shadow: var(--shadow-card);
+  color: var(--td-text-color-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  will-change: transform;
+}
+.pf-min-pill:hover {
+  color: var(--td-text-color-primary);
+}
+
+.pf-panel-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+/* 形态收敛：一个主图标代表当前形态，点开才有四项带文字的菜单。
+   十字箭头（Move）已彻底退役，不再出现在标题栏或菜单里。 */
+.pf-mode-main {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--td-text-color-placeholder);
+  cursor: pointer;
+}
+.pf-mode-main:hover,
+.pf-mode-main[aria-expanded='true'] {
+  background-color: var(--tc-hover-chrome);
+  color: var(--td-brand-color);
+}
+/* portal 到 body：绕开 .pf-panel 的 overflow:hidden（上一版菜单被裁掉是假绿） */
+.pf-mode-menu {
+  position: fixed;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 116px;
+  padding: 4px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--tc-surface-content) 94%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-card);
+  animation: pf-mode-menu-in 140ms var(--ease-tencent) both;
+}
+.pf-mode-menu button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--td-text-color-secondary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.pf-mode-menu button:hover,
+.pf-mode-menu button.is-on {
+  background-color: var(--tc-hover-chrome);
+  color: var(--td-brand-color);
+}
+
+/* 轻量 live 指示：只在运行中出现的 14×2 扫描线，不抢正文注意力。 */
+.pf-live {
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  margin-left: auto;
+  overflow: hidden;
+  border-radius: 1px;
+  background-color: color-mix(in srgb, var(--td-brand-color) 24%, transparent);
+}
+.pf-live::after {
+  content: '';
+  display: block;
+  width: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background-color: var(--td-brand-color);
+  animation: pf-live-scan 1.4s ease-in-out infinite;
+}
+@keyframes pf-live-scan {
+  from { transform: translateX(-6px); }
+  to { transform: translateX(14px); }
+}
+@keyframes pf-mode-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 拖动落点提示：让「松手会切到哪个形态」在松手前就可见 */
+.pf-drop-hint {
+  position: fixed;
+  z-index: 110;
+  pointer-events: none;
+  border-color: var(--td-brand-color);
+  color: var(--td-brand-color);
+}
+.pf-drop-hint.is-right {
+  top: 84px;
+  right: 0;
+  bottom: 0;
+  width: 40px;
+  border-left: 2px solid;
+  background-color: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
+}
+.pf-drop-hint.is-top {
+  top: 84px;
+  left: 0;
+  right: 0;
+  height: 40px;
+  border-bottom: 2px solid;
+  background-color: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
+}
+.pf-drop-hint.is-floating {
+  top: 132px;
+  left: 48px;
+  right: 48px;
+  bottom: 132px;
+  border: 1px dashed color-mix(in srgb, var(--td-brand-color) 40%, transparent);
+  border-radius: 10px;
+  background-color: color-mix(in srgb, var(--td-brand-color) 3%, transparent);
+}
+
+.pf-panel-pill {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--td-text-color-placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 阶段图例 */
+.pf-panel-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--td-component-stroke);
+}
+
+.pf-panel-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pf-panel-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.pf-panel-legend i.is-understand,
+.pf-panel-legend i.is-0 {
+  background-color: var(--td-text-color-placeholder);
+}
+.pf-panel-legend i.is-change,
+.pf-panel-legend i.is-1 {
+  background-color: var(--td-brand-color);
+}
+.pf-panel-legend i.is-verify,
+.pf-panel-legend i.is-fix,
+.pf-panel-legend i.is-2,
+.pf-panel-legend i.is-3 {
+  background-color: var(--td-success-color);
+}
+.pf-panel-legend i.is-failed {
+  background-color: var(--td-error-color);
+}
+
+/* 横向时间轴 */
+.pf-panel-axis {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.pf-panel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  min-height: 26px;
+}
+
+.pf-panel-row:hover,
+.pf-panel-row.is-hover {
+  background-color: var(--tc-hover-chrome);
+}
+
+.pf-panel-row.is-sel {
+  background-color: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
+}
+
+.pf-panel-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--td-text-color-secondary);
+}
+
+.pf-panel-verb {
+  flex-shrink: 0;
+}
+
+.pf-panel-ico {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--td-text-color-placeholder);
+}
+
+.pf-panel-row.is-running .pf-panel-ico {
+  color: var(--td-brand-color);
+}
+
+.pf-panel-row.is-error .pf-panel-ico {
+  color: var(--td-error-color);
+}
+
+.pf-panel-target {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, Consolas, 'Courier New', monospace);
+  color: var(--td-text-color-placeholder);
+}
+
+/* 条形轨道：占满一行 */
+.pf-panel-track {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background-color: var(--tc-hover-chrome);
+}
+
+.pf-panel-track i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+}
+
+.pf-panel-track i.is-tool {
+  background-color: var(--td-brand-color);
+  opacity: 0.75;
+}
+
+.pf-panel-track i.is-thinking {
+  background-color: var(--td-text-color-placeholder);
+  opacity: 0.6;
+}
+
+.pf-panel-track i.is-running {
+  animation: pf-panel-pulse 1.4s ease-in-out infinite;
+  opacity: 1;
+}
+
+.pf-panel-track i.is-error {
+  background-color: var(--td-error-color);
+}
+
+/* 播放头：当前时刻一条竖线（运行中 = now，结束 = 窗尾） */
+.pf-panel-row .pf-panel-track .pf-panel-playhead {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background-color: var(--td-brand-color);
+  opacity: 0.8;
+}
+
+/* 详情区 */
+.pf-panel-detail {
+  min-height: 44px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background-color: var(--td-bg-color-secondarycontainer);
+  font-family: var(--font-mono, Consolas, 'Courier New', monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--td-text-color-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+}
+
+/* 底部时间滑块（用户定版删除）：四种形态都不再渲染 range 控件；
+   步骤条自身就是只读进度/时长表达。 */
+
+@keyframes pf-panel-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-panel-track i.is-running,
+  .pf-live::after {
+    animation: none;
+  }
+  .pf-live::after {
+    width: 14px;
+    transform: none;
+    opacity: 0.6;
+  }
+  .pf-mode-menu {
+    animation: none;
+  }
+}
+
+/* 窄屏兜底：不占右栏宽度；形态切换交给 ChatPage 的状态机（默认最小化），
+   不再把顶部吸顶 / 最小化胶囊一起隐藏。 */
+@media (max-width: 899px) {
+  .pf-dock-right {
+    display: none;
+  }
+  .pf-dock-top .pf-panel-row {
+    min-width: 88px;
+    max-width: 160px;
+  }
+}

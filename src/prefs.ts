@@ -55,6 +55,16 @@ export interface Prefs {
    * 解析与回落规则见 `shared/interface-language.ts`。
    */
   interfaceLanguage?: InterfaceLanguage;
+  /** 单聊过程面板的停靠形态与位置（与服务端 preferences.ts 一一对应） */
+  processPanel?: {
+    mode: 'right' | 'top' | 'floating' | 'minimized';
+    x?: number;
+    y?: number;
+    /** 最小化胶囊的视口坐标（区别于浮动态坐标） */
+    minX?: number;
+    minY?: number;
+    lastMode?: 'right' | 'top' | 'floating';
+  };
 }
 
 export type PrefsPatch = { [K in keyof Prefs]?: Prefs[K] | null };

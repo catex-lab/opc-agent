@@ -19,7 +19,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -191,28 +192,25 @@ console.log('\n[2] 代码块：A55 后按钮精简');
     kept.join(',')
   );
 
-  // B3 + D2/F3：工具卡耗时口径
-  // 过程流改版后一轮结束默认收成一条摘要，步骤只在展开态渲染 —— 先点开再看。
-  /* F3 改口径：
-     原期望：`工具卡显示耗时 1.2s`（每个步骤行都挂耗时）
-     新期望：步骤行（1200ms < 3s）**不挂**耗时；1.2s 只出现在摘要条的
-             「工具 X」总耗时上（D2 前缀）。
-     依据：逐行 1.2s 是噪音，值得看的是「哪一步慢」；总耗时仍在摘要条上。 */
-  await page.locator('[data-steps-bar]').first().click();
+  // B3 + D2/F3：工具步耗时口径
+  // 2026-11-22 改版：一轮结束默认收成一条摘要（答案在场即折叠），
+  // 步骤只在展开态渲染 —— 先点摘要线展开再看。
+  await page.locator('[data-flow-summary]').first().click();
   await page.waitForTimeout(500);
   const stepMeta = await page.evaluate(() => {
-    const step = document.querySelector('[data-tool-step]');
-    return step?.querySelector('.tc-trace-meta')?.textContent?.trim() ?? null;
+    const step = document.querySelector('[data-flow-row][data-flow-row-kind="tool"]');
+    return step?.querySelector('.pf-meta')?.textContent?.trim() ?? null;
   });
-  ok(stepMeta === null, 'F3：<3s 的步骤行不挂耗时（不再出现 1.2s）', String(stepMeta));
+  // 参考页口径：完成步挂真实耗时（1200ms → 1.2s），运行中步显示「执行中」
+  ok(stepMeta === '1.2s', '改版：完成步耗时全量显示（1200ms → 1.2s）', String(stepMeta));
   const barMeta = await page.evaluate(() => {
-    const bar = document.querySelector('[data-steps-bar]');
-    return bar?.querySelector('.tc-trace-meta')?.textContent?.trim() ?? null;
+    const bar = document.querySelector('[data-flow-summary]');
+    return bar?.querySelector('.pf-meta')?.textContent?.trim() ?? null;
   });
-  // S1-2（审查报告）：摘要条上的「工具 3.2s」与头部「已处理 …」两套口径并存
-  //（包含 / 并列读不出）—— 工具行耗时只删**显示**（埋点保留），全页只留
-  // 头部一个总耗时。这里反证摘要条不再挂耗时。
-  ok(barMeta === null, 'D2：摘要条不再重复显示耗时（只留头部总耗时）', String(barMeta));
+  // 摘要线不挂耗时；总耗时只在整轮时钟（data-flow-clock）一处
+  ok(barMeta === null, '摘要线不重复显示耗时（总耗时只在流程时钟一处）', String(barMeta));
+  const clockText = await page.evaluate(() => document.querySelector('[data-flow-clock]')?.textContent?.trim() ?? null);
+  ok(!!clockText && clockText.includes('已处理'), '整轮时钟定格「已处理 X」', clockText ?? '缺失');
 
   // A159：代码块右上角复制按钮背景透明。
   // 按钮在 `t-chat-md-content` 的 shadow DOM 里，且 **悬停代码块时才创建**

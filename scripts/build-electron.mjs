@@ -53,6 +53,27 @@ await build({
   logLevel: 'info',
 });
 
+/**
+ * M01：harness 子进程单独打一份。
+ *
+ * 它由 main 以 `ELECTRON_RUN_AS_NODE=1` spawn（设计 §10.1 方案 A）：server
+ * 的生死独立于主进程，崩了由看门狗重启。不能和 main 共用产物 —— main
+ * 里的 server 三件套已改为动态 import（harness 模式下永不执行），再共用
+ * 一份产物就等于把「两个进程各开一次 SQLite」又焊回去了。同一套
+ * `packages: 'external'`；asarUnpack 放行见 electron-builder.yml。
+ */
+await build({
+  entryPoints: ['harness/index.ts'],
+  outfile: `${OUT_DIR}/harness.cjs`,
+  bundle: true,
+  platform: 'node',
+  target: 'node22',
+  format: 'cjs',
+  packages: 'external',
+  sourcemap: true,
+  logLevel: 'info',
+});
+
 // 入口本身保持手写：它必须在任何模块初始化之前设好环境变量（详见文件头注释），
 // 所以不能参与打包，直接原样拷过去。
 await cp('electron/bootstrap.cjs', `${OUT_DIR}/bootstrap.cjs`);

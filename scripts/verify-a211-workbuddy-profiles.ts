@@ -370,7 +370,10 @@ group('4. 一个都没装：诚实降级，不假绿');
   ok(applyWorkbuddyProfile(spec, 'workbuddy') === spec, '★ 没检测到官方配置时不动定义表（原样返回）');
   eq(workbuddyKeyblobDisplay(), '~/.workbuddy/keyblob', '兜底时恢复话术仍指得到登录态文件');
   const hint = recoveryHintFor('workbuddy');
-  ok(hint.includes('~/.workbuddy') && hint.includes('CODEBUDDY_API_KEY'), '恢复话术仍可执行（含路径与 Key 字段名）');
+  // 2026-11-19 A233/A234 改版：话术从「去桌面端重登 / 找 keyblob」改为
+  // 「应用内授权（登录态独立保存）+ CODEBUDDY_API_KEY 字段」——可执行性
+  // 判据跟着契约走：给出 Key 字段名与登录入口。
+  ok(hint.includes('CODEBUDDY_API_KEY') && hint.includes('去登录'), '恢复话术仍可执行（给出 Key 字段名与登录入口）', hint.slice(0, 80));
 }
 
 // ───────────────────── [5] 快照形状与新鲜度 ─────────────────────

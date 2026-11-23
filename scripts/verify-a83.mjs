@@ -12,7 +12,7 @@
  *   [3] 暗色自动降字重（且**真的换到了更轻的字面**，不是只改了个数字）
  *   [4] 等宽数字（1 与 8 同宽，数字不抖）
  *   [5] 孤字与孤卡（text-wrap: pretty + 最后一行撑满）
- *   [6] 打字机：高斯模糊渐显 + 字符错开（真实流式下捕获 .tc-type-char）
+ *   [6] 流式反馈：高斯模糊渐显关键帧保留 + 过程流的整轮时钟/状态胶囊
  *   [7] 拖拽干脆无回弹（拖拽期间全站过渡 0s；全站没有过冲曲线）
  */
 import { createServer } from 'node:http';
@@ -23,7 +23,8 @@ import { chromium } from 'playwright-core';
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check');
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import { resolveChromePath } from './lib/chrome.mjs';
+const CHROME = resolveChromePath();
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -451,7 +452,7 @@ ok(
   `偏差 ${iconAlign.delta}px`
 );
 
-console.log('\n[6] 打字机：高斯模糊渐显 + 字符错开');
+console.log('\n[6] 流式反馈：渐显关键帧 + 过程流时钟/胶囊');
 
 // keyframes 里必须有 blur（确定性检查，不依赖动画时刻）
 const keyframes = await page.evaluate(() => {
@@ -475,39 +476,28 @@ await go('/chat/s1');
 await page.fill('textarea', '再确认一次品牌色');
 await page.press('textarea', 'Enter');
 
-// 轮询：SSE 每 80ms 一片，抓到一次就够
-// 两个计数要分开取最大值：状态行的标签只在阶段切换时重播，与思考块的
-// 字符不同步；用「字符最多那一帧」的状态行计数会漏掉它。
-let typing = { chars: 0, anim: '', delay: '', maxDelay: '', statusChars: 0 };
+// 轮询：SSE 每 80ms 一片，抓到一次就够。
+// 2026-11-22 起单聊过程回合整轮交给 ProcessFlow：旧的状态行 / 逐字 span
+// 不再出现在这一路径上，流式反馈的锚点是 data-flow-state / 时钟 / 状态数据。
+let typing = { flowState: '', flowClock: '', flowPill: '' };
 for (let i = 0; i < 40; i++) {
   await page.waitForTimeout(100);
-  const snap = await page.evaluate(() => {
-    const all = [...document.querySelectorAll('.tc-type-char')];
-    const status = [...document.querySelectorAll('[data-stream-status] .tc-type-char')];
-    const el = all[0];
-    const delays = all.map(e => parseFloat(e.style.animationDelay) || 0);
-    return {
-      chars: all.length,
-      statusChars: status.length,
-      anim: el ? getComputedStyle(el).animationName : '',
-      delay: el ? el.style.animationDelay : '',
-      maxDelay: delays.length ? `${Math.max(...delays)}ms` : '',
-    };
-  });
-  typing.chars = Math.max(typing.chars, snap.chars);
-  typing.statusChars = Math.max(typing.statusChars, snap.statusChars);
-  if (snap.anim) typing.anim = snap.anim;
-  if (snap.maxDelay) typing.maxDelay = snap.maxDelay;
-  if (typing.chars > 0 && typing.statusChars > 0) break;
+  const snap = await page.evaluate(() => ({
+    flowState: document.querySelector('[data-flow]')?.getAttribute('data-flow-state') ?? '',
+    flowClock: document.querySelector('[data-flow-clock]')?.textContent?.trim() ?? '',
+    flowPill: document.querySelector('[data-flow]')?.getAttribute('data-flow-pill') ?? '',
+  }));
+  if (snap.flowState) typing.flowState = snap.flowState;
+  if (!typing.flowClock && snap.flowClock) typing.flowClock = snap.flowClock;
+  if (!typing.flowPill && snap.flowPill) typing.flowPill = snap.flowPill;
+  if (typing.flowState === 'running' && typing.flowPill) break;
 }
 
-ok(typing.chars > 0, '流式期间出现了逐字动画元素（.tc-type-char）', `n=${typing.chars}`);
-ok(typing.anim === 'tc-type-in', '逐字元素的动画是 tc-type-in', typing.anim || 'none');
-ok(typing.statusChars > 0, '状态行的阶段文案也在逐字浮现', `n=${typing.statusChars}`);
-ok(parseFloat(typing.maxDelay) > 0, '字符带递增的 animation-delay（错开显现）', `最大 ${typing.maxDelay}`);
+ok(typing.flowState === 'running', '流式期间过程流进入 running 态', typing.flowState || '未找到');
+ok(/秒|分/.test(typing.flowClock), '整轮时钟按秒计时（不是旧的分片摘要）', typing.flowClock.slice(0, 40) || '无时钟');
+ok(typing.flowPill.length > 0, '整轮状态数据给出实时动作/结果（无可见胶囊）', typing.flowPill.slice(0, 40) || '无状态');
 
-// 流式**进行中**截一张（等 1.2s 之后流已结束，逐字 span 会被收成纯文本，
-// 那样截到的是「打字结束后」的画面，看不出模糊渐显）
+// 流式**进行中**截一张（等 1.2s 之后流已结束，时钟会定格成总耗时）
 await page.screenshot({ path: join(OUT, 'a83-typing.png') });
 await page.waitForTimeout(1200);
 

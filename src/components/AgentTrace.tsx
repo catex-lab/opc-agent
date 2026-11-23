@@ -1,36 +1,45 @@
 /**
- * 执行轨迹（A36）—— 替代 A35 的「步骤时间线」。
+ * 执行轨迹 v2（2026-11-21 定版，对照 ZCode 过程条形态，用户逐图拍板）。
  *
- * ## 与 A35 的差别
+ * ## 定版形态（五张效果图口径）
  *
- * A35 已经把「卡片」换成了「一行一步 + 竖线」，但那还是**逐条罗列**：
- * 用户要滚动完 20 行才知道「它到底动了哪些文件」。这一版补上参考图里
- * 真正有价值的三样东西：
+ *   1. **收纳线**：整个执行过程流唯一的门面是一行「已工作 X 秒」（满 1 分钟
+ *      「M 分 S 秒」）。旧的「执行、检查 · 成功」摘要字样退役。
+ *      · 执行中（正文未开始）：自动展开跟滚，秒数逐秒跳动；
+ *      · 正文一开始输出：立即折叠成一行，且**不再自动展开**（手动点开回看
+ *        仍允许，收起后回到折叠态）；
+ *      · 回合结束：定格（真实墙钟 = 最后一个块 endedAt − 第一个块 startedAt）。
+ *   2. **扁平单行**：每步一行、全部同层（旧的一级二级缩进退役）——
+ *      `[hover 浮现箭头][类型图标][动词][单行内容 flex-1 截断][耗时]`。
+ *      内容永不折行；展开详情面板内部才允许层级。
+ *   3. **图标随步骤类型**（lucide，ZCode 同款映射思路）。
+ *   4. **连续同类型步骤合并成组**（一期就做，用户拍板）：相邻且动词相同的
+ *      步骤合并为组头「图标 + 类型 + N 次 + 累计耗时」，点组头开合；
+ *      进行中的组自动展开跟随（组头扫光）。思考/旁白插队即断组。
+ *   5. **运行中三件套**：行背景光晕自左而右循环 + 动词/实时内容文字扫光 +
+ *      左缘光晕条；内容 = 实时尾部逐帧刷新 + 光标。
+ *   6. **详情面板**：命令区（$ 提示符 + mono，pre-wrap + break-words）、
+ *      输出区（**上限 5 行区内滚动 + 吸底跟随 + 上滚冻结**，用户拍板）、
+ *      思考详情（全文 + 字数）。字数 chip 从行上退役，归入详情。
  *
- *   1. **活动摘要**：整条轨迹压成一句话（`编辑、已读取：SettingsPage.tsx`），
- *      收起时它就是那一行，展开时它仍在顶部 —— 任何时候都知道「干了什么」。
- *   2. **diff 统计**：文件类步骤后面跟 `+109 -16`，一眼看出改动量。
- *   3. **嵌套思考**：紧跟在某个工具后面的思考节点缩进挂到它下面，
- *      带一条连接线，默认收起一行「深度思考」。
+ * ## 与 gate 的契约
  *
- * 底部还有一层**渐隐遮罩**：轨迹超过可视高度时，最后一行淡出，
- * 提示「下面还有」，而不是硬切一刀。
+ * `[data-steps-bar]`（收纳线，aria-expanded = 展开态）、`[data-trace-scroll]`
+ * （步骤容器，仅展开时挂载）、`[data-tool-step]` / `data-trace-verb` /
+ * `data-trace-completion` / `.tc-trace-meta`（行级耗时/状态）/
+ * `data-trace-tail` / `data-trace-narration` / `data-trace-thinking` /
+ * `data-trace-totalms` / `data-trace-unreturned` 保留；
+ * 新增 `[data-trace-group]`（组头）与 `data-trace-elapsed`（收纳线上的毫秒数）。
+ * `.tc-step-dot` 随圆点形态退役（图标即状态载体）。
+ * 阶段条（2026-11-21）：`[data-trace-phases]`（整块）、`data-phase-segment`
+ * （段，值 = 阶段 kind）、`data-phase-failed`（段内有失败）、
+ * `[data-phase-legend]`（图例，可折叠）、`data-phase-toggle`（图例开关，
+ * aria-expanded）、`[data-trace-pill]`（状态胶囊，值 = 当前状态机档位）。
  *
- * ## 展开策略（既定口径）
+ * ## 状态收口（不变）
  *
- * 完成态**默认收起**（长会话里一条消息挂 20 行会把上下文冲散），
- * 但流式过程中默认展开 —— 用户此刻正在盯着它干活。
- * 手动切过之后就不再自动干预。
- *
- * 正文收拢（2026-11-03 生产口径，2026-11-07 修锚点）：`collapse` 的判据是
- * 「最后一段正文出现了」，锚点跟着文本走 —— 正文之后再来的工具事件不再让
- * `collapse` 回落，因此不会把已显示的正文重新卷进轨迹、再展开一次。
- *
- * 单步明细（2026-10-30）：执行中默认展开，**执行完立即收起**；
- * 写入/编辑、删除、权限、报错四类关键步骤完成后仍保持展开。
- * 完成判定见 `src/trace/fold.ts`：真实结束事件优先，缺失时才用
- * 「下一条事件视为上一步完成」兜底，没有后续事件的长耗时步骤不会假装完成。
- * 整条过程流的字号/行高统一为 14px / 1.7（见 index.css `.tc-trace`）。
+ * 行状态仍走 src/trace/fold.ts 的完成判定（真实结束事件 > 下一条事件兜底 >
+ * 本轮结束标「未回传」）。
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -48,29 +57,27 @@ import {
   FolderSearch,
   Image as ImageIcon,
   Zap,
-  ChevronDown,
-  ChevronUp,
+  ChevronRight,
   type LucideIcon,
 } from 'lucide-react';
 import type { Block } from '../../shared/blocks';
 import {
+  baseName,
   buildDiffHunks,
-  // S1-2：formatHandledDuration 不再在组件里调用（工具行耗时只删显示）——
-  // 从 import 中移除，避免留一个误导后来者的未用引用。
+  formatHandledDurationText,
   formatStepDuration,
+  groupPhases,
   summarizeTrace,
+  type FlowPhase,
+  type FlowPhaseKind,
   type TraceDiff,
   type TraceItem,
 } from '../../shared/trace';
 import { DiffView } from './DiffView';
 import { useOverflowY } from '../hooks/useOverflowY';
-import {
-  hasUnreturnedResult,
-  shouldAutoFoldOnTurnEnd,
-  type ResolvedTraceItem,
-} from '../trace/fold';
-import { buildTraceRows, isNarration, stepRows } from '../trace/rows';
-import { useTranslation, type MessageKey, type Translate } from '../i18n';
+import { hasUnreturnedResult, resolveTraceItems, type ResolveTraceOptions, type ResolvedTraceItem } from '../trace/fold';
+import { buildTraceRows, isNarration, stepRows, type TraceRow } from '../trace/rows';
+import { useTranslation, type Locale, type MessageKey, type Translate } from '../i18n';
 import '../trace/traceFold.css';
 
 /**
@@ -107,36 +114,45 @@ const OUTCOME_KEY: Record<string, MessageKey> = {
   ok: 'chat.trace.outcome.ok',
 };
 
-/** 与 `summarizeTrace().text` 语义一致，只是按当前语言重排 */
-function summaryText(summary: ReturnType<typeof summarizeTrace>, t: Translate): string {
-  const outcome = t(OUTCOME_KEY[summary.outcome] ?? 'chat.trace.outcome.ok');
-  const head = summary.editedFiles.length
-    ? t('chat.trace.summary.edited', { n: summary.editedFiles.length })
-    : summary.files.length
-      ? t('chat.trace.summary.read', { n: summary.files.length })
-      : summary.verbs.length
-        ? t('chat.trace.summary.verbs', {
-            verbs:
-              summary.verbs
-                .slice(0, 3)
-                .map(v => (VERB_KEY[v] ? t(VERB_KEY[v]) : v))
-                .join(t('chat.trace.listSeparator')) +
-              (summary.verbs.length > 3 ? t('chat.trace.more') : ''),
-          })
-        : '';
-  return head ? `${head} · ${outcome}` : outcome;
-}
+// ── 阶段条（2026-11-21，参考用户给的单聊过程流设计稿） ────────────────
+
+/** 图例的四阶段 + 失败标记（失败是运行时状态，不是阶段，但颜色要能对上图例） */
+const PHASE_LABEL: Record<FlowPhaseKind, MessageKey> = {
+  understand: 'chat.trace.phase.understand',
+  change: 'chat.trace.phase.change',
+  verify: 'chat.trace.phase.verify',
+  fix: 'chat.trace.phase.fix',
+};
+const PHASE_LEGEND_ORDER: ReadonlyArray<{ kind: FlowPhaseKind | 'failed'; key: MessageKey }> = [
+  { kind: 'understand', key: 'chat.trace.phase.understand' },
+  { kind: 'change', key: 'chat.trace.phase.change' },
+  { kind: 'verify', key: 'chat.trace.phase.verify' },
+  { kind: 'failed', key: 'chat.trace.failed' },
+  { kind: 'fix', key: 'chat.trace.phase.fix' },
+];
 
 /**
- * 工具 → 图标 + 颜色。
- *
- * 单色化（2026-10-30 改版）：图标一律 secondary 灰，状态区分靠形状
- * （✓/✗/空心圈/脉冲点），不靠颜色。`--tool-color-*` 令牌保留在 index.css 备用。
- * 入参一律 `String()` 兜底 —— 历史上 `tool.name` 缺失时这里抛过一次
- * `toLowerCase of undefined`，而它发生在消息列表渲染中，直接把整屏打成白屏。
+ * 胶囊里运行中动词的特例：轨迹动词「已读取」是完成态措辞（行上是刻意的），
+ * 但胶囊带「正在」前缀，直接拼会变成「正在已读取」。给胶囊一个进行态动词。
+ */
+const PILL_VERB_KEY: Record<string, MessageKey> = {
+  ...VERB_KEY,
+  '已读取': 'chat.trace.verb.read',
+};
+
+/** 图例开合的本地偏好（跨消息共享一个偏好，不逐条记） */
+const LEGEND_PREF_KEY = 'opc.trace.phaseLegend';
+
+/** 命令行类工具：折叠行内容用等宽字体（命令 / 脚本一眼可辨） */
+const SHELL_TOOL_NAMES: ReadonlySet<string> = new Set(['bash', 'shell', 'execute']);
+
+/**
+ * 工具 → 图标。单色化：图标一律 placeholder 灰，状态区分靠形状与动效，
+ * 不靠颜色。入参一律 `String()` 兜底 —— 历史上 `tool.name` 缺失时这里抛过
+ * `toLowerCase of undefined`，直接把整屏打成白屏。
  */
 function iconOf(toolName: string): LucideIcon {
-  switch (toolName) {
+  switch (String(toolName).toLowerCase()) {
     case 'skill':
       return Sparkles;
     case 'bash':
@@ -179,54 +195,6 @@ function iconOf(toolName: string): LucideIcon {
 
 const DETAIL_LIMIT = 500;
 
-/**
- * 明细里的输出块。
- *
- * 流式中贴底滚动并显示**尾部**（最新内容在末尾，截头部会让用户以为卡住）；
- * 结束后显示**头部**（那才是「这条命令在干什么」的上下文）。
- */
-function OutputBox({
-  label,
-  text,
-  running,
-  isError,
-}: {
-  label: string;
-  text: string;
-  running: boolean;
-  isError?: boolean;
-}) {
-  const { t } = useTranslation();
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!running) return;
-    const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [running, text]);
-
-  if (!text) return null;
-  const shown =
-    text.length > DETAIL_LIMIT
-      ? running
-        ? `…\n${text.slice(-DETAIL_LIMIT)}`
-        : `${text.slice(0, DETAIL_LIMIT)}\n…`
-      : text;
-
-  return (
-    <div
-      ref={ref}
-      className="tc-step-detail"
-      style={{ color: isError ? 'var(--td-error-color)' : undefined }}
-      data-tool-output
-    >
-      <span style={{ color: 'var(--td-text-color-placeholder)' }}>
-        {running ? t('chat.trace.outputting') : isError ? t('chat.trace.error') : label}:{' '}
-      </span>
-      {shown}
-    </div>
-  );
-}
-
 /** `+109 -16` / `+12` / `±0` —— 三种口径各自对应「有真实 diff / 只知新增 / 没有数据」 */
 function DiffTag({ diff }: { diff: TraceDiff }) {
   if (diff.known) {
@@ -253,94 +221,85 @@ function DiffTag({ diff }: { diff: TraceDiff }) {
   );
 }
 
-/**
- * 思考节点（方案 C）：缩进挂在上一个工具下面，一行「深度思考」+ 字数 + 秒数。
- *
- * 排版与方案 A 同一套语言（头部 12px secondary、正文正体沿 2px 左细线铺开），
- * 只降半档字号、缩进更浅 —— 它挂在轨迹里，左边已经被缩进吃掉 18px。
- *
- * 为什么不再用 `.tc-step-detail`（等宽 12px + 3% 底）：那是**工具输出**的语言，
- * 机器文本等宽才对；思考是自然语言，套等宽 + 最淡一档灰，长推理比工具输出还难读。
- *
- * `collapse`：这条消息已经有正文了。既定口径是「输出正文前折叠上面的」——
- * 答案出现后，过程让位，不再自动铺开。
- */
-function ThinkingNode({ item, collapse = false }: { item: TraceItem; collapse?: boolean }) {
-  const { t } = useTranslation();
-  const thinkText = item.thinking;
-  if (!thinkText) return null;
-  const running = thinkText.state === 'streaming';
-  // 被厂商隐去的思考：正文是密的，但「确实想过一段」是事实。
-  // 这里既不能伪造内容，也不能什么都不显示 —— 空一行、标明「已隐去」最诚实。
-  const redacted = !!thinkText.redacted;
-  const secs = item.durationMs != null ? Math.max(1, Math.round(item.durationMs / 1000)) : null;
-
-  const row = (
-    <>
-      <Brain size={12} style={{ flexShrink: 0 }} />
-      <span className="tc-think-note-title">
-        {redacted ? t('chat.trace.redacted') : running ? t('chat.trace.thinkingLive') : t('chat.trace.thinking')}
-      </span>
-      {!redacted && thinkText.format === 'summary' && <span className="tc-think-badge">{t('chat.trace.summaryBadge')}</span>}
-      <span className="tc-think-note-meta">
-        {redacted ? t('chat.trace.redactedReason') : t('chat.thinking.chars', { n: thinkText.text.length })}
-      </span>
-      {secs != null && <span className="tc-think-note-meta">{secs}s</span>}
-    </>
-  );
-
-  return (
-    <div className="tc-trace-nested" data-trace-thinking={item.id}>
-      {redacted ? (
-        // 没有正文就没有可展开的东西：渲染成一行静态说明，而不是一个点了没反应的折叠条
-        <div className="tc-thinking tc-think-note" data-redacted="1">
-          <div className="tc-think-note-redacted">{row}</div>
-        </div>
-      ) : (
-        <details className="tc-thinking tc-think-note" open={running && !collapse}>
-          <summary>{row}</summary>
-          <div className="tc-think-note-body">{thinkText.text}</div>
-        </details>
-      )}
-    </div>
-  );
+/** 运行中行的实时尾部：最后 ~48 字符，压成单行 */
+function tailOf(text: string | undefined, n = 48): string {
+  if (!text) return '';
+  const t = text.replace(/\s+/g, ' ').trimEnd();
+  return t.length > n ? `…${t.slice(-n)}` : t;
+}
+/** 工具主入参：没有输出时的尾部回退（让活跃行显示「在处理什么」） */
+function primaryInputOf(input?: Record<string, unknown>): string {
+  if (!input) return '';
+  for (const k of ['command', 'query', 'url', 'pattern', 'file_path', 'path', 'skill', 'args']) {
+    const v = input[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return '';
 }
 
-/** 展开明细：不同工具只差在「哪几段」，样式统一交给 .tc-step-detail */
-function detailOf(item: TraceItem, t: Translate): ReactNode {
+/** 完成态单行摘要：文件步骤给文件名，其余给命令/查询/URL/主入参本身 */
+function summaryOf(item: ResolvedTraceItem): string {
+  if (item.path) return baseName(item.path);
+  return primaryInputOf(item.block?.input) || item.target || '';
+}
+
+/** 折叠过渡时长（ms）。改这里必须同步 traceFold.css 与 index.css 的 `.tc-trace-fold`。 */
+const FOLD_MS = 220;
+
+/**
+ * F4：贴底跟随的时间预算（ms）。预算按**时间**给（FOLD_MS + 120 = 340ms），
+ * 覆盖最长的展开动画再留一帧余量 —— 不依赖帧率，跨平台一致。
+ */
+const PIN_BUDGET_MS = FOLD_MS + 120;
+
+/** 关键步骤的 tooltip —— 说明它为什么带着 pin 标记 */
+const CRITICAL_TITLE_KEY: Record<string, MessageKey> = {
+  write: 'chat.trace.criticalWrite',
+  delete: 'chat.trace.criticalDelete',
+  permission: 'chat.trace.criticalPermission',
+  error: 'chat.trace.criticalError',
+};
+
+/**
+ * 展开明细：不同工具只差在「哪几段」，样式统一交给面板（.tcv2-detail）。
+ * 命令区带 `$` 提示符（1ch 列，ZCode ExecuteCommand 同款）。
+ */
+function detailOf(item: ResolvedTraceItem, t: Translate): ReactNode {
   const input = item.block?.input ?? {};
   const name = item.toolName;
 
   if (name === 'skill') {
     const args = String(input.args ?? '');
-    return args ? <div className="tc-step-detail">{args.slice(0, 300)}</div> : null;
+    return args ? (
+      <pre className="tcv2-pre">{args.slice(0, 300)}</pre>
+    ) : null;
   }
   if (name === 'bash' || name === 'shell' || name === 'execute') {
     const cmd = String(input.command ?? '');
     if (!cmd) return null;
     return (
-      <div className="tc-step-detail">
-        <span style={{ color: 'var(--td-text-color-placeholder)' }}>$ </span>
+      <pre className="tcv2-pre">
+        <span className="tcv2-prompt">$ </span>
         {cmd.slice(0, DETAIL_LIMIT)}
-      </div>
+      </pre>
     );
   }
   if (name === 'webfetch') {
     const url = String(input.url ?? '');
     return url ? (
-      <div className="tc-step-detail">
-        <span style={{ color: 'var(--td-text-color-placeholder)' }}>URL: </span>
+      <pre className="tcv2-pre">
+        <span className="tcv2-prompt">URL </span>
         {url}
-      </div>
+      </pre>
     ) : null;
   }
   if (item.path) {
     const content = String(input.content ?? '');
     return (
-      <div className="tc-step-detail">
-        <div style={{ color: 'var(--td-text-color-placeholder)' }}>{item.path}</div>
-        {content && <div className="mt-1">{content.slice(0, 1000)}</div>}
-      </div>
+      <pre className="tcv2-pre">
+        {item.path}
+        {content ? `\n${content.slice(0, 1000)}` : ''}
+      </pre>
     );
   }
   if (Object.keys(input).length === 0) return null;
@@ -350,92 +309,81 @@ function detailOf(item: TraceItem, t: Translate): ReactNode {
   } catch {
     json = String(input);
   }
+  return <pre className="tcv2-pre">{json.slice(0, 300)}</pre>;
+}
+
+/**
+ * 输出块：**上限 5 行区内滚动 + 吸底跟随 + 上滚冻结**（用户拍板，ZCode
+ * ExecuteOutput 同款）。流式中贴底；用户向上滚动即冻结视口（不再被新输出
+ * 拽走），滚回底部恢复跟随。结束后保留阅读位置。
+ */
+function OutputBox({ text, running, isError }: { text: string; running: boolean; isError?: boolean }) {
+  const { t } = useTranslation();
+  const ref = useRef<HTMLDivElement>(null);
+  /** 用户向上滚走后冻结在当时的文本快照上（回到底部自动解冻） */
+  const [frozen, setFrozen] = useState<string | null>(null);
+  const followedRef = useRef(false);
+
+  useEffect(() => {
+    if (!running) return;
+    followedRef.current = true;
+    const el = ref.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [running, text]);
+
+  if (!text) return null;
+  const display = frozen ?? text;
+  const shown =
+    display.length > DETAIL_LIMIT
+      ? running
+        ? `…\n${display.slice(-DETAIL_LIMIT)}`
+        : `${display.slice(0, DETAIL_LIMIT)}\n…`
+      : display;
+
   return (
-    <div className="tc-step-detail">
-      <span style={{ color: 'var(--td-text-color-placeholder)' }}>{t('chat.trace.input')}: </span>
-      {json.slice(0, 300)}
+    <div className="tcv2-out-wrap">
+      <div className="tcv2-dlabel">
+        <span>{isError ? t('chat.trace.error') : t('chat.trace.output')}</span>
+        <span className="tcv2-dhint">{t('chat.trace.outputCap')}</span>
+      </div>
+      <div
+        ref={ref}
+        className="tcv2-out fade-tail"
+        style={{ color: isError ? 'var(--td-error-color)' : undefined }}
+        data-tool-output
+        onScroll={el => {
+          if (!running || !followedRef.current) return;
+          const box = el.currentTarget;
+          const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight <= 8;
+          if (!atBottom && frozen === null) setFrozen(text);
+          else if (atBottom && frozen !== null) setFrozen(null);
+        }}
+      >
+        {shown}
+      </div>
     </div>
   );
 }
 
-/** 折叠过渡时长（ms）。改这里必须同步 traceFold.css 与 index.css 的 `.tc-trace-fold`。 */
-const FOLD_MS = 220;
-
-/**
- * F4：贴底跟随的时间预算（ms）。
- *
- * 原来是「连续 12 帧」。帧数是**帧率的函数**：120Hz 屏上 12 帧只有 100ms，
- * 180ms 的明细展开动画还没走完就停了（当前步被顶到折叠线以下）；
- * 掉帧的机器上 12 帧又能拖到 400ms+，白白占着主线程。
- *
- * 这条轨迹里跟「高度还在长」有关的动画只有两个：明细展开 180ms、
- * 折叠 220ms（FOLD_MS）。所以预算做成 `FOLD_MS + 120 = 340ms`：
- * 覆盖最长的那条动画，再留一帧余量给布局抖动。每帧贴底，到点即停，
- * 跨平台表现一致 —— 不再依赖跑了多少帧。
- */
-const PIN_BUDGET_MS = FOLD_MS + 120;
-
-/**
- * F3：单步耗时低于这个值就不显示。
- *
- * 工具步骤大多在 1 秒上下，逐行拖一个「1.2s」等于给每行加一段噪音；
- * 真正值得看的是「这一步为什么慢」。总耗时仍留在摘要条上（带「工具」前缀）。
- */
-const STEP_DURATION_VISIBLE_MS = 3000;
-
-/** 关键步骤的 tooltip —— 说明它为什么不像别的步骤那样收起 */
-const CRITICAL_TITLE_KEY: Record<string, MessageKey> = {
-  write: 'chat.trace.criticalWrite',
-  delete: 'chat.trace.criticalDelete',
-  permission: 'chat.trace.criticalPermission',
-  error: 'chat.trace.criticalError',
-};
-
-/** 单步 */
+/** 单行步骤行（v2）：`[箭头 hover 浮现][图标][动词][单行内容][右侧列]`。
+ *  内容永不折行（nowrap + ellipsis），展开详情面板在行下方。 */
 function StepRow({
   item,
-  collapse = false,
+  open,
+  onToggle,
+  insideGroup,
+  seenAt,
 }: {
   item: ResolvedTraceItem;
-  collapse?: boolean;
+  open: boolean;
+  onToggle: () => void;
+  insideGroup?: boolean;
+  /** 该行首次出现的时间（运行中行的秒数从这里起算） */
+  seenAt: number;
 }) {
   const { t } = useTranslation();
   const running = item.status === 'running';
-  /** 写入、删除、权限、报错四类：完成后不折叠，始终摊在过程流里 */
   const critical = item.critical;
-  /**
-   * 「每执行完一步就自动折叠」（2026-10-30 用户口径）。
-   *
-   * 执行中的步骤默认展开明细 —— 用户此刻正盯着它干活，命令/输出就是要看的；
-   * 一旦状态离开 running（completed / error / interrupted），这一格立即收起，
-   * 整条轨迹回到「一行一步」的密度，不会因为跑过的步骤全都摊开而变成一堵墙。
-   *
-   * 关键步骤例外：它们的明细在完成后常驻，不再提供手动收起 ——
-   * 写入/删除一旦出错，事后回看必须还能看到当时改了什么、报了什么。
-   */
-  const [open, setOpen] = useState(running || critical);
-  const prevRunning = useRef(running);
-  useEffect(() => {
-    if (critical) {
-      setOpen(true);
-      return;
-    }
-    if (prevRunning.current && !running) setOpen(false);
-    prevRunning.current = running;
-  }, [running, critical]);
-  // 这一轮已经出答案 → 过程让位，明细一并收起；关键步骤与仍在跑的步骤除外
-  // （用户手动展开轨迹时，正在跑的那一步必须还能看到实时输出）
-  useEffect(() => {
-    if (critical) {
-      setOpen(true);
-      return;
-    }
-    if (collapse && !running) setOpen(false);
-  }, [collapse, critical, running]);
-  /**
-   * 明细的「先挂住再卸」：与整条轨迹同一套做法。
-   * 收起时先留着播 180ms 高度过渡，播完再卸载，避免隐藏时白养一棵子树。
-   */
   const [showBody, setShowBody] = useState(open);
   useEffect(() => {
     if (open) {
@@ -445,119 +393,234 @@ function StepRow({
     const timer = setTimeout(() => setShowBody(false), FOLD_MS);
     return () => clearTimeout(timer);
   }, [open]);
-  const Icon = iconOf(item.toolName);
-  const detail = item.kind === 'tool' ? detailOf(item, t) : null;
-  // A96：文件类工具优先给行级 diff。没有 diff 数据（read / delete / 未知工具）
-  // 时返回 null，这里自动退回原来的明细渲染 —— 两条路互斥，不会重复显示。
-  const hunks = useMemo(
-    () =>
-      item.kind === 'tool' && item.block ? buildDiffHunks(item.toolName, item.block.input) : null,
-    [item.kind, item.toolName, item.block]
-  );
-  const hasDetail = hunks != null || detail != null || !!item.block?.output;
-  const canToggle = hasDetail && !critical;
 
-  const meta =
-    item.status === 'running'
-      ? t('chat.trace.executing')
-      : item.status === 'interrupted'
-        ? // 与「失败」分开说：失败是确定的坏消息，未回传可能还在后台跑
-          t('chat.trace.noResult')
-        : item.status === 'error'
-          ? t('chat.trace.failed')
-          : // F3：< 3s 不显示。状态词（执行中 / 失败 / 未回传）照旧常驻，
-            // 只有「耗时」这一档受预算约束 —— 短步骤的 1.2s 是纯噪音，
-            // 长步骤的耗时才是「为什么慢」的线索。
-            item.durationMs != null && item.durationMs >= STEP_DURATION_VISIBLE_MS
-            ? formatStepDuration(item.durationMs) ?? ''
-            : '';
+  const isThink = item.kind === 'thinking';
+  const redacted = isThink && !!item.thinking?.redacted;
+  const Icon = isThink ? Brain : iconOf(item.toolName);
+  const verb = VERB_KEY[item.verb] ? t(VERB_KEY[item.verb]) : item.verb;
+  const mono = !isThink && SHELL_TOOL_NAMES.has(String(item.toolName).toLowerCase());
+
+  // 明细是否存在：思考行永远有全文；工具行看 diff / detail / 输出
+  const hunks = useMemo(
+    () => (!isThink && item.block ? buildDiffHunks(item.toolName, item.block.input) : null),
+    [isThink, item]
+  );
+  const detail = !isThink ? detailOf(item, t) : null;
+  const thinkText = item.thinking;
+  const hasDetail = isThink ? !!(thinkText && !thinkText.redacted) : hunks != null || detail != null || !!item.block?.output;
+  const canToggle = hasDetail;
+
+  /**
+   * 行内单行内容：运行中 = 实时尾部（最新内容）；完成后 =
+   * 命令/查询/URL/文件名本身（正在干什么优先于抽象 target）。
+   */
+  const tail = running
+    ? isThink
+      ? tailOf(thinkText?.text)
+      : tailOf(item.block?.output) || tailOf(primaryInputOf(item.block?.input), 56)
+    : '';
+  const summary = !running
+    ? isThink
+      ? (thinkText?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)
+      : summaryOf(item)
+    : '';
+
+  // 右侧列：运行中 = 该行已跑秒数（逐秒跳动）；完成 = 真实耗时；
+  // error/interrupted = 状态词（与耗时互斥——失败行给原因不给时长）。
+  let meta: string;
+  if (redacted) {
+    // 被厂商隐去的思考：没有正文可数，字数与秒数都省（v1 同口径）
+    meta = '';
+  } else if (running) {
+    const live = seenAt > 0 ? Math.max(1, Math.round((Date.now() - seenAt) / 1000)) : 0;
+    meta = formatStepDuration(live * 1000) ?? t('chat.trace.executing');
+  } else if (item.status === 'error') {
+    meta = t('chat.trace.failed');
+  } else if (item.status === 'interrupted') {
+    meta = t('chat.trace.noResult');
+  } else {
+    meta = formatStepDuration(item.durationMs) ?? '';
+  }
+
   const stepState =
-    item.status === 'running'
-      ? 'running'
-      : item.status === 'error'
-        ? 'error'
-        : item.status === 'interrupted'
-          ? 'interrupted'
-          : 'done';
+    item.status === 'running' ? 'running' : item.status === 'error' ? 'error' : item.status === 'interrupted' ? 'interrupted' : 'done';
 
   return (
     <div
-      className={`tc-step is-${stepState}`}
-      data-tool-step={item.id}
+      className={`tcv2-step is-${stepState}${insideGroup ? ' in-group' : ''}`}
+      data-tool-step={!isThink ? item.id : undefined}
+      data-trace-thinking={isThink ? item.id : undefined}
+      data-redacted={redacted ? '1' : undefined}
       data-trace-verb={item.verb}
       data-trace-completion={item.completion}
       data-trace-critical={item.criticalReason}
+      data-expanded={canToggle ? (open ? '1' : '0') : undefined}
     >
-      <span className="tc-step-dot" aria-hidden="true" />
-      <div
-        className="tc-step-head"
-        data-clickable={canToggle ? '1' : undefined}
-        data-expanded={canToggle ? (open ? '1' : '0') : undefined}
-        onClick={canToggle ? () => setOpen(v => !v) : undefined}
-        role={canToggle ? 'button' : undefined}
-        tabIndex={canToggle ? 0 : undefined}
-        aria-expanded={canToggle ? open : undefined}
-        onKeyDown={
-          canToggle
-            ? e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  setOpen(v => !v);
+      <div className={`tcv2-row is-${stepState}`}>
+        {canToggle && (
+          <ChevronRight size={13} className="tcv2-chev" aria-hidden="true" />
+        )}
+        <Icon size={15} className="tcv2-ic" aria-hidden="true" />
+        <div
+          className="tcv2-rowhead"
+          data-clickable={canToggle ? '1' : undefined}
+          data-expanded={canToggle ? (open ? '1' : '0') : undefined}
+          onClick={canToggle ? onToggle : undefined}
+          role={canToggle ? 'button' : undefined}
+          tabIndex={canToggle ? 0 : undefined}
+          aria-expanded={canToggle ? open : undefined}
+          onKeyDown={
+            canToggle
+              ? e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onToggle();
+                  }
                 }
-              }
-            : undefined
-        }
-        title={critical ? t(CRITICAL_TITLE_KEY[item.criticalReason ?? ''] ?? 'chat.trace.critical') : item.path}
-      >
-        <Icon size={14} style={{ color: 'var(--td-text-color-secondary)', flexShrink: 0 }} />
-        <span className="tc-trace-verb">{VERB_KEY[item.verb] ? t(VERB_KEY[item.verb]) : item.verb}</span>
-        {item.target && <span className="tc-trace-target">{TARGET_KEY[item.target] ? t(TARGET_KEY[item.target]) : item.target}</span>}
+              : undefined
+          }
+          title={
+            critical
+              ? t(CRITICAL_TITLE_KEY[item.criticalReason ?? ''] ?? 'chat.trace.critical')
+              : isThink
+                ? undefined
+                : item.path
+          }
+        >
+        <span className={`tcv2-verb${running ? ' opc-sweep-text' : ''}`}>
+          {redacted ? t('chat.trace.redacted') : isThink && running ? t('chat.trace.thinkingLive') : verb}
+        </span>
+        {tail ? (
+          <span className={`tcv2-line${mono ? ' mono' : ''}`} data-trace-tail>
+            {tail}
+            <span className="opc-caret" aria-hidden="true" />
+          </span>
+        ) : redacted ? (
+          <span className="tcv2-line">{t('chat.trace.redactedReason')}</span>
+        ) : (
+          summary && (
+            <span className={`tcv2-line${mono ? ' mono' : ''}`}>
+              {summary}
+            </span>
+          )
+        )}
         {item.diff && <DiffTag diff={item.diff} />}
         {critical && (
-          // F2：不再写「常驻」两个字 —— 一个 7px 方块 + 左侧 3px 竖条
-          // 就够表达「这一步不会跟着收起」。文字退场的理由是：它占的宽度
-          // 比它承载的信息多，而且每行都写一遍，读起来像标签墙。
+          // F2：7px 方块 + 左侧竖条就够表达「这一步值得回看」。
           <span className="tc-trace-pin" data-trace-pin={item.criticalReason} aria-hidden="true" />
         )}
-        {/* A100：事件来源标签。**只标纯文本解析那一种** —— 原生 / 结构化
-            输出是绝大多数，逐条标出来反而把轨迹刷满噪音；而「解析出来的」
-            是少数且可信度低一档，值得让人一眼看见。
-            A102：标签挪到耗时**前面**，并且不再复用 `.tc-trace-meta`。
-            那个类带 `margin-left:auto`，两个自动边距会把行内剩余空间对半
-            分，耗时从此贴不到右缘（实测同轮 600ms 停在 x=915，别行 200ms
-            在 x=1284）。现在只有耗时带 auto，每行右缘一致。 */}
         {item.kind === 'tool' && item.block?.source === 'parsed_text' && (
-          <span
-            className="tc-trace-src"
-            data-trace-source="parsed_text"
-            title={t('chat.trace.parsedTitle')}
-          >
+          <span className="tc-trace-src" data-trace-source="parsed_text" title={t('chat.trace.parsedTitle')}>
             {t('chat.trace.parsedBadge')}
           </span>
         )}
         {meta && (
-          <span className="tc-trace-meta" data-trace-status={item.status}>
+          <span className={`tc-trace-meta tcv2-chip${running ? ' opc-sweep-soft' : ''}`} data-trace-status={item.status}>
             {meta}
           </span>
         )}
+        </div>
       </div>
       {showBody && (
-        <div className="tc-step-body" data-step-body data-open={open ? '1' : '0'}>
-          <div className="tc-step-body-inner">
-            {hunks ? <DiffView hunks={hunks} /> : detail}
-            <OutputBox
-              label={t('chat.trace.output')}
-              text={item.block?.output ?? ''}
-              running={item.status === 'running'}
-              isError={item.status === 'error'}
-            />
+        <div className="tc-step-body tcv2-body" data-step-body data-open={open ? '1' : '0'}>
+          <div className="tc-step-body-inner tcv2-detail">
+            {isThink ? (
+              thinkText && !thinkText.redacted ? (
+                <>
+                  <div className="tcv2-dlabel">
+                    <span>{t('chat.trace.thinkingFull')}</span>
+                    <span className="tcv2-dhint">{t('chat.thinking.chars', { n: thinkText.text.length })}</span>
+                  </div>
+                  <pre className="tcv2-pre tcv2-think-full">{thinkText.text}</pre>
+                </>
+              ) : null
+            ) : (
+              <>
+                {hunks ? <DiffView hunks={hunks} /> : detail}
+                <OutputBox
+                  text={item.block?.output ?? ''}
+                  running={item.status === 'running'}
+                  isError={item.status === 'error'}
+                />
+              </>
+            )}
           </div>
         </div>
       )}
-      {item.nested.length > 0 && (
-        <div className="tc-trace-nest">
-          {item.nested.map(n => (
-            <ThinkingNode key={n.id} item={n} collapse={collapse} />
+    </div>
+  );
+}
+
+/** tick 只负责触发重渲染；真实时间一律 Date.now() 现取，不累计漂移。
+ *  （已并入调用点：行/组的运行中耗时直接 Date.now() 现算。） */
+
+/** 组头（连续同类型步骤合并，一期形态）：`[箭头][图标][类型][N 次][累计耗时]` */
+function GroupBlock({
+  group,
+  open,
+  onToggle,
+  openIds,
+  toggleRow,
+  seenAtOf,
+}: {
+  group: TraceGroup;
+  open: boolean;
+  onToggle: () => void;
+  openIds: ReadonlySet<string>;
+  toggleRow: (id: string) => void;
+  seenAtOf: (id: string) => number;
+}) {
+  const { t } = useTranslation();
+  const Icon = iconOf(group.items[0]?.toolName ?? '');
+  const verb = VERB_KEY[group.verb] ? t(VERB_KEY[group.verb]) : group.verb;
+  // 累计耗时：完成步用真实 duration；运行中的成员按 seenAt 现算
+  const total =
+    group.items.reduce((sum, it) => {
+      if (it.status === 'running') {
+        const seen = seenAtOf(it.id);
+        return sum + (seen > 0 ? Date.now() - seen : 0);
+      }
+      return sum + (it.durationMs ?? 0);
+    }, 0) || undefined;
+
+  return (
+    <div className={`tcv2-group${group.running ? ' is-running' : ''}`} data-trace-group={group.id} data-trace-group-running={group.running ? '1' : undefined}>
+      <div
+        className="tcv2-gh"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={onToggle}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+      >
+        <ChevronRight size={13} className="tcv2-chev" aria-hidden="true" />
+        <Icon size={15} className="tcv2-ic" aria-hidden="true" />
+        <span className={`tcv2-verb${group.running ? ' opc-sweep-text' : ''}`}>{verb}</span>
+        <span className={`tcv2-line${group.running ? ' opc-sweep-soft' : ''}`}>
+          {group.running ? t('chat.trace.executing') : t('chat.trace.groupRuns', { n: group.items.length })}
+        </span>
+        {total != null && (
+          <span className={`tc-trace-meta tcv2-chip${group.running ? ' opc-sweep-soft' : ''}`}>
+            {formatStepDuration(total) ?? ''}
+          </span>
+        )}
+      </div>
+      {open && (
+        <div className="tcv2-gbody">
+          {group.items.map(it => (
+            <StepRow
+              key={it.id}
+              item={it}
+              open={openIds.has(it.id)}
+              onToggle={() => toggleRow(it.id)}
+              insideGroup
+              seenAt={seenAtOf(it.id)}
+            />
           ))}
         </div>
       )}
@@ -565,25 +628,87 @@ function StepRow({
   );
 }
 
+/** 连续同类型步骤的组（一期形态，用户拍板） */
+interface TraceGroup {
+  id: string;
+  verb: string;
+  items: ResolvedTraceItem[];
+  running: boolean;
+}
+
+/** 展开段：旁白 / 单行 / 组 */
+type Segment =
+  | { kind: 'narration'; id: string; text: string }
+  | { kind: 'row'; row: ResolvedTraceItem }
+  | { kind: 'group'; group: TraceGroup };
+
+/**
+ * 扁平化 + 分组：
+ * 1. 旧形态里思考会缩进挂在工具下（item.nested）——v2 全部拉平成兄弟行，
+ *    顺序 = 工具行紧跟它的思考行；嵌套思考同样过一遍 fold 的完成判定
+ *    （它们此前是未解析的裸 TraceItem）；
+ * 2. 相邻且动词相同的步骤合并成组（思考/旁白插队即断组）；
+ * 3. 单行成组没有意义：只有 ≥2 行才包组。
+ */
+function buildSegments(rows: readonly TraceRow[], opts: ResolveTraceOptions): Segment[] {
+  // 先拉平
+  const flat: TraceRow[] = [];
+  for (const row of rows) {
+    if (isNarration(row)) {
+      flat.push(row);
+      continue;
+    }
+    flat.push(row);
+    if (row.nested.length > 0) flat.push(...resolveTraceItems(row.nested, opts));
+  }
+
+  const segments: Segment[] = [];
+  let pending: ResolvedTraceItem[] = [];
+
+  const flushPending = () => {
+    if (pending.length === 0) return;
+    if (pending.length >= 2) {
+      const verb = pending[0]!.verb;
+      segments.push({
+        kind: 'group',
+        group: {
+          id: `${pending[0]!.id}:grp`,
+          verb,
+          items: pending,
+          running: pending.some(i => i.status === 'running'),
+        },
+      });
+    } else {
+      segments.push({ kind: 'row', row: pending[0]! });
+    }
+    pending = [];
+  };
+
+  for (const row of flat) {
+    if (isNarration(row)) {
+      flushPending();
+      segments.push({ kind: 'narration', id: row.id, text: row.text });
+      continue;
+    }
+    if (pending.length > 0 && pending[0]!.verb !== row.verb) flushPending();
+    pending.push(row);
+  }
+  flushPending();
+  return segments;
+}
+
 export interface AgentTraceProps {
   /** 一条轨迹段：连续的「工具 / 思考」块 */
   blocks: readonly Block[];
-  /** 这一轮是否还在流式（决定默认展开 + 自动贴底） */
+  /** 这一轮是否还在流式（决定活跃行的动态与自动贴底） */
   isStreaming?: boolean;
-  /** 这条消息已经有正文：收起轨迹，把版面让给答案（既定口径） */
+  /** 正文已开始 / 本轮已结束：收纳线自动折叠的信号（见组件内自动开合） */
   collapse?: boolean;
 }
 
 export function AgentTrace({ blocks, isStreaming = false, collapse = false }: AgentTraceProps) {
-  const { t } = useTranslation();
-  /**
-   * 生产口径的完成判定（见 src/trace/fold.ts）：
-   * 真实结束事件优先；缺失时才用「下一条事件」兜底；没有后续事件的
-   * 长耗时步骤保持 running，本轮结束仍无结束事件的标为 missing。
-   *
-   * 行序列同时包含旁白（text 块）：它们是过程的一部分，跟着轨迹一起
-   * 收拢/展开，不再落在轨迹外面把答案往下推。
-   */
+  const { t, locale } = useTranslation();
+
   const rows = useMemo(
     () =>
       buildTraceRows(blocks, {
@@ -592,131 +717,143 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
       }),
     [blocks, isStreaming, collapse]
   );
+  const segments = useMemo(() => buildSegments(rows, { streaming: !!isStreaming, contentStarted: !!collapse }), [rows, isStreaming, collapse]);
   const steps = useMemo(() => stepRows(rows), [rows]);
   const summary = useMemo(() => summarizeTrace(steps), [steps]);
+  const totalMs = steps.reduce((s, i) => s + (i.durationMs ?? 0), 0);
+  const unreturned = hasUnreturnedResult(steps);
+  const running = rows.some(i => !isNarration(i) && i.status === 'running');
 
-  // 既定口径：完成态默认收起；流式中默认展开。
-  // 例外：正文**已经出现之后**才挂载的轨迹段（`collapse` 为真）属于答案
-  // 下方的后置工具，按辅助信息处理 —— 直接收着挂上来，不再展开一次
-  // 再收一次。手动切过之后不再自动干预（否则用户刚展开就被「跑完」那一刻关掉）。
-  const [expanded, setExpanded] = useState(!!isStreaming && !collapse);
-  const touched = useRef(false);
-  const prevStreaming = useRef(!!isStreaming);
-  /** 正文是否已经开始（一旦成立就保持；后续工具到达只是临时展开） */
-  const contentStartedRef = useRef(!!collapse);
-  /** 上一次因正文收拢时的步骤数：之后的步骤才算「新事件」 */
-  const foldedAtRef = useRef(0);
-  const [foldReason, setFoldReason] = useState<'content' | 'done' | 'manual' | null>(null);
-  const prevCollapse = useRef(!!collapse);
+  // ── 阶段条：扁平步骤 → 连续阶段段（纯函数；历史消息与流式同一套派生） ──
+  const phases = useMemo(() => groupPhases(steps), [steps]);
 
-  useEffect(() => {
-    const wasStreaming = prevStreaming.current;
-    prevStreaming.current = !!isStreaming;
-
-    // 本轮结束：完成态收起（手动展开/收起过就尊重手动，不再自动干预）
-    if (wasStreaming && !isStreaming) {
-      if (
-        shouldAutoFoldOnTurnEnd({
-          wasStreaming,
-          streaming: !!isStreaming,
-          manual: touched.current,
-        })
-      ) {
-        setExpanded(false);
-        setFoldReason('done');
+  /** 图例开合：本地偏好（默认展开 = 参考稿形态），跨消息共享一个开关 */
+  const [legendOpen, setLegendOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(LEGEND_PREF_KEY) !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const toggleLegend = () => {
+    setLegendOpen(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem(LEGEND_PREF_KEY, next ? '1' : '0');
+      } catch {
+        /* 存不下就算了：本次会话内仍然生效，只是重启后回到默认 */
       }
-      return;
-    }
-    if (!isStreaming) return;
-
-    const wasCollapse = prevCollapse.current;
-    prevCollapse.current = !!collapse;
-
-    // collapse 只在「最后一个工具之后出现非空正文」时为真 ——
-    // 它就是用户要的「首个正文内容 token」，不是思考 token / 工具 token。
-    // 每次它由假变真都收拢一次：正文恢复输出后，过程重新让位。
-    if (collapse && !wasCollapse) {
-      contentStartedRef.current = true;
-      foldedAtRef.current = rows.length;
-      if (!touched.current) {
-        setExpanded(false);
-        setFoldReason('content');
-      }
-      return;
-    }
-
-    // 正文之后又来了工具事件：新锚点下 `collapse` 不再回落，这段轨迹保持收起。
-    // A2：这里**不再**自动展开。旧逻辑是本段真的多了行就重开，但在
-    // think/tool/answer 交错的回合里，这个「重开 → 正文再出现 → 收拢」
-    // 会反复发生，每次都是 200ms、数百像素的高度变化，且正好覆盖正文
-    // 流式输出的全过程。新步骤不再占用版面：摘要条的步数会增长，
-    // 运行中另有「执行中」标记（见 barLabel 下方），用户点一下仍可展开。
-    // 手动展开过（touched）的由用户自己控制，不在此列。
-  }, [collapse, isStreaming, rows.length]);
-
-  /**
-   * A2：收拢之后不再因为新步骤自动展开，只补一次「收尾」收拢。
-   *
-   * 本条效应原来负责两件事：有新步骤就跑出来展开；这些步骤后面没有正文
-   * 时再收起。第一次是流式期间高度来回的主因（think/tool/answer 交错时
-   * 反复触发，每次 200ms、数百像素）。现在展开只由用户点击触发，这里
-   * 仅在「正文已经在这批步骤之后、且它们都结束」时把版面收回去。
-   */
-  useEffect(() => {
-    if (!isStreaming || touched.current || !contentStartedRef.current) return;
-    const fresh = rows.slice(foldedAtRef.current);
-    if (fresh.length === 0) return;
-    if (collapse && fresh.every(i => isNarration(i) || i.status !== 'running')) {
-      setExpanded(false);
-      setFoldReason('content');
-    }
-  }, [rows, isStreaming, collapse]);
-
-  /**
-   * 折叠动画要「先挂住再卸」。
-   *
-   * 直接 `expanded && <div>` 会让 300px 高的轨迹在一帧内消失，答案猛地往上跳；
-   * 一直挂在 DOM 里又会让收起态白养一棵子树（`verify-a36` 明着断言
-   * 「收起时步骤不渲染」）。所以：收起时先留着播 220ms 过渡，播完再卸载。
-   */
-  const [showBody, setShowBody] = useState(expanded);
-  useEffect(() => {
-    if (expanded) {
-      setShowBody(true);
-      return;
-    }
-    const timer = setTimeout(() => setShowBody(false), FOLD_MS);
-    return () => clearTimeout(timer);
-  }, [expanded]);
-
-  const toggle = () => {
-    touched.current = true;
-    const next = !expanded;
-    setExpanded(next);
-    setFoldReason(next ? null : 'manual');
+      return next;
+    });
   };
 
-  const running = rows.some(i => !isNarration(i) && i.status === 'running');
-  const stepCount = steps.filter(i => i.kind === 'tool').length;
-  // S1-2：总耗时只保留头部那一个（「已处理 32 秒」）。摘要条不再重复展示
-  // 工具耗时；totalMs 若将来要在别处呈现，计算仍在此处（埋点不动）。
-  const totalMs = steps.reduce((s, i) => s + (i.durationMs ?? 0), 0);
-  /** 收拢后摘要条要能交代「最后一步没等到结果」 */
-  const unreturned = hasUnreturnedResult(steps);
+  /** 明细开合的唯一事实源（行点击都写这里） */
+  const [openIds, setOpenIds] = useState<ReadonlySet<string>>(new Set());
+  const toggleRow = (id: string) => {
+    setOpenIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
-  // 渐隐遮罩：只有真的溢出时才淡出，否则短轨迹末尾会莫名其妙变虚
+  /**
+   * 收纳线开合。
+   *
+   * 自动规则（用户定版）：
+   *   · 执行中（isStreaming 且正文未开始）→ 展开，跟随滚动；
+   *   · 正文开始输出（collapse 翻真）→ 立即折叠，且**不再自动展开**；
+   *   · 回合结束 → 折叠。
+   * 手动点开允许（拍板「可以点开」）：手动操作写入 userOverride，自动规则
+   * 在流式期间不再覆盖它；回合结束强制回折叠默认态。
+   */
+  const [open, setOpen] = useState<boolean>(!!isStreaming && !collapse);
+  const [userOverride, setUserOverride] = useState<boolean | null>(null);
+  /** 回合结束强制回折叠默认态（只在 流式→结束 的沿上生效，不盯 override） */
+  const wasStreamingRef = useRef(isStreaming);
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming) {
+      setUserOverride(null);
+      setOpen(false);
+    }
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+  /** 流式期间：正文开始 → 自动收；手动点过则尊重手动（拍板「可以点开」） */
+  useEffect(() => {
+    if (!isStreaming) return;
+    if (userOverride !== null) return;
+    setOpen(!collapse);
+  }, [isStreaming, collapse, userOverride]);
+  const toggleOpen = () => {
+    setUserOverride(open ? false : true);
+    setOpen(prev => !prev);
+  };
+
+  /**
+   * 「已工作」墙钟：第一个块 startedAt →（流式中）now /（结束）最后一个块
+   * endedAt。历史消息没有 live 时钟，直接用真实时间戳算 —— 刷新后定格
+   * 数字不变。流式中每秒重渲染一次让秒数跳动；因此这里**刻意不用
+   * useMemo** —— 每次渲染现算，秒跳才可见。
+   */
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!isStreaming) return;
+    const iv = setInterval(() => setTick(n => n + 1), 1000);
+    return () => clearInterval(iv);
+  }, [isStreaming]);
+
+  const computeElapsedMs = (): number => {
+    let start = Infinity;
+    let end = 0;
+    for (const b of blocks) {
+      if (b.type !== 'tool' && b.type !== 'thinking') continue;
+      const s = (b as { startedAt?: number }).startedAt ?? 0;
+      const e = (b as { endedAt?: number }).endedAt ?? 0;
+      if (s > 0) start = Math.min(start, s);
+      if (e > 0) end = Math.max(end, e);
+    }
+    if (!Number.isFinite(start)) return totalMs;
+    // 流式中 = 到现在为止；结束 = 真实墙钟（没有 endedAt 的轮退回 totalMs）
+    if (isStreaming) return Math.max(0, Date.now() - start);
+    return end > start ? end - start : totalMs;
+  };
+  const elapsedMs = computeElapsedMs();
+
+  /** 行首见时间：运行中行的秒数从这里起算（真实 duration 要等结束事件） */
+  const seenAtRef = useRef<Map<string, number>>(new Map());
+  const seenAtOf = (id: string): number => seenAtRef.current.get(id) ?? 0;
+  useEffect(() => {
+    const now = Date.now();
+    for (const row of rows) {
+      if (isNarration(row)) continue;
+      if (!seenAtRef.current.has(row.id)) seenAtRef.current.set(row.id, now);
+      for (const n of row.nested) {
+        if (!seenAtRef.current.has(n.id)) seenAtRef.current.set(n.id, now);
+      }
+    }
+  }, [rows]);
+
+  /** 组开合：运行中的组自动展开（跟随）；用户点过组头则尊重用户 */
+  const [groupOverride, setGroupOverride] = useState<Record<string, boolean>>({});
+  const toggleGroup = (id: string) => {
+    setGroupOverride(prev => ({ ...prev, [id]: !(prev[id] ?? false) }));
+  };
+  const groupOpen = (g: TraceGroup): boolean => {
+    const o = groupOverride[g.id];
+    if (o !== undefined) return o;
+    return g.running;
+  };
+
+  // 渐隐遮罩：只有真的溢出时才淡出
   const { ref: scrollRef, el: scrollEl, overflowing } = useOverflowY<HTMLDivElement>();
 
   /**
-   * 流式中贴底：新步骤永远在末尾，不贴底就看不到它。
-   *
-   * 不能只拍一次：新步骤的明细有 180ms 高度动画，拍第一帧时它还没长出来，
-   * 等到动画结束又没有依赖变化可触发 —— 结果就是「当前步被顶到折叠线以下」。
-   * F4：预算按**时间**给（PIN_BUDGET_MS = 340ms），不再数帧 —— 见常量注释。
-   * 依赖用 `items`（而不是 `items.length`），输出持续追加时也会重新贴底。
+   * 流式中贴底：新步骤永远在末尾。F4 预算按时间给（340ms），
+   * 依赖用 segments —— 组开合 / 行追加都会重新贴底。
    */
   useEffect(() => {
-    if (!running || !expanded || !scrollEl) return;
+    if (!running || !open || !scrollEl) return;
     let raf = 0;
     let stopped = false;
     const startedAt = performance.now();
@@ -731,89 +868,175 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
       stopped = true;
       cancelAnimationFrame(raf);
     };
-  }, [running, expanded, showBody, rows, scrollEl]);
+  }, [running, open, segments, scrollEl]);
 
   if (rows.length === 0) return null;
 
-  /**
-   * 汇总行文案。
-   *
-   * 刻意**不**在运行中替换成「执行中…」：那句话把最有信息量的东西（干了什么）
-   * 盖掉了。文字始终是摘要 —— 流式过程中它随新步骤不断变化，本身就是「在动」
-   * 的证据；运行态另有 StreamStatus 的呼吸灯表达。
-   */
-  const barLabel = summaryText(summary, t) || (expanded ? t('chat.trace.collapse') : t('chat.trace.viewSteps'));
   const showTotalDiff = summary.diff.added > 0 || summary.diff.removed > 0;
+  const stepCount = steps.filter(i => i.kind === 'tool').length;
+  const worked = formatHandledDurationText(elapsedMs, (locale ?? 'zh') as Locale);
 
-  /**
-   * 收拢原因：content = 首个正文 token 到达；done = 本轮结束；
-   * manual = 用户自己收的。摘要条始终保留，点击即可展开 —— 这就是「展开出口」。
-   */
-  const foldedReason = expanded ? null : (foldReason ?? (isStreaming ? 'content' : 'done'));
-  const foldTitle =
-    foldedReason === 'content'
-      ? t('chat.trace.foldContent')
-      : foldedReason === 'manual'
-        ? t('chat.trace.foldManual')
-        : foldedReason === 'done'
-          ? t('chat.trace.foldDone')
-          : undefined;
+  // ── 阶段条的几何 ────────────────────────────────────────────────
+  // 有真实时间戳：按毫秒占比摆段（left/width 百分比）；段尾没回结果时窗口
+  // 延伸到「现在」（流式中每秒重渲染，秒跳由既有 tick 驱动）。
+  // 全无时间戳（legacyToBlocks 的老数据）：按段内步数等宽——顺序仍是事实，
+  // 编不出时间就不编。窄段保底 1.5%，保证一闪而过的验证也能被看见。
+  interface PhaseSeg extends FlowPhase {
+    left: number;
+    width: number;
+    /** 只有流式进行中且段未收尾才脉动；历史消息一律静止 */
+    live: boolean;
+  }
+  const phaseSegments: PhaseSeg[] = (() => {
+    const timed = phases.some(p => (p.startMs ?? 0) > 0);
+    if (!timed) {
+      const totalSteps = phases.reduce((s, p) => s + p.steps, 0) || 1;
+      let acc = 0;
+      return phases.map(p => {
+        const width = (p.steps / totalSteps) * 100;
+        const seg: PhaseSeg = { ...p, left: acc, width, live: false };
+        acc += width;
+        return seg;
+      });
+    }
+    const starts = phases.filter(p => (p.startMs ?? 0) > 0).map(p => p.startMs!) as number[];
+    const winStart = Math.min(...starts);
+    const maxEnd = Math.max(...phases.map(p => p.endMs ?? 0), winStart);
+    const hasOpen = phases.some(p => p.endMs === undefined);
+    const winEnd = hasOpen && isStreaming ? Date.now() : Math.max(maxEnd, winStart);
+    const span = Math.max(winEnd - winStart, 1);
+    return phases.map(p => {
+      const s = p.startMs ?? winStart;
+      const e = p.endMs ?? winEnd;
+      const left = Math.min(((s - winStart) / span) * 100, 98.5);
+      const width = Math.min(Math.max(((e - s) / span) * 100, 1.5), 100 - left);
+      return { ...p, left, width, live: isStreaming && p.endMs === undefined };
+    });
+  })();
+
+  // ── 状态胶囊：运行工具 → 思考中 → 输出中 → 已结束（如实给结论） ──
+  const runningTool = [...steps].reverse().find(i => i.kind === 'tool' && i.status === 'running');
+  const runningThink = !runningTool && steps.some(i => i.kind === 'thinking' && i.status === 'running');
+  const pill = (() => {
+    if (runningTool) {
+      const verbRaw = runningTool.verb;
+      const verbKey = PILL_VERB_KEY[verbRaw];
+      const verb = verbKey ? t(verbKey) : verbRaw;
+      const target = summaryOf(runningTool);
+      // 实时秒（用户口径）：块 startedAt → now 现算；老数据没有时间戳，
+      // 退回本行首次被看到的时刻（seenAt），再没有就不显示秒。
+      const startedAt = runningTool.block?.startedAt ?? 0;
+      const seen = seenAtOf(runningTool.id);
+      const liveMs = startedAt > 0 ? Date.now() - startedAt : seen > 0 ? Date.now() - seen : 0;
+      const secs = formatStepDuration(liveMs);
+      const prefix = t('chat.trace.pill.doingPrefix');
+      return {
+        state: 'tool' as const,
+        tone: 'running' as const,
+        text: `${prefix}${verb}${target ? ` ${target}` : ''}${secs ? ` · ${secs}` : ''}`,
+      };
+    }
+    if (runningThink) {
+      return { state: 'thinking' as const, tone: 'running' as const, text: t('chat.trace.thinkingLive') };
+    }
+    if (isStreaming && collapse) {
+      return { state: 'answering' as const, tone: 'running' as const, text: t('chat.trace.pill.answering') };
+    }
+    if (isStreaming) {
+      return { state: 'waiting' as const, tone: 'running' as const, text: t('chat.trace.executing') };
+    }
+    // 已结束：胶囊如实给结论——重试口径在这里与「已工作」收纳线互补。
+    if (unreturned) {
+      return { state: 'unreturned' as const, tone: 'interrupted' as const, text: t('chat.trace.noResult') };
+    }
+    if (summary.outcome === 'error') {
+      return {
+        state: 'failed' as const,
+        tone: 'error' as const,
+        text: worked ? `${t('chat.trace.outcome.error')} · ${t('chat.trace.pill.elapsed', { n: worked })}` : t('chat.trace.outcome.error'),
+      };
+    }
+    const retried = summary.retries > 0;
+    const doneWord = retried
+      ? t('chat.trace.outcome.okRetried', { n: summary.retries })
+      : t('chat.trace.pill.done');
+    return {
+      state: retried ? ('retried' as const) : ('done' as const),
+      tone: 'ok' as const,
+      text: worked ? `${doneWord} · ${t('chat.trace.pill.elapsed', { n: worked })}` : doneWord,
+    };
+  })();
 
   return (
-    <div className="tc-trace" data-trace data-trace-state={running ? 'running' : 'done'}>
+    <div className="tc-trace tcv2-shell" data-trace data-trace-state={running ? 'running' : 'done'}>
+      {stepCount > 0 && phases.length > 0 && (
+        <div className="tcv2-phase" data-trace-phases>
+          <div className="tcv2-phase-bar-row">
+            {/* 阶段条：纯几何图形，语义交给下面的图例行与胶囊（aria-hidden） */}
+            <div className="tcv2-phase-bar" aria-hidden="true">
+              {phaseSegments.map((p, i) => (
+                <i
+                  key={`${p.kind}:${i}`}
+                  className={`tcv2-phase-seg is-${p.kind}${p.failed ? ' is-failed' : ''}${p.live ? ' is-live' : ''}`}
+                  data-phase-segment={p.kind}
+                  data-phase-failed={p.failed ? '1' : undefined}
+                  style={{ left: `${p.left}%`, width: `${p.width}%` }}
+                />
+              ))}
+            </div>
+            <button
+              type="button"
+              className="tcv2-phase-toggle"
+              data-phase-toggle
+              aria-expanded={legendOpen}
+              aria-label={t('chat.trace.phase.legend')}
+              title={t('chat.trace.phase.legend')}
+              onClick={toggleLegend}
+            >
+              <ChevronRight size={13} className={`tcv2-chev${legendOpen ? ' open' : ''}`} aria-hidden="true" />
+            </button>
+          </div>
+          {legendOpen && (
+            <div className="tcv2-phase-legend" data-phase-legend>
+              {PHASE_LEGEND_ORDER.map(it => (
+                <span key={it.kind} className="tcv2-phase-legend-item">
+                  <i className={`tcv2-phase-dot is-${it.kind}`} aria-hidden="true" />
+                  {t(it.key)}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="tcv2-pill-row">
+            <span className="tcv2-pill" data-trace-pill={pill.state}>
+              <i className={`tcv2-pill-dot is-${pill.tone}`} aria-hidden="true" />
+              <span aria-live="polite">{pill.text}</span>
+            </span>
+          </div>
+        </div>
+      )}
       <div
-        className="tc-steps-bar"
+        className="tc-steps-bar tcv2-collapser"
         data-steps-bar
-        data-trace-fold-reason={foldedReason ?? undefined}
         role="button"
         tabIndex={0}
-        aria-expanded={expanded}
-        title={foldTitle}
-        onClick={toggle}
+        aria-expanded={open}
+        title={t('chat.trace.viewSteps')}
+        onClick={toggleOpen}
         onKeyDown={e => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            toggle();
+            toggleOpen();
           }
         }}
       >
-        {/* 2026-10-30 改版：行首不再摆状态图标三件套
-            （绿勾/红叉/脉冲点），chevron 紧跟摘要文案之后而不是钉在行尾 ——
-            这一行读起来是「干了什么 ⌄」，状态由步骤行各自表达。 */}
-        <span className="tc-trace-summary" data-trace-summary title={summaryText(summary, t)}>
-          {barLabel}
+        <ChevronRight size={14} className={`tcv2-chev${open ? ' open' : ''}`} aria-hidden="true" />
+        <span className="tcv2-worked" data-trace-elapsed={elapsedMs}>
+          {worked ? t('chat.trace.worked', { n: worked }) : t('chat.trace.worked', { n: '0 秒' })}
         </span>
-        <span className="tc-trace-count" data-trace-count>
-          {t('chat.trace.stepsCount', { n: stepCount })}
-        </span>
-        {/* 收拢态才提示：展开时这一步的行尾已经有同名胶囊，不必重复 */}
-        {!expanded && unreturned && (
-          <span
-            className="tc-trace-unreturned"
-            data-trace-unreturned
-            title={t('chat.trace.unreturnedTitle')}
-          >
+        {unreturned && (
+          <span className="tc-trace-unreturned" data-trace-unreturned title={t('chat.trace.unreturnedTitle')}>
             {t('chat.trace.unreturned')}
           </span>
-        )}
-        {/* A2：收拢之后新步骤不再展开占版面，用一个独立标记说明「还在跑」。
-            刻意不动摘要文案本身 —— 那句话里的「干了什么」信息量最高，
-            盖掉它反而是退步。 */}
-        {!expanded && isStreaming && (
-          <span className="tc-trace-foldtag" data-trace-running>
-            {t('chat.trace.running')}
-          </span>
-        )}
-        {/* 首个正文 token 收拢时给一个可见出口；摘要条本身始终可点 */}
-        {foldedReason === 'content' && (
-          <span className="tc-trace-foldtag" data-trace-foldtag>
-            {t('chat.trace.folded')}
-          </span>
-        )}
-        {expanded ? (
-          <ChevronUp size={13} style={{ color: 'var(--td-text-color-placeholder)', flexShrink: 0 }} />
-        ) : (
-          <ChevronDown size={13} style={{ color: 'var(--td-text-color-placeholder)', flexShrink: 0 }} />
         )}
         {showTotalDiff && (
           <span className="tc-diff" data-diff-total={`+${summary.diff.added} -${summary.diff.removed}`}>
@@ -821,42 +1044,50 @@ export function AgentTrace({ blocks, isStreaming = false, collapse = false }: Ag
             <span className="tc-diff-del">-{summary.diff.removed}</span>
           </span>
         )}
-        {/* S1-2（审查报告）：「工具 20.0s」与头部「已处理 32 秒」两个耗时口径
-            并存，关系（包含/并列）读不出 —— 工具行的耗时只删**显示**，埋点
-            与 totalMs 的计算保留（下一行仍要靠它做归一），界面只留头部那一个
-            总耗时。 */}
+        {stepCount > 0 && <span className="tcv2-hint">{t('chat.trace.stepsCount', { n: stepCount })}</span>}
       </div>
 
-      {showBody && (
-        <div className="tc-trace-fold" data-trace-fold data-fold={expanded ? '1' : '0'}>
-          <div className="tc-trace-fold-inner">
-            <div
-              ref={scrollRef}
-              className="tc-trace-scroll tc-scroll-fade"
-              data-trace-scroll
-              data-fade={overflowing ? '1' : undefined}
-            >
-              <div className="tc-steps">
-                {rows.map(row =>
-                  isNarration(row) ? (
-                    <div key={row.id} className="tc-trace-solo">
-                      <p className="tc-trace-narration" data-trace-narration>
-                        {row.text}
-                      </p>
-                    </div>
-                  ) : row.kind === 'thinking' ? (
-                    <div key={row.id} className="tc-trace-solo">
-                      <ThinkingNode item={row} collapse={collapse} />
-                    </div>
-                  ) : (
-                    <StepRow key={row.id} item={row} collapse={collapse} />
-                  )
-                )}
-              </div>
-            </div>
-          </div>
+      {open && (
+        <div
+          ref={scrollRef}
+          className="tc-trace-scroll tc-scroll-fade tcv2-rows"
+          data-trace-scroll
+          data-fade={overflowing ? '1' : undefined}
+        >
+          {segments.map(seg => {
+            if (seg.kind === 'narration') {
+              return (
+                <p key={seg.id} className="tc-trace-narration" data-trace-narration>
+                  {seg.text}
+                </p>
+              );
+            }
+            if (seg.kind === 'row') {
+              return (
+                <StepRow
+                  key={seg.row.id}
+                  item={seg.row}
+                  open={openIds.has(seg.row.id)}
+                  onToggle={() => toggleRow(seg.row.id)}
+                  seenAt={seenAtOf(seg.row.id)}
+                />
+              );
+            }
+            return (
+              <GroupBlock
+                key={seg.group.id}
+                group={seg.group}
+                open={groupOpen(seg.group)}
+                onToggle={() => toggleGroup(seg.group.id)}
+                openIds={openIds}
+                toggleRow={toggleRow}
+                seenAtOf={seenAtOf}
+              />
+            );
+          })}
         </div>
       )}
+      {totalMs > 0 && <span data-trace-totalms hidden>{totalMs}</span>}
     </div>
   );
 }

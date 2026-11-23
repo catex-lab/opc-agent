@@ -43,6 +43,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
+import { resolveChromePath } from './lib/chrome.mjs';
 
 const ROOT = process.cwd();
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'opc-a222-'));
@@ -393,7 +394,7 @@ if (!FULL) {
 } else if (!fs.existsSync(path.join(DIST, 'index.html'))) {
   ok(false, '需要 dist/（先 npm run build），本层跳过');
 } else {
-  const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+  const CHROME = resolveChromePath();
   const MIME: Record<string, string> = {
     '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
     '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json',
