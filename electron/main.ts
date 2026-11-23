@@ -20,7 +20,8 @@
 import { app, BrowserWindow, screen, shell, nativeTheme, ipcMain, dialog, Tray, Menu, nativeImage, Notification } from 'electron';
 import { once } from 'node:events';
 import { join, isAbsolute } from 'node:path';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { loadPrefs } from '../server/preferences.js';
 import { decideCloseAction } from './close-policy.js';
@@ -429,6 +430,33 @@ function registerIpc() {
       platform: process.platform,
       arch: process.arch,
     };
+  });
+
+  // 关于页：打开随包分发的第三方许可清单。
+  //
+  // 为什么不让前端直接 openPath(app.asar/THIRD-PARTY-LICENSES.txt)：
+  // asar 是虚拟文件系统，fs 垫片读得到，但 shell.openPath 交给系统后
+  // 系统不认识 asar 内的路径 —— 点了没反应。所以先读内容、落到临时目录的
+  // 真实文件，再把真实路径交给系统程序打开。
+  //
+  // 文件名带版本号：不同版本各留一份，避免系统缓存旧内容；临时目录由系统
+  // 回收，不写进 dataDir（清单是只读的法律声明，不是用户数据）。
+  ipcMain.handle('opc:open-license-text', async (_e) => {
+    if (rejectUntrustedIpc(_e, 'opc:open-license-text')) return '来源校验失败';
+    const src = join(app.getAppPath(), 'THIRD-PARTY-LICENSES.txt');
+    let content: string;
+    try {
+      content = readFileSync(src, 'utf8');
+    } catch (e) {
+      return `许可清单读取失败：${e instanceof Error ? e.message : String(e)}`;
+    }
+    const dest = join(tmpdir(), `OPC-Agent-THIRD-PARTY-LICENSES-${app.getVersion()}.txt`);
+    try {
+      writeFileSync(dest, content, 'utf8');
+      return await shell.openPath(dest);
+    } catch (e) {
+      return e instanceof Error ? e.message : '打开失败';
+    }
   });
 
   /* ── 应用内检查更新 ──────────────────────────────────────────────
