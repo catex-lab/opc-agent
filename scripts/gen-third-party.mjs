@@ -300,8 +300,22 @@ function bundledDirs() {
   return out;
 }
 
+/**
+ * 这两个 npm 平台包虽在 dependencies 树里，但 2026-11-19 起被
+ * electron-builder.yml 的 `files` 排除，改为用户首次使用时从 npm 镜像
+ * 按需下载（vendorComponents.ts）。标注「原样进 asar」是过时信息 ——
+ * 清单仍列出它们（多列不违规、更保守），但来源必须如实写。
+ *
+ * ⚠️ 与 electron-builder.yml 的 files 排除规则、vendorComponents.ts 的
+ * 白名单三处必须同步；任一处改动都要回来核对这里。
+ */
+const ON_DEMAND_PACKAGES = new Set([
+  '@anthropic-ai/claude-agent-sdk-win32-x64',
+  '@openai/codex-win32-x64',
+]);
+
 const seen = new Map();
-/** 每一条带上「它凭什么随包分发」：后端原样打包 / 前端构建内联 / 运行时本体 */
+/** 每一条带上「它凭什么随包分发」：后端原样打包 / 前端构建内联 / 运行时本体 / 按需下载 */
 function add(dir, pkg, origin) {
   const key = `${pkg.name}@${pkg.version}`;
   if (seen.has(key)) return;
@@ -310,7 +324,9 @@ function add(dir, pkg, origin) {
     version: pkg.version || '?',
     license: licenseOf(pkg),
     copyright: copyrightOf(dir, pkg),
-    origin,
+    origin: ON_DEMAND_PACKAGES.has(pkg.name)
+      ? '按需下载（不随安装包，首次使用时从 npm 镜像取）'
+      : origin,
     nested: nestedPackages(dir, pkg.name),
   });
 }
@@ -352,13 +368,17 @@ const lines = [
   '',
   '本文件由 `node scripts/gen-third-party.mjs` 从 node_modules 自动生成，请勿手工编辑。',
   '',
-  '覆盖范围（三块，全部随安装包分发）：',
+  '覆盖范围（三块，随安装包分发；例外见下）：',
   '  1. 后端依赖 —— `npm ls --omit=dev` 的完整生产依赖树，原样打进 app.asar；',
   '  2. 前端打包 —— `src/` 里 import 到的包及其 dependencies 闭包，Vite 构建时',
   '     内联进 dist/assets/*.js。它们在 package.json 里写作 devDependencies，',
   '     但**代码确实在安装包里**（react / react-dom / tdesign-react / lucide-react',
   '     / xterm 等），因此同样需要署名；',
   '  3. Electron 运行时本体（内含 Chromium）。',
+  '',
+  '例外：codex / claude 的 npm 平台包虽在依赖树里，但自 2026-11-19 起不随包，',
+  '改为首次使用时从 npm 镜像按需下载；它们的「来源」字段如实标注，',
+  '仍列出是因为清单宁多勿少（多列不违规，漏列才丢署名）。',
   '',
   '不在此列的：vite / tailwindcss / electron-builder / tsx / playwright-core 等',
   '纯构建与测试工具 —— 它们只在开发机上运行，产物里没有它们的代码。',

@@ -2,13 +2,17 @@ OPC Agent — 随安装包分发的第三方组件许可清单
 
 本文件由 `node scripts/gen-third-party.mjs` 从 node_modules 自动生成，请勿手工编辑。
 
-覆盖范围（三块，全部随安装包分发）：
+覆盖范围（三块，随安装包分发；例外见下）：
   1. 后端依赖 —— `npm ls --omit=dev` 的完整生产依赖树，原样打进 app.asar；
   2. 前端打包 —— `src/` 里 import 到的包及其 dependencies 闭包，Vite 构建时
      内联进 dist/assets/*.js。它们在 package.json 里写作 devDependencies，
      但**代码确实在安装包里**（react / react-dom / tdesign-react / lucide-react
      / xterm 等），因此同样需要署名；
   3. Electron 运行时本体（内含 Chromium）。
+
+例外：codex / claude 的 npm 平台包虽在依赖树里，但自 2026-11-19 起不随包，
+改为首次使用时从 npm 镜像按需下载；它们的「来源」字段如实标注，
+仍列出是因为清单宁多勿少（多列不违规，漏列才丢署名）。
 
 不在此列的：vite / tailwindcss / electron-builder / tsx / playwright-core 等
 纯构建与测试工具 —— 它们只在开发机上运行，产物里没有它们的代码。
@@ -38,7 +42,7 @@ OPC Agent — 随安装包分发的第三方组件许可清单
 @anthropic-ai/claude-agent-sdk-win32-x64 0.3.316
   许可：SEE LICENSE IN LICENSE.md
   版权：（该包未随附 LICENSE 文件，许可依据其 package.json 元数据）
-  来源：后端依赖（原样进 app.asar）
+  来源：按需下载（不随安装包，首次使用时从 npm 镜像取）
 
 @anthropic-ai/sdk 1.3.0
   许可：Apache-2.0

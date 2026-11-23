@@ -38,22 +38,27 @@
 
 | 包 | 许可 | 是否随安装包分发 |
 |---|---|---|
-| `@anthropic-ai/claude-agent-sdk` 0.3.316 | **`© Anthropic PBC. All rights reserved.`** —— `package.json` 的 `license` 字段写的是 `SEE LICENSE IN README.md`，但包内 `LICENSE.md` 的正文就是这一句，并指向 <https://code.claude.com/docs/en/legal-and-compliance> 的商业条款 | **是**（SDK 本体约 4.8MB） |
-| `@anthropic-ai/claude-agent-sdk-win32-x64` 0.3.316 | 同上 | **是**（内含 `claude.exe`，约 320MB） |
+| `@anthropic-ai/claude-agent-sdk` 0.3.316 | **`© Anthropic PBC. All rights reserved.`** —— `package.json` 的 `license` 字段写的是 `SEE LICENSE IN README.md`，但包内 `LICENSE.md` 的正文就是这一句，并指向 <https://code.claude.com/docs/en/legal-and-compliance> 的商业条款 | **是**（SDK 本体约 4.8MB，随包） |
+| `@anthropic-ai/claude-agent-sdk-win32-x64` 0.3.316 | 同上 | **否**（`claude.exe` 约 320MB，2026-11-19 起改为按需下载，见下） |
 
 **这是当前唯一一个非开源组件，也是本项目对外分发时最需要自己判断的一处。**
 
 事实部分：Claude Code 的 SDK 与 CLI 由 Anthropic 以「保留所有权利」发布，通过 npm 分发。
 `npm install` 时由使用者自己从 npm 取得，属于 Anthropic 发布链条内；
-本项目把它连同 `claude.exe` 一起打进自己的安装包，等于**再分发其副本**。
+本项目把 SDK 本体打进自己的安装包，等于**再分发其专有副本**。
 
-因此有两条路线，代码两条都支持，区别只在打包配置：
+因此有三条路线，代码都支持，区别只在打包配置：
 
-- **当前选择（2026-10-31）**：随包分发，开箱即用。`package.json` 的 `dependencies` 里有它，
-  `electron-builder.yml` 未排除，`verify:a156-claude-sdk` 断言平台二进制可被解析到。
-- **保守选择**：从 `files` 里排除 `node_modules/@anthropic-ai/claude-agent-sdk*/**`，
-  改为运行时由用户自行安装（`npm i @anthropic-ai/claude-agent-sdk` 或装 Claude Code CLI）。
-  适配器已经按「动态 import + 缺失时给出安装提示」写，排除后表现为「未安装」而不是崩溃。
+- **当前选择（2026-11-19 起）**：SDK 本体随包（约 4.8MB），但**平台二进制（`claude.exe`）改为按需下载** ——
+  `electron-builder.yml` 的 `files` 排除了 `@anthropic-ai/claude-agent-sdk-win32-x64/**`，
+  用户首次使用时由 `vendorComponents.ts` 从 npm 镜像按 lockfile 的 sha512 校验后下载。
+  这一处减小了安装包体积，但 SDK 本体随包分发的事实不变。
+- **保守选择 A（应用内代下载）**：进一步把 SDK 本体也排除，由应用提示后从 npm 镜像下载。
+  风险低于随包，但应用仍是分发链的执行者，不是零风险。
+- **保守选择 B（引导用户自装，真正脱离分发）**：从 `files` 里排除 `node_modules/@anthropic-ai/claude-agent-sdk*/**`，
+  改为提示用户自己运行 `npm i @anthropic-ai/claude-agent-sdk` 或安装官方 Claude Code CLI。
+  应用全程不碰副本，不构成再分发 —— 代价是开箱即用体验下降。
+  适配器已按「动态 import + 缺失时给出安装提示」写，排除后表现为「未安装」而不是崩溃。
 
 若你 fork 后准备公开分发二进制，建议先读一遍上面那条商业条款再决定走哪条。
 
