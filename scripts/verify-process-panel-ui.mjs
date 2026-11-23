@@ -305,6 +305,53 @@ for (const [target, expect] of [
   await close(h);
 }
 
+// ── [5] 设置模态期间：过程面板不许浮到弹窗上 ──────────────────────
+{
+  console.log('\n[5] 设置模态遮住过程面板');
+  ok(
+    /body:has\(\[data-settings-modal\]\) \[data-process-panel\]/.test(panelCss)
+      && /body:has\(\[data-settings-modal\]\) \.pf-mode-menu/.test(panelCss),
+    '隐藏规则同时覆盖四形态面板与形态菜单'
+  );
+
+  for (const modeCfg of ['top', 'right', 'floating', 'minimized']) {
+    console.log(`\n[5] 设置模态 · ${modeCfg}`);
+    const h = await open({ mode: modeCfg });
+    const { page } = h;
+    // A37：设置是浮在会话上的模态，ChatPage 仍在下面渲染。
+    // 必须点 UI 入口走 SPA 导航 —— 直接 goto('/settings') 会丢掉会话 state，
+    // 面板根本不渲染，那条「隐藏」断言就会假绿。
+    await page.getByRole('button', { name: /设置|settings/i }).first().click();
+    await page.waitForSelector('[data-settings-modal]', { timeout: 15000 });
+    await page.waitForTimeout(200);
+
+    // 肯定式：先证明设置弹窗真的开了，避免「整页没打开」让隐藏断言假绿
+    const dialog = await rect(page, '[data-settings-panel]');
+    ok(dialog.width > 300 && dialog.height > 200, '设置弹窗确实打开', `${Math.round(dialog.width)}x${Math.round(dialog.height)}`);
+    ok(await page.locator('[data-process-panel]').count() === 1, `${modeCfg}：面板仍在 DOM，只藏显示不删状态`);
+
+    if (PROBE) {
+      // 反向探针：撤掉隐藏规则，下面的断言必须变红
+      await page.addStyleTag({ content: 'body:has([data-settings-modal]) [data-process-panel] { display: revert !important; }' });
+    }
+    const hidden = await page.locator('[data-process-panel]').first().evaluate(el => {
+      const cs = getComputedStyle(el);
+      const b = el.getBoundingClientRect();
+      return cs.display === 'none' || (b.width === 0 && b.height === 0);
+    });
+    ok(hidden !== PROBE, PROBE ? `反向探针：${modeCfg} 撤销隐藏必须判红` : `${modeCfg}：面板在设置模态期间不可见`);
+
+    if (modeCfg === 'top' && !PROBE) {
+      const hit = await page.evaluate(() => {
+        const el = document.elementFromPoint(720, 100);
+        return !!el && !!el.closest('[data-process-panel]');
+      });
+      ok(!hit, '吸顶原位置用真实鼠标坐标自证不再命中面板');
+    }
+    await close(h);
+  }
+}
+
 await browser.close();
 server.close();
 console.log(`\n过程面板浏览器断言：${total - failures.length}/${total} 通过`);

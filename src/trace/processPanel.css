@@ -472,3 +472,12 @@
     max-width: 160px;
   }
 }
+
+/* 设置弹窗是模态（A37：/settings 浮在会话之上，ChatPage 仍在下面渲染）。
+   模态容器 z-40，而吸顶 z-41、形态菜单 portal z-120 —— 只调层级压不住，
+   面板会浮到设置卡上。模态在场时把四形态和菜单一起从显示层摘掉：
+   只改显示，不动拖动/偏好状态，关掉设置后原样回来。 */
+body:has([data-settings-modal]) [data-process-panel],
+body:has([data-settings-modal]) .pf-mode-menu {
+  display: none;
+}
