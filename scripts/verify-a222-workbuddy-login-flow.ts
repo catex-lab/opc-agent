@@ -512,17 +512,29 @@ if (!FULL) {
     await page.locator('[data-agent-row="workbuddy"]').first().click();
     await page.waitForSelector('[data-agent-login-btn]', { timeout: 15000 });
 
-    // ── 死链接窗口 ──
+    // ── A233 语义：打开详情页不再自动起登录流，idle 态按钮用探测留下的 URL 可点 ──
+    // 旧夹具在这里期望按钮已禁用、状态行已显示「正在准备登录链接」——那是 A233
+    // 之前「挂载即起流」的行为。现在只有点击才起流（agentLogin.ts openLogin），
+    // 所以先断言 idle 可点，再由点击触发 starting 去验证「死链接窗口」。
+    ok(!(await page.locator('[data-agent-login-btn]').isDisabled()),
+      'A233：未点击时按钮可点（不在挂载时偷偷起登录流）');
+    let opened: string[] = await page.evaluate(() =>
+      (window as unknown as { __opcOpenUrls: string[] }).__opcOpenUrls ?? []);
+    eq(opened.length, 0, '★ 挂载后没点击前一次都没调用 window.open');
+
+    // ── 点击 → 起流 → 死链接窗口 ──
+    await page.locator('[data-agent-login-btn]').click();
+    await page.waitForSelector('[data-agent-login-state="starting"]', { timeout: 12000 });
     ok(await page.locator('[data-agent-login-btn]').isDisabled(),
       '★★ 登录流刚启动、活链接还没回来时按钮禁用（不把用户送去死 state）');
     const startingLabel = await page.locator('[data-agent-login-state]').innerText().catch(() => '');
     ok(startingLabel.includes('正在准备登录链接'), '同时给出「正在准备登录链接」而不是静默灰掉',
       startingLabel.slice(0, 40));
-    let opened: string[] = await page.evaluate(() =>
+    opened = await page.evaluate(() =>
       (window as unknown as { __opcOpenUrls: string[] }).__opcOpenUrls ?? []);
-    eq(opened.length, 0, '★ 在活链接回来之前一次都没调用 window.open');
+    eq(opened.length, 0, '★★ 活链接回来之前一次都没调用 window.open（死链接也没开）');
 
-    // ── 活链接到达 ──
+    // ── 活链接到达：A233 点击后 pendingOpen 会自动补开一次，不再需要手动点 ──
     statusState = { state: 'waiting', authUrl: LIVE_URL };
     await page.waitForFunction(() => {
       const btn = document.querySelector('[data-agent-login-btn]') as HTMLButtonElement | null;
@@ -530,11 +542,14 @@ if (!FULL) {
     }, null, { timeout: 12000 });
     ok((await page.getAttribute('[data-agent-login-state]', 'data-agent-login-state')) === 'waiting',
       '状态行进入 waiting');
-    await page.locator('[data-agent-login-btn]').click();
-    await page.waitForTimeout(300);
+    // 轮询 1500ms 才拿下一次 status，自动补开可能晚于按钮变可点；等 opened 真出现再断言。
+    await page.waitForFunction(() => {
+      const arr = (window as unknown as { __opcOpenUrls: string[] }).__opcOpenUrls ?? [];
+      return arr.length > 0;
+    }, null, { timeout: 12000 });
     opened = await page.evaluate(() =>
       (window as unknown as { __opcOpenUrls: string[] }).__opcOpenUrls ?? []);
-    eq(opened, [LIVE_URL], '★★ 点「去登录」打开的是活链接（恰好一次）');
+    eq(opened, [LIVE_URL], '★★ 活链接到达后恰好打开一次（点击手势后的自动补开）');
     ok(!opened.includes(DEAD_URL), '★★ 探测留下的死链接一次都没被打开');
 
     // ── 登录成功 → 自动重探（用户不必再点「重新探测」）──
