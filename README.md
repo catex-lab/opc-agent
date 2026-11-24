@@ -70,9 +70,9 @@ OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个�
 1. **Node.js 22+** —— 数据库用的是 `node:sqlite`，低版本没有这个内置模块。
 2. **本机至少装一个 Agent CLI**。这个应用本身不含任何模型，它只是把你自己装好的 Agent 收进一个界面。一个 CLI 都没装的话，打开会是空通讯录。
 
-> **本仓库只提供源码，不发布预编译安装包。** 自己 `npm run electron:build` 打出来的包只在你本机可用；
-> 公开分发安装包会牵涉到随包的三方组件（其中 Claude Agent SDK 是「保留所有权利」的专有许可），
-> 具体条款与两条可选路线见 [THIRD-PARTY.md](./THIRD-PARTY.md)。
+> **本仓库提供源码，GitHub Releases 另提供预编译完整包**（`*-full.zip`，可直接运行，也用于应用内更新）。
+> 随包组件的许可与署名见 [THIRD-PARTY.md](./THIRD-PARTY.md)；Claude Code、Codex 等组件不随包分发，
+> 改为首次使用时自行下载。也可自行 `npm run electron:build` 打包。
 
 ```bash
 git clone https://github.com/catex-lab/opc-agent.git
