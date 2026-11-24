@@ -235,7 +235,7 @@ ok(nullTiming.timing?.t2 === null, '本轮无正文时 t2=null 原样下发，�
 // ── 4. comingSoon 数据隔离 ───────────────────────────────────────────────
 group('4. 「即将接入」占位清单隔离');
 const list = soon.COMING_SOON_AGENTS;
-eq(list.length, 10, '精选 10 家（肯定式：清单不是空的）');
+eq(list.length, 9, '精选 9 家（DSH 2026-11-24 转正后；肯定式：清单不是空的）');
 eq(new Set(list.map(a => a.id)).size, list.length, 'id 无重复');
 ok(list.every(a => a.id && a.name && a.vendor && a.reason && a.color), '每家字段完整');
 ok(list.every(a => ['acp', 'stream-json', 'evaluating'].includes(a.tier)), 'tier 取值合法');
@@ -243,7 +243,7 @@ ok(list.every(a => ['soon', 'planned'].includes(a.status)), 'status 取值合法
 ok(list.every(a => !/20\d\d|v\d+\.\d+|Q[1-4]/i.test(a.reason)), 'reason 不给日期 / 版本 / 季度承诺');
 eq(soon.COMING_SOON_STATUS_LABEL.soon, '即将接入', '状态文案口径');
 eq(soon.COMING_SOON_STATUS_LABEL.planned, '规划中', '规划中文案口径');
-eq(soon.comingSoonIds().length, 10, 'comingSoonIds() 可用于闸门比对');
+eq(soon.comingSoonIds().length, 9, 'comingSoonIds() 可用于闸门比对');
 
 // 否定式：占位 id 绝不能出现在真 Agent 定义里
 const defsSrc = code('server/agents/definitions.ts');
@@ -302,7 +302,16 @@ ok(!hasLine(messages, /formatTimingTitle\(/), '消息头不再挂四段分解的
 const rosterRoutes = code('server/routes/agent-roster.ts');
 ok(hasLine(rosterRoutes, /function comingSoonList\(\)/), 'comingSoonList 过滤已转正的 id');
 ok((rosterRoutes.match(/comingSoon: comingSoonList\(\)/g) ?? []).length >= 2, '/api/agents 与 /probe 都下发平级 comingSoon');
-ok(hasLine(customRoutes, /const configured = agentAcceptsModel\(agentId\)/), 'configured 归属二次过滤');
+/* 归属闸的判据是「行为」而非变量名：CLI 配置模型按 m.agentIds.includes(agentId)
+   二次过滤，用户路由按 modelRoutesForAgent(agentId) 取 —— 两者都只把属于本 Agent
+   的项并进 configured。旧断言钉 `const configured = agentAcceptsModel(...)` 的字面量，
+   用户路由改造把 baseConfigured → configured 拆成两步后就假红了（§30）。 */
+ok(
+  hasLine(customRoutes, /agentAcceptsModel\(agentId\)/) &&
+  hasLine(customRoutes, /listCliConfiguredModels\(\)\.filter\(m => m\.agentIds\.includes\(agentId\)\)/) &&
+  hasLine(customRoutes, /modelRoutesForAgent\(agentId\)/),
+  'configured 归属二次过滤（CLI 按 agentIds、用户路由按 agentId）'
+);
 ok((customRoutes.match(/^\s+configured,$/gm) ?? []).length >= 3, 'models 路由三个返回分支都带平级 configured');
 /* 2026-11-15：可切换性改由配置读取层声明（ZCode 不声明 ⇒ 缺省只读；
    Kimi Code 声明 true 是因为它的 --model 真生效）。钉住「缺省 = false」，

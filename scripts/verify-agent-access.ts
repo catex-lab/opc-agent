@@ -75,7 +75,11 @@ async function collect(
   ok(!!cursor?.cli, 'cursor 应带 cli 调用规格');
   ok(!cursor?.unsupportedReason, 'cursor 不应再有 unsupportedReason（"仅 GUI" 是错的）');
   ok(cursor?.descriptor.vendor === 'Cursor', 'cursor 应声明 vendor');
-  eq(cursor?.cli?.bin, 'cursor-agent', 'cursor 的 bin 必须是 cursor-agent，不是 cursor');
+  // bin 支持 string | string[]（数组 = 候选回退名，findExecutable 依次命中）。
+  // cursor 后来加了 'agent' 回退名（老版本安装的命令名不同），钉住
+  // 「cursor-agent 必须是首选」这个不变量，而不是钉死单值字面量。
+  const cursorBin = Array.isArray(cursor?.cli?.bin) ? cursor?.cli?.bin[0] : cursor?.cli?.bin;
+  eq(cursorBin, 'cursor-agent', 'cursor 的 bin 首选必须是 cursor-agent，不是 cursor');
   ok(
     !!cursor?.descriptor.capabilities?.includes('code') &&
       !!cursor?.descriptor.capabilities?.includes('tools'),
@@ -154,7 +158,12 @@ async function collect(
   } as any;
   const intlArgs = qoder?.cli?.buildArgs('P', probeCtx) ?? [];
   const cnArgs = cn?.cli?.buildArgs('P', probeCtx) ?? [];
-  eq(cnArgs, intlArgs, 'qoder-cn 与 qoder 的 argv 完全一致（同一份 buildArgs）');
+  // KB 注入（ea85679）把 per-agent 的 mcp-kb-<id>.json 路径嵌进了 buildArgs，
+  // 两国版本唯一的合法差异就是这个文件名里的 id。归一化后再比，钉住
+  // 「同一份 buildArgs 模板」这个不变量，而不是钉死文件名字面量。
+  const normalize = (args: string[]) =>
+    args.map(a => a.replace(/mcp-kb-[a-z0-9-]+\.json/i, 'mcp-kb-<id>.json'));
+  eq(normalize(cnArgs), normalize(intlArgs), 'qoder-cn 与 qoder 的 argv 一致（归一化 kb 文件名后）');
 }
 
 {
@@ -314,7 +323,11 @@ async function collect(
 {
   const src = fs.readFileSync(new URL('../src/agentLogos.ts', import.meta.url), 'utf8');
   const body = src.slice(src.indexOf('AGENT_LOGOS'), src.indexOf('/** 按 key 取 logo'));
-  const keys = new Set([...body.matchAll(/^\s{2}([A-Za-z0-9_]+):\s*\{/gm)].map(m => m[1]));
+  // key 既可以是裸标识符（workbuddy:）也可以是带引号的（'deepseek-harness':）——
+  // id 含连字符时必须带引号，解析器要两种都认。
+  const keys = new Set(
+    [...body.matchAll(/^\s{2}(?:'([^']+)'|([A-Za-z0-9_]+)):\s*\{/gm)].map(m => m[1] ?? m[2])
+  );
   ok(keys.size >= 10, 'AGENT_LOGOS 解析出条目', `${keys.size} 个`);
 
   for (const d of AGENT_DEFS) {

@@ -1105,6 +1105,7 @@ function honestEmptySummary(catalogSrc: string): boolean {
     kimicli: 'kimi 只有 -m，无枚举命令；默认模型从 ~/.kimi-code/config.toml 只读（2026-11-15 实测）',
     hermes: 'hermes 没有 cli 通道（走 ACP），无法传 --model',
     kimicode: 'kimicode 没有 cli 通道，无法传 --model',
+    'deepseek-harness': 'DSH 没有 cli 通道（走 ACP）；模型来自 session/new 的 configOptions 现发现（session-config source）+ 用户自定义路由，不走静态目录',
     zcode: 'zcode 0.17.0 无 --model、无枚举命令；模型只能读配置文件（P1 处理）',
     workbuddy: 'SDK 清单（sdk-models + 官方产品配置），不走 CLI 枚举',
     doubao: 'http 通道，模型由用户在设置里填',

@@ -52,6 +52,8 @@ import { readAgentConfigModels } from '../agents/agentConfigModels.js';
 import { reconcileWorkbuddyResumeTokens } from '../agents/wbRootEpoch.js';
 import { loginFlowStatus, startLoginFlow } from '../agents/loginFlow.js';
 import { verifyCredential } from '../credential-verify.js';
+import { modelRoutesForAgent } from '../modelRoutes.js';
+import { routeLabel, routeToValue } from '../../shared/model-route.js';
 import { withObservedCapabilities } from './agent-roster.js';
 
 
@@ -442,7 +444,7 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
      * 归属只认「这个 Agent 真的接受 --model」，不吃模型参数的 Agent
      * （zcode 的只读档）拿到空数组 —— 给它选项就是点了不生效的假控件。
      */
-    const configured = agentAcceptsModel(agentId)
+    const baseConfigured = agentAcceptsModel(agentId)
       ? listCliConfiguredModels().filter(m => m.agentIds.includes(agentId))
       /* A211：WorkBuddy 是唯一「不吃 --model、但能切模型」的例外。
          SDK 走 `session.setModel()` 热更新，桌面端 `models.json` 里的自定义
@@ -450,6 +452,20 @@ app.get("/api/agents/:agentId/models", async (req, res) => {
          所以它不是 A210 注释里警惕的「点了不生效的假控件」；仍放平级字段，
          不碰 `models` 数组，A151 的四档语义原样保留。 */
       : agentId === 'workbuddy' ? workbuddyCustomModels() : [];
+    /* 用户显式登记的自定义路由走同一条「平级可选组」通道，不进 `models` 数组：
+       它是 A151 四档语义之外的第五类，混进去会把 unknown/manual 误判成 catalog。
+       id 用可逆编码，选中后服务端能还原成 provider+model 三闸校验。 */
+    const userRoutes = modelRoutesForAgent(agentId).map(route => ({
+      id: routeToValue(route),
+      label: route.displayName ?? routeLabel(route),
+      source: `用户自定义路由 · ${route.providerId ?? route.modelId}`,
+      agentIds: [agentId],
+    }));
+    const configuredIds = new Set(baseConfigured.map(m => m.id));
+    const configured = [
+      ...baseConfigured,
+      ...userRoutes.filter(route => !configuredIds.has(route.id)),
+    ];
     const models = await registry.modelsFor(agentId);
     // 一并给出该 Agent 自己的默认模型：列表按 provider 分组后，第一条
     // 不再等于「默认模型」（opencode 的默认是 zai/glm-4.7，而列表第一条

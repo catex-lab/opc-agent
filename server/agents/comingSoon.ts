@@ -55,8 +55,8 @@ export const COMING_SOON_STATUS_LABEL: Record<ComingSoonAgent['status'], string>
 };
 
 /**
- * 精选 10 家：全部来自 2026-11-12 生态调研中**有第一方证据**的条目。
- * 不含项目已接入的 16 条，不含「只有 IDE 插件 / 只有云 API / 无流式输出」
+ * 精选 9 家：全部来自 2026-11-12 生态调研中**有第一方证据**的条目。
+ * 不含项目已接入的 17 条，不含「只有 IDE 插件 / 只有云 API / 无流式输出」
  * 的厂商（那些放进来等于承诺一个做不到的形态）。
  */
 export const COMING_SOON_AGENTS: readonly ComingSoonAgent[] = [
@@ -87,15 +87,8 @@ export const COMING_SOON_AGENTS: readonly ComingSoonAgent[] = [
     reason: '官方声明原生 ACP，另有 streaming-json 输出',
     color: '#5F5E5A',
   },
-  {
-    id: 'deepseek-harness',
-    name: 'DeepSeek Harness',
-    vendor: 'DeepSeek',
-    tier: 'acp',
-    status: 'soon',
-    reason: 'dsh --profile acp（ACP 是 profile，不是独立命令）',
-    color: '#378ADD',
-  },
+  // deepseek-harness 已于 2026-11-24 转正（AGENT_DEFS，kind: 'acp'）——
+  // 按本文件「真接入时用同一个 id 转正」的口径从占位清单移除。
   {
     id: 'qwen-code',
     name: 'Qwen Code',

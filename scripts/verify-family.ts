@@ -61,6 +61,8 @@ const FROZEN_IDS = [
   'opencode',
   'claude',
   'hermes',
+  // DSH 2026-11-24 从 comingSoon 占位转正（kind: 'acp'），id 沿用占位期命名。
+  'deepseek-harness',
   'cursor',
   'qoder',
   // A76：Qoder 国内版。它是**独立条目**而不是 qoder 上的一个设置项 ——

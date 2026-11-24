@@ -35,6 +35,7 @@ import { spawnSync } from 'node:child_process';
 import { AcpAdapter } from '../server/agents/adapters/acp.js';
 import type { AgentDefinition } from '../server/agents/definitions.js';
 import type { AgentEvent, SendContext } from '../server/agents/types.js';
+import { createModelRoute, deleteModelRoute } from '../server/modelRoutes.js';
 
 let pass = 0;
 let fail = 0;
@@ -46,7 +47,7 @@ function say(id: string, name: string, ok: boolean, detail = ''): void {
 // ============= 假 ACP 服务端 =============
 //
 // initialize → 回 agentInfo（hang-init 模式下永不回复）；
-// session/new → 回 sessionId + models（hang-new 模式下永不回复）；
+// session/new → 回 sessionId + models（hang-new 永不回复；dsh-config 回 configOptions）；
 // session/prompt → 发一条 text chunk 通知，然后正常回包结束。
 // 挂死 = 「永不回复但进程保持存活」，正是实测事故里 gateway 的行为。
 // 每次启动登记 pid 到 launches.jsonl，供断言「拉起几个进程 / pid 已退出」。
@@ -81,6 +82,35 @@ rl.on('line', line => {
   if (msg.method === 'session/new') {
     if (mode === 'hang-new') return; // 永不回复，进程保持存活（复现 gateway 挂死）
     sessionSeq += 1;
+    if (mode === 'dsh-config') {
+      // DSH 0.2.2-rc.5 实测：没有 models.availableModels，模型在 configOptions
+      // 里按 provider 分两层；reasoning_effort 混在一起，不能被当成模型。
+      respond(msg.id, {
+        sessionId: 'fake-dsh-' + process.pid + '-' + sessionSeq,
+        configOptions: [
+          {
+            id: 'model', name: 'Model', category: 'model', type: 'select',
+            currentValue: '["deepseek-official","deepseek-v4-flash"]',
+            options: [
+              {
+                group: 'deepseek-official', name: 'DeepSeek',
+                options: [{ value: '["deepseek-official","deepseek-v4-flash"]', name: 'deepseek-v4-flash' }],
+              },
+              {
+                group: 'sensenova', name: 'sensenova',
+                options: [{ value: '["sensenova","sensenova-6.8-flash"]', name: 'sensenova-6.8-flash' }],
+              },
+            ],
+          },
+          {
+            id: 'reasoning_effort', name: 'Reasoning effort', category: 'thought_level', type: 'select',
+            currentValue: 'high',
+            options: [{ value: 'high', name: 'High' }],
+          },
+        ],
+      });
+      return;
+    }
     respond(msg.id, {
       sessionId: 'fake-session-' + process.pid + '-' + sessionSeq,
       models: { availableModels: [{ modelId: 'fake-model', name: 'Fake Model' }] },
@@ -93,6 +123,11 @@ rl.on('line', line => {
       update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } },
     });
     respond(msg.id, { stopReason: 'end_turn', usage: { totalTokens: 5 } });
+    return;
+  }
+  if (msg.method === 'session/set_config_option') {
+    try { fs.appendFileSync(path.join(dir, 'config-set.jsonl'), JSON.stringify(msg.params) + '\\n'); } catch {}
+    respond(msg.id, {});
     return;
   }
   if (msg.method === 'session/request_permission') {
@@ -110,8 +145,9 @@ process.env.FAKE_ACP_DIR = tmpDir; // 适配器 spawn 时透传 process.env，�
 
 const launchesPath = path.join(tmpDir, 'launches.jsonl');
 const modePath = path.join(tmpDir, 'mode.txt');
+const configSetPath = path.join(tmpDir, 'config-set.jsonl');
 
-function setMode(mode: 'ok' | 'hang-new' | 'hang-init'): void {
+function setMode(mode: 'ok' | 'hang-new' | 'hang-init' | 'dsh-config'): void {
   fs.writeFileSync(modePath, mode, 'utf8');
 }
 function readLaunches(): number[] {
@@ -125,6 +161,16 @@ function readLaunches(): number[] {
     })
     .filter(pid => pid > 0);
 }
+function readConfigSets(): Array<{ configId?: string; value?: unknown; sessionId?: string }> {
+  if (!fs.existsSync(configSetPath)) return [];
+  return fs.readFileSync(configSetPath, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .flatMap(line => {
+      try { return [JSON.parse(line) as { configId?: string; value?: unknown; sessionId?: string }]; }
+      catch { return []; }
+    });
+}
 function resetLaunches(): void {
   // 链环境下前一段残留的 Fake ACP 子进程可能还没被树杀干净——
   // 若只清文件，旧进程在 reset 之后才写自己的 launches 行，会污染下一段计数
@@ -132,6 +178,7 @@ function resetLaunches(): void {
   // 先确保上一批进程全部退出，再清文件。
   killAllLaunched();
   fs.writeFileSync(launchesPath, '', 'utf8');
+  fs.writeFileSync(configSetPath, '', 'utf8');
 }
 
 function pidAlive(pid: number): boolean {
@@ -181,12 +228,12 @@ function buildDef(): AgentDefinition {
   } as AgentDefinition;
 }
 
-function makeCtx(sessionId: string): SendContext {
+function makeCtx(sessionId: string, model = 'fake-model'): SendContext {
   return {
     sessionId,
     prompt: 'hi',
     cwd: tmpDir,
-    model: 'fake-model',
+    model,
     systemPrompt: '',
     allowedTools: [],
   };
@@ -345,6 +392,89 @@ console.log('[S] 基线：session/new 正常回包时行为不变');
     say('S5', 'session/new 的模型清单进入 availableModels', okAdapter.availableModels.length > 0, `models=${okAdapter.availableModels.length}`);
   } finally {
     okAdapter?.dispose();
+  }
+}
+
+// ============= [S2] DSH：configOptions 里的嵌套分组也要能发现 =============
+console.log('[S2] DSH configOptions 发现模型（Hermes 的 availableModels 路径保持不变）');
+{
+  let cfgAdapter: AcpAdapter | null = null;
+  try {
+    setMode('dsh-config');
+    resetLaunches();
+    cfgAdapter = new AcpAdapter(buildDef(), { requestTimeoutMs: INJECTED_TIMEOUT, initTimeoutMs: INJECTED_TIMEOUT });
+    const { events, timedOut } = await collect(cfgAdapter,
+      makeCtx('sess-dsh-config', '["sensenova","sensenova-6.8-flash"]'), WATCHDOG_MS);
+    const types = events.map(e => e.type);
+    const ids = cfgAdapter.availableModels.map(m => m.modelId);
+    const routes = cfgAdapter.availableRoutes;
+    const configSets = readConfigSets();
+
+    say('S6', '正常收发，没有因为多一种模型字段而报错', !timedOut && !types.includes('error'), `types=${types.join(',')}`);
+    say('S7', '用户自定义 sensenova 路由进入模型清单',
+      ids.includes('["sensenova","sensenova-6.8-flash"]'), `ids=${ids.join(' | ')}`);
+    say('S8', '官方路由同时保留（自定义不是替换官方）',
+      ids.includes('["deepseek-official","deepseek-v4-flash"]'), `ids=${ids.join(' | ')}`);
+    say('S9', 'reasoning_effort 的 high 没有混进模型清单', !ids.includes('high'), `ids=${ids.join(' | ')}`);
+    say('S10', '统一路由保留 providerId', routes.some(r =>
+      r.providerId === 'sensenova' && r.modelId === 'sensenova-6.8-flash' && r.source === 'session-config'
+    ), `routes=${routes.length}`);
+    say('S11', '选中的自定义路由经 set_config_option 真正下发',
+      configSets.some(item => item.configId === 'model' && item.value === '["sensenova","sensenova-6.8-flash"]'),
+      `sets=${JSON.stringify(configSets)}`);
+    say('S12', '一条路由只下发一次（不是每块流式都重设）', configSets.length === 1, `sets=${configSets.length}`);
+  } finally {
+    cfgAdapter?.dispose();
+  }
+}
+
+// ============= [S3] 归属闸：没发现的路由不许让 ACP 静默用默认 =============
+console.log('[S3] 未归属的模型路由必须报错，绝不静默继续');
+{
+  let rogueAdapter: AcpAdapter | null = null;
+  try {
+    setMode('dsh-config');
+    resetLaunches();
+    rogueAdapter = new AcpAdapter(buildDef(), { requestTimeoutMs: INJECTED_TIMEOUT, initTimeoutMs: INJECTED_TIMEOUT });
+    const { events, timedOut } = await collect(rogueAdapter,
+      makeCtx('sess-dsh-rogue', '["rogue-provider","not-in-list"]'), WATCHDOG_MS);
+    const types = events.map(e => e.type);
+
+    say('S13', '未归属路由报错且没有正文（不是「换成默认后照样回一句」）',
+      !timedOut && types.includes('error') && !types.includes('text'), `types=${types.join(',')}`);
+    say('S14', '拒绝原因写清「模型路由未生效」', errorMessage(events).includes('模型路由未生效'), errorMessage(events).slice(0, 100));
+    say('S15', '拒绝后不调用 set_config_option', readConfigSets().length === 0, `sets=${readConfigSets().length}`);
+  } finally {
+    rogueAdapter?.dispose();
+  }
+}
+
+// ============= [S4] 用户登记的路由也要进入 ACP 菜单与归属集合 =============
+console.log('[S4] 自定义路由存储与 ACP 发现层联动');
+{
+  let storedAdapter: AcpAdapter | null = null;
+  const stored = createModelRoute({
+    agentId: 'fake-hermes', providerId: 'my-gateway', modelId: 'stored-model',
+    displayName: 'Stored Model', deliveryDialect: 'acp-config',
+  });
+  try {
+    setMode('dsh-config');
+    resetLaunches();
+    storedAdapter = new AcpAdapter(buildDef(), { requestTimeoutMs: INJECTED_TIMEOUT, initTimeoutMs: INJECTED_TIMEOUT });
+    const { events, timedOut } = await collect(storedAdapter, makeCtx('sess-stored-route'), WATCHDOG_MS);
+    const ids = storedAdapter.availableModels.map(m => m.modelId);
+
+    say('S16', '存过的路由出现在 availableModels（不再「存了却选不了」）',
+      !timedOut && ids.includes('["my-gateway","stored-model"]'), `ids=${ids.join(' | ')}`);
+    say('S17', '存过的路由出现在 availableRoutes 且保留用户来源',
+      storedAdapter.availableRoutes.some(r =>
+        r.providerId === 'my-gateway' && r.modelId === 'stored-model' && r.origin === 'user'
+      ), `routes=${storedAdapter.availableRoutes.length}`);
+    say('S18', '没有 error 事件（用户路由不打扰既有 ACP 会话）',
+      !events.some(e => e.type === 'error'), `types=${events.map(e => e.type).join(',')}`);
+  } finally {
+    storedAdapter?.dispose();
+    deleteModelRoute(stored.id);
   }
 }
 

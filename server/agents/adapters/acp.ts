@@ -18,6 +18,8 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { randomUUID } from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { AsyncQueue, linkAbort } from '../channel.js';
 import {
   findExecutable,
@@ -25,6 +27,7 @@ import {
   isUnresolvedShim,
   isIdeLauncher,
   expandPath,
+  shortcutInstallRoot,
   killProcessTree,
   type LaunchTarget,
 } from '../probe.js';
@@ -49,6 +52,17 @@ import {
   behaviorOfKind,
   type PermissionOption,
 } from '../../../shared/permissions.js';
+import {
+  parseAcpModelConfigOptions,
+  parseModelRouteValue,
+  routeKey,
+  routeLabel,
+  routeToValue,
+  type AcpConfigOptionLike,
+  type ModelRoute,
+} from '../../../shared/model-route.js';
+import { applyModelRoute, resolveModelRoute } from '../../model-route-resolution.js';
+import { modelRoutesForAgent } from '../../modelRoutes.js';
 
 /**
  * 从 ACP 归一化后的选项里挑一个回给服务端。
@@ -68,6 +82,64 @@ export function selectAcpOption(
   }
   const want = decision.behavior;
   return options.find(o => behaviorOfKind(o.kind) === want) ?? null;
+}
+
+interface AcpModelOption {
+  modelId: string;
+  name: string;
+  description?: string;
+}
+
+/** ACP 上报的模型条目只认 modelId；name 缺失时退回 id，不凭空编展示名。 */
+function isAcpModelOption(value: unknown): value is AcpModelOption {
+  return !!value && typeof value === 'object'
+    && typeof (value as { modelId?: unknown }).modelId === 'string';
+}
+
+/** 把统一路由转成旧模型清单形状：modelId 用可逆编码，provider 不会在下发时丢。 */
+export function acpModelOptionsFromRoutes(routes: readonly ModelRoute[]): AcpModelOption[] {
+  return routes.map(route => ({
+    modelId: routeToValue(route),
+    name: routeLabel(route),
+    ...(route.description ? { description: route.description } : {}),
+  }));
+}
+
+/**
+ * 合并两种发现来源：ACP 的 `models.availableModels`（Hermes 原有路径）优先，
+ * DSH 的 `configOptions[model]` 补充在后面。按 modelId 去重，不覆盖前者的名字。
+ */
+export function mergeAcpModelOptions(
+  reported: unknown,
+  routes: readonly ModelRoute[]
+): AcpModelOption[] {
+  const out: AcpModelOption[] = Array.isArray(reported)
+    ? reported.filter(isAcpModelOption).map(item => ({
+        modelId: item.modelId,
+        name: typeof item.name === 'string' && item.name ? item.name : item.modelId,
+        ...(typeof item.description === 'string' ? { description: item.description } : {}),
+      }))
+    : [];
+  const seen = new Set(out.map(item => item.modelId));
+  for (const item of acpModelOptionsFromRoutes(routes)) {
+    if (seen.has(item.modelId)) continue;
+    seen.add(item.modelId);
+    out.push(item);
+  }
+  return out;
+}
+
+/** ACP 现场发现 + 用户登记可能撞同一条路由；按 provider/model 去重，先发现的优先。 */
+export function dedupeModelRoutes(routes: readonly ModelRoute[]): ModelRoute[] {
+  const seen = new Set<string>();
+  const out: ModelRoute[] = [];
+  for (const route of routes) {
+    const key = routeKey(route);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(route);
+  }
+  return out;
 }
 
 /** ACP 协议版本，实测 Hermes 接受 1 */
@@ -307,8 +379,10 @@ export class AcpAdapter implements AgentProvider {
     { rpcId: unknown; options: PermissionOption[] }
   >();
   private agentInfo: { name?: string; version?: string } | null = null;
-  /** session/new 返回的模型清单，供前端选择 */
-  private models: Array<{ modelId: string; name: string; description?: string }> = [];
+  /** session/new 返回的模型清单，供前端选择（Hermes availableModels + DSH configOptions） */
+  private models: AcpModelOption[] = [];
+  /** 从 ACP configOptions 发现的统一路由，供后续 set_config_option / 路由校验使用 */
+  private modelRoutes: ModelRoute[] = [];
 
   /** 单个 RPC 请求的超时（可注入；默认 90 秒 = 产品默认值） */
   private readonly requestTimeoutMs: number;
@@ -336,13 +410,59 @@ export class AcpAdapter implements AgentProvider {
     return this.models;
   }
 
+  /** 原始路由（含 providerId / 凭据引用），比 availableModels 的字符串更能表达来源 */
+  get availableRoutes() {
+    return this.modelRoutes;
+  }
+
   // ============= 进程管理 =============
 
-  private resolveBin(): string | null {
-    return findExecutable(
-      this.def.descriptor.command || 'hermes-acp',
-      (this.def.extraPaths ?? []).map(expandPath)
+  /**
+   * 快捷方式反推的安装根（ZCode / DSH 这类安装目录自选的桌面应用）。
+   * 没有 shortcutNames 或反推不到时返回 null。
+   */
+  private shortcutRoot(): string | null {
+    return (
+      (this.def.shortcutNames ?? [])
+        .map(name => shortcutInstallRoot(name))
+        .find((r): r is string => Boolean(r)) ?? null
     );
+  }
+
+  /** engineCandidates 展开 `{root}` 后的文件完整路径（供「文件直接命中」兜底） */
+  private engineFiles(): string[] {
+    const root = this.shortcutRoot();
+    return (this.def.engineCandidates ?? []).map(cand => {
+      const filled = root && cand.includes('{root}') ? cand.replace('{root}', root) : cand;
+      return path.resolve(expandPath(filled));
+    });
+  }
+
+  /**
+   * 定位 ACP 可执行文件。
+   *
+   * hermes：命令名 + extraPaths 就够（bin 目录固定）。
+   * DSH：桌面版安装目录用户自选、exe 不在 PATH —— 与 CliAdapter 的
+   * searchDirs 同构：extraPaths + engineCandidates 所在目录（{root} 由
+   * 快捷方式反推），最后兜底逐个检查引擎候选文件本身。
+   */
+  private resolveBin(): string | null {
+    const root = this.shortcutRoot();
+    const dirs = (this.def.extraPaths ?? []).map(expandPath);
+    for (const cand of this.def.engineCandidates ?? []) {
+      const filled = root && cand.includes('{root}') ? cand.replace('{root}', root) : cand;
+      dirs.push(path.dirname(expandPath(filled)));
+    }
+    const hit = findExecutable(this.def.descriptor.command || 'hermes-acp', dirs);
+    if (hit) return hit;
+    for (const file of this.engineFiles()) {
+      try {
+        if (fs.statSync(file).isFile()) return file;
+      } catch {
+        /* 候选不存在就试下一个 */
+      }
+    }
+    return null;
   }
 
   /** 启动 ACP 进程并完成 initialize（幂等；initialize 超时自愈：杀树重建后重试一次） */
@@ -403,11 +523,24 @@ export class AcpAdapter implements AgentProvider {
       );
     }
 
-    // P4 预备：ACP 旗标（如 gemini 的 --acp）从定义表追加在启动垫片之后
-    const acpArgs = this.def.acp?.args ?? [];
+    // P4 预备：ACP 旗标（如 gemini 的 --acp）从定义表追加在启动垫片之后。
+    // DSH：args 里可用 `{exeDir}` 引用已解析可执行文件所在目录 —— cli.js
+    // 藏在 app.asar 内，路径随安装目录变，静态写死必漏。
+    const exeDir = path.dirname(binPath);
+    const acpArgs = (this.def.acp?.args ?? []).map(a => a.replace('{exeDir}', exeDir));
+    // env 叠加次序：process.env → 启动垫片 env → 定义表 acp.env；
+    // deleteEnv 最后剔除（DSH：NODE_OPTIONS 会干扰 exe-as-node 启动）。
+    const spawnEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...(this.target.env ?? {}),
+      ...(this.def.acp?.env ?? {}),
+      NO_COLOR: '1',
+      FORCE_COLOR: '0',
+    };
+    for (const key of this.def.acp?.deleteEnv ?? []) delete spawnEnv[key];
     const child = spawn(this.target.command, [...this.target.prefixArgs, ...acpArgs], {
       cwd: process.cwd(),
-      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+      env: spawnEnv,
       shell: false,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -717,10 +850,22 @@ export class AcpAdapter implements AgentProvider {
           acpSessionId = res.sessionId as string;
           this.acpSessions.set(ctx.sessionId, acpSessionId);
 
-          const available = (res.models as { availableModels?: unknown })?.availableModels;
-          if (Array.isArray(available)) {
-            this.models = available as Array<{ modelId: string; name: string; description?: string }>;
-          }
+          // Hermes 走 models.availableModels；DSH 0.2.2-rc.5 的 session/new
+          // 把它放在 configOptions[model].options 的 provider 分组里（实测
+          // models.availableModels 为空）。两者都收，前者排在前面保持旧行为。
+          const available = (res.models as { availableModels?: unknown } | undefined)?.availableModels;
+          const discovered = parseAcpModelConfigOptions(
+            (res.configOptions ?? res.configurationOptions) as readonly AcpConfigOptionLike[] | null | undefined
+          );
+          // 用户登记过的路由也属于这个 Agent；否则「设置里存好了」在菜单里
+          // 等于不存在。现场发现的排在前面，同名时保留 ACP 原文的展示名。
+          const routes = dedupeModelRoutes([
+            ...discovered,
+            ...modelRoutesForAgent(this.descriptor.id),
+          ]);
+          if (routes.length > 0) this.modelRoutes = routes;
+          const merged = mergeAcpModelOptions(available, routes);
+          if (merged.length > 0) this.models = merged;
           break;
         } catch (err) {
           const timeout = err instanceof AcpRequestTimeoutError;
@@ -753,6 +898,40 @@ export class AcpAdapter implements AgentProvider {
           };
           return;
         }
+      }
+    }
+
+    // 模型路由：只有带 provider 的路由才需要显式下发。老会话里的裸模型名
+    // 继续交给 ACP Agent 自己决定（Hermes 的既有行为不变）。
+    // 归属闸在这里是硬要求：没在本次 session/new 里发现的路由宁可报错，
+    // 也不能让 ACP 悄悄用默认模型回一句「成功」。
+    const requestedRoute = parseModelRouteValue(ctx.model);
+    if (requestedRoute?.providerId) {
+      const resolved = resolveModelRoute(requestedRoute, {
+        agentId: this.descriptor.id,
+        availableRoutes: this.modelRoutes,
+        supportedDialects: ['acp-config'],
+      });
+      if (!resolved.ok) {
+        yield { type: 'error', message: `模型路由未生效：${resolved.message}` };
+        return;
+      }
+      const application = applyModelRoute(resolved.route, 'acp-config');
+      // 编译期收窄：applyModelRoute 对 acp-config 只会返回第一种形状。
+      // 真出现别的方言就是接线接错了，宁可报错也不把未知参数发给 ACP。
+      if (application.dialect !== 'acp-config') {
+        yield { type: 'error', message: `模型路由方言错误：${application.dialect}` };
+        return;
+      }
+      try {
+        await rpc.request(
+          application.method,
+          { sessionId: acpSessionId, ...application.params },
+          this.requestTimeoutMs
+        );
+      } catch (err) {
+        yield { type: 'error', message: `切换模型失败：${(err as Error).message}` };
+        return;
       }
     }
 

@@ -171,6 +171,12 @@ export function ModelSelectPopup({
   const wbOnlyGroup =
     configuredModels.length > 0 &&
     configuredModels.every(m => m.source.startsWith('WorkBuddy'));
+  /* 用户显式登记的路由是另一类来源：它不是 CLI 配置里「写过某个名字」，
+     而是本应用里保存的完整 provider/model。分组标题要说准，否则用户以为
+     这些模型是从本机配置文件里偶然发现的。 */
+  const userOnlyGroup =
+    configuredModels.length > 0 &&
+    configuredModels.every(m => m.source.startsWith('用户自定义路由'));
 
   // 键盘游标：进浮层时落在当前选中项上（没有选中就落第一项）。
   // 原来 TDesign Select 自带方向键 + 回车，换成自绘后这部分能力不能丢，
@@ -561,7 +567,7 @@ export function ModelSelectPopup({
                 className="text-caption font-medium"
                 style={{ color: 'var(--td-text-color-secondary)' }}
               >
-                {wbOnlyGroup ? 'WorkBuddy 自定义模型' : '本机 CLI 配置'}
+                {userOnlyGroup ? '自定义路由' : wbOnlyGroup ? 'WorkBuddy 自定义模型' : '本机 CLI 配置'}
               </span>
               <span
                 className="text-caption tabular-nums"
