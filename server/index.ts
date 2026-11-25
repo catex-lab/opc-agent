@@ -185,6 +185,7 @@ import { registerVerifyRoutes } from "./routes/verify.js";
 import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerCustomAgentRoutes } from "./routes/custom-agents.js";
+import { registerModelRouteRoutes } from "./routes/model-routes.js";
 import { registerChatRoutes, type ChatRoutesDeps } from "./routes/chat.js";
 import { registerVendorComponentRoutes } from "./routes/vendor-components.js";
 import { buildMcpConfig, safeAgentId } from "./extensions/distribute.js";
@@ -473,6 +474,12 @@ function sdkRuntimeFor(agentId: string) {
 
 // 检查 WorkBuddy（SDK 通道）的登录状态
 app.get("/api/check-login", async (req, res) => {
+  // A222 契约是「60 秒内必须有应答」。实测（2026-11-24）WorkBuddy CLI 偶发
+  // initialize 慢到撞满厂商 SDK 传输层的 60s 硬超时（@tencent-ai/agent-sdk
+  // process-transport），我们传的 `timeout: SDK_LOGIN_WAIT_MS` 管不到
+  // initialize 阶段 —— 契约靠「CLI 今天心情好」满足。这里加一道 50s 总预算
+  // 竞速：无论 CLI 多慢，路由都在闸门红线之前给出诚实错误。
+  const CHECK_LOGIN_HARD_CAP_MS = 50_000;
   const response: LoginStatusResponse = {
     isLoggedIn: false,
     envConfigured: false,
@@ -512,10 +519,13 @@ app.get("/api/check-login", async (req, res) => {
   }
   
   // 2. 使用 unstable_v2_authenticate 检查登录状态（更可靠）
+  // A222：有登录流在跑时上面已经让路；这里只剩 authenticate 一条路，
+  // 总预算 = 硬帽竞速。竞速超时后底层 CLI 会自己走到它的 60s 传输层超时，
+  // 迟到的 resolve/reject 只影响局部变量（response 已发出），挂 .catch 防未处理拒绝。
   try {
     let needsLogin = false;
-    
-    const result = await unstable_v2_authenticate({
+
+    const authPromise = unstable_v2_authenticate({
       // A155：以前写死 environment: 'external' —— 查的是 CodeBuddy 国际站，
       // WorkBuddy 桌面端的登录态在 ~/.workbuddy，这里必须用同一套参数。
       ...sdkRuntimeFor('workbuddy'),
@@ -534,6 +544,16 @@ app.get("/api/check-login", async (req, res) => {
         response.error = '未登录，请先登录 WorkBuddy';
       }
     });
+    authPromise.catch(() => { /* 竞速超时后的迟到拒绝：response 已发出，吞掉防 unhandled */ });
+    const result = await Promise.race([
+      authPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`check-login 总预算（${CHECK_LOGIN_HARD_CAP_MS / 1000}s）耗尽：WorkBuddy CLI initialize 过慢`)),
+          CHECK_LOGIN_HARD_CAP_MS
+        )
+      ),
+    ]);
     
     // 如果没有触发 onAuthUrl 回调，说明已登录
     if (!needsLogin && result?.userinfo) {
@@ -779,6 +799,9 @@ registerModelCatalogRoutes(app, {
 // ============= Agent 凭据（应用内登录）=============
 // F0-02②：已迁至 server/routes/agent-credentials.ts。
 registerAgentCredentialRoutes(app);
+
+// 用户自定义模型路由：与凭据分离，只存 provider/model 与引用名。
+registerModelRouteRoutes(app);
 
 
 // ============= 会话 API =============

@@ -35,6 +35,7 @@ import { spawnSync } from 'node:child_process';
 import { AcpAdapter } from '../server/agents/adapters/acp.js';
 import type { AgentDefinition } from '../server/agents/definitions.js';
 import type { AgentEvent, SendContext } from '../server/agents/types.js';
+import { createModelRoute, deleteModelRoute } from '../server/modelRoutes.js';
 
 let pass = 0;
 let fail = 0;
@@ -46,7 +47,7 @@ function say(id: string, name: string, ok: boolean, detail = ''): void {
 // ============= 假 ACP 服务端 =============
 //
 // initialize → 回 agentInfo（hang-init 模式下永不回复）；
-// session/new → 回 sessionId + models（hang-new 模式下永不回复）；
+// session/new → 回 sessionId + models（hang-new 永不回复；dsh-config 回 configOptions）；
 // session/prompt → 发一条 text chunk 通知，然后正常回包结束。
 // 挂死 = 「永不回复但进程保持存活」，正是实测事故里 gateway 的行为。
 // 每次启动登记 pid 到 launches.jsonl，供断言「拉起几个进程 / pid 已退出」。
@@ -81,6 +82,35 @@ rl.on('line', line => {
   if (msg.method === 'session/new') {
     if (mode === 'hang-new') return; // 永不回复，进程保持存活（复现 gateway 挂死）
     sessionSeq += 1;
+    if (mode === 'dsh-config') {
+      // DSH 0.2.2-rc.5 实测：没有 models.availableModels，模型在 configOptions
+      // 里按 provider 分两层；reasoning_effort 混在一起，不能被当成模型。
+      respond(msg.id, {
+        sessionId: 'fake-dsh-' + process.pid + '-' + sessionSeq,
+        configOptions: [
+          {
+            id: 'model', name: 'Model', category: 'model', type: 'select',
+            currentValue: '["deepseek-official","deepseek-v4-flash"]',
+            options: [
+              {
+                group: 'deepseek-official', name: 'DeepSeek',
+                options: [{ value: '["deepseek-official","deepseek-v4-flash"]', name: 'deepseek-v4-flash' }],
+              },
+              {
+                group: 'sensenova', name: 'sensenova',
+                options: [{ value: '["sensenova","sensenova-6.8-flash"]', name: 'sensenova-6.8-flash' }],
+              },
+            ],
+          },
+          {
+            id: 'reasoning_effort', name: 'Reasoning effort', category: 'thought_level', type: 'select',
+            currentValue: 'high',
+            options: [{ value: 'high', name: 'High' }],
+          },
+        ],
+      });
+      return;
+    }
     respond(msg.id, {
       sessionId: 'fake-session-' + process.pid + '-' + sessionSeq,
       models: { availableModels: [{ modelId: 'fake-model', name: 'Fake Model' }] },
@@ -88,11 +118,39 @@ rl.on('line', line => {
     return;
   }
   if (msg.method === 'session/prompt') {
+    if (mode === 'silent-prompt') {
+      // 完全静默：既不发 update 也不回包 —— 必须按注入窗口快速失败
+      return;
+    }
+    if (mode === 'slow-prompt') {
+      // 慢但活着：先立刻发第 1 条（建立续期锚点），之后每隔 0.9s 一条
+      //（> 注入的 1.5s 窗口），共 3 条后再回包。修复前第 2 条之前就超时；
+      // 修复后每条 update 必须续期，撑到回包。
+      let i = 0;
+      const tick = () => {
+        if (i < 3) {
+          i += 1;
+          notify('session/update', {
+            sessionId: msg.params.sessionId,
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'chunk-' + i } },
+          });
+          if (i < 3) setTimeout(tick, 900);
+          else setTimeout(() => respond(msg.id, { stopReason: 'end_turn', usage: { totalTokens: 15 } }), 900);
+        }
+      };
+      tick();
+      return;
+    }
     notify('session/update', {
       sessionId: msg.params.sessionId,
       update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } },
     });
     respond(msg.id, { stopReason: 'end_turn', usage: { totalTokens: 5 } });
+    return;
+  }
+  if (msg.method === 'session/set_config_option') {
+    try { fs.appendFileSync(path.join(dir, 'config-set.jsonl'), JSON.stringify(msg.params) + '\\n'); } catch {}
+    respond(msg.id, {});
     return;
   }
   if (msg.method === 'session/request_permission') {
@@ -110,8 +168,9 @@ process.env.FAKE_ACP_DIR = tmpDir; // 适配器 spawn 时透传 process.env，�
 
 const launchesPath = path.join(tmpDir, 'launches.jsonl');
 const modePath = path.join(tmpDir, 'mode.txt');
+const configSetPath = path.join(tmpDir, 'config-set.jsonl');
 
-function setMode(mode: 'ok' | 'hang-new' | 'hang-init'): void {
+function setMode(mode: 'ok' | 'hang-new' | 'hang-init' | 'dsh-config' | 'slow-prompt' | 'silent-prompt'): void {
   fs.writeFileSync(modePath, mode, 'utf8');
 }
 function readLaunches(): number[] {
@@ -125,6 +184,16 @@ function readLaunches(): number[] {
     })
     .filter(pid => pid > 0);
 }
+function readConfigSets(): Array<{ configId?: string; value?: unknown; sessionId?: string }> {
+  if (!fs.existsSync(configSetPath)) return [];
+  return fs.readFileSync(configSetPath, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .flatMap(line => {
+      try { return [JSON.parse(line) as { configId?: string; value?: unknown; sessionId?: string }]; }
+      catch { return []; }
+    });
+}
 function resetLaunches(): void {
   // 链环境下前一段残留的 Fake ACP 子进程可能还没被树杀干净——
   // 若只清文件，旧进程在 reset 之后才写自己的 launches 行，会污染下一段计数
@@ -132,6 +201,7 @@ function resetLaunches(): void {
   // 先确保上一批进程全部退出，再清文件。
   killAllLaunched();
   fs.writeFileSync(launchesPath, '', 'utf8');
+  fs.writeFileSync(configSetPath, '', 'utf8');
 }
 
 function pidAlive(pid: number): boolean {
@@ -181,12 +251,12 @@ function buildDef(): AgentDefinition {
   } as AgentDefinition;
 }
 
-function makeCtx(sessionId: string): SendContext {
+function makeCtx(sessionId: string, model = 'fake-model'): SendContext {
   return {
     sessionId,
     prompt: 'hi',
     cwd: tmpDir,
-    model: 'fake-model',
+    model,
     systemPrompt: '',
     allowedTools: [],
   };
@@ -292,8 +362,32 @@ if (process.argv.includes('--probe')) {
         (adapter as unknown as { retryBudget: number }).retryBudget = Number.POSITIVE_INFINITY;
       }, ['A1', 'A7']);
       break;
+    case 'no-renew': {
+      // 拆掉「活动续期」：把 JsonRpcStdio.prototype.noteActivity 打成 no-op，
+      // 退回「固定窗口、有产出也误杀」的旧行为 —— [R1]/[R2] 必须真变红。
+      setMode('slow-prompt');
+      resetLaunches();
+      const probeAdapter = new AcpAdapter(buildDef(), {
+        requestTimeoutMs: INJECTED_TIMEOUT, initTimeoutMs: INJECTED_TIMEOUT, promptHardCapMs: 15_000,
+      });
+      // 先建连拿到 rpc 实例，从实例原型链取到 JsonRpcStdio.prototype（TS private 只是编译期概念）
+      const anyRpc = await (probeAdapter as unknown as { ensureRpc: () => Promise<unknown> }).ensureRpc();
+      const rpcProto = Object.getPrototypeOf(anyRpc) as Record<string, unknown>;
+      const originalNote = rpcProto.noteActivity as (...args: unknown[]) => number;
+      rpcProto.noteActivity = function () { return 0; };
+      const { events, timedOut, elapsedMs } = await collect(probeAdapter, makeCtx('sess-probe-norenew'), WATCHDOG_MS);
+      rpcProto.noteActivity = originalNote;
+      const types = events.map(e => e.type);
+      const r1 = !timedOut && !types.includes('error');
+      const r2 = types.includes('done') && elapsedMs >= 2500;
+      console.log(`    ${r1 ? '✗ 探针失效：[R1] 仍绿' : '✓ 探针生效：[R1] 如预期变红'}（elapsed=${elapsedMs}ms types=${types.join(',')}）`);
+      console.log(`    ${r2 ? '✗ 探针失效：[R2] 仍绿' : '✓ 探针生效：[R2] 如预期变红'}`);
+      probeAdapter.dispose();
+      red = !r1 || !r2;
+      break;
+    }
     default:
-      console.log(`  ✗ 未知探针：${probeName}（可选 no-kill | no-retry | infinite-budget）`);
+      console.log(`  ✗ 未知探针：${probeName}（可选 no-kill | no-retry | infinite-budget | no-renew）`);
       process.exit(3);
   }
   killAllLaunched();
@@ -345,6 +439,168 @@ console.log('[S] 基线：session/new 正常回包时行为不变');
     say('S5', 'session/new 的模型清单进入 availableModels', okAdapter.availableModels.length > 0, `models=${okAdapter.availableModels.length}`);
   } finally {
     okAdapter?.dispose();
+  }
+}
+
+// ============= [R] session/prompt 活动续期：有产出不误杀，无产出仍快速失败 =============
+//
+// 无人值守场景：定时任务预算 30 分钟，但 ACP prompt 旧实现固定 90s 就掐断，
+// 中途 session/update 不续期 —— 慢任务（工具调用多）被误杀且无自动重试。
+// 修复：收到本会话的 session/update 就把空闲窗口往后推；完全静默仍按窗口快速失败；
+// 总时长受硬上限封顶，防止「不停产出却永不结束」变成永不超时。
+console.log('[R] prompt 活动续期：有产出不误杀 / 静默仍快速失败 / 硬上限封顶');
+{
+  // [R1] 慢但活着：3 条 update 每条间隔 2.2s（> 1.5s 窗口），第 4 拍正常回包。
+  let slowAdapter: AcpAdapter | null = null;
+  try {
+    setMode('slow-prompt');
+    resetLaunches();
+    slowAdapter = new AcpAdapter(buildDef(), {
+      requestTimeoutMs: INJECTED_TIMEOUT,
+      initTimeoutMs: INJECTED_TIMEOUT,
+      promptHardCapMs: 15_000, // 硬上限 15s，够跑完 3×2.2s=6.6s，又能测到封顶
+    });
+    const { events, timedOut, elapsedMs } = await collect(slowAdapter, makeCtx('sess-slow'), WATCHDOG_MS);
+    const types = events.map(e => e.type);
+    const texts = events.filter(e => e.type === 'text').map(e => (e as { content?: string }).content ?? '');
+
+    say('R1', '慢任务（每 0.9s 有产出）没有在 1.5s 窗口被误杀',
+      !timedOut && !types.includes('error'), `elapsed=${elapsedMs}ms types=${types.join(',')}`);
+    say('R2', '跑满 3 条 update 后正常收到 done（不是提前返回）',
+      types.includes('done') && elapsedMs >= 2500, `elapsed=${elapsedMs}ms`);
+    say('R3', '三条 update 的内容都收到了（续期不吞正文）',
+      texts.some(t => t.includes('chunk-1')) && texts.some(t => t.includes('chunk-3')),
+      `texts=${JSON.stringify(texts).slice(0, 120)}`);
+  } finally {
+    slowAdapter?.dispose();
+  }
+
+  // [R2] 完全静默：没有任何 update，必须按注入窗口快速失败（不能因为装了续期就永不超时）。
+  let silentAdapter: AcpAdapter | null = null;
+  try {
+    setMode('silent-prompt');
+    resetLaunches();
+    silentAdapter = new AcpAdapter(buildDef(), {
+      requestTimeoutMs: INJECTED_TIMEOUT,
+      initTimeoutMs: INJECTED_TIMEOUT,
+      promptHardCapMs: 15_000,
+    });
+    const { events, timedOut, elapsedMs } = await collect(silentAdapter, makeCtx('sess-silent'), WATCHDOG_MS);
+    const message = errorMessage(events);
+
+    say('R4', '完全静默仍在 ~1 个注入窗口快速失败（没变成永不超时）',
+      !timedOut && events.some(e => e.type === 'error') && elapsedMs < 6000,
+      `elapsed=${elapsedMs}ms`);
+    say('R5', '静默失败仍是普通超时文案（没被错报成 hard-cap）',
+      message.includes('ACP 请求超时') && !message.includes('单轮上限'), message.slice(0, 100));
+  } finally {
+    silentAdapter?.dispose();
+  }
+
+  // [R3] 硬上限：一直有产出但总时长越过硬上限，必须被封顶并给诚实文案。
+  let cappedAdapter: AcpAdapter | null = null;
+  try {
+    setMode('slow-prompt');
+    resetLaunches();
+    cappedAdapter = new AcpAdapter(buildDef(), {
+      requestTimeoutMs: INJECTED_TIMEOUT,
+      initTimeoutMs: INJECTED_TIMEOUT,
+      promptHardCapMs: 2500, // 2.5s 封顶 < 约 3.6s 的正常耗时
+    });
+    const { events, timedOut, elapsedMs } = await collect(cappedAdapter, makeCtx('sess-capped'), WATCHDOG_MS);
+    const message = errorMessage(events);
+
+    say('R6', '持续产出但越过硬上限仍被掐断（不是无限续期）',
+      !timedOut && events.some(e => e.type === 'error'), `elapsed=${elapsedMs}ms`);
+    say('R7', '触顶报错是诚实文案「达到单轮上限，请拆分任务」',
+      message.includes('单轮上限') && message.includes('拆分任务'), message.slice(0, 120));
+    say('R8', '触顶发生在硬上限附近（2.5s 量级，不是 1.5s 就错杀）',
+      elapsedMs >= 2200 && elapsedMs < 8000, `elapsed=${elapsedMs}ms`);
+  } finally {
+    cappedAdapter?.dispose();
+  }
+}
+
+// ============= [S2] DSH：configOptions 里的嵌套分组也要能发现 =============
+console.log('[S2] DSH configOptions 发现模型（Hermes 的 availableModels 路径保持不变）');
+{
+  let cfgAdapter: AcpAdapter | null = null;
+  try {
+    setMode('dsh-config');
+    resetLaunches();
+    cfgAdapter = new AcpAdapter(buildDef(), { requestTimeoutMs: INJECTED_TIMEOUT, initTimeoutMs: INJECTED_TIMEOUT });
+    const { events, timedOut } = await collect(cfgAdapter,
+      makeCtx('sess-dsh-config', '["sensenova","sensenova-6.8-flash"]'), WATCHDOG_MS);
+    const types = events.map(e => e.type);
+    const ids = cfgAdapter.availableModels.map(m => m.modelId);
+    const routes = cfgAdapter.availableRoutes;
+    const configSets = readConfigSets();
+
+    say('S6', '正常收发，没有因为多一种模型字段而报错', !timedOut && !types.includes('error'), `types=${types.join(',')}`);
+    say('S7', '用户自定义 sensenova 路由进入模型清单',
+      ids.includes('["sensenova","sensenova-6.8-flash"]'), `ids=${ids.join(' | ')}`);
+    say('S8', '官方路由同时保留（自定义不是替换官方）',
+      ids.includes('["deepseek-official","deepseek-v4-flash"]'), `ids=${ids.join(' | ')}`);
+    say('S9', 'reasoning_effort 的 high 没有混进模型清单', !ids.includes('high'), `ids=${ids.join(' | ')}`);
+    say('S10', '统一路由保留 providerId', routes.some(r =>
+      r.providerId === 'sensenova' && r.modelId === 'sensenova-6.8-flash' && r.source === 'session-config'
+    ), `routes=${routes.length}`);
+    say('S11', '选中的自定义路由经 set_config_option 真正下发',
+      configSets.some(item => item.configId === 'model' && item.value === '["sensenova","sensenova-6.8-flash"]'),
+      `sets=${JSON.stringify(configSets)}`);
+    say('S12', '一条路由只下发一次（不是每块流式都重设）', configSets.length === 1, `sets=${configSets.length}`);
+  } finally {
+    cfgAdapter?.dispose();
+  }
+}
+
+// ============= [S3] 归属闸：没发现的路由不许让 ACP 静默用默认 =============
+console.log('[S3] 未归属的模型路由必须报错，绝不静默继续');
+{
+  let rogueAdapter: AcpAdapter | null = null;
+  try {
+    setMode('dsh-config');
+    resetLaunches();
+    rogueAdapter = new AcpAdapter(buildDef(), { requestTimeoutMs: INJECTED_TIMEOUT, initTimeoutMs: INJECTED_TIMEOUT });
+    const { events, timedOut } = await collect(rogueAdapter,
+      makeCtx('sess-dsh-rogue', '["rogue-provider","not-in-list"]'), WATCHDOG_MS);
+    const types = events.map(e => e.type);
+
+    say('S13', '未归属路由报错且没有正文（不是「换成默认后照样回一句」）',
+      !timedOut && types.includes('error') && !types.includes('text'), `types=${types.join(',')}`);
+    say('S14', '拒绝原因写清「模型路由未生效」', errorMessage(events).includes('模型路由未生效'), errorMessage(events).slice(0, 100));
+    say('S15', '拒绝后不调用 set_config_option', readConfigSets().length === 0, `sets=${readConfigSets().length}`);
+  } finally {
+    rogueAdapter?.dispose();
+  }
+}
+
+// ============= [S4] 用户登记的路由也要进入 ACP 菜单与归属集合 =============
+console.log('[S4] 自定义路由存储与 ACP 发现层联动');
+{
+  let storedAdapter: AcpAdapter | null = null;
+  const stored = createModelRoute({
+    agentId: 'fake-hermes', providerId: 'my-gateway', modelId: 'stored-model',
+    displayName: 'Stored Model', deliveryDialect: 'acp-config',
+  });
+  try {
+    setMode('dsh-config');
+    resetLaunches();
+    storedAdapter = new AcpAdapter(buildDef(), { requestTimeoutMs: INJECTED_TIMEOUT, initTimeoutMs: INJECTED_TIMEOUT });
+    const { events, timedOut } = await collect(storedAdapter, makeCtx('sess-stored-route'), WATCHDOG_MS);
+    const ids = storedAdapter.availableModels.map(m => m.modelId);
+
+    say('S16', '存过的路由出现在 availableModels（不再「存了却选不了」）',
+      !timedOut && ids.includes('["my-gateway","stored-model"]'), `ids=${ids.join(' | ')}`);
+    say('S17', '存过的路由出现在 availableRoutes 且保留用户来源',
+      storedAdapter.availableRoutes.some(r =>
+        r.providerId === 'my-gateway' && r.modelId === 'stored-model' && r.origin === 'user'
+      ), `routes=${storedAdapter.availableRoutes.length}`);
+    say('S18', '没有 error 事件（用户路由不打扰既有 ACP 会话）',
+      !events.some(e => e.type === 'error'), `types=${events.map(e => e.type).join(',')}`);
+  } finally {
+    storedAdapter?.dispose();
+    deleteModelRoute(stored.id);
   }
 }
 

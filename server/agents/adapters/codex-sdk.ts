@@ -203,6 +203,8 @@ export class CodexSdkAdapter implements AgentProvider {
         ? {
             availability: 'ready' as const,
             message: '已通过环境变量配置凭据（未校验）',
+            statusSummary: '已通过环境变量配置凭据',
+            statusDetail: '未校验',
           }
         : resolveCodexCredential(inspectCodexCredentials())),
       installed: true,
@@ -221,18 +223,30 @@ export class CodexSdkAdapter implements AgentProvider {
   refreshCredential(): AgentStatus | null {
     if (!this.status?.installed) return null;
     const now = new Date().toISOString();
-    const resolved: Pick<AgentStatus, 'availability' | 'message' | 'probeState'> =
-      process.env.OPENAI_API_KEY
-        ? { availability: 'ready', message: '已通过环境变量配置凭据（未校验）' }
+    const envConfigured = Boolean(process.env.OPENAI_API_KEY);
+    const resolved: Pick<AgentStatus, 'availability' | 'message' | 'probeState' | 'statusSummary' | 'statusDetail'> =
+      envConfigured
+        ? {
+            availability: 'ready',
+            message: '已通过环境变量配置凭据（未校验）',
+            statusSummary: '已通过环境变量配置凭据',
+            statusDetail: '未校验',
+          }
         : resolveCodexCredential(inspectCodexCredentials());
     const next: AgentStatus = {
       ...this.status,
       availability: resolved.availability,
       message: resolved.message,
+      statusSummary: resolved.statusSummary,
+      statusDetail: resolved.statusDetail,
       probedAt: now,
     };
     if (resolved.probeState) next.probeState = resolved.probeState;
     else delete next.probeState;
+    if (!envConfigured) {
+      delete next.statusSummary;
+      delete next.statusDetail;
+    }
     // 绿点回来了就顺手清掉上一次的失败原因；仍失败则保留并补建议
     if (resolved.availability === 'ready') delete next.lastError;
     this.status = next;

@@ -29,6 +29,7 @@ import kimicodeLogo from './assets/agent-logos/kimicode.svg';
 import traeLogo from './assets/agent-logos/trae.svg';
 import piLogo from './assets/agent-logos/pi.png';
 import antigravityLogo from './assets/agent-logos/antigravity.png';
+import deepseekHarnessLogo from './assets/agent-logos/deepseek-harness.svg';
 
 export interface AgentLogo {
   /** Vite 解析后的资源地址 */
@@ -162,6 +163,16 @@ export const AGENT_LOGOS: Record<string, AgentLogo> = {
     fit: 'contain',
     hex: '#4285F4',
     source: 'https://asvg.app/icons/google-antigravity',
+  },
+  'deepseek-harness': {
+    src: deepseekHarnessLogo,
+    // DSH 官方 logomark（mono，fill=currentColor）：经 <img> 渲染时
+    // currentColor 不继承 CSS 颜色 → 落成黑色字形，需要浅色底衬。
+    tile: 'light',
+    fit: 'contain',
+    // 品牌色取 DSH 产品主色（与 descriptor.color 同源），用于兜底色块与强调
+    hex: '#378ADD',
+    source: '用户提供：DeepSeek Harness 官方 logomark-mono.svg（E:\\aiapp\\LOGO\\）',
   },
 };
 

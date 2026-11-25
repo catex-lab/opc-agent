@@ -21,7 +21,7 @@
  * 订阅方看到的是「有一次变更」，而不是「有三次」。
  */
 
-export type CredentialChangeKind = 'credentials' | 'env' | 'profiles';
+export type CredentialChangeKind = 'credentials' | 'env' | 'profiles' | 'model-routes';
 
 export interface CredentialChange {
   kind: CredentialChangeKind;
@@ -42,7 +42,7 @@ export function mergeCredentialChanges(batch: CredentialChange[]): CredentialCha
     const dup = out.find(x => x.kind === e.kind && x.agentId === e.agentId);
     if (!dup) out.push({ ...e });
   }
-  for (const kind of ['credentials', 'env', 'profiles'] as const) {
+  for (const kind of ['credentials', 'env', 'profiles', 'model-routes'] as const) {
     const global = out.find(e => e.kind === kind && e.agentId === undefined);
     if (!global) continue;
     for (let i = out.length - 1; i >= 0; i--) {
@@ -95,4 +95,9 @@ export function emitEnvChanged(): void {
 /** 账号 profile 增删改后发（#15）。 */
 export function emitProfilesChanged(agentId?: string): void {
   emit({ kind: 'profiles', ...(agentId ? { agentId } : {}) });
+}
+
+/** 用户自定义模型路由增删改后发；订阅方按 agentId 决定是否重取。 */
+export function emitModelRoutesChanged(agentId?: string): void {
+  emit({ kind: 'model-routes', ...(agentId ? { agentId } : {}) });
 }

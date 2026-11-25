@@ -888,10 +888,16 @@ try {
   ok(badgeCount > 0, '[5] 至少有一条带「未验证」角标（否则下面那条相等断言会假绿）');
   ok(badgeCount === uiPayload.unverified.length,
     '[5] 每一条未验证的模型都带「未验证」角标', `${badgeCount} / ${uiPayload.unverified.length}`);
-  ok((await page2.locator('[data-model-probe-hint]').count()) === 1,
-    '[5] 浮层先说明「点了会跑一次 CLI」（不写这句，无响应会被当成卡死）');
+  /* 底部辅助文字按用户「简洁美观」的要求移除：探测提示与溯源行都不再渲染。
+     否定式必须配肯定式 —— 单看「没有这两行」，把整个浮层删掉也会绿。
+     所以前一条 [5] 浮层打开、未验证角标、下面这条「添加模型」三者俱在，
+     才说明是真的删掉了那两行，而不是整块 UI 消失。 */
+  ok((await page2.locator('[data-model-probe-hint]').count()) === 0,
+    '[5] 底部不再显示「点了会跑一次 CLI」的辅助说明');
+  ok((await page2.locator('[data-model-popup-provenance]').count()) === 0,
+    '[5] 底部不再显示来源 / 刷新时间的溯源行');
   ok((await page2.locator('[data-model-popup-add]').count()) === 1,
-    '[5] qoder 不是只读清单，底部仍是「添加模型」');
+    '[5] qoder 不是只读清单，底部仍是「添加模型」（肯定式自证浮层没被删）');
 
   const sel = id => `[data-model-id="${String(id).replace(/"/g, '\\"')}"]`;
   const target = page2.locator(sel(clickId));

@@ -515,6 +515,10 @@ export interface AgentStatus {
   binaryPath?: string;
   version?: string;
   message?: string;
+  /** 状态结论 token（与服务端同源）：主行只显示这一档 */
+  statusSummary?: string;
+  /** 状态说明 token：真实检测通过后由统一渲染层隐藏 */
+  statusDetail?: string;
   /** 需要登录时的认证地址（探测侧结构化给出，供「去登录」按钮使用） */
   authUrl?: string;
   /** 最近一次调用失败的原因 */

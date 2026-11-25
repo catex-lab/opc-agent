@@ -42,7 +42,6 @@ import { Check, Info, Plus } from 'lucide-react';
 import { Tooltip } from 'tdesign-react';
 import type { Model, CliConfiguredModel } from '../types';
 import { modelTagKind } from '../../shared/model-tag';
-import { asProvenance, describeProvenance, type Provenance } from '../../shared/provenance';
 
 export interface ModelSelectPopupProps {
   models: Model[];
@@ -73,15 +72,6 @@ export interface ModelSelectPopupProps {
   note?: string;
   /** 只读时高亮「当前用的是哪一条」 */
   currentId?: string;
-  /**
-   * P0：这份清单的来源 / 取数时刻 / 是否真的向服务方校验过。
-   *
-   * 写在底部通栏上方，不是为了好看：用户报的第三个问题是「输入框里展示的
-   * 不一定是真实实时的模型，导致用不了各平台的积分或体验套餐」。一份
-   * 20 小时前枚举出来、从没验过账号权益的名单，必须自报家门，而不是
-   * 顶着「内置模型」的标题装作实时。
-   */
-  provenance?: Provenance;
   /**
    * 「未验证」模型被点击时先标定一次（A151 / P2）。
    *
@@ -157,7 +147,6 @@ export function ModelSelectPopup({
   readonly = false,
   note,
   currentId,
-  provenance,
   onSelectUnverified,
   manual = false,
 }: ModelSelectPopupProps) {
@@ -171,6 +160,12 @@ export function ModelSelectPopup({
   const wbOnlyGroup =
     configuredModels.length > 0 &&
     configuredModels.every(m => m.source.startsWith('WorkBuddy'));
+  /* 用户显式登记的路由是另一类来源：它不是 CLI 配置里「写过某个名字」，
+     而是本应用里保存的完整 provider/model。分组标题要说准，否则用户以为
+     这些模型是从本机配置文件里偶然发现的。 */
+  const userOnlyGroup =
+    configuredModels.length > 0 &&
+    configuredModels.every(m => m.source.startsWith('用户自定义路由'));
 
   // 键盘游标：进浮层时落在当前选中项上（没有选中就落第一项）。
   // 原来 TDesign Select 自带方向键 + 回车，换成自绘后这部分能力不能丢，
@@ -561,7 +556,7 @@ export function ModelSelectPopup({
                 className="text-caption font-medium"
                 style={{ color: 'var(--td-text-color-secondary)' }}
               >
-                {wbOnlyGroup ? 'WorkBuddy 自定义模型' : '本机 CLI 配置'}
+                {userOnlyGroup ? '自定义路由' : wbOnlyGroup ? 'WorkBuddy 自定义模型' : '本机 CLI 配置'}
               </span>
               <span
                 className="text-caption tabular-nums"
@@ -622,51 +617,6 @@ export function ModelSelectPopup({
             data-model-verify-error
           >
             {verifyError}
-          </p>
-        )}
-        {/* A151：先说明「点了会怎样」再让用户点。不写这句，一次 8-20s 的
-            无响应会被当成卡死；写了这句，「验证中…」才有出处。 */}
-        {!readonly && !verifyError && models.some(m => m.verified === false) && (
-          <p
-            className="mb-1 px-2 text-caption leading-4"
-            style={{ color: 'var(--td-text-color-secondary)' }}
-            data-model-probe-hint
-          >
-            带「未验证」的模型选中前会先跑一次 CLI 确认（花少量 token）。
-          </p>
-        )}
-        {/* P0：清单自报来源与时间。老服务端没给就明说「从未刷新」——
-            绝不因为拿不到数据就省掉这一行，省掉反而最像「实时」。
-            M-1（审查报告）：「数据来源与时间未知」是没法行动的反馈，
-            改成「上次刷新：从未刷新 · 点此刷新」，刷新动作与底部
-            「添加模型（去设置）」同源（设置里刷新枚举）。 */}
-        {asProvenance(provenance) ? (
-          <p
-            className="mb-1 px-2 text-caption leading-4 break-words"
-            style={{ color: 'var(--td-text-color-placeholder)' }}
-            title={asProvenance(provenance)?.note}
-            data-model-popup-provenance
-            data-provenance-verified={asProvenance(provenance)?.verified ? '1' : '0'}
-          >
-            {describeProvenance(provenance)}
-          </p>
-        ) : (
-          <p
-            className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-2 text-caption leading-4"
-            style={{ color: 'var(--td-text-color-placeholder)' }}
-            data-model-popup-provenance
-            data-provenance-verified="0"
-          >
-            <span>上次刷新：从未刷新</span>
-            <button
-              type="button"
-              className="underline underline-offset-2 transition-colors hover:opacity-80"
-              style={{ color: 'var(--td-brand-color)' }}
-              onClick={onAddModel}
-              data-model-popup-refresh
-            >
-              点此刷新
-            </button>
           </p>
         )}
         {readonly || manual ? (

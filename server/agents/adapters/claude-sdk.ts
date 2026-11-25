@@ -325,7 +325,12 @@ export class ClaudeSdkAdapter implements AgentProvider {
     );
     this.status = {
       ...(envConfigured
-        ? { availability: 'ready' as const, message: '已通过环境变量配置凭据（未校验）' }
+        ? {
+            availability: 'ready' as const,
+            message: '已通过环境变量配置凭据（未校验）',
+            statusSummary: '已通过环境变量配置凭据',
+            statusDetail: '未校验',
+          }
         : resolveClaudeCredential(inspectClaudeCredentials())),
       installed: true,
       binaryPath: binary,
@@ -341,18 +346,32 @@ export class ClaudeSdkAdapter implements AgentProvider {
   refreshCredential(): AgentStatus | null {
     if (!this.status?.installed) return null;
     const now = new Date().toISOString();
-    const resolved: Pick<AgentStatus, 'availability' | 'message' | 'probeState'> =
+    const envConfigured = Boolean(
       process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN
-        ? { availability: 'ready', message: '已通过环境变量配置凭据（未校验）' }
+    );
+    const resolved: Pick<AgentStatus, 'availability' | 'message' | 'probeState' | 'statusSummary' | 'statusDetail'> =
+      envConfigured
+        ? {
+            availability: 'ready',
+            message: '已通过环境变量配置凭据（未校验）',
+            statusSummary: '已通过环境变量配置凭据',
+            statusDetail: '未校验',
+          }
         : resolveClaudeCredential(inspectClaudeCredentials());
     const next: AgentStatus = {
       ...this.status,
       availability: resolved.availability,
       message: resolved.message,
+      statusSummary: resolved.statusSummary,
+      statusDetail: resolved.statusDetail,
       probedAt: now,
     };
     if (resolved.probeState) next.probeState = resolved.probeState;
     else delete next.probeState;
+    if (!envConfigured) {
+      delete next.statusSummary;
+      delete next.statusDetail;
+    }
     if (resolved.availability === 'ready') delete next.lastError;
     this.status = next;
     return next;

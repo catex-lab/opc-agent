@@ -316,9 +316,24 @@ export interface AgentDefinition {
    * 走 ACP 需要的旗标（如 gemini 的 `--acp`）从这里追加。缺省 = 无额外参数
    * （hermes 的 hermes-acp 不需要）。**AcpAdapter 已支持消费本字段**；
    * 切通道本身（kind: 'cli' → 'acp'）另需逐家验证四链路后才落。
+   *
+   * DSH（DeepSeek Harness）：桌面版 exe 自身当 node 解释器跑 profile 里的
+   * ACP 入口，args 里用 `{exeDir}` 占位符引用已解析可执行文件所在目录
+   * （安装目录用户自选，写死盘符必漏）。
    */
   acp?: {
     args?: string[];
+    /**
+     * 追加环境变量（在 `process.env` 与启动垫片 env 之后合并）。
+     * DSH 需要 `ELECTRON_RUN_AS_NODE=1`：让桌面 exe 以 node 模式跑 cli.js，
+     * 否则它会拉起 GUI 窗口而不是 stdio JSON-RPC。
+     */
+    env?: Record<string, string>;
+    /**
+     * 启动前从继承环境里剔除的变量。DSH 剔除 `NODE_OPTIONS`：
+     * 实测继承的 Node 选项会干扰 exe-as-node 启动（探针 2026-11-24）。
+     */
+    deleteEnv?: string[];
   };
   /**
    * 登录代管（P2，接入架构收敛方案）：该 Agent **已核实**的登录命令。
@@ -1604,6 +1619,60 @@ cli: {
     authFiles: ['AppData/Local/hermes/auth.json', '.hermes/auth.json'],
   },
   {
+    // DSH 正式接入（2026-11-24）：原 comingSoon 占位转正。
+    // 启动形态（本机实测，探针 .tmp/probe-dsh-acp.mjs）：
+    //   `DeepSeek Harness.exe --expose-internals <cli.js> --profile acp`
+    //   env 需 ELECTRON_RUN_AS_NODE=1（exe 当 node 用，否则拉起 GUI）、
+    //   剔除 NODE_OPTIONS（继承的 Node 选项会干扰 exe-as-node）。
+    // cli.js 在 app.asar 内：路径作为**参数**传给 exe（Electron 自己的 fs
+    // 垫片读得到），不是从 asar 里 spawn 二进制 —— 不踩 §19 的 ENOENT 坑。
+    descriptor: {
+      id: 'deepseek-harness',
+      name: 'DeepSeek Harness',
+      vendor: 'DeepSeek',
+      kind: 'acp',
+      // 官方走 DeepSeek 账号，自定义 provider 时额度算各家 provider；
+      // 模型路由是核心用法，region 不硬塞 cn —— 与 opencode 同一纪律。
+      family: 'deepseek-harness',
+      familyName: 'DeepSeek Harness',
+      surface: 'acp',
+      region: 'any',
+      regionName: '跟随模型 provider',
+      authScope: 'deepseek-account',
+      authScopeName: 'DeepSeek 官方账号',
+      capabilities: ['chat', 'code', 'write', 'tools'],
+      description: 'DeepSeek 官方编码 Harness，通过 ACP profile 接入，支持自定义 provider 的模型路由',
+      eventCapabilities: ['thinking', 'tool', 'usage'],
+      icon: 'deepseek-harness',
+      color: '#378ADD',
+      command: 'DeepSeek Harness.exe',
+      installHint: 'DeepSeek Harness 桌面版（官网安装），通过 ACP（stdio JSON-RPC）接入',
+    },
+    acp: {
+      args: [
+        '--expose-internals',
+        '{exeDir}\\resources\\app.asar\\dsh\\node_modules\\@deepseek-ai\\dsh-desktop-host\\lib\\cli.js',
+        '--profile',
+        'acp',
+      ],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+      deleteEnv: ['NODE_OPTIONS'],
+    },
+    // DSH 的模型切换走 session/set_config_option（["provider","model"] 二元组），
+    // 与 hermes 的 set_model 不同：实测（verify:acp-session-timeout S11/S12 +
+    // 真机 E2E）不认识的组合会明确报错、认识的组合真生效 —— 不是假控件，
+    // 符合 'client' 的准入标准。不设这个字段，菜单永远「模型由 Agent 决定」。
+    modelSelection: 'client',
+    // 安装目录用户自选（如 E:\AI\DeepSeek Harness），不在 PATH ——
+    // 与 ZCode 同一策略：桌面快捷方式反推安装根，再按 exe 名命中。
+    engineCandidates: ['{root}/DeepSeek Harness.exe'],
+    shortcutNames: ['DeepSeek Harness.lnk'],
+    // 自定义 provider 的 apiKeyEnv 由用户在 DSH 的 patch/profile 里自己定，
+    // 这里只列实测见过的通用名；官方登录凭据在 DSH 自己的 profile 里。
+    authEnvs: ['DEEPSEEK_API_KEY', 'SENSENOVA_API_KEY'],
+    authFiles: ['.dsh/settings.yaml.imported', '.dsh/profiles/desktop/cordis.yml'],
+  },
+  {
     descriptor: {
       id: 'cursor',
       name: 'Cursor',
@@ -2595,6 +2664,17 @@ const INSTALL_INFO: Record<string, AgentInstall> = {
     note: '随 ZCode 桌面版分发，没有命令行安装方式；装完把引擎软链到 PATH（本应用不代管它的模型配置）',
     checkedAt: CHECKED,
     checkedFrom: '本机 ~/.zcode 为桌面版留下的配置；未找到可核实的独立下载页',
+  },
+  'deepseek-harness': {
+    method: 'installer',
+    requires: 'none',
+    // 不给 url：没有核实到可写进白名单的独立下载页，界面不画「去下载」。
+    // 本机桌面版已实测能作为 node 解释器跑内置 cli.js 的 ACP profile
+    // （2026-11-24 探针）；安装目录由官方安装器决定，OPC 从快捷方式反推。
+    note: '安装 DeepSeek Harness 桌面版后即可被 OPC 发现；无需 PATH，OPC 从桌面快捷方式反推安装目录并通过 ACP profile 接入',
+    checkedAt: '2026-11-24',
+    checkedFrom:
+      '本机桌面版实测：exe 以 ELECTRON_RUN_AS_NODE=1 启动 dsh-desktop-host 内置 cli.js 的 ACP profile；未核实到可公开给出的独立下载页，故不画按钮',
   },
   hermes: {
     method: 'unknown',

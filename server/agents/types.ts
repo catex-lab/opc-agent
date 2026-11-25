@@ -501,8 +501,18 @@ export interface AgentStatus {
   binaryPath?: string;
   /** 版本号 */
   version?: string;
-  /** 面向用户的状态说明 */
+  /** 面向用户的状态说明（兼容旧消费者；新 UI 优先读下面两个字段） */
   message?: string;
+  /**
+   * 状态结论 token：只放「握手成功 / 检测到本地登录态 / 探测超时」这类结论。
+   * 解释、限制、文件时间一律不进这里 —— 详情页主行只认这一档。
+   */
+  statusSummary?: string;
+  /**
+   * 状态说明 token：必要的排查提示（未校验 / 文件时间 / 等待秒数）。
+   * 真实检测通过后由前端统一隐藏，避免陈旧提示冒充事实。
+   */
+  statusDetail?: string;
   /**
    * 需要登录时的认证地址。
    *

@@ -34,6 +34,7 @@ import {
 } from '../i18n';
 import { ProviderSettings } from './ProviderSettings';
 import { ModelCatalogSettings } from './ModelCatalogSettings';
+import { ModelRouteSettings } from './ModelRouteSettings';
 import { MemoryPanel } from './MemoryPanel';
 import { PermissionRulesPanel } from './PermissionRulesPanel';
 import { ProfilePanel } from './ProfilePanel';
@@ -1161,8 +1162,12 @@ export function SettingsPage({
             否则用户碰到「官方上新了但菜单里没有」时完全没有抓手。
             T1-1：内容区大标题取消；原挂在标题旁的 ⓘ 说明降为表格下方一行小字。 */}
         {section === 'models' && (
-        <div>
+        <div className="space-y-8">
           <ModelCatalogSettings onRefreshed={onModelsRefreshed} />
+          {/* 用户登记的自定义 provider/model 路由。作为「模型清单」的子块，
+              不新增导航分区（a28/a37 钉死了分区数量），保存/删除走事件总线
+              让聊天模型菜单立即重取。 */}
+          <ModelRouteSettings />
         </div>
         )}
 
