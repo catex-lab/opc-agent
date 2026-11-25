@@ -922,6 +922,10 @@ export class AcpAdapter implements AgentProvider {
         message: this.agentInfo?.version
           ? `ACP 握手成功（凭据未校验；会话创建未验证）：${this.agentInfo.name ?? 'agent'} v${this.agentInfo.version}`
           : 'ACP 握手成功（凭据未校验；会话创建未验证）',
+        statusSummary: this.agentInfo?.version
+          ? `ACP 握手成功：${this.agentInfo.name ?? 'agent'} v${this.agentInfo.version}`
+          : 'ACP 握手成功',
+        statusDetail: '凭据未校验；会话创建未验证',
         probedAt: now,
       };
     } catch (err) {

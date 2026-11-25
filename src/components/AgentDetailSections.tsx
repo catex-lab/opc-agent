@@ -9,6 +9,7 @@ import { describeProbeFeedback, type AgentProbeFeedback } from '../agentProbe';
 import { describeProvenance, asProvenance } from '../../shared/provenance';
 import { subscribeCredentialChanges } from '../lib/credentialEvents';
 import { useAgentLogin } from '../agentLogin';
+import { agentStatusCopy } from '../agentStatusCopy';
 import {
   AVAILABILITY_META,
   CAPABILITY_META,
@@ -89,6 +90,8 @@ export function AgentDetailSections({
    */
   const unverifiedReady =
     agent.status.availability === 'ready' && !agent.status.lastCanary;
+  /** 状态文案统一走 token 层：主行只有结论，解释性文字只在必要时出现 */
+  const statusCopy = agentStatusCopy(agent);
 
   /**
    * 账号与权益（A152）。按需拉 `/api/agents/:id/account`，不塞进名册接口 ——
@@ -245,29 +248,27 @@ export function AgentDetailSections({
         <div className={`tc-detail-rows overflow-hidden ${CARD}`} style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
           <DetailRow
             label="状态"
-            // 状态词永远在第一位：A177/A178 要求「探测超时」不能被
-            // 探测消息里的 "Request timeout" 原话盖过去，更不能显示成「未登录」
+            // 状态词永远在第一位；结论与排查提示分层由 agentStatusCopy 统一裁定
+            // —— 它是所有 Agent 共用的唯一出口，新增适配器不必再各自拼句子。
             value={
-              unverifiedReady
-                ? '未验证'
-                : agent.status.message
-                  ? `${availabilityLabelOf(agent)} · ${agent.status.message}`
-                  : availabilityLabelOf(agent)
+              <span data-agent-unverified={unverifiedReady ? 'true' : undefined}>
+                {statusCopy.primary}
+                {statusCopy.detail && (
+                  <span
+                    className="mt-1 block text-secondary"
+                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                    data-agent-status-detail
+                  >
+                    {statusCopy.detail}
+                  </span>
+                )}
+              </span>
             }
           />
-          {/* D1-1（审查报告）：探测说 ready 但从未真实检测过 → 基本信息的
-              「状态」行同步为「未验证」，与页面顶部的灰色徽标同一口径
-              （原话：状态显示必须与验证程度一致）。 */}
-          {unverifiedReady && (
-            <DetailRow
-              label="真实检测"
-              value={
-                <span style={{ color: 'var(--td-text-color-placeholder)' }}>
-                  还没做过真实检测 —— 状态仅供参考，点右上角「真实检测」核对
-                </span>
-              }
-            />
-          )}
+          {/* D1-1（审查报告）：探测说 ready 但从未真实检测过 → 「状态」行同步为
+              「未验证」（由 agentStatusCopy 统一裁决），这里不再重复第二条说明行：
+              「还没做过真实检测」这句由状态行的次级提示承担，避免同一件事说两遍。
+              未验证时行上仍带 `data-agent-unverified`，闸门据此断言。 */}
           {/* 每个非 ready 的 Agent 都给一句「怎么恢复」：401/403 去重登、
               429 是额度/限流、ENOENT 是没装好。文案由后端按 id 下发，
               前端不做猜测（自建 Agent 也有兜底话术）。 */}
@@ -327,16 +328,8 @@ export function AgentDetailSections({
             value={agent.status.version ? `v${agent.status.version}` : '未上报'}
           />
           <DetailRow label="接入方式" value={kindLabel(agent.kind)} />
-          {/* A222：不再摆一个「接入说明」的标签去解释右边那段话 —— 那段话
-              本身就是说明。改成整行正文，少一列重复标签，读起来也不断行。 */}
-          {agent.installHint && !showInstallCard && (
-            <div
-              className={`${ROW_X} pb-3 text-secondary`}
-              style={{ color: 'var(--td-text-color-secondary)' }}
-            >
-              {agent.installHint}
-            </div>
-          )}
+          {/* A71：没装（或装了起不来）时仍由「获取」卡片承担具体安装说明；
+              已装状态的接入方式只留结论，不再重复一段灰色散文。 */}
           {/* A71：没装（或装了起不来）时，把「接入说明」这句散文升级成「获取」卡片。
               为什么只在这两个状态下出现：`needs-auth` 是"已经装好了、只差登录"，
               这时候给下载按钮会把用户引去重装一个本来就没坏的东西 —— 越修越乱。

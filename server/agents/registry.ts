@@ -558,6 +558,8 @@ class AgentRegistry {
         availability: 'unknown',
         installed: this.statuses.get(id)?.installed ?? false,
         message: `探测超时：已等待 ${seconds} 秒仍未返回`,
+        statusSummary: '探测超时',
+        statusDetail: `已等待 ${seconds} 秒仍未返回`,
         probeState: 'timeout',
         probedAt: new Date().toISOString(),
       };

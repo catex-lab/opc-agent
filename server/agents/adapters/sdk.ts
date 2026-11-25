@@ -478,18 +478,20 @@ export class SdkAdapter implements AgentProvider {
         const kb =
           this.descriptor.id === 'workbuddy' ? workbuddyKeyblobInfo() : null;
         const kbNote = kb
-          ? `（keyblob 最后更新 ${
-              kb.exists ? formatLocalMinute(kb.mtime) : '未找到'
-            }；桌面端活跃不代表此文件被刷新）`
+          ? `keyblob 文件时间 ${kb.exists ? formatLocalMinute(kb.mtime) : '未找到'}（仅供参考）`
           : '';
+        const summary = envOk
+          ? '已通过环境变量配置凭据'
+          : userinfo?.userName
+            ? `检测到本地登录态：${userinfo.userName}`
+            : '检测到本地登录态';
+        const detail = ['未校验', kbNote].filter(Boolean).join('；');
         this.status = {
           availability: 'ready',
           installed: true,
-          message: envOk
-            ? '已通过环境变量配置凭据（未校验）'
-            : userinfo?.userName
-              ? `检测到本地登录态（未校验）：${userinfo.userName}${kbNote}`
-              : `检测到本地登录态（未校验）${kbNote}`,
+          message: `${summary}（${detail}）`,
+          statusSummary: summary,
+          statusDetail: detail,
           probedAt: now,
         };
       }

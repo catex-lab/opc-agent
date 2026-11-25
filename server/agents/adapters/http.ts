@@ -253,6 +253,8 @@ export class HttpAdapter implements AgentProvider {
         availability: 'needs-auth',
         installed: false,
         message: `未配置 API Key：${how}。怎么恢复：${recoveryHintFor(this.descriptor.id)}`,
+        statusSummary: '未配置 API Key',
+        statusDetail: how,
         probedAt: now,
       };
       return this.status;
@@ -272,6 +274,8 @@ export class HttpAdapter implements AgentProvider {
           availability: 'unreachable',
           installed: true,
           message: `后端网络不可达：${host}（本机与代理均连不上）。该模型无法调用，请检查网络或代理设置。`,
+          statusSummary: `后端网络不可达：${host}`,
+          statusDetail: '本机与代理均连不上；请检查网络或代理设置',
           probedAt: now,
         };
         return this.status;
@@ -284,6 +288,8 @@ export class HttpAdapter implements AgentProvider {
       // 只确认「环境变量里有 Key」+ 后端 TCP 可达；没有发过一次带 Key 的请求，
       // 所以不能说「已登录/就绪」，只能说「已检测到凭据（未校验）」。
       message: `已检测到凭据（未校验）：环境变量 ${keyEnv}`,
+      statusSummary: '已检测到凭据',
+      statusDetail: `未校验；来源：环境变量 ${keyEnv}`,
       probedAt: now,
     };
     return this.status;
