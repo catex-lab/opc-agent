@@ -14,6 +14,7 @@
  */
 
 import { spawn } from 'child_process';
+import { agentChildEnv } from '../child-env.js';
 import fs from 'fs';
 import http from 'http';
 import net from 'net';
@@ -766,7 +767,7 @@ export function runCapture(
         cwd,
         // target.env 是启动目标的一部分（如 Trae 的 ELECTRON_RUN_AS_NODE=1），
         // 必须垫在 process.env 之上；显式传入的 env 优先级最高。
-        env: { ...process.env, ...(target.env ?? {}), ...(env ?? {}) },
+        env: agentChildEnv({ ...(target.env ?? {}), ...(env ?? {}) }),
         shell: false,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],

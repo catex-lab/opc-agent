@@ -34,6 +34,7 @@
 import fs from 'fs';
 import path from 'path';
 import { dataDirPath } from '../paths.js';
+import { agentChildEnv } from '../child-env.js';
 import { modelTagKind } from '../../shared/model-tag.js';
 import { makeProvenance, type Provenance } from '../../shared/provenance.js';
 import { expandPath, findExecutable, resolveAnyLaunchTarget, runCapture } from './probe.js';
@@ -937,13 +938,12 @@ export function mergeModelOptions(
 
 /** 子进程环境：关掉颜色与交互，避免 CLI 以为自己在 TTY 里 */
 function childEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
+  return agentChildEnv({
     NO_COLOR: '1',
     FORCE_COLOR: '0',
     CI: '1',
     TERM: 'dumb',
-  };
+  });
 }
 
 /** 跑一次 CLI 枚举，返回 stdout；失败（未安装 / 非 0 退出）返回 null */

@@ -63,6 +63,10 @@ import {
 } from '../../../shared/model-route.js';
 import { applyModelRoute, resolveModelRoute } from '../../model-route-resolution.js';
 import { modelRoutesForAgent } from '../../modelRoutes.js';
+// 凭据闸的查询函数：设置页保存的 Key 已由 loadAgentCredentials() 注入 env，
+// 与用户自己 export 的走同一条判据。不传这个函数 = 带凭据的路由恒被拒。
+import { hasCredentialRef } from '../../credential-ref.js';
+import { agentChildEnv } from '../../child-env.js';
 
 /**
  * 从 ACP 归一化后的选项里挑一个回给服务端。
@@ -657,13 +661,12 @@ export class AcpAdapter implements AgentProvider {
     const acpArgs = (this.def.acp?.args ?? []).map(a => a.replace('{exeDir}', exeDir));
     // env 叠加次序：process.env → 启动垫片 env → 定义表 acp.env；
     // deleteEnv 最后剔除（DSH：NODE_OPTIONS 会干扰 exe-as-node 启动）。
-    const spawnEnv: NodeJS.ProcessEnv = {
-      ...process.env,
+    const spawnEnv: NodeJS.ProcessEnv = agentChildEnv({
       ...(this.target.env ?? {}),
       ...(this.def.acp?.env ?? {}),
       NO_COLOR: '1',
       FORCE_COLOR: '0',
-    };
+    });
     for (const key of this.def.acp?.deleteEnv ?? []) delete spawnEnv[key];
     const child = spawn(this.target.command, [...this.target.prefixArgs, ...acpArgs], {
       cwd: process.cwd(),
@@ -1046,6 +1049,7 @@ export class AcpAdapter implements AgentProvider {
         agentId: this.descriptor.id,
         availableRoutes: this.modelRoutes,
         supportedDialects: ['acp-config'],
+        credentialAvailable: hasCredentialRef,
       });
       if (!resolved.ok) {
         yield { type: 'error', message: `模型路由未生效：${resolved.message}` };

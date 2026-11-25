@@ -43,19 +43,16 @@ OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个�
 
 ## 内置 Agent
 
-共 16 条接入定义：
+共 17 条接入定义，其中 Trae 已下架，实际可选 16 条：
 
 | Agent | Agent | Agent | Agent |
 |---|---|---|---|
 | WorkBuddy | Codex | Gemini | OpenCode |
 | Claude Code | Hermes | Cursor | Qoder |
 | Qoder CN | 豆包 | ZCode | Kimi |
-| Pi | Antigravity CLI | Kimi Code CLI | Trae（暂时下架） |
+| Pi | Antigravity CLI | Kimi Code CLI | DeepSeek Harness |
 
-接入方式有两种，以**写死的白名单**为准，不做自由发现：
-
-- **CLI 探测（13 条）**：只认定义里写死的命令名，在 `PATH` 与各自约定目录里查找可执行文件。名单外的 CLI 即使装了也不会被自动发现 —— 这是刻意的，避免把 IDE 的图形启动器误判成 CLI。
-- **官方 SDK 直连（3 条：WorkBuddy / Claude Code / Codex）**：走厂商 SDK，SDK 自带平台二进制，不依赖本机 `PATH`，因此开箱即用；代价是安装包体积（见 [THIRD-PARTY.md](./THIRD-PARTY.md) 的许可说明）。
+接入以**写死的白名单**为准，不做自由发现：CLI 探测只认定义里写死的命令名，在 `PATH` 与各自约定目录里查找；另有官方 SDK 直连（WorkBuddy / Claude Code / Codex）、ACP（Hermes / DeepSeek Harness）与 HTTP 三类。名单外的 CLI 即使装了也不会被自动发现 —— 这是刻意的，避免把 IDE 的图形启动器误判成 CLI。SDK 自带平台二进制，不依赖本机 `PATH`；Claude / Codex 的本体改为按需安装，不随包分发（见 [THIRD-PARTY.md](./THIRD-PARTY.md)）。
 
 > Trae 目前下架：只认 `traecli`（企业版），IDE 自带的 `trae-cn` 是 VS Code 垫片，接进去会被当成可执行路径、拉起图形窗口。定义保留，恢复只需从 `RETIRED_AGENT_IDS` 里删掉 id。
 
@@ -157,7 +154,7 @@ npm run verify:package # 打包产物逐字节核对
 
 ![权限门禁](docs/screenshots/04-settings.png)
 
-*服务端内置 23 类危险命令 + 14 条需确认，`rm -rf`、强推主分支这类直接拒绝，任何模式都放不过去。*
+*CLI 通道内置 23 类危险命令 + 14 条需确认，`rm -rf`、强推主分支这类直接拒绝；SDK / ACP 通道按各自协议弹审批卡，未登记的工具一律拒绝。越权操作必须人工放行。*
 
 ## 许可
 
@@ -184,4 +181,4 @@ npm run verify:package # 打包产物逐字节核对
 
 ## 状态
 
-版本 `1.0.22`（`v1.0.22` 已发版；此后累积的变化记在 `CHANGELOG.md` 的「未发布」段）。
+版本 `1.0.24`（`v1.0.24` 已发版；变化见 `CHANGELOG.md`）。

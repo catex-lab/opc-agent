@@ -22,6 +22,7 @@ import { currentPermissionRules } from '../../permission-rules.js';
 // 「该 Agent 永久」的落库查询（2026-11-12 变体 A）。CLI 目录只有 allow/deny
 // 两档、弹不出范围选择器，但授权检查在公共路径上：有授权就自动放行，无授权照旧问。
 import { hasAgentGrant } from '../../permission-grants.js';
+import { agentChildEnv } from '../../child-env.js';
 import {
   CLI_PERMISSION_OPTIONS,
   buildDenialMessage,
@@ -313,15 +314,14 @@ export function describeCliFailure(input: CliFailureInput): string {
  * 否则会出现「标定说 JSON 解析不了、正常对话却好好的」这种口径不一致。
  */
 export function childEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
+  return agentChildEnv({
     NO_COLOR: '1',
     FORCE_COLOR: '0',
     CI: '1',
     TERM: 'dumb',
     // 部分 CLI 会因 stdin 非 TTY 而进入交互模式，显式关掉
     NODE_NO_WARNINGS: '1',
-  };
+  });
 }
 
 /**
