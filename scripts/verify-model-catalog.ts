@@ -846,6 +846,42 @@ function honestEmptySummary(catalogSrc: string): boolean {
     panelSrc.includes('data-model-catalog-refresh'),
     '刷新：按钮需要稳定的测试钩子'
   );
+  // T6-1 后续：CLI 类行展开也要能看到真实模型名，不再只给条数。
+  // 钉行为：① 走与聊天菜单同源的 /api/agents/:id/models（WorkBuddy 例外走 /api/models）；
+  // ② 名字列表有稳定钩子；③ 刷新后展开区缓存被作废，不能拿旧名字冒充新结果。
+  ok(
+    /\/api\/agents\/\$\{encodeURIComponent\(agentId\)\}\/models/.test(panelSrc) &&
+      panelSrc.includes("'/api/models'"),
+    '展开：CLI 与 WorkBuddy 两条模型名接口都要接（与聊天菜单同源）'
+  );
+  ok(
+    panelSrc.includes('data-catalog-model'),
+    '展开：模型名列表需要稳定的测试钩子'
+  );
+  ok(
+    /id:\s*['"]qoder-cn['"]/.test(panelSrc),
+    '目录：qoder-cn 必须出现在设置页模型清单里（独立账号，不能只列国际版）'
+  );
+  ok(
+    /detailEpoch\.current\s*\+=\s*1/.test(panelSrc) && /setDetails\(\{\}\)/.test(panelSrc),
+    '刷新：展开区模型名缓存必须作废（否则刷新后还是旧名字）'
+  );
+  const catalogHeaderSrc = panelSrc.slice(0, panelSrc.indexOf('{rows.map'));
+  ok(
+    catalogHeaderSrc.includes('data-catalog-header') &&
+      !/t\(\s*['"]settings\.models\.colSource['"]\s*\)/.test(catalogHeaderSrc),
+    '列表：主表只有 Agent 名与模型数，不再显示枚举来源列'
+  );
+  ok(
+    panelSrc.includes('data-catalog-source={row.id}') && panelSrc.includes('t(row.sourceKey)'),
+    '来源：折进展开明细而不是彻底丢失（命令原文仍留在悬停 title）'
+  );
+  const zhI18n = read('src/i18n/zh.ts');
+  const enI18n = read('src/i18n/en.ts');
+  ok(
+    zhI18n.includes("'settings.models.unverified'") && enI18n.includes("'settings.models.unverified'"),
+    '展开：未验证角标中英文案都必须存在'
+  );
 
   const appSrc = read('src/App.tsx');
   /* 认「这个 effect 的依赖数组里同时有 currentAgentId 与 modelsEpoch」，

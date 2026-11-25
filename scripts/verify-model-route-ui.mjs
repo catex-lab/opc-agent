@@ -13,7 +13,8 @@
  *   [6] 编辑发出 PUT，行内容更新；
  *   [7] 删除要二次确认，确认后发 DELETE，行消失；
  *   [8] 服务端把用户路由并进 `configured` 平级字段（不动 models 数组）；
- *   [9] 无控制台错误。
+ *   [9] 模型清单主表只有 Agent / 模型两列，枚举来源折进展开明细（不丢信息）；
+ *   [10] 无控制台错误。
  *
  * 断言纪律（沿用 §3）：UI 点击走真实坐标 + elementFromPoint 自证；
  * 否定式断言配肯定式；先证明页面打开了再判「没有 X」。
@@ -182,7 +183,29 @@ await page.waitForTimeout(900);
   ok(navTexts.length === 8, '导航仍是八项：自定义路由是子块，没有新增分区', String(navTexts.length));
 }
 
-// ── [2] Agent 选择器只列已接入的 Agent ──
+// ── [2] 主表瘦身：来源列不回来，但信息也没被删掉 ──
+{
+  const headerText = (await page.locator('[data-catalog-header]').innerText())
+    .replace(/\s+/g, ' ')
+    .trim();
+  ok(
+    !/枚举来源|Source/.test(headerText) && /Agent/.test(headerText) && /模型|Models/.test(headerText),
+    '主表只有 Agent 与模型两列（否定式配肯定式：没删掉整张表）',
+    headerText
+  );
+  // 展开一行证明来源折进明细；夹具 counts 为空也要显示来源，只是没有模型名。
+  await page.locator('[data-catalog-row="opencode"] button').first().click();
+  await page.waitForSelector('[data-catalog-detail="opencode"] [data-catalog-source="opencode"]');
+  const sourceText = (await page.locator('[data-catalog-source="opencode"]').innerText()).replace(/\s+/g, ' ').trim();
+  ok(
+    /命令行枚举|Command-line enumeration/.test(sourceText),
+    '展开后能看到枚举来源（命令原文留在悬停 title）',
+    sourceText
+  );
+  await page.locator('[data-catalog-row="opencode"] button').first().click();
+}
+
+// ── [3] Agent 选择器只列已接入的 Agent ──
 {
   const picker = page.locator('[data-model-route-agent-picker]');
   ok(await picker.count() > 0, 'Agent 选择器存在');
@@ -198,7 +221,7 @@ await page.waitForTimeout(900);
   await page.waitForTimeout(150);
 }
 
-// ── [3] 空态 → 添加 → 表单 + 密钥提示 ──
+// ── [4] 空态 → 添加 → 表单 + 密钥提示 ──
 {
   ok(await page.locator('[data-model-route-settings]').count() > 0, '自定义路由子块渲染在模型清单里');
   ok(await page.locator('[data-model-route-row]').count() === 0, '初始无自定义路由');
@@ -209,7 +232,7 @@ await page.waitForTimeout(900);
   ok(/引用名/.test(hint) && /不填密钥/.test(hint), '显眼提示：只填引用名、不填密钥', hint.replace(/\s+/g, ' '));
 }
 
-// ── [4] 填写 + 保存：POST body 无密钥 ──
+// ── [5] 填写 + 保存：POST body 无密钥 ──
 const modelsRefetchBefore = calls.filter(c => c.kind === 'platform-models-refetch').length;
 {
   await page.locator('[data-model-route-field="providerId"] input').fill('sensenova');
@@ -226,7 +249,7 @@ const modelsRefetchBefore = calls.filter(c => c.kind === 'platform-models-refetc
   }
 }
 
-// ── [5] 新行出现 + 事件触发菜单重取 ──
+// ── [6] 新行出现 + 事件触发菜单重取 ──
 {
   ok(await page.locator('[data-model-route-row]').count() === 1, '保存后新行出现（肯定式：真的渲染出来了）');
   const text = await page.locator('[data-model-route-row]').first().innerText();
@@ -239,7 +262,7 @@ const modelsRefetchBefore = calls.filter(c => c.kind === 'platform-models-refetc
   );
 }
 
-// ── [6] 编辑 → PUT ──
+// ── [7] 编辑 → PUT ──
 {
   await page.locator('[data-model-route-edit]').first().click();
   await page.waitForTimeout(250);
@@ -253,7 +276,7 @@ const modelsRefetchBefore = calls.filter(c => c.kind === 'platform-models-refetc
   ok(/改名后的路由/.test(text), '行内容更新（不是只发了请求没刷新）', text.replace(/\s+/g, ' '));
 }
 
-// ── [7] 删除要确认 → DELETE ──
+// ── [8] 删除要确认 → DELETE ──
 {
   await page.locator('[data-model-route-delete]').first().click();
   await page.waitForTimeout(200);
@@ -265,7 +288,7 @@ const modelsRefetchBefore = calls.filter(c => c.kind === 'platform-models-refetc
   ok(await page.locator('[data-model-route-row]').count() === 0, '删除后行消失');
 }
 
-// ── [8] 服务端 configured 平级字段静态断言 ──
+// ── [9] 服务端 configured 平级字段静态断言 ──
 {
   const src = await readFile(join(ROOT, 'server', 'routes', 'custom-agents.ts'), 'utf8');
   ok(src.includes('...userRoutes.filter'), '用户路由并进 configured 平级字段（不进 models 数组）');
@@ -274,7 +297,7 @@ const modelsRefetchBefore = calls.filter(c => c.kind === 'platform-models-refetc
   ok(popup.includes("startsWith('用户自定义路由')"), '模型浮层识别用户路由分组');
 }
 
-// ── [9] 控制台 ──
+// ── [10] 控制台 ──
 ok(errors.length === 0, '无控制台错误', errors.slice(0, 3).join(' | ') || 'clean');
 
 await browser.close();

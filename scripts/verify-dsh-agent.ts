@@ -120,6 +120,9 @@ console.log('\n[C] 隔离与联动（转正不留尾巴）');
   ok(def, 'import 级：AGENT_DEFS 能取到 DSH 定义');
   if (def) {
     eq(def.descriptor.kind, 'acp', 'import 级：kind === acp');
+    // A71：转正条目必须和其余 15 个 Agent 一样带结构化安装元数据。
+    // verify:package 的 15/16 就是被这条漏字段挡住过的。
+    ok(!!def.descriptor.install?.method, 'import 级：DSH 带 install.method（A71 全量元数据）');
     ok(Array.isArray(def.acp?.args) && def.acp.args.length > 0, 'import 级：acp.args 非空');
     eq(def.acp?.env?.ELECTRON_RUN_AS_NODE, '1', 'import 级：ELECTRON_RUN_AS_NODE=1');
     ok(def.acp?.deleteEnv?.includes('NODE_OPTIONS') === true, 'import 级：deleteEnv 含 NODE_OPTIONS');

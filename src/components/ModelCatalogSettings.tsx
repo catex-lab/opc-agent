@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, MessagePlugin } from 'tdesign-react';
 import { ChevronDown, RefreshCw } from 'lucide-react';
 import { useTranslation, type MessageKey, type Translate } from '../i18n';
@@ -15,10 +15,10 @@ import { api } from '../api';
  * 能说明这件事、也没有任何办法催它一下。
  *
  * 这一屏补三件事：
- *   1. **可见** —— 每个 Agent 枚举到几条、上次是什么时候枚举的、数据从哪来；
- *   2. **可看** —— 行可展开（T6-1 b 方案）：WorkBuddy 展开显示 SDK 枚举出的
- *      模型名（/api/models，与聊天模型菜单同源）；CLI 类目录接口只报条数，
- *      展开如实指向聊天输入框的模型菜单；
+ *   1. **可见** —— 每个 Agent 枚举到几条、上次是什么时候枚举的；
+ *   2. **可看** —— 行可展开：所有 Agent 都显示与聊天菜单同源的模型名
+ *      （WorkBuddy 走 /api/models，其余走 /api/agents/:id/models，只读），
+ *      枚举来源折在展开区，不占主表列；
  *   3. **可催** —— 一个「刷新」按钮，作废两套缓存后重新枚举。
  *
  * ## 交互取舍
@@ -44,8 +44,8 @@ interface CatalogSummary {
   tookMs?: number;
 }
 
-/** 固定顺序。来源原文（命令行 / SDK 方法名）不再直接上界面 —— T6-2 把它收进
- * 每行来源格的悬停 title，界面只显示人话（sourceKey）。 */
+/** 固定顺序。来源原文（命令行 / SDK 方法名）不占主表列 —— 收进展开区的
+ * 悬停 title，界面只显示人话（sourceKey）。 */
 const CATALOG_AGENTS: Array<{
   id: string;
   label: string;
@@ -54,13 +54,19 @@ const CATALOG_AGENTS: Array<{
 }> = [
   { id: 'opencode', label: 'OpenCode', source: 'opencode models', sourceKey: 'settings.models.sourceCli' },
   { id: 'qoder', label: 'Qoder', source: 'qodercli --list-models', sourceKey: 'settings.models.sourceCli' },
+  { id: 'qoder-cn', label: 'Qoder CN', source: 'qoderclicn --list-models', sourceKey: 'settings.models.sourceCli' },
   { id: 'codex', label: 'Codex', source: 'codex debug models', sourceKey: 'settings.models.sourceCli' },
+  { id: 'cursor', label: 'Cursor', source: 'cursor-agent models', sourceKey: 'settings.models.sourceCli' },
+  { id: 'pi', label: 'Pi', source: 'pi --list-models', sourceKey: 'settings.models.sourceCli' },
 ];
 
 const LABELS: Record<string, string> = {
   opencode: 'OpenCode',
   qoder: 'Qoder',
+  'qoder-cn': 'Qoder CN',
   codex: 'Codex',
+  cursor: 'Cursor',
+  pi: 'Pi',
   workbuddy: 'WorkBuddy',
 };
 
@@ -83,6 +89,18 @@ interface ModelCatalogSettingsProps {
   onRefreshed?: () => void;
 }
 
+interface ModelNameEntry {
+  modelId: string;
+  name: string;
+  verified?: boolean;
+}
+
+interface DetailState {
+  loading: boolean;
+  error: boolean;
+  models: ModelNameEntry[] | null;
+}
+
 export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps) {
   const { t } = useTranslation();
   const [data, setData] = useState<CatalogSummary | null>(null);
@@ -91,11 +109,11 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
   const [error, setError] = useState<string | null>(null);
   // T6-1（b 方案）：行可展开。展开的行 id（null = 全部收起）。
   const [expanded, setExpanded] = useState<string | null>(null);
-  // WorkBuddy 的模型名清单。目录接口只报条数，名字要问 /api/models（模型菜单
-  // 用的同一个接口，只读不触发枚举）—— 展开时才拉一次，拉到后缓存。
-  const [sdkModels, setSdkModels] = useState<Array<{ modelId: string; name: string }> | null>(null);
-  const [sdkLoading, setSdkLoading] = useState(false);
-  const [sdkError, setSdkError] = useState(false);
+  // 目录接口只报条数，模型名走与聊天菜单同源的接口：WorkBuddy 用 /api/models，
+  // 其余 Agent 用 /api/agents/:id/models（都是只读，不会触发枚举）。
+  // 展开时才拉一次，刷新后整块作废；epoch 防止刷新后旧请求写回新状态。
+  const [details, setDetails] = useState<Record<string, DetailState>>({});
+  const detailEpoch = useRef(0);
 
   const load = useCallback(async () => {
     try {
@@ -123,8 +141,8 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
       setData(json);
       setError(null);
       // 刷新后目录重算过，展开区缓存的模型名也作废，下次展开重新拉
-      setSdkModels(null);
-      setSdkError(false);
+      detailEpoch.current += 1;
+      setDetails({});
 
       const parts = Object.entries(json.counts ?? {}).map(
         ([id, n]) => `${labelOf(id)} ${n}`
@@ -169,36 +187,56 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
     },
   ];
 
-  // T6-1：展开 WorkBuddy 行时才拉模型名。/api/models 与聊天模型菜单同源（只读
-  // 内存缓存，不触发枚举），失败就如实报错，不装作没有模型。
-  useEffect(() => {
-    if (expanded !== 'workbuddy' || sdkModels || sdkLoading || sdkError) return;
-    if (!workbuddyCount) return; // 尚未枚举过：没有名字可拉，展开区显示「尚未枚举」
-    let alive = true;
-    setSdkLoading(true);
+  const loadDetail = useCallback((agentId: string) => {
+    const epoch = detailEpoch.current;
+    setDetails(prev =>
+      prev[agentId] ? prev : { ...prev, [agentId]: { loading: true, error: false, models: null } }
+    );
+    const url =
+      agentId === 'workbuddy'
+        ? '/api/models'
+        : `/api/agents/${encodeURIComponent(agentId)}/models`;
     api
-      .get('/api/models')
+      .get(url)
       .then(async res => {
-        const json = (await res.json()) as { models?: Array<{ modelId?: string; name?: string }> };
-        if (!alive) return;
-        const list = Array.isArray(json.models)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as {
+          models?: Array<{ modelId?: string; name?: string; verified?: boolean }>;
+        };
+        const list: ModelNameEntry[] = Array.isArray(json.models)
           ? json.models
-              .filter((m): m is { modelId: string; name: string } => !!m && typeof m.modelId === 'string')
-              .map(m => ({ modelId: m.modelId, name: typeof m.name === 'string' && m.name ? m.name : m.modelId }))
+              .filter(
+                (m): m is { modelId: string; name?: string; verified?: boolean } =>
+                  !!m && typeof m.modelId === 'string'
+              )
+              .map(m => ({
+                modelId: m.modelId,
+                name: typeof m.name === 'string' && m.name ? m.name : m.modelId,
+                verified: m.verified,
+              }))
           : [];
-        if (list.length === 0) setSdkError(true);
-        else setSdkModels(list);
+        if (epoch !== detailEpoch.current) return;
+        setDetails(prev => ({
+          ...prev,
+          [agentId]: { loading: false, error: list.length === 0, models: list.length ? list : null },
+        }));
       })
       .catch(() => {
-        if (alive) setSdkError(true);
-      })
-      .finally(() => {
-        if (alive) setSdkLoading(false);
+        if (epoch !== detailEpoch.current) return;
+        setDetails(prev => ({
+          ...prev,
+          [agentId]: { loading: false, error: true, models: null },
+        }));
       });
-    return () => {
-      alive = false;
-    };
-  }, [expanded, workbuddyCount, sdkModels, sdkLoading, sdkError]);
+  }, []);
+
+  // 展开哪一行才拉哪一行的名字；尚未枚举过就不发无意义的请求。
+  useEffect(() => {
+    if (!expanded || details[expanded]) return;
+    const count = expanded === 'workbuddy' ? workbuddyCount : data?.counts?.[expanded];
+    if (!count) return;
+    loadDetail(expanded);
+  }, [expanded, details, data, workbuddyCount, loadDetail]);
 
   return (
     <div className="space-y-3" data-model-catalog>
@@ -220,7 +258,7 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
             border: '1px solid var(--tc-edge)',
           }}
         >
-          {/* T6-3：表头。三列与数据行同宽对齐；末列留出展开箭头的位置。 */}
+          {/* 表头两列：Agent 名 + 模型数；枚举来源折叠在展开明细里。末格留出展开箭头。 */}
           <div
             className="flex items-center gap-3 px-3 py-2"
             data-catalog-header
@@ -236,13 +274,7 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
               {t('settings.models.colAgent')}
             </span>
             <span
-              className="min-w-0 flex-1 text-caption"
-              style={{ color: 'var(--td-text-color-secondary)' }}
-            >
-              {t('settings.models.colSource')}
-            </span>
-            <span
-              className="shrink-0 text-caption"
+              className="min-w-0 flex-1 text-right text-caption"
               style={{ color: 'var(--td-text-color-secondary)' }}
             >
               {t('settings.models.colModels')}
@@ -272,16 +304,8 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
                   >
                     {row.label}
                   </span>
-                  {/* T6-2：来源列显示人话；命令 / 方法原文收进悬停 title */}
                   <span
-                    className="min-w-0 flex-1 truncate text-caption"
-                    style={{ color: 'var(--td-text-color-secondary)' }}
-                    title={row.source}
-                  >
-                    {t(row.sourceKey)}
-                  </span>
-                  <span
-                    className="shrink-0 text-body tabular-nums"
+                    className="min-w-0 flex-1 text-right text-body tabular-nums"
                     style={{ color: 'var(--td-text-color-secondary)' }}
                     data-catalog-count={row.id}
                   >
@@ -301,38 +325,59 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
                   />
                 </button>
 
-                {/* 展开明细：WorkBuddy 显示 SDK 枚举出的模型名；CLI 类目录接口
-                    只报条数不暴露名字，如实指向聊天输入框的模型菜单。 */}
+                {/* 展开明细：所有 Agent 都显示与聊天菜单同源的模型名。
+                    目录接口只报条数，名字走只读的模型接口，刷新后重新拉。 */}
                 {isExpanded && (
                   <div className="px-3 pb-3" data-catalog-detail={row.id}>
-                    {row.id === 'workbuddy' ? (
-                      !workbuddyCount ? (
-                        <p className="tc-hint">{t('settings.models.never')}</p>
-                      ) : sdkLoading ? (
-                        <p className="tc-hint">{t('settings.models.loading')}</p>
-                      ) : sdkError || !sdkModels ? (
-                        <p className="tc-hint" style={{ color: 'var(--td-error-color)' }}>
-                          {t('settings.models.loadFailedShort')}
-                        </p>
-                      ) : (
+                    {/* 来源不占主表列；展开后才显示，命令原文留在悬停 title。 */}
+                    <div
+                      className="mb-2 flex min-w-0 items-center gap-1.5 text-caption"
+                      style={{ color: 'var(--td-text-color-secondary)' }}
+                      title={row.source}
+                      data-catalog-source={row.id}
+                    >
+                      <span className="shrink-0">{t('settings.models.colSource')}</span>
+                      <span aria-hidden>·</span>
+                      <span className="truncate">{t(row.sourceKey)}</span>
+                    </div>
+                    {typeof row.count !== 'number' || row.count === 0 ? (
+                      <p className="tc-hint">{t('settings.models.never')}</p>
+                    ) : (() => {
+                      const detail = details[row.id];
+                      if (!detail || detail.loading) {
+                        return <p className="tc-hint">{t('settings.models.loading')}</p>;
+                      }
+                      if (detail.error || !detail.models) {
+                        return (
+                          <p className="tc-hint" style={{ color: 'var(--td-error-color)' }}>
+                            {t('settings.models.loadFailedShort')}
+                          </p>
+                        );
+                      }
+                      return (
                         <ul className="m-0 list-none p-0">
-                          {sdkModels.map(m => (
+                          {detail.models.map(m => (
                             <li
                               key={m.modelId}
-                              className="truncate py-1 text-body"
+                              className="flex items-center gap-2 truncate py-1 text-body"
                               style={{ color: 'var(--td-text-color-primary)' }}
                               title={m.modelId}
+                              data-catalog-model={m.modelId}
                             >
-                              {m.name}
+                              <span className="truncate">{m.name}</span>
+                              {m.verified === false && (
+                                <span
+                                  className="shrink-0 text-caption"
+                                  style={{ color: 'var(--td-text-color-placeholder)' }}
+                                >
+                                  {t('settings.models.unverified')}
+                                </span>
+                              )}
                             </li>
                           ))}
                         </ul>
-                      )
-                    ) : typeof row.count === 'number' ? (
-                      <p className="tc-hint">{t('settings.models.detailInChat')}</p>
-                    ) : (
-                      <p className="tc-hint">{t('settings.models.never')}</p>
-                    )}
+                      );
+                    })()}
                   </div>
                 )}
               </div>

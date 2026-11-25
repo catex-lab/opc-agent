@@ -2665,6 +2665,17 @@ const INSTALL_INFO: Record<string, AgentInstall> = {
     checkedAt: CHECKED,
     checkedFrom: '本机 ~/.zcode 为桌面版留下的配置；未找到可核实的独立下载页',
   },
+  'deepseek-harness': {
+    method: 'installer',
+    requires: 'none',
+    // 不给 url：没有核实到可写进白名单的独立下载页，界面不画「去下载」。
+    // 本机桌面版已实测能作为 node 解释器跑内置 cli.js 的 ACP profile
+    // （2026-11-24 探针）；安装目录由官方安装器决定，OPC 从快捷方式反推。
+    note: '安装 DeepSeek Harness 桌面版后即可被 OPC 发现；无需 PATH，OPC 从桌面快捷方式反推安装目录并通过 ACP profile 接入',
+    checkedAt: '2026-11-24',
+    checkedFrom:
+      '本机桌面版实测：exe 以 ELECTRON_RUN_AS_NODE=1 启动 dsh-desktop-host 内置 cli.js 的 ACP profile；未核实到可公开给出的独立下载页，故不画按钮',
+  },
   hermes: {
     method: 'unknown',
     requires: 'none',

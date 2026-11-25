@@ -1096,6 +1096,7 @@ export const zh = {
   'settings.models.sourceCli': '命令行枚举',
   'settings.models.sourceSdk': '官方接口',
   'settings.models.title': '模型清单',
+  'settings.models.unverified': '未验证',
   'settings.permission.add': '添加规则',
   'settings.permission.allow': '允许',
   'settings.permission.deny': '禁止',

@@ -1098,6 +1098,7 @@ export const en: Record<MessageKey, string> = {
   'settings.models.sourceCli': 'Command-line enumeration',
   'settings.models.sourceSdk': 'Official SDK',
   'settings.models.title': 'Model catalog',
+  'settings.models.unverified': 'Unverified',
   'settings.permission.add': 'Add rule',
   'settings.permission.allow': 'Allow',
   'settings.permission.deny': 'Deny',
