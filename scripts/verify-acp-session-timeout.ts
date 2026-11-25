@@ -118,6 +118,29 @@ rl.on('line', line => {
     return;
   }
   if (msg.method === 'session/prompt') {
+    if (mode === 'silent-prompt') {
+      // 完全静默：既不发 update 也不回包 —— 必须按注入窗口快速失败
+      return;
+    }
+    if (mode === 'slow-prompt') {
+      // 慢但活着：先立刻发第 1 条（建立续期锚点），之后每隔 0.9s 一条
+      //（> 注入的 1.5s 窗口），共 3 条后再回包。修复前第 2 条之前就超时；
+      // 修复后每条 update 必须续期，撑到回包。
+      let i = 0;
+      const tick = () => {
+        if (i < 3) {
+          i += 1;
+          notify('session/update', {
+            sessionId: msg.params.sessionId,
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'chunk-' + i } },
+          });
+          if (i < 3) setTimeout(tick, 900);
+          else setTimeout(() => respond(msg.id, { stopReason: 'end_turn', usage: { totalTokens: 15 } }), 900);
+        }
+      };
+      tick();
+      return;
+    }
     notify('session/update', {
       sessionId: msg.params.sessionId,
       update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } },
@@ -147,7 +170,7 @@ const launchesPath = path.join(tmpDir, 'launches.jsonl');
 const modePath = path.join(tmpDir, 'mode.txt');
 const configSetPath = path.join(tmpDir, 'config-set.jsonl');
 
-function setMode(mode: 'ok' | 'hang-new' | 'hang-init' | 'dsh-config'): void {
+function setMode(mode: 'ok' | 'hang-new' | 'hang-init' | 'dsh-config' | 'slow-prompt' | 'silent-prompt'): void {
   fs.writeFileSync(modePath, mode, 'utf8');
 }
 function readLaunches(): number[] {
@@ -339,8 +362,32 @@ if (process.argv.includes('--probe')) {
         (adapter as unknown as { retryBudget: number }).retryBudget = Number.POSITIVE_INFINITY;
       }, ['A1', 'A7']);
       break;
+    case 'no-renew': {
+      // 拆掉「活动续期」：把 JsonRpcStdio.prototype.noteActivity 打成 no-op，
+      // 退回「固定窗口、有产出也误杀」的旧行为 —— [R1]/[R2] 必须真变红。
+      setMode('slow-prompt');
+      resetLaunches();
+      const probeAdapter = new AcpAdapter(buildDef(), {
+        requestTimeoutMs: INJECTED_TIMEOUT, initTimeoutMs: INJECTED_TIMEOUT, promptHardCapMs: 15_000,
+      });
+      // 先建连拿到 rpc 实例，从实例原型链取到 JsonRpcStdio.prototype（TS private 只是编译期概念）
+      const anyRpc = await (probeAdapter as unknown as { ensureRpc: () => Promise<unknown> }).ensureRpc();
+      const rpcProto = Object.getPrototypeOf(anyRpc) as Record<string, unknown>;
+      const originalNote = rpcProto.noteActivity as (...args: unknown[]) => number;
+      rpcProto.noteActivity = function () { return 0; };
+      const { events, timedOut, elapsedMs } = await collect(probeAdapter, makeCtx('sess-probe-norenew'), WATCHDOG_MS);
+      rpcProto.noteActivity = originalNote;
+      const types = events.map(e => e.type);
+      const r1 = !timedOut && !types.includes('error');
+      const r2 = types.includes('done') && elapsedMs >= 2500;
+      console.log(`    ${r1 ? '✗ 探针失效：[R1] 仍绿' : '✓ 探针生效：[R1] 如预期变红'}（elapsed=${elapsedMs}ms types=${types.join(',')}）`);
+      console.log(`    ${r2 ? '✗ 探针失效：[R2] 仍绿' : '✓ 探针生效：[R2] 如预期变红'}`);
+      probeAdapter.dispose();
+      red = !r1 || !r2;
+      break;
+    }
     default:
-      console.log(`  ✗ 未知探针：${probeName}（可选 no-kill | no-retry | infinite-budget）`);
+      console.log(`  ✗ 未知探针：${probeName}（可选 no-kill | no-retry | infinite-budget | no-renew）`);
       process.exit(3);
   }
   killAllLaunched();
@@ -392,6 +439,85 @@ console.log('[S] 基线：session/new 正常回包时行为不变');
     say('S5', 'session/new 的模型清单进入 availableModels', okAdapter.availableModels.length > 0, `models=${okAdapter.availableModels.length}`);
   } finally {
     okAdapter?.dispose();
+  }
+}
+
+// ============= [R] session/prompt 活动续期：有产出不误杀，无产出仍快速失败 =============
+//
+// 无人值守场景：定时任务预算 30 分钟，但 ACP prompt 旧实现固定 90s 就掐断，
+// 中途 session/update 不续期 —— 慢任务（工具调用多）被误杀且无自动重试。
+// 修复：收到本会话的 session/update 就把空闲窗口往后推；完全静默仍按窗口快速失败；
+// 总时长受硬上限封顶，防止「不停产出却永不结束」变成永不超时。
+console.log('[R] prompt 活动续期：有产出不误杀 / 静默仍快速失败 / 硬上限封顶');
+{
+  // [R1] 慢但活着：3 条 update 每条间隔 2.2s（> 1.5s 窗口），第 4 拍正常回包。
+  let slowAdapter: AcpAdapter | null = null;
+  try {
+    setMode('slow-prompt');
+    resetLaunches();
+    slowAdapter = new AcpAdapter(buildDef(), {
+      requestTimeoutMs: INJECTED_TIMEOUT,
+      initTimeoutMs: INJECTED_TIMEOUT,
+      promptHardCapMs: 15_000, // 硬上限 15s，够跑完 3×2.2s=6.6s，又能测到封顶
+    });
+    const { events, timedOut, elapsedMs } = await collect(slowAdapter, makeCtx('sess-slow'), WATCHDOG_MS);
+    const types = events.map(e => e.type);
+    const texts = events.filter(e => e.type === 'text').map(e => (e as { content?: string }).content ?? '');
+
+    say('R1', '慢任务（每 0.9s 有产出）没有在 1.5s 窗口被误杀',
+      !timedOut && !types.includes('error'), `elapsed=${elapsedMs}ms types=${types.join(',')}`);
+    say('R2', '跑满 3 条 update 后正常收到 done（不是提前返回）',
+      types.includes('done') && elapsedMs >= 2500, `elapsed=${elapsedMs}ms`);
+    say('R3', '三条 update 的内容都收到了（续期不吞正文）',
+      texts.some(t => t.includes('chunk-1')) && texts.some(t => t.includes('chunk-3')),
+      `texts=${JSON.stringify(texts).slice(0, 120)}`);
+  } finally {
+    slowAdapter?.dispose();
+  }
+
+  // [R2] 完全静默：没有任何 update，必须按注入窗口快速失败（不能因为装了续期就永不超时）。
+  let silentAdapter: AcpAdapter | null = null;
+  try {
+    setMode('silent-prompt');
+    resetLaunches();
+    silentAdapter = new AcpAdapter(buildDef(), {
+      requestTimeoutMs: INJECTED_TIMEOUT,
+      initTimeoutMs: INJECTED_TIMEOUT,
+      promptHardCapMs: 15_000,
+    });
+    const { events, timedOut, elapsedMs } = await collect(silentAdapter, makeCtx('sess-silent'), WATCHDOG_MS);
+    const message = errorMessage(events);
+
+    say('R4', '完全静默仍在 ~1 个注入窗口快速失败（没变成永不超时）',
+      !timedOut && events.some(e => e.type === 'error') && elapsedMs < 6000,
+      `elapsed=${elapsedMs}ms`);
+    say('R5', '静默失败仍是普通超时文案（没被错报成 hard-cap）',
+      message.includes('ACP 请求超时') && !message.includes('单轮上限'), message.slice(0, 100));
+  } finally {
+    silentAdapter?.dispose();
+  }
+
+  // [R3] 硬上限：一直有产出但总时长越过硬上限，必须被封顶并给诚实文案。
+  let cappedAdapter: AcpAdapter | null = null;
+  try {
+    setMode('slow-prompt');
+    resetLaunches();
+    cappedAdapter = new AcpAdapter(buildDef(), {
+      requestTimeoutMs: INJECTED_TIMEOUT,
+      initTimeoutMs: INJECTED_TIMEOUT,
+      promptHardCapMs: 2500, // 2.5s 封顶 < 约 3.6s 的正常耗时
+    });
+    const { events, timedOut, elapsedMs } = await collect(cappedAdapter, makeCtx('sess-capped'), WATCHDOG_MS);
+    const message = errorMessage(events);
+
+    say('R6', '持续产出但越过硬上限仍被掐断（不是无限续期）',
+      !timedOut && events.some(e => e.type === 'error'), `elapsed=${elapsedMs}ms`);
+    say('R7', '触顶报错是诚实文案「达到单轮上限，请拆分任务」',
+      message.includes('单轮上限') && message.includes('拆分任务'), message.slice(0, 120));
+    say('R8', '触顶发生在硬上限附近（2.5s 量级，不是 1.5s 就错杀）',
+      elapsedMs >= 2200 && elapsedMs < 8000, `elapsed=${elapsedMs}ms`);
+  } finally {
+    cappedAdapter?.dispose();
   }
 }
 

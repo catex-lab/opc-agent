@@ -198,7 +198,29 @@ export interface AcpAdapterOptions {
   requestTimeoutMs?: number;
   /** initialize 握手超时毫秒数。缺省 60s。 */
   initTimeoutMs?: number;
+  /**
+   * session/prompt 的绝对上限：即使持续收到 session/update 也最多等这么久。
+   * 缺省 = requestTimeoutMs × 20（产品默认 = 30 分钟，与定时任务 RUN_BUDGET 对齐）。
+   * 防止「活动续期」被一个不停产出却永不结束的轮次变成永不超时。
+   */
+  promptHardCapMs?: number;
 }
+
+/**
+ * 一次「有产出但总时长触顶」的 prompt 超时。
+ *
+ * 与 AcpRequestTimeoutError（= 静默无活动，快速失败）分开：
+ * 用户要看的是「这一轮一直在干活，只是太久，请拆任务」，而不是同一句干巴巴的超时。
+ */
+export class AcpPromptHardCapError extends Error {
+  constructor(public readonly minutes: number) {
+    super(`ACP 请求超时：session/prompt（已持续产出 ${minutes} 分钟达到单轮上限，请拆分任务）`);
+    this.name = 'AcpPromptHardCapError';
+  }
+}
+
+/** promptHardCapMs 缺省值相对 requestTimeoutMs 的倍数（90s × 20 = 30 分钟）。 */
+const PROMPT_HARD_CAP_FACTOR = 20;
 
 function resolveTimeoutMs(optionValue: number | undefined, fallback: number): number {
   if (typeof optionValue === 'number' && Number.isFinite(optionValue) && optionValue > 0) {
@@ -226,9 +248,24 @@ export class AcpRequestTimeoutError extends Error {
 type Json = Record<string, unknown>;
 
 /** 极简 JSON-RPC 2.0 stdio 客户端（换行分隔，非 LSP 的 Content-Length 分帧） */
+interface PendingRequest {
+  resolve: (v: unknown) => void;
+  reject: (e: Error) => void;
+  timer: NodeJS.Timeout;
+  method: string;
+  /** 活动续期：有产出就把窗口往后推，但总时长受 hardDeadline 限制 */
+  renew?: {
+    windowMs: number;
+    hardDeadline: number;
+    startedAt: number;
+    activityCount: number;
+    lastError: Error | null;
+  };
+}
+
 class JsonRpcStdio {
   private nextId = 1;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
+  private pending = new Map<number, PendingRequest>();
   private buf = '';
   private closed = false;
 
@@ -307,18 +344,98 @@ class JsonRpcStdio {
     if (msg.method) this.onNotification?.(msg);
   }
 
-  request(method: string, params: Json, timeoutMs = DEFAULT_REQUEST_TIMEOUT): Promise<unknown> {
+  /** 定时器到点：有触顶标记就报 hard-cap 文案，否则报普通请求超时。 */
+  private expire(id: number): void {
+    const p = this.pending.get(id);
+    if (!p) return;
+    this.pending.delete(id);
+    p.reject(p.renew?.lastError ?? new AcpRequestTimeoutError(p.method));
+  }
+
+  /**
+   * @param renew 活动续期配置。仅 session/prompt 传——它要等整轮跑完，
+   *   中途的 session/update 证明 agent 还活着，不能按「静默挂死」掐断。
+   *   其余 RPC（initialize / session/new / set_config_option）保持一次性窗口。
+   */
+  request(
+    method: string,
+    params: Json,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT,
+    renew?: { windowMs: number; hardCapMs: number }
+  ): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error('ACP 进程未运行'));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new AcpRequestTimeoutError(method));
-      }, timeoutMs);
+      const startedAt = Date.now();
+      const timer = setTimeout(() => this.expire(id), timeoutMs);
       timer.unref?.();
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, {
+        resolve, reject, timer, method,
+        ...(renew ? {
+          renew: {
+            windowMs: renew.windowMs,
+            hardDeadline: startedAt + renew.hardCapMs,
+            startedAt,
+            activityCount: 0,
+            lastError: null as Error | null,
+          },
+        } : {}),
+      });
       this.write({ jsonrpc: '2.0', id, method, params });
     });
+  }
+
+  /**
+   * 记录一条「这一轮还活着」的活动，重置所有可续期请求的空闲窗口。
+   *
+   * 为什么按 method 而不是按 sessionId：JsonRpcStdio 是通用 stdio JSON-RPC
+   * 客户端，不认识 ACP 的会话语义；调用方（适配器）在确认这条通知属于当前
+   * 会话后才调它。同时只会有一条 session/prompt 在飞（send 是逐轮串行），
+   * 按 method 定位既不误伤别的 RPC，也不引入协议耦合。
+   *
+   * @returns 实际被续期的请求数（0 = 没有可续期的在飞请求）
+   */
+  noteActivity(method: string): number {
+    let touched = 0;
+    const now = Date.now();
+    for (const [id, p] of this.pending) {
+      if (!p.renew || p.method !== method) continue;
+      if (now >= p.renew.hardDeadline) {
+        // 触顶：不再续期，把失败原因升级成「有产出但太久」的诚实文案。
+        // 让当前窗口自然到点，到点时 expire() 会读这个标记报 hard-cap 错误。
+        p.renew.lastError = new AcpPromptHardCapError(
+          Math.max(1, Math.round((now - p.renew.startedAt) / 60000))
+        );
+        touched++;
+        continue;
+      }
+      clearTimeout(p.timer);
+      p.renew.activityCount++;
+      const remaining = p.renew.hardDeadline - now;
+      const win = Math.min(p.renew.windowMs, remaining);
+      const t = setTimeout(() => {
+        // 这个窗口若正好把请求推到硬上限（remaining ≤ windowMs），到点时要报
+        // 「有产出但太久」而不是普通超时——否则用户看到的还是那句无助的超时。
+        if (Date.now() >= p.renew!.hardDeadline) {
+          p.renew!.lastError = new AcpPromptHardCapError(
+            Math.max(1, Math.round((Date.now() - p.renew!.startedAt) / 60000))
+          );
+        }
+        this.expire(id);
+      }, win);
+      t.unref?.();
+      p.timer = t;
+      touched++;
+    }
+    return touched;
+  }
+
+  /** 供闸门读取：当前在飞 prompt 被续期的次数（0 = 从未活动续期）。 */
+  activityCount(method: string): number {
+    for (const p of this.pending.values()) {
+      if (p.renew && p.method === method) return p.renew.activityCount;
+    }
+    return 0;
   }
 
   notify(method: string, params: Json): void {
@@ -388,6 +505,8 @@ export class AcpAdapter implements AgentProvider {
   private readonly requestTimeoutMs: number;
   /** initialize 握手超时（可注入；默认 60s） */
   private readonly initTimeoutMs: number;
+  /** session/prompt 的绝对上限（活动续期也越不过这道墙） */
+  private readonly promptHardCapMs: number;
   /**
    * 超时自愈的重试预算：硬编码 1 —— 第一次超时杀树重建再试一次，
    * 第二次仍超时就把诚实文案交给用户。
@@ -404,6 +523,14 @@ export class AcpAdapter implements AgentProvider {
     this.descriptor = def.descriptor;
     this.requestTimeoutMs = resolveTimeoutMs(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT);
     this.initTimeoutMs = resolveTimeoutMs(options.initTimeoutMs, INIT_TIMEOUT);
+    // 显式注入优先；否则按 requestTimeoutMs 倍数派生（产品默认 90s × 20 = 30 分钟）。
+    // 闸门注入 1.5s 短超时时，硬上限自动收窄到 30s，测试不必真等 30 分钟。
+    this.promptHardCapMs =
+      typeof options.promptHardCapMs === 'number' &&
+      Number.isFinite(options.promptHardCapMs) &&
+      options.promptHardCapMs > 0
+        ? options.promptHardCapMs
+        : this.requestTimeoutMs * PROMPT_HARD_CAP_FACTOR;
   }
 
   get availableModels() {
@@ -657,6 +784,10 @@ export class AcpAdapter implements AgentProvider {
 
     const queue = this.streams.get(sessionId);
     if (!queue) return;
+
+    // 活动续期：这条通知证明该会话的 agent 还在产出，把 session/prompt
+    // 的空闲窗口往后推。必须先过上面的归属检查——别的会话的通知不能给我续期。
+    this.rpc?.noteActivity('session/prompt');
 
     const ev = mapUpdate(update);
     if (Array.isArray(ev)) ev.forEach(item => queue.push(item));
@@ -962,7 +1093,10 @@ export class AcpAdapter implements AgentProvider {
           sessionId: acpSessionId,
           prompt: [{ type: 'text', text: buildPrompt(ctx) }],
         },
-        this.requestTimeoutMs
+        this.requestTimeoutMs,
+        // 有产出就续期：慢任务（工具调用多、思考多轮）不再被固定 90s 误杀；
+        // 完全静默仍按 requestTimeoutMs 快速失败；总时长受 promptHardCapMs 封顶。
+        { windowMs: this.requestTimeoutMs, hardCapMs: this.promptHardCapMs }
       )
       .then(res => {
         const usage = (res as Json)?.usage as Json | undefined;
