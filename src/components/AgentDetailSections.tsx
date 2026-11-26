@@ -22,6 +22,7 @@ import {
   type RegisteredAgent,
 } from '../types';
 import { api } from '../api';
+import { useTranslation } from '../i18n';
 
 /**
  * Agent 资料的信息区块 —— 资料页（AgentDetailPanel）与详情弹窗
@@ -79,6 +80,7 @@ export function AgentDetailSections({
    */
   onSelectAgent?: (agentId: string) => void;
 }) {
+  const { t } = useTranslation();
   const capabilities = agent.capabilities
     .map(cap => ({ key: cap, meta: CAPABILITY_META[cap] }))
     .filter((c): c is { key: typeof c.key; meta: NonNullable<typeof c.meta> } => !!c.meta);
@@ -225,7 +227,7 @@ export function AgentDetailSections({
           （探测反馈仍然在卡下方给一行，只有真有反馈时才出现）。 */}
       <section className="mt-6 first:mt-0">
         <div className="mb-2 flex items-center justify-between gap-3">
-          <h3 className="tc-section-title">基本信息</h3>
+          <h3 className="tc-section-title">{t('agentDetail.section.basic')}</h3>
           {onReprobe && (
             <button
               type="button"
@@ -390,7 +392,7 @@ export function AgentDetailSections({
           宁可不显示，也不摆一行查不到的值。 */}
       {hasIdentity && (
         <section className="mt-6" data-agent-identity>
-          <h3 className="tc-section-title mb-2">身份</h3>
+          <h3 className="tc-section-title mb-2">{t('agentDetail.section.identity')}</h3>
           <div className={`tc-detail-rows overflow-hidden ${CARD}`} style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
             {agent.familyName && <DetailRow label="产品族" value={agent.familyName} />}
             {surfaceLabel && <DetailRow label="产品形态" value={surfaceLabel} />}
@@ -501,7 +503,7 @@ export function AgentDetailSections({
           就是「算谁的账号、领了什么」。 */}
       {account && (
         <section className="mt-6" data-agent-account>
-          <h3 className="tc-section-title mb-2">账号与权益</h3>
+          <h3 className="tc-section-title mb-2">{t('agentDetail.section.account')}</h3>
           <div
             className={`tc-detail-rows overflow-hidden ${CARD}`}
             style={{ backgroundColor: 'var(--td-bg-color-container)' }}
@@ -687,7 +689,7 @@ export function AgentDetailSections({
       {/* 擅长领域 */}
       {capabilities.length > 0 && (
         <section className="mt-6">
-          <h3 className="tc-section-title mb-2">擅长领域</h3>
+          <h3 className="tc-section-title mb-2">{t('agentDetail.section.expertise')}</h3>
           <div className="flex flex-wrap gap-2">
             {capabilities.map(({ key, meta: cm }) => (
               <span
@@ -732,7 +734,7 @@ export function AgentDetailSections({
                 写着「（不支持）」，再补一句「只返回最终回答」是同一件事说两遍；
                 确实需要解释（全灰看起来像坏了）时收进标题旁唯一的 info 图标。 */}
             <div className="mb-2 flex items-center gap-1.5">
-              <h3 className="tc-section-title">过程能力</h3>
+              <h3 className="tc-section-title">{t('agentDetail.section.process')}</h3>
               <InfoHint
                 label="过程能力说明"
                 text="这份清单来自 Agent 自己声明的能力；虚线置灰表示它没有暴露这类执行过程。"
@@ -804,7 +806,7 @@ export function AgentDetailSections({
       {/* 结构化技能（参考 A2A AgentSkill）：展示可承接的具体任务及其数据形式。 */}
       {(agent.skills?.length ?? 0) > 0 && (
         <section className="mt-6" data-agent-skills>
-          <h3 className="tc-section-title mb-2">可承接的任务</h3>
+          <h3 className="tc-section-title mb-2">{t('agentDetail.section.tasks')}</h3>
           {/* A222 / UI 收口：「关键词：」是给一串标签贴的重复标签，改成 chip 让排版
               自己说明这是一组标签；输入 / 输出的数据形式确实不显然，但也不是每次
               都要读，收进标题旁唯一的 info 图标里。 */}
@@ -844,7 +846,7 @@ export function AgentDetailSections({
       {/* 介绍 */}
       {agent.description && (
         <section className="mt-6">
-          <h3 className="tc-section-title mb-2">介绍</h3>
+          <h3 className="tc-section-title mb-2">{t('agentDetail.section.intro')}</h3>
           <p
             className={`${CARD} ${ROW_X} ${ROW_Y} text-body leading-relaxed`}
             style={{
@@ -860,7 +862,7 @@ export function AgentDetailSections({
       {/* 技术信息：路径与错误只在存在时才出现，没有就不占位 */}
       {(agent.status.binaryPath || agent.status.lastError) && (
         <section className="mt-6">
-          <h3 className="tc-section-title mb-2">技术信息</h3>
+          <h3 className="tc-section-title mb-2">{t('agentDetail.section.tech')}</h3>
           <div className={`tc-detail-rows overflow-hidden ${CARD}`} style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
             {agent.status.binaryPath && (
               <DetailRow label="可执行文件" value={agent.status.binaryPath} mono />

@@ -604,7 +604,7 @@ ok(
 ok(aboutSrc.includes("appInfo?.().then"), '版本仍取自 app.getVersion() 的桥（不改口径）');
 
 const privacyKeys = ['settings.about.privacy1Title', 'settings.about.privacy2Title', 'settings.about.privacy3Title'];
-const privacyTitles = ['不收集任何信息', '只会发给你自己配置的模型服务商', '永久免费且无广告'];
+const privacyTitles = ['不收集对话内容', '只会发给你自己配置的模型服务商', '永久免费且无广告'];
 // i18n 后 PRIVACY 只存 key，正文落在 zh 语言包 —— 结构仍要钉住「三条、同一模板」，
 // 文案仍要逐条命中中文语言包，避免把「组件里找不到字面量」当成文案缺失。
 /* 2026-11-10 v3：页面新增了同前缀的 `const PRIVACY_ICONS`，且 PRIVACY 带类型标注。

@@ -491,7 +491,7 @@ console.log('\n[4] 关于页三段式：版本条单行、说明进弹层、隐�
   ok(privacy.count === 3, '隐私区正好三张条目卡', `实测 ${privacy.count}`);
   ok(privacy.visible, '三张卡默认可见（不折叠、不藏进 ⓘ）');
   ok(
-    ['不收集任何信息', '只会发给你自己配置的模型服务商', '永久免费且无广告'].every(t => privacy.titles.includes(t)),
+    ['不收集对话内容', '只会发给你自己配置的模型服务商', '永久免费且无广告'].every(t => privacy.titles.includes(t)),
     '三张卡标题命中合规文案',
     privacy.titles.join(' / ')
   );

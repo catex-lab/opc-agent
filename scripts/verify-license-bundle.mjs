@@ -79,6 +79,17 @@ ok(/THIRD-PARTY-LICENSES\.txt/.test(zh), '中文文案保留清单文件名（a1
 const en = read('src/i18n/en.ts');
 ok(/ships with the installed app/.test(en), '英文文案改指向随包清单');
 
+// [3b] 内嵌 CodeBuddy CLI 的许可口径：清单/文档/关于页必须一致说 MIT
+// 2026-11-23 已从「无法查证」更正为 MIT；这里防止文档或 UI 悄悄回退旧说法。
+const thirdPartyMd = read('THIRD-PARTY.md');
+const sdkRow = thirdPartyMd.split('\n').find(l => l.includes('`@tencent-ai/agent-sdk`')) ?? '';
+ok(/MIT/.test(sdkRow) && !/无法查证/.test(sdkRow),
+  'THIRD-PARTY.md：内嵌 CodeBuddy CLI 不再被写成「许可无法查证」');
+const aboutSource = read('src/components/AboutPanel.tsx');
+const codeBuddyEntry = aboutSource.split('\n').find(l => l.includes("'@tencent-ai/codebuddy-code'")) ?? '';
+ok(/license:\s*'MIT'/.test(codeBuddyEntry) && !/licenseMissing/.test(codeBuddyEntry),
+  '关于页：内嵌 CodeBuddy CLI 标 MIT，不再显示「条款缺失」');
+
 // [4] 生成器一致性（清单没过期）
 const gen = spawnSync(process.execPath, ['scripts/gen-third-party.mjs', '--check'], {
   cwd: ROOT,

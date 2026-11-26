@@ -77,6 +77,22 @@ function ok(cond, name, extra = '') {
   }
 }
 
+// [1b] A213 残角：configured 放行必须先于「空列表清空」。
+// 钉顺序而不是钉某行字面量：只要空列表分支先跑，用户在只读/枚举在途时
+// 选的 configured 模型就会被抹掉（A151 的同源坑）。
+{
+  const appSrc = fs.readFileSync(path.join(ROOT, 'src/App.tsx'), 'utf8');
+  const start = appSrc.indexOf('if (manualModel) return;');
+  const end = appSrc.indexOf('\n  }, [', start);
+  const effect = start >= 0 && end > start ? appSrc.slice(start, end) : '';
+  const configuredAt = effect.indexOf('configuredModels.some');
+  const emptyAt = effect.indexOf('pickableModels.length === 0');
+  ok(configuredAt >= 0 && emptyAt >= 0 && configuredAt < emptyAt,
+    '★ [1b] configured 放行在空列表清空之前（目录为空不抹用户已选模型）');
+  ok(/agentModelSource\.forAgent !== currentAgentId/.test(effect),
+    '[1b] 归属守卫仍在（不拿上一个 Agent 的清单校验当前选择）');
+}
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();

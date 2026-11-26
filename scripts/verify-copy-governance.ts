@@ -161,9 +161,33 @@ function contracts(mutatedBanned?: string[]): void {
   }
 }
 
+/** 详情区块标题：英文界面不许再出现硬编码中文（P0-14 的部分整改） */
+function detailHeadings(): void {
+  const src = fs.readFileSync(
+    path.join(ROOT, 'src/components/AgentDetailSections.tsx'), 'utf8'
+  );
+  const zh = fs.readFileSync(path.join(ROOT, 'src/i18n/zh.ts'), 'utf8');
+  const en = fs.readFileSync(path.join(ROOT, 'src/i18n/en.ts'), 'utf8');
+  const keys = [
+    'agentDetail.section.basic', 'agentDetail.section.identity',
+    'agentDetail.section.account', 'agentDetail.section.expertise',
+    'agentDetail.section.process', 'agentDetail.section.tasks',
+    'agentDetail.section.intro', 'agentDetail.section.tech',
+  ];
+  check('详情区块八处标题走 i18n，中英两份键齐全', () => {
+    assert.ok(keys.every(k => src.includes(`t('${k}')`)),
+      '组件里还有标题没走 t()');
+    assert.ok(keys.every(k => zh.includes(`'${k}':`) && en.includes(`'${k}':`)),
+      '中英语言包有键缺失');
+    assert.ok(!/>\s*(基本信息|身份|账号与权益|擅长领域|过程能力|可承接的任务|介绍|技术信息)\s*</.test(src),
+      '仍有硬编码中文标题节点');
+  });
+}
+
 async function run(): Promise<void> {
   console.log(probe ? `UI 文案治理闸门（探针模式：${probe}）` : 'UI 文案治理闸门（AGENTS.md §10）');
   const mutation = probe === 'no-blacklist' ? (list: string[]) => list.filter(w => w !== '本页面') : undefined;
+  detailHeadings();
   contracts(mutation);
   console.log(`\n═══ 结果：${pass} 通过 / ${fail} 失败 ═══`);
   if (probe) {

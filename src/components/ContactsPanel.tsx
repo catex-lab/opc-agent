@@ -655,21 +655,15 @@ export function ContactsPanel({
                     ? t('contacts.noMatchDesc')
                     : hiddenAgents.length > 0
                       ? t('contacts.allHiddenDesc')
-                      : undefined
+                      : t('contacts.noAgentsDesc')
                 }
                 action={
-                  keyword
-                    ? t('contacts.clearSearch')
-                    : hiddenAgents.length > 0
-                      ? t('contacts.getAgents')
-                      : undefined
+                  keyword ? t('contacts.clearSearch') : t('contacts.getAgents')
                 }
                 onAction={
                   keyword
                     ? () => setKeyword('')
-                    : hiddenAgents.length > 0
-                      ? () => setGetAgentsOpen(true)
-                      : undefined
+                    : () => setGetAgentsOpen(true)
                 }
               />
             ) : (

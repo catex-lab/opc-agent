@@ -441,16 +441,18 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
   ok(switches === 0, '隐私卡里没有统计开关（没有可关的东西，就不该给开关）', `${switches} 个`);
 
   const body = await page.locator('[data-settings-panel]').last().innerText();
-  ok(/不收集任何信息/.test(body), '明说「不收集任何信息」');
+  ok(/不收集对话内容/.test(body), '明说「不收集对话内容」（不再绝对化为「不收集任何信息」）');
+  ok(!/不收集任何信息|Collects nothing/.test(body), '旧绝对化承诺已消失（肯定式见上一条）');
   ok(!/允许发送匿名统计/.test(body), '旧文案「允许发送匿名统计」已消失');
   /* 2026-10-29：原先这里断言「逐项否认统计/埋点/崩溃上报」那段文案存在。
      用户要求整段删除，原因是它的后半句「全部代码在 GitHub 公开，可自行核验」
      **兑现不了**（本仓远端 private，点进去 404）。
      于是断言从「文案在」翻转成「不实承诺不在」——
-     否定式必须配肯定式（本函数上面的 `/不收集任何信息/`、下面的「数据在哪」
+     否定式必须配肯定式（本函数上面的 `/不收集对话内容/`、下面的「数据在哪」
      断言，以及 `[data-about-privacy]` 的 count 断言），否则「整张隐私卡被删掉」也会绿。 */
   ok(!/GitHub 公开/.test(body), '不再声称「代码在 GitHub 公开可核验」（仓库 private，兑现不了）');
   ok(/你自己配置的模型服务商/.test(body), '说清了唯一会离开本机的东西是什么');
+  ok(/生图/.test(body) && /不含对话内容/.test(body), '联网行为把生图也交代了，并明说请求不含对话内容');
   /* 中文标点前多一格空白，是 JSX 换行折叠成空格的典型产物 ——
      肉眼在缩略图上根本看不出来，只有取文本才抓得到。 */
   ok(!/服务商\s+，/.test(body), '标点没有被 JSX 换行折叠出的空格顶开');
@@ -552,7 +554,7 @@ console.log('\n[5] 关于与隐私：无统计开关、有承诺、有入口、�
   });
   ok(v3.heroFirst && v3.heroCentered, 'v3：身份焦点是第一个区块且居中（一屏一主角）',
     `first=${v3.heroFirst} / centered=${v3.heroCentered}`);
-  ok(/你的数据只留在你这台机器上|Your data stays on this machine/.test(v3.promiseText),
+  ok(/对话内容留在你的设备上|Your chat content stays on your device/.test(v3.promiseText),
     'v3：隐私区有一句主承诺', v3.promiseText.slice(0, 30));
   ok(v3.promiseSize !== null && v3.bodySize !== null && v3.promiseSize > v3.bodySize,
     'v3：主承诺字号高于要点正文（层级靠字号，不靠加框）',
