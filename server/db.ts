@@ -18,6 +18,10 @@ import type {
   EventCapability,
 } from '../shared/capabilities.js';
 import { capabilityKeyString } from '../shared/capabilities.js';
+// B1：完整性检查与损坏隔离。纯函数模块，闸门可直接 import。
+import { checkIntegrity, listCorruptArchives, quarantineDatabase } from './db-safety.js';
+// B1：删除回收站（软删除）。表结构、保留期、清理都在那个模块。
+import * as trashStore from './trash.js';
 
 // 路径推导已拆到 `paths.ts`（无副作用），这里只做 re-export：
 // 既有 `import { dataDirPath } from './db.js'` 的调用点无需改动，
@@ -39,6 +43,46 @@ if (!fs.existsSync(dataDir)) {
 // 一并 import，stdout 是纯 JSON-RPC 通道，任何 stdout 日志都会污染协议
 // （Hermes 日志里真实出现过 parse error）。
 console.error(`[DB] 数据库文件: ${dbPath}`);
+
+// ── B1：打开前先验完整性，坏了就隔离（绝不原地修）──────────────────────
+//
+// 用户数据的唯一事实来源就是这一个文件。SQLite 没有修复能力，任何"修"都是
+// 在赌；所以策略是「原封不动搬走 + 用新库启动」：界面还能打开，用户还能用，
+// 而旧数据完整躺在 data/corrupt-<时间戳>/ 里等他自己救。
+//
+// 只在**主文件已存在**时检查：首次启动不该被走一遍 PRAGMA。
+if (fs.existsSync(dbPath)) {
+  const integrity = checkIntegrity(dbPath);
+  if (!integrity.ok) {
+    const q = quarantineDatabase(dbPath, dataDir);
+    if (q.dir) {
+      // 用 stderr + 明显分隔：这条日志是用户唯一能看到的"数据还在哪儿"的线索
+      console.error(
+        [
+          '',
+          '════════════════════════════════════════════════════════',
+          '[DB] ⚠️ 数据库文件损坏，已隔离（未做任何修复）',
+          `[DB] 原因: ${integrity.detail}`,
+          `[DB] 移出文件: ${q.moved.join('、')}`,
+          `[DB] 隔离目录: ${q.dir}`,
+          '[DB] 已用全新空库启动。旧数据完整保留在上述目录，',
+          '[DB] 可自行用 sqlite3 .recover 等工具尝试抢救。',
+          '════════════════════════════════════════════════════════',
+          '',
+        ].join('\n')
+      );
+    } else {
+      // 搬不走（权限/被占用）：这一处必须显式抛，不能"带着坏库继续跑"——
+      // 带着坏库跑的下场是所有写入静默失败，比启动失败难查得多。
+      throw new Error(
+        `数据库损坏且无法隔离（${q.error ?? '未知原因'}）：${dbPath}。` +
+          '请关闭正在占用该文件的程序后重启应用。'
+      );
+    }
+  } else {
+    console.error(`[DB] 完整性检查通过（${integrity.detail}）`);
+  }
+}
 
 // 创建数据库连接（Node 22 内置 SQLite，无需原生依赖）
 const db = new DatabaseSync(dbPath);
@@ -295,6 +339,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 `);
+
+// B1：删除回收站表 + 启动清理过期条目。
+// 清理放这里（建表紧跟着）：回收站只在删除时增长，过期判定放宽到
+// 「下次启动」对 30 天量级毫无影响，不需要额外定时器。
+trashStore.createTrashTable(db);
+try {
+  const purged = trashStore.purgeExpired(db);
+  if (purged > 0) console.error(`[DB] 回收站清理：${purged} 条过期记录已删除`);
+} catch (e) {
+  console.error('[DB] 回收站清理失败（不影响启动）:', (e as Error).message);
+}
 
 /**
  * 幂等加列：先 PRAGMA 探测再 ALTER。
@@ -1031,12 +1086,38 @@ export function invalidateAgentResumeTokens(agentId: string): number {
 }
 
 // 删除会话
-export function deleteSession(id: string): boolean {
-  const stmt = db.prepare('DELETE FROM sessions WHERE id = ?');
-  const result = stmt.run(bind(id));
+//
+// B1：删除前把会话行与它的全部消息序列化进回收站 —— 这个动作在界面上和
+// 「收起面板」太像，误点代价却是永久丢数据。快照对读路径零侵入（见 trash.ts）。
+//
+// 带 `WithTrashId` 的版本给 HTTP 路由用：它要把刚写进去的回收站 id 回给前端，
+// 前端才有东西可「撤销」。`deleteSession` 保持原签名（boolean），
+// 既有调用点（App.tsx / 闸门 / 脚本）一行都不用改。
+export function deleteSessionWithTrashId(id: string): { deleted: boolean; trashId: string | null } {
+  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as
+    | Record<string, unknown>
+    | undefined;
+  if (!session) return { deleted: false, trashId: null };
+  const messages = db.prepare('SELECT * FROM messages WHERE session_id = ?').all(id) as unknown[];
+  const runs = db.prepare('SELECT * FROM runs WHERE session_id = ?').all(id) as unknown[];
+  const trashId = trashStore.put(db, {
+    kind: 'session',
+    sessionId: id,
+    label: String(session.title ?? id),
+    payload: { session, messages, runs },
+  });
+
+  const result = db.prepare('DELETE FROM sessions WHERE id = ?').run(bind(id));
+  // runs 的 session_id 没有外键（历史遗留），不显式删就会留下孤儿台账 ——
+  // 表现为「会话没了，但 /api/runs/active 里还挂着它的中断记录」。
+  db.prepare('DELETE FROM runs WHERE session_id = ?').run(bind(id));
   const changed = toNumber(result.changes) > 0;
   if (changed) notifyKbPersist({ type: 'session-deleted', sessionId: id });
-  return changed;
+  return { deleted: changed, trashId: changed ? trashId : null };
+}
+
+export function deleteSession(id: string): boolean {
+  return deleteSessionWithTrashId(id).deleted;
 }
 
 /**
@@ -1048,6 +1129,18 @@ export function deleteSession(id: string): boolean {
  * 外键是 ON DELETE CASCADE，所以别用 deleteSession 的 SQL 顺手做这件事。
  */
 export function deleteMessagesBySession(sessionId: string): number {
+  // B1：同 deleteSession，先快照再删。label 用条数 —— 界面上一眼能看出
+  // 「这条恢复项是 37 条消息」而不是一个悬空的时间戳。
+  const rows = db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC').all(sessionId) as unknown[];
+  if (rows.length > 0) {
+    const title = (db.prepare('SELECT title FROM sessions WHERE id = ?').get(sessionId) as { title?: string } | undefined)?.title;
+    trashStore.put(db, {
+      kind: 'messages',
+      sessionId,
+      label: `${title ?? sessionId} · ${rows.length} 条消息`,
+      payload: { messages: rows },
+    });
+  }
   const stmt = db.prepare('DELETE FROM messages WHERE session_id = ?');
   const result = stmt.run(bind(sessionId));
   const changed = toNumber(result.changes);
@@ -1236,10 +1329,103 @@ export function createMessages(messages: DbMessageInput[]): void {
 }
 
 // 清空所有数据
+//
+// B1：以前只删 messages + sessions —— 靠外键 CASCADE 覆盖了 verifications，
+// 但 **runs 的 session_id 没有外键**，于是清空后 /api/runs/active 依然能翻出
+// 上一批会话的中断台账（「明明清空了，它还说我有个后台任务在跑」）。
+// 这里显式补齐。回收站（trash）刻意**不清**：用户点「清空」是要清聊天数据，
+// 不是要连后悔药一起扔掉 —— 30 天后自然过期。
 export function clearAllData(): void {
+  db.exec('DELETE FROM runs');
   db.exec('DELETE FROM messages');
   db.exec('DELETE FROM sessions');
   notifyKbPersist({ type: 'all-cleared' });
+}
+
+// ============= 回收站（B1）=============
+
+/** 列出未过期的回收站条目，供「最近删除」界面展示。 */
+export function listTrash(): trashStore.TrashRow[] {
+  return trashStore.list(db);
+}
+
+/** 历史上被隔离的损坏库（B1）。启动时隔离过的目录能在这里查到。 */
+export function corruptArchives() {
+  return listCorruptArchives(dataDir);
+}
+
+/**
+ * 从回收站恢复一条记录。
+ *
+ * 返回 `'ok' | 'not-found' | 'expired' | 'conflict'`：
+ *   · `expired` = 已过保留期。**不能恢复成功**——列表里已经看不到它了，若还让
+ *     恢复成功，用户会拿到「已恢复」却哪里都找不到，比直接说「已过期」更糟。
+ *   · `conflict` = 同 id 的行已经存在（用户删了又重建了同名会话）。
+ *     **不覆盖**：宁可让用户看到「恢复失败」，也不能静默冲掉新数据。
+ */
+export function restoreTrashItem(trashId: string): 'ok' | 'not-found' | 'expired' | 'conflict' {
+  const row = trashStore.get(db, trashId);
+  if (!row) return 'not-found';
+  if (trashStore.isExpired(row)) return 'expired';
+
+  let payload: {
+    session?: Record<string, unknown>;
+    messages?: Array<Record<string, unknown>>;
+    runs?: Array<Record<string, unknown>>;
+  };
+  try {
+    payload = JSON.parse(row.payload);
+  } catch {
+    return 'not-found';
+  }
+
+  const insertRow = (table: string, values: Record<string, unknown>): void => {
+    const cols = Object.keys(values);
+    const stmt = db.prepare(
+      `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
+    );
+    stmt.run(...cols.map(c => bind(values[c])));
+  };
+
+  try {
+    db.exec('BEGIN');
+    if (payload.session) {
+      const exists = db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(String(payload.session.id));
+      if (exists) {
+        db.exec('ROLLBACK');
+        return 'conflict';
+      }
+      insertRow('sessions', payload.session);
+    }
+    for (const m of payload.messages ?? []) insertRow('messages', m);
+    for (const r of payload.runs ?? []) insertRow('runs', r);
+    db.exec('COMMIT');
+  } catch (e) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      /* 回滚失败也继续抛原始错误 */
+    }
+    console.error('[DB] 回收站恢复失败:', (e as Error).message);
+    return 'not-found';
+  }
+
+  trashStore.drop(db, trashId);
+  // 恢复的消息要重新进知识库索引（删的时候 indexer 已经把它们摘掉了）
+  if (payload.session) {
+    notifyKbPersist({
+      type: 'messages-upserted',
+      sessionId: String(payload.session.id),
+      messageIds: (payload.messages ?? []).map(m => String(m.id)),
+    });
+  } else if (payload.messages?.length) {
+    notifyKbPersist({
+      type: 'messages-upserted',
+      sessionId: row.session_id,
+      messageIds: payload.messages.map(m => String(m.id)),
+    });
+  }
+  return 'ok';
 }
 
 // ============= Run 台账（M01）=============

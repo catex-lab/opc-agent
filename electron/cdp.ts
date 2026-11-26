@@ -40,16 +40,21 @@
  *
  * ## 已知代价（如实记，不美化）
  *
- * 端口常开意味着**本机任何进程都能驱动这个应用的所有页面**，包括应用自己的
- * 窗口 —— 那是 `--remote-debugging-port` 的语义，没法只开一半。接受它的理由：
- * 只绑回环、端口由系统随机分配、且这是「人机同屏」唯一便宜的实现。
- * 不需要时 `OPC_CDP=0` 关掉（冒烟脚本与讲究的用户都走这条）。
+ * 端口开放意味着**本机任何进程都能驱动这个应用的所有页面**，包括应用自己的
+ * 窗口 —— 那是 `--remote-debugging-port` 的语义，没法只开一半。因此 2026-11-26
+ * 起（P0-01）改为**默认关闭**：用户在设置页显式开启才开放，且需重启生效。
+ *
+ * 判定单一出口是 `cdpShouldEnable()`，优先级：
+ *   `OPC_CDP=0` 强制关 > `OPC_CDP=1` 强制开 > 偏好 `cdpEnabled`（缺键 = 关）。
+ * 前两条给脚本/闸门用（冒烟必须能显式开、并行跑时必须能强制关），第三条是
+ * 用户持久化选择。开关层和端点层必须都走它，避免出现「开关说开、端点说关」。
  */
 
 import { app } from 'electron';
 import { get } from 'node:http';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { loadPrefs } from '../server/preferences.js';
 
 /** 描述符文件名。放在数据目录里，与 chat.db 同级 —— 卸载/迁移时一起走。 */
 export const CDP_FILE_NAME = 'cdp.json';
@@ -67,7 +72,7 @@ export interface CdpTargetInfo {
 }
 
 export interface CdpDescriptor {
-  /** false = 本次启动没开调试端口（OPC_CDP=0 或读取失败） */
+  /** false = 本次启动没开调试端口（默认关 / OPC_CDP=0 / 读取失败） */
   enabled: boolean;
   port: number | null;
   /** 浏览器级 ws 端点（`/json/version` 的 webSocketDebuggerUrl） */
@@ -103,16 +108,27 @@ export function isCdpEnabled(): boolean {
 }
 
 /**
+ * 本次启动是否开放 CDP 端口的**唯一判定**。开关层与端点层共用，避免分裂。
+ *
+ * 环境变量优先于偏好：脚本能无条件强制开/关；普通用户走持久化的设置页开关，
+ * 缺键 = 关（安全默认）。用 `loadPrefs()` 而非读 localStorage：主进程与设置页
+ * 写的是同一份 `preferences.json`（A154 的 closeBehavior 也是这个套路）。
+ */
+export function cdpShouldEnable(): boolean {
+  if (process.env.OPC_CDP === '0') return false;
+  if (process.env.OPC_CDP === '1') return true;
+  return loadPrefs().cdpEnabled === true;
+}
+
+/**
  * 追加调试端口开关。**必须在 app ready 之前调用**（Chromium 初始化之后改不了）。
  *
- * `OPC_CDP=0` 是唯一开关：冒烟测试、以及不想把端口开着的用户都走它。
- * 做成环境变量而不是设置项，是因为设置项要有 UI、要持久化、要向用户解释
- * —— 而真正需要它的是脚本（每个 Electron 冒烟都该显式关掉，免得并行跑时
- * 互相干扰）。端口本身由 Chromium 随机分配，不存在「脚本之间抢同一个端口」。
+ * 默认不开放（P0-01）。要走人机同屏：设置页打开「远程调试端口」后重启，
+ * 或脚本显式 `OPC_CDP=1`。强制关 `OPC_CDP=0` 仍然优先。
  */
 export function enableCdp(): void {
-  if (process.env.OPC_CDP === '0') {
-    console.log('[CDP] OPC_CDP=0 —— 不开放远程调试端口（人机同屏不可用）');
+  if (!cdpShouldEnable()) {
+    console.log('[CDP] 未开放远程调试端口（默认关；设置页开启后需重启，或 OPC_CDP=1）');
     last = disabledDescriptor();
     return;
   }
@@ -130,7 +146,7 @@ export function enableCdp(): void {
  * 返回 null = 没开（或没读到）—— 调用方照常用面板，只是 Agent 连不上。
  */
 export async function initCdpEndpoint(): Promise<boolean> {
-  if (process.env.OPC_CDP === '0') {
+  if (!cdpShouldEnable()) {
     last = disabledDescriptor();
     return false;
   }

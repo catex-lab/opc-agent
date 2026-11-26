@@ -3,6 +3,7 @@ import { Button, MessagePlugin } from 'tdesign-react';
 import { ChevronDown, RefreshCw } from 'lucide-react';
 import { useTranslation, type MessageKey, type Translate } from '../i18n';
 import { api } from '../api';
+import { httpErrorText } from '../lib/http-error';
 
 /**
  * 「模型清单」设置分区。
@@ -118,7 +119,7 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
   const load = useCallback(async () => {
     try {
       const res = await api.get('/api/model-catalog');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(httpErrorText(res.status));
       setData((await res.json()) as CatalogSummary);
       setError(null);
     } catch (err) {
@@ -199,7 +200,7 @@ export function ModelCatalogSettings({ onRefreshed }: ModelCatalogSettingsProps)
     api
       .get(url)
       .then(async res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(httpErrorText(res.status));
         const json = (await res.json()) as {
           models?: Array<{ modelId?: string; name?: string; verified?: boolean }>;
         };

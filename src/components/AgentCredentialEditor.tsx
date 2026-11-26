@@ -7,6 +7,7 @@ import { describeProvenance, asProvenance } from '../../shared/provenance';
 import { emitCredentialsChanged, subscribeCredentialChanges } from '../lib/credentialEvents';
 import { InfoHint } from './InfoHint';
 import { api } from '../api';
+import { httpErrorText } from '../lib/http-error';
 
 /**
  * 单个 Agent 的凭据编辑器（取 / 存 / 清 + 连通性 + 模型清单）。
@@ -123,7 +124,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
     setError(null);
     try {
       const res = await api.get('/api/agent-credentials');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(httpErrorText(res.status));
       const data = await res.json();
       const list: CredentialView[] = Array.isArray(data.credentials) ? data.credentials : [];
       const found = list.find(c => c.agentId === agentId);

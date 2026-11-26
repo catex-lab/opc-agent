@@ -55,6 +55,7 @@ import {
 } from './answer/linkRouter';
 import type { Message } from './types';
 import { api } from './api';
+import { httpErrorText } from './lib/http-error';
 
 /**
  * ChatPage 按需加载。
@@ -537,7 +538,7 @@ function AppContent() {
         const res = await api.get(
           `/api/agents/${encodeURIComponent(currentAgentId)}/models`
         );
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(httpErrorText(res.status));
         const data = await res.json();
         if (!cancelled) {
           setAgentModels(Array.isArray(data.models) ? data.models : []);
@@ -879,6 +880,21 @@ function AppContent() {
   }, [fetchSessions]);
 
   /**
+   * B1：设置页「最近删除」里恢复了一条会话 —— 列表必须重拉才看得见。
+   *
+   * 用 window 事件而不是把 fetchSessions 传进设置页：设置页不该依赖聊天
+   * 状态（它现在只依赖 api 层），而事件是这条反向依赖最轻的接线方式。
+   * 顺带把项目计数也重拉 —— 恢复的会话可能带 project_id。
+   */
+  useEffect(() => {
+    const onRestored = () => {
+      void fetchSessions();
+    };
+    window.addEventListener('opc:sessions-changed', onRestored);
+    return () => window.removeEventListener('opc:sessions-changed', onRestored);
+  }, [fetchSessions]);
+
+  /**
    * A117：每次进入项目栏都拉一次项目列表。
    *
    * 为什么不在启动时拉：`GET /api/projects` 要读每个项目的记忆文件来算
@@ -925,13 +941,18 @@ function AppContent() {
 
   const handleDeleteSession = useCallback(
     async (sessionId: string) => {
-      const navigateTo = await deleteSession(sessionId);
+      const { navigateTo, trashId } = await deleteSession(sessionId);
       // A117：删会话会改变它所属项目的 sessionCount，而那个数是后端在
       // GET /api/projects 里算的 —— 重拉一次，项目列表的数字才跟着变。
       // 只在「用户已经用过项目栏」时才拉：从没打开过项目栏的人，不该因为
       // 删了一条会话就多付一次「读所有项目记忆文件」的开销。
       if (projects.length > 0) void fetchProjects();
       if (navigateTo) navigate(navigateTo);
+      // B1：删除是「移到回收站」而不是销毁。给一条明确回执，否则用户
+      // 看到会话消失只会以为数据没了（确认框里也写了保留 30 天）。
+      if (trashId) {
+        MessagePlugin.success('已删除，30 天内可恢复');
+      }
     },
     [deleteSession, navigate, fetchProjects, projects.length]
   );

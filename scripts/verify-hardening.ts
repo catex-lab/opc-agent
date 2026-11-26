@@ -279,6 +279,24 @@ console.log('\n[5] 本机 API token 不随 Agent 子进程外泄');
     ok(/agentChildEnv\(/.test(src) && !/\.\.\.process\.env/.test(src),
       `${file} 子进程环境走收口函数、不再裸继承 process.env`);
   }
+
+  // B5（2026-11-26）：SDK 通道由厂商自己 spawn（`{...process.env,...options.env}`），
+  // 不走 agentChildEnv。必须在两条 options 路径里都摘掉本机 token。
+  //
+  // 钉不变量、不钉写法：早期实现靠 `[OPC_LOCAL_TOKEN_ENV]: undefined` 覆盖，
+  // 后来改成 `withoutLocalToken()` 解构剔除（因为 one-shot 的 `Options.env`
+  // 类型是 `Record<string, string>` 不收 undefined）。两种写法都满足
+  // 「子进程拿不到 token」，所以断言钉的是「有收口函数、且两条路径都走了它」。
+  const sdk = stripComments(read('server/agents/adapters/sdk.ts'));
+  ok(sdk.includes("OPC_LOCAL_TOKEN_ENV"), 'SDK 适配器导入 token 常量');
+  ok(/function withoutLocalToken\([\s\S]*?\[OPC_LOCAL_TOKEN_ENV\]: _\w*[\s\S]*?\.\.\.rest/.test(sdk),
+    'SDK 侧有收口函数：把 token 从 env 里解构剔除（不留空串，空串仍会传进子进程）');
+  const sdkSpreads = (sdk.match(/env: withoutLocalToken\(/g) ?? []).length;
+  ok(sdkSpreads >= 2,
+    `SDK 会话池 + one-shot 两条路径都用收口函数（实际 ${sdkSpreads} 处）`);
+  ok(!/env:\s*\{\s*\.\.\.this\.runtime\.env\s*\}/.test(sdk),
+    '没有哪条路径直接把 runtime.env 原样交给 SDK（那样 token 会漏）');
+  ok(!sdk.includes("OPC_LOCAL_TOKEN_ENV]: '"), 'SDK 不会用空字符串冒充「剔除」（空串仍会传进子进程）');
 }
 
 console.log(`\n=== ${pass}/${total} 通过 ===`);

@@ -29,6 +29,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
+import { EXPECTED_SECTIONS } from './lib/settings-sections.mjs';
 
 const ROOT = process.cwd();
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-a211-ui-'));
@@ -322,8 +323,12 @@ try {
   }));
   await page.goto(`${base}/settings?section=login`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('[data-wb-error]', { timeout: 30000 });
-  eq(await page.locator('[data-settings-section]').count(), 8,
-    '★ 八个分区导航仍在（整页没被 ErrorBoundary 接管）');
+  // 这里的意图是「整页没被 ErrorBoundary 连导航一起吞掉」，不是「分区恰好八项」。
+  // 所以期望值取自契约清单（scripts/lib/settings-sections.mjs），加分区不用改这里。
+  // 反例：原先钉死 8，B1 加「最近删除」后整链红在「want 8, got 9」，
+  // 而真正要守的性质（导航还在）其实没坏。
+  eq(await page.locator('[data-settings-section]').count(), EXPECTED_SECTIONS.length,
+    `★ 分区导航仍在（${EXPECTED_SECTIONS.length} 项，整页没被 ErrorBoundary 接管）`);
   ok(await page.locator('[data-settings-panel="login"]').count() > 0,
     '★ 登录分区仍渲染（肯定式，不只钉「没有 X」）');
   ok(await page.locator('[data-wb-state]').count() === 0,

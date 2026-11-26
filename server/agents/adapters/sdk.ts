@@ -45,6 +45,11 @@ import { applyWorkbuddyProfile, workbuddyKeyblobDisplay } from '../wbProductProf
 import { kbMcpServerSpec, KB_MCP_SERVER_NAME } from '../../kb/tool.js';
 import { workbuddyKeyblobInfo, formatLocalMinute } from '../credentialStatus.js';
 import { appendFailureAdvice } from '../recovery.js';
+// B5（2026-11-26）：SDK 自己 spawn CLI 时走 `{ ...process.env, ...options.env }`
+// （见 node_modules/@tencent-ai/agent-sdk/lib/transport/process-transport.js），
+// 不走我们的 agentChildEnv 收口。必须在 options.env 里用 undefined 覆盖掉
+// 本机 token —— SDK 正是用 `undefined` 表示该变量不传给子进程（类型也允许）。
+import { OPC_LOCAL_TOKEN_ENV } from '../../../shared/harness-protocol.js';
 // P5 修2：首内容等待说明的看门狗（与 claude/codex 同一份）
 import { armWaitNote } from '../waitNote.js';
 // A222：登录流全局单飞。探测必须先让路，且只在流活着时下发它的 URL。
@@ -146,6 +151,23 @@ const SESSION_POOL_ENABLED = process.env.OPC_SDK_SESSION_POOL !== '0';
  */
 function cliOverride(): string | undefined {
   return process.env.OPC_CODEBUDDY_CLI || undefined;
+}
+
+/**
+ * B5：SDK 自己 spawn CLI 子进程，不走我们的 `agentChildEnv()` 收口 ——
+ * 它的 transport 是 `{ ...process.env, ...options.env }`（`process-transport.js`），
+ * 所以本机 API token 会随 `process.env` 一起被继承到 CLI 手里。
+ *
+ * CLI 子进程不需要这个 token（它只用于宿主 → OPC server 的本机鉴权），
+ * 显式从注入的 env 里摘掉。两处 options（会话池 / one-shot 回退）共用，
+ * 避免"改了一处、另一处还在漏"。
+ *
+ * 注意：`Options.env`（one-shot）类型是 `Record<string, string>` 不收
+ * undefined，所以用解构剔除而不是塞 undefined —— 两条路径行为一致。
+ */
+function withoutLocalToken(env: Record<string, string>): Record<string, string> {
+  const { [OPC_LOCAL_TOKEN_ENV]: _omit, ...rest } = env;
+  return rest;
 }
 /** 空闲多久后回收 CLI 进程（每个 ≈24MB 内存 + 一个 node 进程） */
 const SESSION_IDLE_MS = 10 * 60 * 1000;
@@ -819,6 +841,9 @@ export class SdkAdapter implements AgentProvider {
       // A155：产品三要素（environment / endpoint / env）必须跟着会话走。
       // 少这三项的后果不是报错，而是**连到另一个产品**上继续跑。
       ...this.runtime,
+      // B5：SDK 合并 env 时 options.env 覆盖 process.env；undefined = 不传给
+      // 子进程（实测 spawnSync 确认）。CLI 子进程不需要本机 API token。
+      env: withoutLocalToken(this.runtime.env),
       cwd: ctx.cwd || process.cwd(),
       model: ctx.model,
       ...(fallback ? { fallbackModel: fallback } : {}),
@@ -1201,6 +1226,8 @@ export class SdkAdapter implements AgentProvider {
           // A155：回退路径同样要带产品三要素，否则关掉会话池
           // （OPC_SDK_SESSION_POOL=0）就立刻退回「接到另一个产品」。
           ...this.runtime,
+          // B5：同会话池路径，回退 one-shot 也不能把本机 token 交给 CLI 子进程。
+          env: withoutLocalToken(this.runtime.env),
           cwd: ctx.cwd || process.cwd(),
           model: ctx.model,
           ...(fallback ? { fallbackModel: fallback } : {}),

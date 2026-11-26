@@ -70,6 +70,10 @@ OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个�
 > **本仓库提供源码，GitHub Releases 另提供预编译完整包**（`*-full.zip`，可直接运行，也用于应用内更新）。
 > 随包组件的许可与署名见 [THIRD-PARTY.md](./THIRD-PARTY.md)；Claude Code、Codex 等组件不随包分发，
 > 改为首次使用时自行下载。也可自行 `npm run electron:build` 打包。
+>
+> **安装包未做代码签名**（2026-11-26 的决定：不购买证书）。Windows SmartScreen 可能提示
+> "未知发布者"，macOS 首次打开需右键 → 打开。应用内更新清单 `latest.json` 仍做签名验签，
+> 与安装包签名是两回事。请只从本仓库的 GitHub Releases 下载，不要装第三方转发的包。
 
 ```bash
 git clone https://github.com/catex-lab/opc-agent.git
@@ -149,6 +153,8 @@ npm run verify:package # 打包产物逐字节核对
 | `images/` | 生成的图片 |
 
 应用内不收集统计、不埋点、不做崩溃上报，也没有安装 ID —— 代码里不存在遥测模块。密钥一律从环境变量或本地凭据文件读取，不写进源码。
+
+**自定义模型路由的凭据引用**（`credentialRef`）只认本进程可见的环境变量名。ACP 类 Agent（如 DeepSeek Harness）若有自己的 profile 配置（例如 `~/.dsh/profiles/acp/*.patch.yml`），其中写的密钥**不会**被 OPC 读取 —— 我们刻意不跨边界解析第三方配置文件。要在 OPC 里用带凭据的自定义路由，请把密钥导出为环境变量（如 `SENSENOVA_API_KEY`），或在 OPC 的设置页保存对应凭据。
 
 越权的操作会被拦下来问你：
 

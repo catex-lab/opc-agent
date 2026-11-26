@@ -103,6 +103,20 @@ export interface Prefs {
    * 尊重在意这一点的用户）。显式 false 才关；null = 回到默认开。
    */
   canaryEnabled?: boolean;
+  /**
+   * 远程调试端口（CDP / 人机同屏）的总开关（P0-01，2026-11-26）。
+   *
+   * **默认关**：缺键等同 false。端口一旦开放，本机任何进程都能驱动本应用的
+   * 所有页面 —— 这是 `--remote-debugging-port` 的固有语义，没法只开一半，
+   * 所以不再默认开。需要「Agent 点哪、用户看哪」的用户在设置页显式打开。
+   *
+   * ⚠️ **重启才生效**：Chromium 的调试开关只能在 app ready 之前追加，
+   * 运行期改这个值不会立刻影响端口。设置页必须如实告知（见 i18n 提示）。
+   *
+   * 环境变量优先级（脚本/闸门用）：`OPC_CDP=0` 强制关 > `OPC_CDP=1` 强制开
+   * > 本偏好。判定单一出口在 `electron/cdp.ts` 的 `cdpShouldEnable()`。
+   */
+  cdpEnabled?: boolean;
   /** 单聊右侧过程面板的停靠形态与位置（2026-11-22） */
   processPanel?: ProcessPanelPrefs;
 }
@@ -254,6 +268,11 @@ export function validatePrefsPatch(input: unknown): PrefsValidation {
         if (v === null) patch.canaryEnabled = null;
         else if (typeof v === 'boolean') patch.canaryEnabled = v;
         else return { ok: false, error: `canaryEnabled 只能是布尔值，收到 ${JSON.stringify(v)}` };
+        break;
+      case 'cdpEnabled':
+        if (v === null) patch.cdpEnabled = null;
+        else if (typeof v === 'boolean') patch.cdpEnabled = v;
+        else return { ok: false, error: `cdpEnabled 只能是布尔值，收到 ${JSON.stringify(v)}` };
         break;
       case 'theme':
         if (v === null) patch.theme = null;

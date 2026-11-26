@@ -6,6 +6,7 @@ import {
   type AgentProbeFeedback,
 } from '../agentProbe';
 import { api } from '../api';
+import { httpErrorText } from '../lib/http-error';
 
 /**
  * Agent 注册表 hook。
@@ -47,7 +48,7 @@ export function useAgentRegistry() {
     setError(null);
     try {
       const res = await api.get('/api/agents');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(httpErrorText(res.status));
       const data = await res.json();
       setAgents(Array.isArray(data.agents) ? data.agents : []);
       setHiddenAgents(Array.isArray(data.hiddenAgents) ? data.hiddenAgents : []);
@@ -113,7 +114,7 @@ export function useAgentRegistry() {
     setError(null);
     try {
       const res = await api.post('/api/agents/probe');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(httpErrorText(res.status));
       const data = await res.json();
       setAgents(Array.isArray(data.agents) ? data.agents : []);
       setHiddenAgents(Array.isArray(data.hiddenAgents) ? data.hiddenAgents : []);

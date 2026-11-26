@@ -16,6 +16,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
+import { httpErrorText } from './lib/http-error';
 
 export interface UserProfile {
   nickname: string;
@@ -107,7 +108,7 @@ export async function loadUserProfile(): Promise<UserProfile> {
   inflight = (async () => {
     try {
       const res = await api.get('/api/user-profile');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(httpErrorText(res.status));
       const data = await res.json();
       snapshot = {
         nickname: typeof data?.nickname === 'string' ? data.nickname : '',
@@ -136,7 +137,7 @@ export async function saveUserProfile(patch: Partial<UserProfile>): Promise<User
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new Error(httpErrorText(res.status));
     const data = await res.json();
     snapshot = {
       nickname: typeof data?.nickname === 'string' ? data.nickname : '',

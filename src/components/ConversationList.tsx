@@ -611,8 +611,12 @@ export function ConversationList({
         );
       })()}
 
-      {/* 删除确认。菜单里点「删除会话」不直接删 —— 后端是硬 DELETE，
-          删掉的消息找不回来，值得多一次明确的确认。 */}
+      {/* 删除确认。菜单里点「删除会话」不直接删 —— 删掉的消息不在列表里了，
+          值得多一次明确的确认。
+
+          B1（2026-11-26）：后端已改为「先快照进回收站再删」，保留 30 天。
+          所以这里**不能再说「无法恢复」**——那句话现在是假的，会让用户
+          以为数据彻底没了而放弃找回。 */}
       <ConfirmDialog
         open={!!confirmDelete}
         title="删除会话"
@@ -626,7 +630,7 @@ export function ConversationList({
       >
         <p>确定删除「{confirmDelete?.name}」吗？</p>
         <p className="mt-1.5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          该会话的全部消息会一并删除，无法恢复。
+          该会话的全部消息会一并从列表移除，保留 30 天可恢复。
         </p>
       </ConfirmDialog>
 

@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-react';
 import { useTranslation } from '../i18n';
 import type { WorkbuddyProfileState } from '../types';
 import { api } from '../api';
+import { httpErrorText } from '../lib/http-error';
 
 /**
  * A211：「WorkBuddy 产品版本」设置区。
@@ -89,7 +90,7 @@ export function WorkbuddyProfileSettings({ onChanged }: WorkbuddyProfileSettings
   const load = useCallback(async () => {
     try {
       const res = await api.get('/api/workbuddy-profiles');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(httpErrorText(res.status));
       const parsed: unknown = await res.json();
       if (!isProfileState(parsed)) throw new Error(t('settings.wbProfile.badResponse'));
       setState(parsed);

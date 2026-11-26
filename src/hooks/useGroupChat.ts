@@ -14,6 +14,7 @@ import {
   type RunEvent,
 } from '../../shared/blocks';
 import { api } from '../api';
+import { httpErrorText } from '../lib/http-error';
 // F0-02②：SSE 分帧/解析与单聊共用一份，不再各写一遍。
 import { readSseStream } from '../lib/sse-parse';
 
@@ -428,8 +429,7 @@ export function useGroupChat(options: UseGroupChatOptions) {
         });
 
         if (!response.ok) {
-          const text = await response.text().catch(() => '');
-          throw new Error(`HTTP ${response.status} ${text.slice(0, 200)}`);
+          throw new Error(httpErrorText(response.status));
         }
 
         await stream.consumeWithReconnect(response);
@@ -487,8 +487,7 @@ export function useGroupChat(options: UseGroupChatOptions) {
         });
 
         if (!response.ok) {
-          const text = await response.text().catch(() => '');
-          throw new Error(`HTTP ${response.status} ${text.slice(0, 200)}`);
+          throw new Error(httpErrorText(response.status));
         }
 
         await stream.consumeWithReconnect(response);

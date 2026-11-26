@@ -592,16 +592,66 @@ export function registerSessionRoutes(app: Express): void {
   app.delete("/api/sessions/:sessionId", (req, res) => {
     try {
       const { sessionId } = req.params;
-      const success = db.deleteSession(sessionId);
+      const { deleted, trashId } = db.deleteSessionWithTrashId(sessionId);
 
-      if (!success) {
+      if (!deleted) {
         return res.status(404).json({ error: "会话不存在" });
       }
 
-      res.json({ success: true });
+      // B1：删除留了一份快照进回收站 —— 把 id 回给前端，界面才能给「撤销」，
+      // 而不是让用户以为数据没了（回收站 30 天后才过期）。
+      res.json({ success: true, restorable: !!trashId, trashId });
     } catch (error: any) {
       console.error("[Delete Session] Error:", error);
       res.status(500).json({ error: error?.message || "删除会话失败" });
+    }
+  });
+
+  // ════════ B1：回收站（删除的后悔药，保留 30 天）════════
+  // 只给「能恢复」这一个出口。刻意不做「永久删除」按钮：删都删了，
+  // 多一个按钮只多一次误点机会；过期自然清理。
+  app.get("/api/trash", (_req, res) => {
+    try {
+      const items = db.listTrash().map(t => ({
+        id: t.id,
+        kind: t.kind,
+        sessionId: t.session_id,
+        label: t.label,
+        deletedAt: t.deleted_at,
+        expiresAt: t.expires_at,
+      }));
+      res.json({ items });
+    } catch (error: any) {
+      console.error("[Trash] List Error:", error);
+      res.status(500).json({ error: "读取回收站失败" });
+    }
+  });
+
+  app.post("/api/trash/:trashId/restore", (req, res) => {
+    try {
+      const result = db.restoreTrashItem(req.params.trashId);
+      if (result === "ok") return res.json({ success: true });
+      if (result === "conflict") {
+        // 409 而不是 500：这不是服务端故障，是「同名会话已经重新建了」的
+        // 业务冲突，界面据此提示「已存在同 id 会话，无法覆盖」。
+        return res.status(409).json({
+          error: "该会话已被重新创建，恢复会覆盖新数据 —— 已取消",
+          code: "trash_conflict",
+        });
+      }
+      if (result === "expired") {
+        // 410 Gone：它确实存在过，但保留期已过（30 天/OPC_TRASH_RETENTION_DAYS）。
+        // 用 410 而不是 404，界面才能提示「已超过保留期」而不是含糊的「找不到」。
+        return res.status(410).json({
+          error: "这条记录已超过保留期，无法恢复",
+          code: "trash_expired",
+        });
+      }
+      // 404：数据本来就损坏或从未存在
+      return res.status(404).json({ error: "回收站里没有这条记录" });
+    } catch (error: any) {
+      console.error("[Trash] Restore Error:", error);
+      res.status(500).json({ error: "恢复失败" });
     }
   });
 }

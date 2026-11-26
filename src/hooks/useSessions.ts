@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Session, Message, PermissionMode } from '../types';
 import { api } from '../api';
+import { httpErrorText } from '../lib/http-error';
 
 const STORAGE_KEYS = {
   sessionModels: 'sessionModels',
@@ -189,9 +190,18 @@ export function useSessions() {
   }, [markLoaded]);
 
   // 删除会话
-  const deleteSession = useCallback(async (sessionId: string): Promise<string | null> => {
+  //
+  // B1：返回 `trashId` —— 后端删除时留了一份快照进回收站，前端据此给出
+  // 「撤销」。不是可选项：没有这个 id 就撤不回来，回收站等于对用户不可见。
+  const deleteSession = useCallback(async (sessionId: string): Promise<{ navigateTo: string | null; trashId: string | null }> => {
     try {
-      await api.delete(`/api/sessions/${sessionId}`);
+      const res = await api.delete(`/api/sessions/${sessionId}`);
+      // api.delete 返回的是 Response（不是解析后的 JSON）——必须自己读 body，
+      // 否则 trashId 永远是 undefined，撤销入口静默失效。
+      const body = res.ok
+        ? ((await res.json().catch(() => null)) as { trashId?: unknown } | null)
+        : null;
+      const trashId = typeof body?.trashId === 'string' ? body.trashId : null;
 
       let navigateTo: string | null = null;
 
@@ -212,10 +222,10 @@ export function useSessions() {
         }
       }
 
-      return navigateTo;
+      return { navigateTo, trashId };
     } catch (error) {
       console.error('Failed to delete session:', error);
-      return null;
+      return { navigateTo: null, trashId: null };
     }
   }, [sessions, currentSessionId]);
 
@@ -238,7 +248,7 @@ export function useSessions() {
     async (sessionId: string): Promise<number> => {
       try {
         const res = await api.delete(`/api/sessions/${sessionId}/messages`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(httpErrorText(res.status));
         const data = await res.json();
         const deleted: number = typeof data.deleted === 'number' ? data.deleted : 0;
         setSessions(prev =>
@@ -308,7 +318,7 @@ export function useSessions() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ pinned }),
         });
-        if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok && res.status !== 404) throw new Error(httpErrorText(res.status));
       } catch (error) {
         console.warn('[Sessions] 置顶落库失败，已回滚:', error);
         setSessions(p => p.map(s => (s.id === sessionId ? { ...s, pinned: prev } : s)));
@@ -341,7 +351,7 @@ export function useSessions() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ reasoningEffort: value || null }),
         });
-        if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok && res.status !== 404) throw new Error(httpErrorText(res.status));
       } catch (error) {
         console.warn('[Sessions] 思考强度落库失败，已回滚:', error);
         setSessions(p => p.map(s => (s.id === sessionId ? { ...s, reasoningEffort: prev } : s)));
@@ -376,7 +386,7 @@ export function useSessions() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ permissionMode: value }),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(httpErrorText(res.status));
       } catch (error) {
         console.warn('[Sessions] 权限模式落库失败，已回滚:', error);
         setSessions(p =>

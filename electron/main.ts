@@ -24,6 +24,8 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { loadPrefs } from '../server/preferences.js';
+// B2：进程级异常兜底，与 server 共用同一份实现（签名去重 + 脱敏 + 不退出）。
+import { installCrashGuard } from '../server/crash-guard.js';
 import { decideCloseAction } from './close-policy.js';
 import { updater } from './updater/index.js';
 import { browserPanel, normalizeBrowserUrl, runBrowserSmoke } from './browser-view.js';
@@ -1003,7 +1005,7 @@ async function createWindow() {
   // P3：解析出 Chromium 实际选中的调试端口，并把应用自己的窗口 URL 记下来
   // —— 后者只影响**描述符里**交给 Agent 的 target（把主窗口排除）。
   // 调试端口本身仍是整个应用的（含主窗口），仅绑回环，见 cdp.ts「已知代价」。
-  // 读不到（OPC_CDP=0 或文件没生成）也不影响面板：只是 Agent 连不上。
+  // 读不到（默认关 / OPC_CDP=0 / 文件没生成）也不影响面板：只是 Agent 连不上。
   //
   // 刻意不 await：这一步最坏要重试 5s（DevToolsActivePort 迟迟不出现），
   // 而窗口该立刻显示。让它自己在后台收敛，描述符落地后 Agent 自然能发现。
@@ -1194,6 +1196,13 @@ function createTray() {
   ]);
   tray.on('right-click', () => tray?.popUpContextMenu(menu));
 }
+
+// B2：主进程同样兜底。server 子进程有自己的 handler（server/index.ts 调用
+// installCrashGuard），但主进程里的 IPC 回调、托盘、更新器不在那个进程里 ——
+// 主进程一崩，窗口直接消失（比白屏更糟：用户连「重开」的界面都没有了）。
+// Electron 主进程的未捕获异常默认打印后**不退出**，但会处于半坏状态；
+// 这里只负责把 stack 结构化落日志，重试/自愈交给 harness 看门狗。
+installCrashGuard();
 
 // 单实例：第二次启动时聚焦已有窗口，而不是再开一个抢同一个数据目录
 if (!app.requestSingleInstanceLock()) {

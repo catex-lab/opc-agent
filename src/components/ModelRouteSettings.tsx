@@ -3,6 +3,7 @@ import { Button, Input, MessagePlugin, Select, Tag } from 'tdesign-react';
 import { Plus } from 'lucide-react';
 import { useTranslation, type MessageKey } from '../i18n';
 import { api } from '../api';
+import { httpErrorText } from '../lib/http-error';
 import { emitModelRoutesChanged } from '../lib/credentialEvents';
 
 /**
@@ -109,7 +110,7 @@ export function ModelRouteSettings() {
   const loadAgents = useCallback(async () => {
     try {
       const res = await api.get('/api/agents');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(httpErrorText(res.status));
       const data = await res.json();
       const all: AgentOption[] = [
         ...(Array.isArray(data.agents) ? data.agents : []),
@@ -140,7 +141,7 @@ export function ModelRouteSettings() {
         ? `/api/model-routes?agentId=${encodeURIComponent(agentId)}`
         : '/api/model-routes';
       const res = await api.get(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(httpErrorText(res.status));
       const data = await res.json();
       setRoutes(Array.isArray(data.routes) ? data.routes : []);
     } catch (err) {

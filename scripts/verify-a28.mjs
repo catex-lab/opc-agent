@@ -32,6 +32,7 @@ const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
 const OUT = join(ROOT, '.render-check');
 import { resolveChromePath } from './lib/chrome.mjs';
+import { orderedLabels, contractDrift } from './lib/settings-sections.mjs';
 const CHROME = resolveChromePath();
 
 const MIME = {
@@ -368,22 +369,40 @@ console.log('\n[6] 设置页分区：互斥渲染 + 副标题跟着走');
   // [6] 要断言「默认落在哪个分区」，所以这里用 open 而不是 openAppearance
   await open(page, '/settings?glass=1');
 
-  // A38/A40 之后设置页 5 个分区；A60 加了「模型清单」→ 6 个；
-  // A83–A95 又加了「关于与隐私」→ 7 个；A115 加了「我的资料」→ 8 个。
-  // 按**显式标签表**断言而不是「有几项」——A37 已经证明按数量断言的探针
-  // 每次加分区都会误报一次，而按标签断言只会漏掉「该在的没在」。
-  // A137：A129 把「自定义 Agent」改名为「助手人设」（理由：与通讯录里用户自建的厂商同名），
-  // 当时只同步了前两项（权限门禁 / 登录配置），漏了这一项 —— 于是本闸门红了整整一版。
-  // 文案变更属于契约变更，改断言是**对的**；但改的时候要显式记下是哪次改名，
-  // 否则下一个人看到这里只会以为「当初就写错了」。
-  // T7-1（UI 优化 2026-11-18）：「助手人设」随效果图 07~14 全量改名「自定义助手」。
-  const NAV_LABELS = ['我的资料', '记忆', '权限门禁', '外观', '登录配置', '模型清单', '自定义助手', '关于与隐私'];
+  // 期望值来自**契约清单**（`scripts/lib/settings-sections.mjs` 的 EXPECTED_SECTIONS），
+  // 不是从源码派生 —— 派生的期望值会随着产品代码被改而同步变绿，反向探针会失效
+  // （第一版这么写时，删掉「最近删除」后两个闸门仍全绿）。
+  // 同时用 `contractDrift()` 抓「契约清单落后于产品代码」，不一致就红，逼人补清单。
+  const drift = contractDrift();
+  ok(drift.added.length === 0, '契约清单覆盖了产品代码里的全部分区（新增分区请补 EXPECTED_SECTIONS）', drift.added.join(','));
+  ok(drift.removed.length === 0, '产品代码里没有悄悄删掉契约内的分区', drift.removed.join(','));
+  const NAV_LABELS = orderedLabels().map(({ label }) => label);
   const navTexts = await page.locator('[data-settings-section]').allInnerTexts();
   const navCount = navTexts.length;
-  const navOk =
-    navCount === NAV_LABELS.length &&
-    NAV_LABELS.every((label, i) => navTexts[i]?.trim().startsWith(label));
-  ok(navOk, '分区导航为八项且顺序正确（我的资料/记忆/权限门禁/外观/登录配置/模型清单/自定义助手/关于）', navTexts.map(t => t.trim()).join(' | '));
+  const navSeq = navTexts.map(t => t.trim());
+  // 每个期望标签都要在真实导航里出现，且出现顺序与表一致（允许中间夹着别的新分区）。
+  let cursor = 0;
+  const inOrder = NAV_LABELS.every(label => {
+    const hit = navSeq.findIndex((t, i) => i >= cursor && t.startsWith(label));
+    if (hit === -1) return false;
+    cursor = hit + 1;
+    return true;
+  });
+  ok(navCount === NAV_LABELS.length, '分区导航数量与源码定义一致', `count=${navCount} 期望=${NAV_LABELS.length}`);
+  ok(inOrder, '分区顺序与源码定义一致', navSeq.join(' | '));
+  // 反向保护：导航里有几项，点过去就必须出现对应面板 —— 防「加了导航项但没接线」的白板分区。
+  // 注意设置页是**懒渲染**（只挂载当前分区），所以不能直接查 DOM，必须逐项点过去。
+  const sectionKeys = await page
+    .locator('[data-settings-section]')
+    .evaluateAll(els => els.map(e => e.getAttribute('data-settings-section')));
+  for (const key of sectionKeys) {
+    await page.locator(`[data-settings-section="${key}"]`).click();
+    await page.waitForTimeout(120);
+    ok((await page.locator(`[data-settings-panel="${key}"]`).count()) > 0, `分区「${key}」点开后有对应面板`, key);
+  }
+  // 点完一轮回到默认分区，免得影响后面的用例
+  await page.locator('[data-settings-section="profile"]').click();
+  await page.waitForTimeout(150);
   // 默认分区改成「我的资料」（用户要求：设置弹窗一打开先看到自己的资料）。
   ok(await page.locator('[data-settings-panel="profile"]').count() > 0, '默认落在「我的资料」');
 
