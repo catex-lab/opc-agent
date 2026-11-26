@@ -406,8 +406,9 @@ export const zh = {
   'agentDetail.section.identity': '身份',
   'agentDetail.section.account': '账号与权益',
   'agentDetail.section.expertise': '擅长领域',
-  'agentDetail.section.process': '过程能力',
-  'agentDetail.section.tasks': '可承接的任务',
+  'agentDetail.section.capabilityOverview': '能力概览',
+  'agentDetail.row.process': '过程能力',
+  'agentDetail.row.tasks': '可承接任务',
   'agentDetail.section.intro': '介绍',
   'agentDetail.section.tech': '技术信息',
   // 瘦身批次 2：运行组件按需下载（Codex / Claude 的平台二进制不再随包分发）

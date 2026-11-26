@@ -171,16 +171,31 @@ function detailHeadings(): void {
   const keys = [
     'agentDetail.section.basic', 'agentDetail.section.identity',
     'agentDetail.section.account', 'agentDetail.section.expertise',
-    'agentDetail.section.process', 'agentDetail.section.tasks',
+    'agentDetail.section.capabilityOverview',
     'agentDetail.section.intro', 'agentDetail.section.tech',
   ];
-  check('详情区块八处标题走 i18n，中英两份键齐全', () => {
+  // 2026-11-26 UI 收口：原「过程能力」「可承接的任务」两个 section 合并为
+  // 「能力概览」，两者降级为卡内的行标签（agentDetail.row.*），也走 i18n。
+  const rowKeys = ['agentDetail.row.process', 'agentDetail.row.tasks'];
+  check('详情区块标题走 i18n，中英两份键齐全（含能力概览与两个行标签）', () => {
     assert.ok(keys.every(k => src.includes(`t('${k}')`)),
       '组件里还有标题没走 t()');
-    assert.ok(keys.every(k => zh.includes(`'${k}':`) && en.includes(`'${k}':`)),
+    assert.ok(rowKeys.every(k => src.includes(`t('${k}')`)),
+      '能力概览卡内的行标签没走 t()');
+    assert.ok(keys.concat(rowKeys).every(k => zh.includes(`'${k}':`) && en.includes(`'${k}':`)),
       '中英语言包有键缺失');
     assert.ok(!/>\s*(基本信息|身份|账号与权益|擅长领域|过程能力|可承接的任务|介绍|技术信息)\s*</.test(src),
       '仍有硬编码中文标题节点');
+  });
+  check('可承接的任务行不再挂重复的数据形式图标', () => {
+    // 2026-11-26 收口：modes 由 toAgentInfo 从 capabilities 派生时写死，
+    // 每条 skill 的 ⓘ 点开几乎都是同一句 text/plain，2~6 次重复。
+    // 否定式配肯定式：先证明区块存在，再钉区内无 InfoHint，避免整块删掉也绿。
+    // 区块现在是能力概览卡内的行 div（不再是独立 section），非贪婪匹配到
+    // 卡片所在 section 的收尾为止 —— 能力概览标题的 InfoHint 在它之前，不受影响。
+    const block = src.match(/data-agent-skills[\s\S]*?<\/section>/)?.[0] ?? '';
+    assert.ok(block.length > 0, '找不到可承接的任务区块，断言失效');
+    assert.ok(!block.includes('<InfoHint'), '又给每条 skill 挂回了数据形式说明图标');
   });
 }
 

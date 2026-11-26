@@ -726,10 +726,14 @@ export function SettingsPage({
 
         {/* 底部留白比顶部大一档：参考图的滚动区在裁切位置看不到底边，
             但「最后一行不贴边」是硬要求 —— 24px 在深色下仍会让末行文字
-            贴着弹窗圆角，故取下 32 / 上 24。 */}
+            贴着弹窗圆角，故取下 32 / 上 24。
+
+            2026-11-26：[scrollbar-gutter:stable] 让滚动条从无到有时**不改变内容宽度**。
+            模型清单那屏的内容高度正好卡在临界点，之前滚动条反复出现/消失，
+            右对齐的数字列整块左右移动 6px（用户录屏实证）——与 ChatPage 同款手法。 */}
         <div
           ref={panelScrollRef}
-          className="tc-scroll-fade min-w-0 flex-1 overflow-y-auto px-4 pb-8 pt-6 sm:px-6"
+          className="tc-scroll-fade min-w-0 flex-1 overflow-y-auto px-4 pb-8 pt-6 sm:px-6 [scrollbar-gutter:stable]"
           data-fade={panelOverflowing ? '1' : undefined}
         >
           <div className="w-full space-y-8" data-settings-panel={section}>

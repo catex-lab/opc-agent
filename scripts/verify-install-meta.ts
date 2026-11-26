@@ -237,10 +237,11 @@ section('[10] 分布计数（改一条要有人知道）');
 const count = (m: InstallMethod) => defs.filter(d => d.install?.method === m).length;
 eq(count('npm'), 5, 'npm 类条数');
 eq(count('script'), 4, 'script 类条数');
-eq(count('installer'), 2, 'installer 类条数');
+// 这里数的是**定义总数**（含下架保留项），不是可选名册；下架名单由 a150 单独钉。
+eq(count('installer'), 3, 'installer 类条数（deepseek-harness / zcode / trae）');
 eq(count('key'), 3, 'key 类条数');
 eq(count('unknown'), 2, 'unknown 类条数（含 qoder-cn：官方没有独立 CLI 安装入口）');
-eq(defs.length, 16, 'Agent 总数（A76 加了 qoder-cn）');
+eq(defs.length, 17, '内置定义总数（含下架保留项；A76 qoder-cn + A210 deepseek-harness）');
 
 // ============= 结果 =============
 console.log('\n— 一览');

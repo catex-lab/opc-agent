@@ -383,11 +383,11 @@ try {
   // ⚠️ 这里原来用的是 gemini。P3 之后 gemini 归到 `manual`（它接受 --model，
   // 只是没有枚举命令），这条就红了 —— 红的是**断言的前提**，不是代码：
   // 该断言要守的是「不许编一份清单出来」，所以换一个真的既不接受 model
-  // 也没有 cli 通道的 Agent（doubao）来对照，判据仍是「列表为空 + 不假装有来源」。
-  const doubao = await json(await fetch(`${fixtureBase}/api/agents/doubao/models`));
-  ok(doubao.source === 'unknown' && (doubao.models ?? []).length === 0,
+  // 也没有 cli 通道的 Agent（hermes）来对照，判据仍是「列表为空 + 不假装有来源」。
+  const noCatalog = await json(await fetch(`${fixtureBase}/api/agents/hermes/models`));
+  ok(noCatalog.source === 'unknown' && (noCatalog.models ?? []).length === 0,
     '[2] 既无目录也无配置的 Agent 维持 unknown（不编清单）',
-    `${doubao.source}/${doubao.models?.length ?? 0}`);
+    `${noCatalog.source}/${noCatalog.models?.length ?? 0}`);
 
   /* 本机真实状态只嗅探、只打印（同 [4] 的 live 文件嗅探）：
      明确这轮绿的是**代码契约**，不是「这台机器恰好装了 cursor-agent / 有 ~/.zcode」。 */
@@ -658,7 +658,7 @@ try {
   fs.mkdirSync(DATA, { recursive: true });
   fs.writeFileSync(availFile, JSON.stringify({ version: 1, agents: { qoder: verdicts } }), 'utf8');
 
-  // 真实写路径：POST 标定。用 doubao（kind: http，没有 cli 通道）——
+  // 真实写路径：POST 标定。用 hermes（kind: acp，没有 cli 通道）——
   // 它会立刻返回 unknown，**不发任何网络请求、不起任何子进程**。
   const post = (url, body) =>
     fetch(url, {
@@ -671,14 +671,14 @@ try {
   ok((await post(`${base}/api/agents/qoder/models/probe`, {
     models: Array.from({ length: 9 }, (_, i) => `m${i}`),
   })).status === 400, '[4] 一次超过 8 条直接 400（一条最长 60s，再多用户等不住）');
-  const noCli = await json(await post(`${base}/api/agents/doubao/models/probe`, {
+  const noCli = await json(await post(`${base}/api/agents/hermes/models/probe`, {
     models: ['probe-check'],
   }));
   ok(noCli.results?.['probe-check']?.verdict === 'unknown',
     '[4] 没有 CLI 通道的 Agent 判 unknown（不猜成可用）',
     String(noCli.results?.['probe-check']?.evidence ?? ''));
   const after = JSON.parse(fs.readFileSync(availFile, 'utf8'));
-  ok(after.agents?.doubao?.['probe-check']?.verdict === 'unknown',
+  ok(after.agents?.hermes?.['probe-check']?.verdict === 'unknown',
     '[4] 标定结果真的落库了（刷新/重启后还在）');
   ok(after.agents?.qoder?.[invalidId]?.verdict === 'invalid',
     '[4] 写别的 Agent 的结果不会冲掉已有记录（merge 不是覆盖）');
@@ -813,7 +813,7 @@ try {
   // 用 route 夹具替掉响应，只验前端这条链：
   //   点中一行 → 恰好打一次、打的是这一条 → 按结论决定「选中」还是「贴原话」。
   // 后端判定在 `verify:model-catalog` 第 9 段用纯函数钉，写入路径在 [4] 用
-  // doubao（无 CLI 通道）验，三层各管一段。
+  // hermes（无 CLI 通道）验，三层各管一段。
   console.log('\n[5] UI：qoder 点未验证的模型要先标定');
   const qCreated = await json(
     await fetch(`${base}/api/sessions`, {
@@ -976,9 +976,10 @@ try {
   // ② 谁**不**该进（没有 cli 通道的，填了也传不下去）；
   // ③ 三种标定结论的处置必须分开：ok/routed 选中、invalid 拦住、unknown 交用户。
   console.log('\n[6] 模型清单来源：能枚举的给清单、能读配置的只读、都没有才手填');
-  /* 只剩三家手填：gemini 45s 挂起、claude 没有枚举命令、agy 未登录拿不到清单
-     （实测理由见 verify-model-catalog 的 NO_ENUMERATION）。 */
-  const MANUAL_EXPECT = ['gemini', 'claude', 'antigravity'];
+  /* 两家手填：claude 没有枚举命令、agy 未登录拿不到清单
+     （实测理由见 verify-model-catalog 的 NO_ENUMERATION）；gemini 已于
+     2026-11-26 下架，不再拿它当真服务端样本。 */
+  const MANUAL_EXPECT = ['claude', 'antigravity'];
   for (const id of MANUAL_EXPECT) {
     const r = await json(await fetch(`${base}/api/agents/${id}/models`));
     ok(r.source === 'manual' && r.manual === true && r.selectable === true,
@@ -987,7 +988,8 @@ try {
       `[6] ${id} 的清单是空的（不许编一份出来）`);
   }
   // 反面对照①：没有 cli 通道的 Agent 绝不能给输入框 —— 填了也传不下去
-  for (const id of ['doubao', 'hermes', 'kimicode']) {
+  // deepseek-harness 有 CLI 目录兜底（catalog），不能当「没有 cli 通道」的反例。
+  for (const id of ['hermes']) {
     const r = await json(await fetch(`${base}/api/agents/${id}/models`));
     ok(r.source === 'unknown' && !r.manual,
       `[6] ${id} 没有 cli 通道 ⇒ 不给手动输入框`, `${r.source}/${r.models?.length ?? 0} 条`);
@@ -1028,11 +1030,11 @@ try {
     await fetch(`${base}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId: 'gemini', title: 'A151 手动模型' }),
+      body: JSON.stringify({ agentId: 'claude', title: 'A151 手动模型' }),
     })
   );
   const gSid = gCreated.session?.id;
-  ok(!!gSid, '[6] 建 gemini 会话成功', String(gSid));
+  ok(!!gSid, '[6] 建 claude 会话成功', String(gSid));
 
   const page3 = await ctx.newPage();
   const page3Errors = [];
@@ -1086,11 +1088,11 @@ try {
   ok(manualNote.length > 0, '[6] 底部有解释文案', manualNote.slice(0, 30));
 
   const mInput = page3.locator('[data-model-manual-input]');
-  await mInput.fill('gemini-2.5-pro');
+  await mInput.fill('manual-probe-model');
   await page3.locator('[data-model-manual-confirm]').click();
   await page3.waitForTimeout(700);
   ok(manualCalls.length === 1 &&
-     JSON.stringify(manualCalls[0]?.models) === JSON.stringify(['gemini-2.5-pro']),
+     JSON.stringify(manualCalls[0]?.models) === JSON.stringify(['manual-probe-model']),
     '[6] 确认时把填的名字原样送去标定', JSON.stringify(manualCalls[0]?.models));
   const msg1 = (await page3.locator('[data-model-manual-msg]').innerText().catch(() => '')).trim();
   ok(msg1.includes('not available right now'), '[6] CLI 说没这个名字时贴原话', msg1.slice(0, 50));
@@ -1109,13 +1111,13 @@ try {
   await page3.locator('[data-model-manual-force]').click();
   await page3.waitForTimeout(500);
   ok((await page3.locator('[data-model-popup]').count()) === 0, '[6] 「仍然使用」后浮层关掉');
-  ok((await gTrigger.innerText()).trim() === 'gemini-2.5-pro', '[6] 芯片上写的就是填的名字',
+  ok((await gTrigger.innerText()).trim() === 'manual-probe-model', '[6] 芯片上写的就是填的名字',
     (await gTrigger.innerText()).trim());
 
   // 再打开：输入框要带出当前值（否则用户看不到现在用的是哪个）
   await gTrigger.click();
   await page3.waitForTimeout(400);
-  ok((await page3.locator('[data-model-manual-input]').inputValue()) === 'gemini-2.5-pro',
+  ok((await page3.locator('[data-model-manual-input]').inputValue()) === 'manual-probe-model',
     '[6] 再打开时输入框带出当前值');
   ok(page3Errors.length === 0, '[6] 没有未捕获异常', page3Errors.slice(0, 2).join(' | '));
 

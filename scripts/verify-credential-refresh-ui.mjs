@@ -135,7 +135,7 @@ async function installFixtures(page, tag) {
   });
 
   // 当前 Agent 的模型清单（App 的 modelsEpoch 订阅事件重拉）
-  await page.route(u => u.pathname === '/api/agents/doubao/models', async route => {
+  await page.route(u => u.pathname === '/api/agents/workbuddy/models', async route => {
     s.agentModels++;
     const n = s.phase;
     await fulfill(route, {
@@ -148,7 +148,7 @@ async function installFixtures(page, tag) {
   });
 
   // 账号卡（useAgentAccount 的 refreshKey 订阅事件重拉）
-  await page.route(u => u.pathname === '/api/agents/doubao/account', async route => {
+  await page.route(u => u.pathname === '/api/agents/workbuddy/account', async route => {
     s.account++;
     const n = s.phase;
     await fulfill(route, {
@@ -182,16 +182,16 @@ if (!ready) {
   process.exit(1);
 }
 
-/** 造一条 doubao 会话：弹窗资料页的 agent 来自会话的 Agent。cwd 由服务端校验，
+/** 造一条 workbuddy 会话：弹窗资料页的 agent 来自会话的 Agent。cwd 由服务端校验，
  *  与 a162 同一套形状，不编假路径。 */
 const sessionRes = await fetch(`${base}/api/sessions`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ title: '#16 刷新链路夹具', agentId: 'doubao' }),
+  body: JSON.stringify({ title: '#16 刷新链路夹具', agentId: 'workbuddy' }),
 });
 const sessionBody = await sessionRes.json().catch(() => ({}));
 const sid = sessionBody.session?.id;
-ok(!!sid, '[1] 造出 doubao 会话夹具', String(sid));
+ok(!!sid, '[1] 造出 workbuddy 会话夹具', String(sid));
 if (!sid) {
   killTree(child);
   console.log(`\n=== ${pass}/${pass + fail} 通过 ===`);
@@ -293,10 +293,10 @@ try {
 
   /* ============= [4] A 点保存；B 全程不动 ============= */
   console.log('\n[4] A 填 Key 并保存，B 不做任何操作');
-  await A.page.locator('[data-credential-key="doubao"] input').fill('ark-fixture-key-1234567890');
+  await A.page.locator('[data-credential-key="workbuddy"] input').fill('cb-fixture-key-1234567890');
   await A.page.getByRole('button', { name: '保存' }).click();
   const saved = await waitUntil(async () =>
-    (await A.page.locator('[data-credential-editor="doubao"] .t-tag--success').count()) > 0,
+    (await A.page.locator('[data-credential-editor="workbuddy"] .t-tag--success').count()) > 0,
     30000);
   ok(saved, '[4] 保存真的成功了（不是「保存没发生却碰巧刷了」）');
 
@@ -307,7 +307,7 @@ try {
   ok(refreshed, '[4] A 的模型清单与账号卡都换成了快照 2');
 
   // C：同样填 Key、同样点保存，但服务端返回 400 → 不走成功分支、不发事件
-  await C.page.locator('[data-credential-key="doubao"] input').fill('ark-fixture-key-rejected');
+  await C.page.locator('[data-credential-key="workbuddy"] input').fill('cb-fixture-key-rejected');
   await C.page.getByRole('button', { name: '保存' }).click();
   const rejected = await waitUntil(() => cSavePosts === 1, 15000);
   ok(rejected, '[4] C 的保存请求确实发出并被拒（反例成立）', `posts=${cSavePosts}`);
@@ -322,9 +322,9 @@ try {
   console.log('\n[5] 肯定式：A 三条链路都刷新');
   ok(state.A.models > baseA.models, '[5] /api/models 重新拉过',
     `${baseA.models}→${state.A.models}`);
-  ok(state.A.agentModels > baseA.agentModels, '[5] /api/agents/doubao/models 重新拉过',
+  ok(state.A.agentModels > baseA.agentModels, '[5] /api/agents/workbuddy/models 重新拉过',
     `${baseA.agentModels}→${state.A.agentModels}`);
-  ok(state.A.account > baseA.account, '[5] /api/agents/doubao/account 重新拉过',
+  ok(state.A.account > baseA.account, '[5] /api/agents/workbuddy/account 重新拉过',
     `${baseA.account}→${state.A.account}`);
   const aTrigger1 = await triggerText(A.page);
   const aAccount1 = await accountText(A.page);
@@ -360,7 +360,7 @@ try {
     '[6] C 模型触发器仍是快照 1', cTrigger1.trim());
   ok(cAccount1.includes('ACCT-SNAP-1') && !cAccount1.includes('ACCT-SNAP-2'),
     '[6] C 账号卡仍是快照 1', cAccount1.slice(0, 60));
-  ok((await C.page.locator('[data-credential-editor="doubao"] .t-tag--success').count()) === 0,
+  ok((await C.page.locator('[data-credential-editor="workbuddy"] .t-tag--success').count()) === 0,
     '[6] C 没有「已配置」成功态（确认这一步真的是失败保存）');
 
   ok(A.errors.length === 0 && B.errors.length === 0 && C.errors.length === 0,

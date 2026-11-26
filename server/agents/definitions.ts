@@ -2699,22 +2699,35 @@ export const AGENT_DEFS: AgentDefinition[] = RAW_DEFS.map(def => {
 });
 
 /**
- * A150：**暂时下架**的 Agent（用户 2026-10-29 决定）。
+ * A150 / 2026-11-26：**暂时下架**的 Agent。
  *
  * 为什么是「下架」而不是「删定义」：Trae 的事件映射、argv 构造、安装说明全部
- * 按官方文档写，本机**从未实跑过一次** —— 真正的 `traecli` 要企业版旗舰套餐，
- * 本机只有 Trae IDE（它附带的 `trae-cn` 是 VS Code 垫片，见 `cli.bin` 的注释）。
- * 删定义等于把「等有人装了再回来核对」的依据一起扔掉。
+ * 按官方文档写，本机**从未实跑过一次**（真正的 `traecli` 要企业版旗舰套餐，
+ * 本机只有 Trae IDE 附带的 VS Code 垫片）；Gemini / Kimi 开放平台 / 豆包是
+ * 用户 2026-11-26 明确要求不再接入的。Kimi Code CLI 是另一条账号体系，
+ * 用户明确要求保留，故不在名单内。删定义等于把「将来要恢复时核对什么」的依据
+ * 一起扔掉，所以这里只把它们从可注册、可展示的链路里摘掉。
  *
  * 生效方式：注册表构造时跳过这些 id ⇒ 不进名册、不参与 `probeAll`、
- * `GET /api/agents/:id` 直接 404。定义本身仍在 `AGENT_DEFS` 里，
+ * `GET /api/agents/:id` 直接 404，「获取 Agent」页也不会出现；凭据列表同样
+ * 跳过，设置页不再给它们留输入框。定义本身仍在 `AGENT_DEFS` 里，
  * 所以 `findDef('trae')` 照样能解析出名字（历史数据不会退化成裸 id）。
  *
  * **恢复方式：把 id 从这个数组里删掉，别处一行都不用改。**
- * 恢复后第一件事是跑 `traecli exec --json "say hi"` 核对真实事件结构 ——
+ * Trae 恢复后第一件事是跑 `traecli exec --json "say hi"` 核对真实事件结构 ——
  * 现有映射一条都没被实测过。
  */
-export const RETIRED_AGENT_IDS: readonly string[] = ['trae'];
+export const RETIRED_AGENT_IDS: readonly string[] = [
+  'trae',
+  'gemini',
+  'doubao',
+  'kimicode',
+];
+
+/** 下架判定：给名单/展示层用；`findDef()` 仍要能解析历史会话里的名字 */
+export function isRetiredAgentId(id: string): boolean {
+  return RETIRED_AGENT_IDS.includes(id);
+}
 
 /** 安装链接允许出现的主机白名单（`verify:install-meta` 断言用） */
 export const INSTALL_HOSTS = [

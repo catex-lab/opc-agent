@@ -104,30 +104,31 @@ console.log('\n[1] 定义表：凭据声明与识别口径一致');
 console.log('\n[2] 列表：只列声明过的，且初始为未配置');
 {
   const list = listCredentials();
-  // A178：workbuddy 也有 credential（CODEBUDDY_API_KEY），列表应包含 4 个
-  eq(list.map(c => c.agentId).sort(), ['doubao', 'gemini', 'kimicode', 'workbuddy'], '列表内容');
-  const doubao = list.find(c => c.agentId === 'doubao')!;
-  eq(doubao.configured, false, '豆包初始未配置');
-  eq(doubao.masked, '', '未配置时不返回掩码');
-  eq(doubao.fromEnv, false, '初始也不来自环境变量');
-  ok(!!doubao.hint, '带填写指引');
+  // A178：workbuddy 也有 credential（CODEBUDDY_API_KEY）；2026-11-26 起
+  // Gemini / Kimi / 豆包已下架，不能再给它们留输入框，故列表只剩 workbuddy。
+  eq(list.map(c => c.agentId).sort(), ['workbuddy'], '列表内容（下架条目不进设置页）');
+  const wb = list.find(c => c.agentId === 'workbuddy')!;
+  eq(wb.configured, false, 'WorkBuddy 初始未配置');
+  eq(wb.masked, '', '未配置时不返回掩码');
+  eq(wb.fromEnv, false, '初始也不来自环境变量');
+  ok(!!wb.hint, '带填写指引');
 }
 
 console.log('\n[3] 保存：落盘 + 注入进程环境');
 {
-  const view = saveCredential('doubao', { key: 'ark-abcdefghijklmn' });
+  const view = saveCredential('workbuddy', { key: 'cb-abcdefghijklmn' });
   ok(view.configured, '保存后标记为已配置');
   ok(view.masked.includes('****'), '只回显掩码', view.masked);
   ok(!view.masked.includes('abcdefghij'), '掩码不泄露中段', view.masked);
-  eq(process.env.ARK_API_KEY, 'ark-abcdefghijklmn', 'Key 已注入 process.env（适配器读的就是这里）');
+  eq(process.env.CODEBUDDY_API_KEY, 'cb-abcdefghijklmn', 'Key 已注入 process.env（SDK 读的就是这里）');
 
   const file = path.join(tmp, 'agent-credentials.json');
   ok(fs.existsSync(file), '凭据文件已落盘', file);
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-  eq(raw.doubao.key, 'ark-abcdefghijklmn', '文件里是该 Agent 的 Key');
+  eq(raw.workbuddy.key, 'cb-abcdefghijklmn', '文件里是该 Agent 的 Key');
   ok(!JSON.stringify(raw).includes('chat.db'), '不写进数据库');
 
-  const again = getCredential('doubao')!;
+  const again = getCredential('workbuddy')!;
   eq(again.configured, true, '重新读取仍是已配置');
 }
 
@@ -146,11 +147,11 @@ console.log('\n[4] 只改接入地址时不清掉 Key');
 
 console.log('\n[5] 清除：文件与进程环境一起清');
 {
-  const v = clearCredential('doubao')!;
+  const v = clearCredential('workbuddy')!;
   eq(v.configured, false, '清除后为未配置');
-  eq(process.env.ARK_API_KEY, undefined, '环境变量已删除（否则调用仍带着旧 Key）');
+  eq(process.env.CODEBUDDY_API_KEY, undefined, '环境变量已删除（否则调用仍带着旧 Key）');
   const raw = JSON.parse(fs.readFileSync(path.join(tmp, 'agent-credentials.json'), 'utf8'));
-  eq(raw.doubao, undefined, '文件里该条目已删除');
+  eq(raw.workbuddy, undefined, '文件里该条目已删除');
   ok(!!raw.gemini, '其它 Agent 的凭据不受影响');
 
   clearCredential('gemini');

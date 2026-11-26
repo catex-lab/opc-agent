@@ -123,6 +123,39 @@ export function AgentDetailSections({
   /** chip：能力 / 过程能力两种 chip 必须同规格，否则同屏并排会一大一小 */
   const CHIP = 'rounded-md px-2 py-1 text-secondary';
 
+  // ── 能力概览（2026-11-26 UI 收口）──
+  // 「过程能力」与「可承接的任务」原来是两个独立 section，各带自己的标题，
+  // 垂直空间主要耗在后者：每条 skill 是「名称 + 描述 + tags」三行。现在合并成
+  // 一个 section、一张卡、两行（76px 标签列与上半部分同构），默认只露结论：
+  //   · 过程能力行 —— 支持项 chip 直接可见；不支持项视觉上收起（display:none），
+  //     收进「+N 项不支持」展开钮。
+  //   · 可承接任务行 —— 只露任务名；描述与 tags 收进「展开说明」。
+  // a126 的 DOM 契约原样保留：7 个 data-event-capability chip、
+  // data-supported / data-observed / data-observed-capabilities 全都在 ——
+  // 折叠只许用 hidden 类，不许以不渲染的方式实现，否则闸门看到的是残缺清单。
+  const [showUnsupportedCaps, setShowUnsupportedCaps] = useState(false);
+  const [showSkillDetail, setShowSkillDetail] = useState(false);
+  // 同族跳转会换 agent prop 而不重挂组件：上一个 Agent 的展开选择不该带过去
+  useEffect(() => {
+    setShowUnsupportedCaps(false);
+    setShowSkillDetail(false);
+  }, [agent.id]);
+
+  /** `undefined`（后端没声明）时过程能力行不渲染 —— 那是「不知道」，不是「不支持」 */
+  const capRowVisible = Boolean(agent.eventCapabilities || agent.observedCapabilities);
+  const declaredCaps = agent.eventCapabilities ?? [];
+  const observedProfile = agent.observedCapabilities;
+  const observedCaps = observedProfile?.observed ?? [];
+  const observedCapSet = new Set(observedCaps);
+  const undeclaredCaps = observedCaps.filter(k => !declaredCaps.includes(k));
+  const unsupportedCaps = EVENT_CAPABILITY_ORDER.filter(k => !declaredCaps.includes(k));
+
+  const skills = agent.skills ?? [];
+  /** 有没有可展开的内容：全是裸名字时「展开说明」就是假控件，不渲染 */
+  const skillsHaveDetail = skills.some(
+    s => Boolean(s.description) || (s.tags?.length ?? 0) > 0,
+  );
+
   // ── 身份（A68）──
   const surfaceLabel = agent.surface ? SURFACE_META[agent.surface]?.label : undefined;
   const regionMeta = agent.region ? REGION_META[agent.region] : undefined;
@@ -710,135 +743,164 @@ export function AgentDetailSections({
         </section>
       )}
 
-      {/* 过程能力（A111）──
-          为什么要单独一块：聊天里「过程区是空的」有两种完全不同的原因 ——
-          这个 Agent 这一轮确实没调工具，或者它压根报不了工具调用。
-          以前两者在界面上长得一模一样，用户只能猜。这里把清单摊开：
-          支持的高亮，不支持的置灰并写「不支持」。
+      {/* 能力概览（2026-11-26 UI 收口）──
+          原「过程能力」（A111）与「可承接的任务」两个独立板块合并成一块：
+          与上半部分同构（一张卡、76px 标签列），垂直空间的大头原来在任务行 ——
+          每条 skill 是「名称 + 描述 + tags」三行，N 条任务就是 3N 行。
+          现在默认只露结论：过程能力行收起不支持项（+N 项不支持），
+          任务行只露任务名（描述与 tags 收进「展开说明」）。
 
-          `undefined`（后端没声明）时整块不渲染 —— 那是「不知道」，
-          不该被画成「不支持」。只有空数组才是明确的「一条都没有」。
+          a126 的 DOM 契约原样保留：7 个 data-event-capability chip、
+          data-supported / data-observed / data-observed-capabilities 全在。
+          折叠只用 hidden 类 —— 不许以不渲染的方式实现，否则闸门与
+          无障碍读屏看到的都是残缺清单。
 
-          P2：清单之外再挂一行**观测事实**（最近一次 run 实际给出了什么）。
-          声明是静态的、可能过期；这一行才是投影器数出来的。两者不一致时
-          必须让用户看见 —— 「清单说有、实际一次没给」正是要消灭的那种谎。 */}
-      {(agent.eventCapabilities || agent.observedCapabilities) && (() => {
-        const declared = agent.eventCapabilities ?? [];
-        const observedProfile = agent.observedCapabilities;
-        const observed = observedProfile?.observed ?? [];
-        const observedSet = new Set(observed);
-        const undeclared = observed.filter(k => !declared.includes(k));
-        return (
-          <section className="mt-6" data-agent-event-capabilities>
-            {/* A222 / UI 收口：标题不再配一段常驻小字。虚线置灰的 chip 自己已经
-                写着「（不支持）」，再补一句「只返回最终回答」是同一件事说两遍；
-                确实需要解释（全灰看起来像坏了）时收进标题旁唯一的 info 图标。 */}
-            <div className="mb-2 flex items-center gap-1.5">
-              <h3 className="tc-section-title">{t('agentDetail.section.process')}</h3>
-              <InfoHint
-                label="过程能力说明"
-                text="这份清单来自 Agent 自己声明的能力；虚线置灰表示它没有暴露这类执行过程。"
-                note={
-                  declared.length === 0 && !observedProfile
-                    ? '这个 Agent 只返回最终回答，不暴露执行过程。'
-                    : undefined
-                }
-              />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {EVENT_CAPABILITY_ORDER.map(key => {
-                const meta = EVENT_CAPABILITY_META[key];
-                const supported = declared.includes(key);
-                return (
-                  <span
-                    key={key}
-                    title={meta.hint}
-                    data-event-capability={key}
-                    data-supported={supported ? '1' : '0'}
-                    /* 有观测记录时才写这个属性：没有记录 ≠ 观察到 0 项 */
-                    data-observed={observedProfile ? (observedSet.has(key) ? '1' : '0') : undefined}
-                    /* A115：这里原来**一个字号类都没写**，于是 chip 落到浏览器默认
-                       字号（比旁边的能力 chip 大出一号）—— 同屏并排时「组件大小
-                       不一」就是这么来的。现在与能力 chip 共用 CHIP。
-                       虚线边用 `border` + `box-border` 之外的写法会改变 chip 的
-                       实际尺寸（边框吃进 padding），所以不支持态补一层
-                       `border border-transparent` 占位，两种态外框同宽。 */
-                    className={`${CHIP} border border-transparent box-border`}
-                    style={
-                      supported
-                        ? {
-                            backgroundColor: 'color-mix(in srgb, var(--td-brand-color) 12%, transparent)',
-                            color: 'var(--td-brand-color)',
-                          }
-                        : {
-                            // 不支持的一律走 placeholder 色 + 虚线边：视觉上明显是「没有」，
-                            // 而不是「有但很淡」
-                            border: '1px dashed var(--td-component-stroke)',
-                            color: 'var(--td-text-color-placeholder)',
-                          }
-                    }
-                  >
-                    {meta.label}
-                    {!supported && '（不支持）'}
-                  </span>
-                );
-              })}
-            </div>
-            {observedProfile && (
-              <p
-                className="mt-2 text-secondary"
-                data-observed-capabilities
-                style={{ color: 'var(--td-text-color-placeholder)' }}
-              >
-                {observed.length > 0
-                  ? `最近一次运行（${observedProfile.key.model ?? '默认模型'} · ${observedProfile.key.gateway}）实际给出：${observed
-                      .map(k => EVENT_CAPABILITY_META[k].label)
-                      .join('、')}`
-                  : '最近一次运行只返回了最终回答 —— 上面这些过程能力一项都没出现。'}
-                {undeclared.length > 0 &&
-                  `；其中「${undeclared.map(k => EVENT_CAPABILITY_META[k].label).join('、')}」清单里没有声明`}
-              </p>
-            )}
-          </section>
-        );
-      })()}
-
-      {/* 结构化技能（参考 A2A AgentSkill）：展示可承接的具体任务及其数据形式。 */}
-      {(agent.skills?.length ?? 0) > 0 && (
-        <section className="mt-6" data-agent-skills>
-          <h3 className="tc-section-title mb-2">{t('agentDetail.section.tasks')}</h3>
-          {/* A222 / UI 收口：「关键词：」是给一串标签贴的重复标签，改成 chip 让排版
-              自己说明这是一组标签；输入 / 输出的数据形式确实不显然，但也不是每次
-              都要读，收进标题旁唯一的 info 图标里。 */}
+          `undefined`（后端没声明 eventCapabilities 且没有观测记录）时过程能力
+          行不渲染 —— 那是「不知道」，不该被画成「不支持」；只有空数组才是
+          明确的「一条都没有」。 */}
+      {(capRowVisible || skills.length > 0) && (
+        <section className="mt-6" data-agent-capability-overview>
+          <div className="mb-2 flex items-center gap-1.5">
+            <h3 className="tc-section-title">{t('agentDetail.section.capabilityOverview')}</h3>
+            {/* 标题旁唯一的 info 图标（A222）：虚线置灰的 chip 自己已经写着
+                「（不支持）」，不补常驻小字；全灰看起来像坏了时才给 note。 */}
+            <InfoHint
+              label="能力概览说明"
+              text="过程能力来自 Agent 自己声明的能力；虚线置灰表示它没有暴露这类执行过程。"
+              note={
+                capRowVisible && declaredCaps.length === 0 && !observedProfile
+                  ? '这个 Agent 只返回最终回答，不暴露执行过程。'
+                  : undefined
+              }
+            />
+          </div>
           <div className={`tc-detail-rows overflow-hidden ${CARD}`} style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
-            {agent.skills!.map(skill => {
-              const modes = [
-                skill.inputModes?.length ? `输入 ${skill.inputModes.join(', ')}` : '',
-                skill.outputModes?.length ? `输出 ${skill.outputModes.join(', ')}` : '',
-              ].filter(Boolean).join(' · ');
-              return (
-                <div key={skill.id} className={`${ROW_X} ${ROW_Y}`} data-agent-skill={skill.id}>
-                  <div className="flex items-center gap-1.5">
-                    <div className="text-body font-medium" style={{ color: 'var(--td-text-color-primary)' }}>{skill.name}</div>
-                    {modes && <InfoHint label={`${skill.name} 数据形式说明`} text={modes} />}
-                  </div>
-                  <div className="mt-1 text-body leading-relaxed" style={{ color: 'var(--td-text-color-secondary)' }}>{skill.description}</div>
-                  {skill.tags && skill.tags.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {skill.tags.map(tag => (
-                        <span
-                          key={tag}
-                          className={CHIP}
-                          style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-secondary)' }}
+            {capRowVisible && (
+              <div className={`${ROW_X} ${ROW_Y}`} data-agent-event-capabilities>
+                <div className="flex gap-3">
+                  <span className={`${LABEL_W} shrink-0 text-body`} style={{ color: 'var(--td-text-color-placeholder)' }}>
+                    {t('agentDetail.row.process')}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {EVENT_CAPABILITY_ORDER.map(key => {
+                        const meta = EVENT_CAPABILITY_META[key];
+                        const supported = declaredCaps.includes(key);
+                        return (
+                          <span
+                            key={key}
+                            title={meta.hint}
+                            data-event-capability={key}
+                            data-supported={supported ? '1' : '0'}
+                            /* 有观测记录时才写这个属性：没有记录 ≠ 观察到 0 项 */
+                            data-observed={observedProfile ? (observedCapSet.has(key) ? '1' : '0') : undefined}
+                            /* 与能力 chip 共用 CHIP（A115，字号不许掉回浏览器默认）；
+                               不支持态补 border border-transparent 占位让两种态外框同宽。
+                               折叠的不支持项挂 hidden 类留在 DOM（见块头注释）。 */
+                            className={`${CHIP} border border-transparent box-border ${supported || showUnsupportedCaps ? '' : 'hidden'}`}
+                            style={
+                              supported
+                                ? {
+                                    backgroundColor: 'color-mix(in srgb, var(--td-brand-color) 12%, transparent)',
+                                    color: 'var(--td-brand-color)',
+                                  }
+                                : {
+                                    // 不支持的一律走 placeholder 色 + 虚线边：视觉上明显是「没有」，
+                                    // 而不是「有但很淡」
+                                    border: '1px dashed var(--td-component-stroke)',
+                                    color: 'var(--td-text-color-placeholder)',
+                                  }
+                            }
+                          >
+                            {meta.label}
+                            {!supported && '（不支持）'}
+                          </span>
+                        );
+                      })}
+                      {unsupportedCaps.length > 0 && (
+                        <button
+                          type="button"
+                          data-caps-unsupported-toggle
+                          onClick={() => setShowUnsupportedCaps(v => !v)}
+                          className="text-secondary underline decoration-dotted underline-offset-2"
+                          style={{ color: 'var(--td-text-color-placeholder)' }}
                         >
-                          {tag}
-                        </span>
+                          {showUnsupportedCaps ? '收起' : `+${unsupportedCaps.length} 项不支持`}
+                        </button>
+                      )}
+                    </div>
+                    {observedProfile && (
+                      <p
+                        className="mt-2 text-secondary"
+                        data-observed-capabilities
+                        style={{ color: 'var(--td-text-color-placeholder)' }}
+                      >
+                        {observedCaps.length > 0
+                          ? `最近一次运行（${observedProfile.key.model ?? '默认模型'} · ${observedProfile.key.gateway}）实际给出：${observedCaps
+                              .map(k => EVENT_CAPABILITY_META[k].label)
+                              .join('、')}`
+                          : '最近一次运行只返回了最终回答 —— 上面这些过程能力一项都没出现。'}
+                        {undeclaredCaps.length > 0 &&
+                          `；其中「${undeclaredCaps.map(k => EVENT_CAPABILITY_META[k].label).join('、')}」清单里没有声明`}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            {skills.length > 0 && (
+              <div className={`${ROW_X} ${ROW_Y}`} data-agent-skills>
+                <div className="flex gap-3">
+                  <span className={`${LABEL_W} shrink-0 text-body`} style={{ color: 'var(--td-text-color-placeholder)' }}>
+                    {t('agentDetail.row.tasks')}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-col gap-1">
+                      {skills.map(skill => (
+                        <div key={skill.id} data-agent-skill={skill.id}>
+                          <div className="text-body" style={{ color: 'var(--td-text-color-primary)' }}>{skill.name}</div>
+                          {showSkillDetail && (
+                            <>
+                              {skill.description && (
+                                <div className="mt-0.5 text-body leading-relaxed" style={{ color: 'var(--td-text-color-secondary)' }}>
+                                  {skill.description}
+                                </div>
+                              )}
+                              {skill.tags && skill.tags.length > 0 && (
+                                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                  {skill.tags.map(tag => (
+                                    <span
+                                      key={tag}
+                                      className={CHIP}
+                                      style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-secondary)' }}
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
                       ))}
                     </div>
-                  )}
+                    {/* A222 同款纪律：没有可展开的内容就不渲染「展开说明」——
+                        假控件比没有控件更糟 */}
+                    {skillsHaveDetail && (
+                      <button
+                        type="button"
+                        data-skills-detail-toggle
+                        onClick={() => setShowSkillDetail(v => !v)}
+                        className="mt-1.5 text-secondary underline decoration-dotted underline-offset-2"
+                        style={{ color: 'var(--td-text-color-placeholder)' }}
+                      >
+                        {showSkillDetail ? '收起说明' : '展开说明'}
+                      </button>
+                    )}
+                  </div>
                 </div>
-              );
-            })}
+              </div>
+            )}
           </div>
         </section>
       )}

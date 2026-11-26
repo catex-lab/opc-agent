@@ -14,7 +14,7 @@
 
 ## 它解决什么问题
 
-本机往往同时装着好几个 Agent CLI（Claude Code、Codex、Gemini、Cursor……），每个都有自己的会话与上下文。想让它们在同一个人物里接力或分工，过去只能手动复制粘贴结果。
+本机往往同时装着好几个 Agent CLI（Claude Code、Codex、Cursor……），每个都有自己的会话与上下文。想让它们在同一个人物里接力或分工，过去只能手动复制粘贴结果。
 
 OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个联系人，左边选人、右边干活，需要协作时把几个拉进一个群，任务按人分派。Agent 的读取、执行、搜索过程折叠成一行，点开是全部细节。
 
@@ -43,18 +43,16 @@ OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个�
 
 ## 内置 Agent
 
-共 17 条接入定义，其中 Trae 已下架，实际可选 16 条：
+当前可选 13 条内置 Agent：
 
 | Agent | Agent | Agent | Agent |
 |---|---|---|---|
-| WorkBuddy | Codex | Gemini | OpenCode |
-| Claude Code | Hermes | Cursor | Qoder |
-| Qoder CN | 豆包 | ZCode | Kimi |
-| Pi | Antigravity CLI | Kimi Code CLI | DeepSeek Harness |
+| WorkBuddy | Codex | OpenCode | Claude Code |
+| Hermes | DeepSeek Harness | Cursor | Qoder |
+| Qoder CN | ZCode | Kimi Code CLI | Pi |
+| Antigravity CLI |  |  |  |
 
-接入以**写死的白名单**为准，不做自由发现：CLI 探测只认定义里写死的命令名，在 `PATH` 与各自约定目录里查找；另有官方 SDK 直连（WorkBuddy / Claude Code / Codex）、ACP（Hermes / DeepSeek Harness）与 HTTP 三类。名单外的 CLI 即使装了也不会被自动发现 —— 这是刻意的，避免把 IDE 的图形启动器误判成 CLI。SDK 自带平台二进制，不依赖本机 `PATH`；Claude / Codex 的本体改为按需安装，不随包分发（见 [THIRD-PARTY.md](./THIRD-PARTY.md)）。
-
-> Trae 目前下架：只认 `traecli`（企业版），IDE 自带的 `trae-cn` 是 VS Code 垫片，接进去会被当成可执行路径、拉起图形窗口。定义保留，恢复只需从 `RETIRED_AGENT_IDS` 里删掉 id。
+接入以**写死的白名单**为准，不做自由发现：CLI 探测只认定义里写死的命令名，在 `PATH` 与各自约定目录里查找；另有官方 SDK 直连（WorkBuddy / Claude Code / Codex）与 ACP（Hermes / DeepSeek Harness）两类。名单外的 CLI 即使装了也不会被自动发现 —— 这是刻意的，避免把 IDE 的图形启动器误判成 CLI。SDK 自带平台二进制，不依赖本机 `PATH`；Claude / Codex 的本体改为按需安装，不随包分发（见 [THIRD-PARTY.md](./THIRD-PARTY.md)）。
 
 ![通讯录](docs/screenshots/01-contacts.png)
 

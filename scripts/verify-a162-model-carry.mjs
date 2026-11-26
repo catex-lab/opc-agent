@@ -3,7 +3,7 @@
  *
  * ## 要钉的是什么
  *
- * 模型名是**各 Agent 私有的命名空间**：opencode 的 `zai/glm-4.7` 在 gemini
+ * 模型名是**各 Agent 私有的命名空间**：opencode 的 `zai/glm-4.7` 在 claude
  * 那里根本不存在。但 `selectedModel` 是 App 级的单个 state，于是从一个会话
  * 切到「另一个 Agent 的会话」时，那个名字会跟着过去 —— 界面上显示已选中，
  * 发出去却被后端按「不属于这个 Agent」换成默认模型（`resolveModelForAgent`）。
@@ -14,7 +14,7 @@
  * 真机上哪个 Agent 有哪些模型取决于装了什么、登了什么，不稳定。这里用
  * `page.route` 把 `/api/agents/:id/models` 换掉：
  *   - `workbuddy` → 一条 `alpha/one`
- *   - `gemini`    → **空清单**（`unknown`）
+ *   - `claude`    → **空清单**（`manual`，仍可手填；gemini 已于 2026-11-26 下架）
  *
  * ## 判据（为什么窗口期才是关键）
  *
@@ -160,7 +160,7 @@ try {
     await fetch(`${base}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'A162 beta', agentId: 'gemini' }),
+      body: JSON.stringify({ title: 'A162 beta', agentId: 'claude' }),
     })
   );
   const sidA = s1.session?.id;
