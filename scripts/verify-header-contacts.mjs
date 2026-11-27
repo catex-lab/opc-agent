@@ -372,7 +372,14 @@ await page.locator('[data-chat-more] .absolute button').nth(3).click();
 await page.waitForTimeout(250);
 const dialog = page.getByRole('dialog');
 ok((await dialog.count()) === 1, '删除弹两步确认框');
-ok((await dialog.getByText('不可恢复', { exact: false }).count()) >= 1, '确认框说明后果');
+// 断言「后果被说明」要钉不变量而不是某一版措辞（B1 之后文案已从「不可恢复」改成
+// 「保留 30 天可恢复」，只钉旧词会在文案一改就假红）。这里钉三件事：
+//   ① 有实质说明（不是只有标题「确定删除」）；② 说明了可恢复期；③ 不再出现「不可恢复」——
+//   删了其实能恢复却说不能，是假话，比不说明更糟。
+const dialogText = (await dialog.innerText()).replace(/\s+/g, ' ');
+ok(dialogText.length > 30, '确认框说明后果（有实质说明）', `len=${dialogText.length}`);
+ok(/\d+\s*天|Trash|回收站/.test(dialogText), '确认框说明可恢复期', dialogText.slice(0, 60));
+ok(!/不可恢复|无法恢复/.test(dialogText), '确认框不再声称「不可恢复」');
 await dialog.getByRole('button', { name: '取消' }).click();
 await page.waitForTimeout(200);
 ok((await page.getByRole('dialog').count()) === 0, '取消后确认框关闭');

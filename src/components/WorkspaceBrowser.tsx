@@ -359,7 +359,7 @@ export function WorkspaceBrowser() {
                 ? cdp.hasTarget
                   ? '远程调试端口已开放：Agent 可用 connectOverCDP 附着到同一个页面'
                   : '端口已开放，但还没认出不预览视图的 target（页面加载后即可）'
-                : '远程调试端口已关闭（OPC_CDP=0）：Agent 连不上这个面板'
+                : '远程调试端口已关闭：在「设置 → 外观 → 高级」开启并重启，Agent 才能连上这个面板'
             }
           >
             {cdp.enabled ? `CDP :${cdp.port}` : 'CDP 关'}

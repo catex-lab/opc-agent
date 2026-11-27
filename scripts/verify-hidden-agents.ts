@@ -80,6 +80,13 @@ try {
     'utf-8'
   );
   ok(contacts.includes('contacts.hideAgent'), '列表右键菜单有「从列表移除」');
+  // 空名册不是死胡同：与「全部隐藏」共用获取弹窗，给用户一个能点的出口。
+  const noAgentsAt = contacts.indexOf("t('contacts.noAgents')");
+  const emptyBranch = noAgentsAt >= 0 ? contacts.slice(noAgentsAt, noAgentsAt + 700) : '';
+  ok(/contacts\.noAgentsDesc/.test(emptyBranch)
+    && /t\('contacts\.getAgents'\)/.test(emptyBranch)
+    && /setGetAgentsOpen\(true\)/.test(emptyBranch),
+  '空名册有说明和「获取 Agent」行动出口（不是死胡同）');
 
   const getAgents = fs.readFileSync(
     path.join(root, 'src/components/GetAgentsDialog.tsx'),

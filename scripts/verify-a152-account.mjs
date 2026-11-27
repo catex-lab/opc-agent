@@ -225,8 +225,8 @@ try {
   ok(codex?.modelSelectable === true, '[2] codex 的模型可以传给 CLI（可切换）');
   ok(Array.isArray(codex?.plans) && codex.plans.length >= 1, '[2] codex 的套餐也进权益列表');
 
-  const doubao = (await json(await fetch(`${base}/api/agents/doubao/account`))).account;
-  ok(doubao === null, '[2] 没有可读账号数据的 Agent 返回 null（界面整块不渲染）');
+  const noAccount = (await json(await fetch(`${base}/api/agents/opencode/account`))).account;
+  ok(noAccount === null, '[2] 没有可读账号数据的 Agent 返回 null（界面整块不渲染）');
   const nope = await fetch(`${base}/api/agents/nope/account`);
   ok(nope.status === 200, '[2] 未知 Agent 不 500（返回 null 即可）');
   ok((await json(nope)).account === null, '[2] 未知 Agent 的 account 也是 null');

@@ -29,7 +29,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { allAgentDefs, findDef } from './agents/definitions.js';
+import { allAgentDefs, findDef, isRetiredAgentId } from './agents/definitions.js';
 import { dataDirPath } from './paths.js';
 
 /**
@@ -258,6 +258,9 @@ export function listCredentials(): CredentialView[] {
   // `saveCredential()` 仍然管它们 —— 只是入口换到 ProviderSettings 里。
   return allAgentDefs()
     .filter(d => !d.descriptor.custom)
+    // 下架条目不再出现在设置页：`findDef()` 仍认识它们（历史会话要显示名字），
+    // 但「还能不能填 Key」是另一回事 —— 名单层必须跟注册表同口径。
+    .filter(d => !isRetiredAgentId(d.descriptor.id))
     .map(d => viewOf(d.descriptor.id))
     .filter((v): v is CredentialView => v !== null);
 }

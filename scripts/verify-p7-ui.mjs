@@ -448,7 +448,13 @@ await page.waitForTimeout(250);
 {
   const dialog = page.locator('[data-confirm-dialog]');
   ok((await dialog.count()) === 1, '删除聊天记录弹确认框', `count=${await dialog.count()}`);
-  ok((await dialog.getByText('不可恢复', { exact: false }).count()) >= 1, '确认框说明后果');
+  // 同 header-contacts：钉「有实质说明 + 说明可恢复期 + 不再声称不可恢复」，不钉某一版措辞。
+  {
+    const t = (await dialog.innerText()).replace(/\s+/g, ' ');
+    ok(t.length > 30, '确认框说明后果（有实质说明）', `len=${t.length}`);
+    ok(/\d+\s*天|Trash|回收站/.test(t), '确认框说明可恢复期', t.slice(0, 60));
+    ok(!/不可恢复|无法恢复/.test(t), '确认框不再声称「不可恢复」');
+  }
   await shot('verify-p7-clear-confirm');
   await dialog.getByRole('button', { name: '删除', exact: true }).click();
   await page.waitForTimeout(500);

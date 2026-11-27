@@ -5,7 +5,8 @@
  *   1. 首轮注入片段含 citationId，且 citation 与会话标题可追溯；
  *   2. 零命中只注入一行状态，不出现任何 `[KB:` 标记；
  *   3. 索引层/会话异常时不抛出（调用方按原 prompt 继续）；
- *   4. 注入固定 workspace：project/all 即使已开启也不会被注入吃掉；
+ *   4. 注入范围收口：session 首轮不注入（面板选「本会话」时不引用历史）；
+ *      workspace 是默认；project/all 即使已开启也封顶 workspace，不替用户放大；
  *      P3 起群聊内容对同工作区可见，但跨工作区仍不可见；
  *   5. 工具入参拒绝 sessionId / 路径；scope 越权被 service 层拒绝；
  *   6. CLI 参数生成含 `--mcp-config` 与 `mcp__kb__search`；
@@ -222,10 +223,32 @@ async function main(): Promise<void> {
   ok('工具显式 scope=session 才可检索本群 source_only', groupToolSession.citations.length > 0);
   ok('显式 session 命中的切片标记 sourceType=group', groupToolSession.citations[0]?.sourceType === 'group');
 
-  // 即使策略已放行 project/all，注入也只能是 workspace
+  // 用户选「本会话」→ 首轮不注入（新会话里只有刚发的自己，注入等于回显原话）
+  const sessionScope = inject.buildKbInjection(sA.id, '并发写冲突', 'session');
+  ok('scope=session 时首轮不注入（返回 null）', sessionScope === null, String(sessionScope?.count));
+
+  // 不传参数（老客户端/内部调用）仍按 workspace，向后兼容
+  const defaultScope = inject.buildKbInjection(sA.id, '并发写冲突');
+  ok('不传 scope 时仍按 workspace 注入', Boolean(defaultScope && defaultScope.count > 0));
+
+  // 即使策略已放行、用户显式选了 project/all，注入也封顶 workspace
   store.setScopePolicy({ allowProject: true, allowAll: true });
-  const stillWorkspace = inject.buildKbInjection(sA.id, '向量检索预算');
-  ok('project/all 已开启时注入仍固定 workspace', Boolean(stillWorkspace && stillWorkspace.count === 0));
+  const cappedProject = inject.buildKbInjection(sA.id, '向量检索预算', 'project');
+  const cappedAll = inject.buildKbInjection(sA.id, '向量检索预算', 'all');
+  ok('scope=project 注入封顶 workspace', Boolean(cappedProject && cappedProject.count === 0));
+  ok('scope=all 注入封顶 workspace', Boolean(cappedAll && cappedAll.count === 0));
+  // 肯定式自证：封顶到 workspace 后仍能命中本工作区内容，而不是「干脆不注入」。
+  const cappedOwn = inject.buildKbInjection(sA.id, '并发写冲突', 'all');
+  ok(
+    '封顶 workspace 后仍注入本工作区内容（非全关）',
+    Boolean(cappedOwn && cappedOwn.count > 0),
+    String(cappedOwn?.count)
+  );
+  ok(
+    '封顶后与 workspace 默认结果一致',
+    cappedProject?.count === crossWorkspace?.count,
+    `project=${cappedProject?.count} workspace=${crossWorkspace?.count}`
+  );
 
   /* ═══════════ 5. 工具入参与越权 ═══════════ */
   section('kb.search 工具');

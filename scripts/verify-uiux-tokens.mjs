@@ -646,6 +646,30 @@ ok(
   '探针仍绿 = 浅灰带会悄悄回来'
 );
 
+/**
+ * 2026-11-26 水平抖动回归：设置弹窗滚动区必须预留滚动条槽位。
+ *
+ * 现象：模型清单那屏内容高度卡在临界点，滚动条反复出现/消失；右对齐的
+ * 「模型数量」列整块左右移动 6px（用户录屏实证）。ChatPage 的滚动区
+ * 早已有 [scrollbar-gutter:stable]，设置弹窗漏了。
+ *
+ * 为什么钉源码而不是量渲染：headless Chromium 用覆盖式滚动条（不占宽），
+ * 运行时量 clientWidth 在两态下相同 —— 假绿。源码断言 + 内置反向探针
+ * 才真正钉住「这个槽位被显式声明了」。
+ */
+const settingsSrc = fs.readFileSync(path.join(SRC, 'components', 'SettingsPage.tsx'), 'utf8');
+const scrollerLine = settingsSrc.split(/\r?\n/).find(l => l.includes('tc-scroll-fade') && l.includes('overflow-y-auto')) ?? '';
+ok(
+  scrollerLine.includes('[scrollbar-gutter:stable]'),
+  '设置弹窗滚动区预留滚动条槽位（右侧数字列不左右抖）',
+  '漏掉时：内容高度卡临界点 → 滚动条反复出现/消失 → 右对齐数字列整块横移'
+);
+ok(
+  !scrollerLine.replace('[scrollbar-gutter:stable]', '').includes('scrollbar-gutter'),
+  '反向探针：去掉槽位声明必须判红',
+  '探针仍绿 = 断言没真正钉住这个类'
+);
+
 console.log(`\n设计系统写法审计：${total - failures.length}/${total} 通过`);
 if (failures.length) {
   console.log('\n失败项：');

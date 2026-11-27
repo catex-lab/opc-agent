@@ -59,6 +59,11 @@ export interface TurnRunnerDeps {
   permissionMode?: PermissionMode;
   /** 场景 id：优先级高于会话绑定的 scenario_id */
   scenarioId?: string | null;
+  /**
+   * 知识库面板选的检索范围，透传给首轮自动注入。
+   * 群聊/工作流与单聊同一口径：选 session 不注入，project/all 封顶 workspace。
+   */
+  kbScope?: import('./kb/search.js').KbScope;
   /** 触发这一轮的原始用户输入 —— A39 技能沉淀靠它判断「这是不是一个可复用手法」 */
   triggerPrompt?: string;
   /** 中止信号：客户端断开时由调用方 abort */
@@ -155,7 +160,7 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
    */
   let kbMemo: KbInjection | null | undefined;
   const kbFor = (query: string): KbInjection | null => {
-    if (kbMemo === undefined) kbMemo = buildKbInjection(session.id, query);
+    if (kbMemo === undefined) kbMemo = buildKbInjection(session.id, query, deps.kbScope);
     return kbMemo;
   };
 

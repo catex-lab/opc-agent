@@ -14,7 +14,7 @@
 
 ## 它解决什么问题
 
-本机往往同时装着好几个 Agent CLI（Claude Code、Codex、Gemini、Cursor……），每个都有自己的会话与上下文。想让它们在同一个人物里接力或分工，过去只能手动复制粘贴结果。
+本机往往同时装着好几个 Agent CLI（Claude Code、Codex、Cursor……），每个都有自己的会话与上下文。想让它们在同一个人物里接力或分工，过去只能手动复制粘贴结果。
 
 OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个联系人，左边选人、右边干活，需要协作时把几个拉进一个群，任务按人分派。Agent 的读取、执行、搜索过程折叠成一行，点开是全部细节。
 
@@ -43,21 +43,16 @@ OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个�
 
 ## 内置 Agent
 
-共 16 条接入定义：
+当前可选 13 条内置 Agent：
 
 | Agent | Agent | Agent | Agent |
 |---|---|---|---|
-| WorkBuddy | Codex | Gemini | OpenCode |
-| Claude Code | Hermes | Cursor | Qoder |
-| Qoder CN | 豆包 | ZCode | Kimi |
-| Pi | Antigravity CLI | Kimi Code CLI | Trae（暂时下架） |
+| WorkBuddy | Codex | OpenCode | Claude Code |
+| Hermes | DeepSeek Harness | Cursor | Qoder |
+| Qoder CN | ZCode | Kimi Code CLI | Pi |
+| Antigravity CLI |  |  |  |
 
-接入方式有两种，以**写死的白名单**为准，不做自由发现：
-
-- **CLI 探测（13 条）**：只认定义里写死的命令名，在 `PATH` 与各自约定目录里查找可执行文件。名单外的 CLI 即使装了也不会被自动发现 —— 这是刻意的，避免把 IDE 的图形启动器误判成 CLI。
-- **官方 SDK 直连（3 条：WorkBuddy / Claude Code / Codex）**：走厂商 SDK，SDK 自带平台二进制，不依赖本机 `PATH`，因此开箱即用；代价是安装包体积（见 [THIRD-PARTY.md](./THIRD-PARTY.md) 的许可说明）。
-
-> Trae 目前下架：只认 `traecli`（企业版），IDE 自带的 `trae-cn` 是 VS Code 垫片，接进去会被当成可执行路径、拉起图形窗口。定义保留，恢复只需从 `RETIRED_AGENT_IDS` 里删掉 id。
+接入以**写死的白名单**为准，不做自由发现：CLI 探测只认定义里写死的命令名，在 `PATH` 与各自约定目录里查找；另有官方 SDK 直连（WorkBuddy / Claude Code / Codex）与 ACP（Hermes / DeepSeek Harness）两类。名单外的 CLI 即使装了也不会被自动发现 —— 这是刻意的，避免把 IDE 的图形启动器误判成 CLI。SDK 自带平台二进制，不依赖本机 `PATH`；Claude / Codex 的本体改为按需安装，不随包分发（见 [THIRD-PARTY.md](./THIRD-PARTY.md)）。
 
 ![通讯录](docs/screenshots/01-contacts.png)
 
@@ -73,6 +68,10 @@ OPC Agent 把它们收进一个 IM 界面：通讯录里每个 Agent 是一个�
 > **本仓库提供源码，GitHub Releases 另提供预编译完整包**（`*-full.zip`，可直接运行，也用于应用内更新）。
 > 随包组件的许可与署名见 [THIRD-PARTY.md](./THIRD-PARTY.md)；Claude Code、Codex 等组件不随包分发，
 > 改为首次使用时自行下载。也可自行 `npm run electron:build` 打包。
+>
+> **安装包未做代码签名**（2026-11-26 的决定：不购买证书）。Windows SmartScreen 可能提示
+> "未知发布者"，macOS 首次打开需右键 → 打开。应用内更新清单 `latest.json` 仍做签名验签，
+> 与安装包签名是两回事。请只从本仓库的 GitHub Releases 下载，不要装第三方转发的包。
 
 ```bash
 git clone https://github.com/catex-lab/opc-agent.git
@@ -153,11 +152,13 @@ npm run verify:package # 打包产物逐字节核对
 
 应用内不收集统计、不埋点、不做崩溃上报，也没有安装 ID —— 代码里不存在遥测模块。密钥一律从环境变量或本地凭据文件读取，不写进源码。
 
+**自定义模型路由的凭据引用**（`credentialRef`）只认本进程可见的环境变量名。ACP 类 Agent（如 DeepSeek Harness）若有自己的 profile 配置（例如 `~/.dsh/profiles/acp/*.patch.yml`），其中写的密钥**不会**被 OPC 读取 —— 我们刻意不跨边界解析第三方配置文件。要在 OPC 里用带凭据的自定义路由，请把密钥导出为环境变量（如 `SENSENOVA_API_KEY`），或在 OPC 的设置页保存对应凭据。
+
 越权的操作会被拦下来问你：
 
 ![权限门禁](docs/screenshots/04-settings.png)
 
-*服务端内置 23 类危险命令 + 14 条需确认，`rm -rf`、强推主分支这类直接拒绝，任何模式都放不过去。*
+*CLI 通道内置 23 类危险命令 + 14 条需确认，`rm -rf`、强推主分支这类直接拒绝；SDK / ACP 通道按各自协议弹审批卡，未登记的工具一律拒绝。越权操作必须人工放行。*
 
 ## 许可
 
@@ -184,4 +185,4 @@ npm run verify:package # 打包产物逐字节核对
 
 ## 状态
 
-版本 `1.0.22`（`v1.0.22` 已发版；此后累积的变化记在 `CHANGELOG.md` 的「未发布」段）。
+版本 `1.0.25`（`v1.0.25` 已发版；变化见 `CHANGELOG.md`）。

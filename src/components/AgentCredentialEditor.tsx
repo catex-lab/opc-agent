@@ -7,6 +7,7 @@ import { describeProvenance, asProvenance } from '../../shared/provenance';
 import { emitCredentialsChanged, subscribeCredentialChanges } from '../lib/credentialEvents';
 import { InfoHint } from './InfoHint';
 import { api } from '../api';
+import { httpErrorText } from '../lib/http-error';
 
 /**
  * 单个 Agent 的凭据编辑器（取 / 存 / 清 + 连通性 + 模型清单）。
@@ -123,7 +124,7 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
     setError(null);
     try {
       const res = await api.get('/api/agent-credentials');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(httpErrorText(res.status));
       const data = await res.json();
       const list: CredentialView[] = Array.isArray(data.credentials) ? data.credentials : [];
       const found = list.find(c => c.agentId === agentId);
@@ -414,7 +415,9 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
         {item.hint && <InfoHint label={`${item.name} 凭据说明`} text={item.hint} />}
       </div>
 
-      {/* API Key */}
+      {/* API Key：保存键紧贴输入框右侧，和「发消息 / 重新探测」同一档
+          32px 主按钮（--tc-btn-height / --tc-btn-pad-x / --tc-btn-font）。
+          详情页与设置页共用这块编辑器，两处布局一起收口。 */}
       <div>
         <label
           className="mb-1 block text-xs"
@@ -422,15 +425,29 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
         >
           {item.keyEnvs.join(' / ')}
         </label>
-        <Input
-          type="password"
-          value={draftKey}
-          onChange={v => setDraftKey(v as string)}
-          placeholder={
-            configured ? t('settings.credential.keyKeepPlaceholder') : t('settings.credential.keyPlaceholder')
-          }
-          data-credential-key={agentId}
-        />
+        <div className="flex items-end gap-2">
+          <div className="min-w-0 flex-1">
+            <Input
+              type="password"
+              value={draftKey}
+              onChange={v => setDraftKey(v as string)}
+              placeholder={
+                configured ? t('settings.credential.keyKeepPlaceholder') : t('settings.credential.keyPlaceholder')
+              }
+              data-credential-key={agentId}
+            />
+          </div>
+          <Button
+            theme="primary"
+            className="tc-btn-brand shrink-0"
+            loading={busy === 'save'}
+            disabled={busy !== null && busy !== 'save'}
+            onClick={() => void save()}
+            data-credential-save={agentId}
+          >
+            {t('settings.credential.save')}
+          </Button>
+        </div>
       </div>
 
       {/* Base URL（仅支持自定义网关的 Agent） */}
@@ -451,12 +468,9 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
         </div>
       )}
 
-      {/* 保存 / 清除 */}
-      <div className="flex items-center gap-2">
-        <Button theme="primary" loading={busy === 'save'} onClick={() => void save()}>
-          {t('settings.credential.save')}
-        </Button>
-        {configured && (
+      {/* 清除：保存已上移到输入框右侧，这里只在已配置时留一个低视觉权重的出口 */}
+      {configured && (
+        <div className="flex items-center">
           <Button
             variant="text"
             theme="danger"
@@ -466,8 +480,8 @@ export function AgentCredentialEditor({ agentId, onSaved }: AgentCredentialEdito
             <Trash2 size={14} />
             {t('settings.credential.clear')}
           </Button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* #15 多账号：点账号名即切换，不用先开一个下拉再点确认。
           明文 Key 从不进前端，按钮上只显示掩码。 */}

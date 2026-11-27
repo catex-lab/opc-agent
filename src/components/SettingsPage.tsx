@@ -24,6 +24,7 @@ import { AgentCredentialSettings } from './AgentCredentialSettings';
 import { WorkbuddyProfileSettings } from './WorkbuddyProfileSettings';
 import { type CloseBehavior, readCloseBehavior, saveCloseBehavior } from '../closeBehavior';
 import { type LinkOpenMode, readLinkOpenMode, saveLinkOpenMode } from '../answer/linkRouter';
+import { readCdpEnabled, saveCdpEnabled } from '../cdpPref';
 import { type AnswerLanguage, readAnswerLanguage, saveAnswerLanguage } from '../answerLanguage';
 import {
   useTranslation,
@@ -40,6 +41,7 @@ import { PermissionRulesPanel } from './PermissionRulesPanel';
 import { ProfilePanel } from './ProfilePanel';
 import { LoginTerminalDialog } from './LoginTerminalDialog';
 import AboutPanel from './AboutPanel';
+import { TrashPanel } from './TrashPanel';
 import { CustomAgent, PermissionMode, ThemePreference, RegisteredAgent } from '../types';
 import {
   TRANSPARENCY_DEFAULT,
@@ -145,6 +147,7 @@ type SettingsSectionKey =
   | 'login'
   | 'models'
   | 'agents'
+  | 'trash'
   | 'about';
 
 const SETTINGS_SECTIONS: Array<{
@@ -178,7 +181,10 @@ const SETTINGS_SECTIONS: Array<{
   { key: 'login', labelKey: 'settings.section.login', hintKey: 'settings.section.loginHint', Icon: KeyRound },
   { key: 'models', labelKey: 'settings.section.models', hintKey: 'settings.section.modelsHint', Icon: Layers },
   { key: 'agents', labelKey: 'settings.section.agents', hintKey: 'settings.section.agentsHint', Icon: Bot },
-  // 排最后：这是「偶尔来一次」的分区，不该抢占前六项的位置
+  // B1：删除的东西去哪了。放在「关于」之前 —— 它是数据类设置，
+  // 用户找「我删的会话还能不能救」时会往设置里翻，但平时不该占显眼位置。
+  { key: 'trash', labelKey: 'settings.section.trash', hintKey: 'settings.section.trashHint', Icon: Trash2 },
+  // 排最后：这是「偶尔来一次」的分区，不该抢占前面几项的位置
   { key: 'about', labelKey: 'settings.section.about', hintKey: 'settings.section.aboutHint', Icon: Info },
 ];
 
@@ -720,10 +726,14 @@ export function SettingsPage({
 
         {/* 底部留白比顶部大一档：参考图的滚动区在裁切位置看不到底边，
             但「最后一行不贴边」是硬要求 —— 24px 在深色下仍会让末行文字
-            贴着弹窗圆角，故取下 32 / 上 24。 */}
+            贴着弹窗圆角，故取下 32 / 上 24。
+
+            2026-11-26：[scrollbar-gutter:stable] 让滚动条从无到有时**不改变内容宽度**。
+            模型清单那屏的内容高度正好卡在临界点，之前滚动条反复出现/消失，
+            右对齐的数字列整块左右移动 6px（用户录屏实证）——与 ChatPage 同款手法。 */}
         <div
           ref={panelScrollRef}
-          className="tc-scroll-fade min-w-0 flex-1 overflow-y-auto px-4 pb-8 pt-6 sm:px-6"
+          className="tc-scroll-fade min-w-0 flex-1 overflow-y-auto px-4 pb-8 pt-6 sm:px-6 [scrollbar-gutter:stable]"
           data-fade={panelOverflowing ? '1' : undefined}
         >
           <div className="w-full space-y-8" data-settings-panel={section}>
@@ -853,6 +863,13 @@ export function SettingsPage({
           <CloseBehaviorSetting />
 
           <LinkOpenModeSetting />
+
+          {/* P0-01：远程调试端口默认关，需要人机同屏的用户显式开。
+              放在窗口行为这一组的最后 —— 它与「关窗行为 / 外链打开方式」同属
+              「影响本机与外部交互的开关」，不混进主题外观三张卡。 */}
+          <GroupDivider />
+          <h2 className="tc-section-title">{t('settings.appearance.groupAdvanced')}</h2>
+          <CdpSetting />
         </div>
         )}
 
@@ -1454,6 +1471,9 @@ export function SettingsPage({
             遥测模块已整体删除，这一页不再有统计开关 —— 没有可关的东西，
             给一个灰着的开关反而是误导。
             放在最后：用户平时不会来，但报 issue 前会被指引到这里。 */}
+        {/* B1：最近删除。放在「关于」之前 —— 用户找「删掉的会话还能不能救」
+            会往设置里翻，但不该抢占常用分区的位置。 */}
+        {section === 'trash' && <TrashPanel />}
         {section === 'about' && <AboutPanel />}
           </div>
         </div>
@@ -1574,6 +1594,44 @@ const LINK_OPEN_OPTIONS: Array<{
     Icon: Layers,
   },
 ];
+
+/**
+ * 「远程调试端口」（CDP / 人机同屏）开关（P0-01）。
+ *
+ * 默认关是安全默认：端口一开，本机任何进程都能驱动应用的所有页面。
+ * 需要「Agent 点哪、用户看哪」的人显式打开。⚠️ 必须重启才生效 ——
+ * Chromium 的调试开关只能在 app ready 前追加，这条限制不能藏在文档里。
+ * data-cdp-setting / data-cdp-switch 是给闸门用的稳定锚点。
+ */
+function CdpSetting() {
+  const { t } = useTranslation();
+  const [enabled, setEnabled] = useState<boolean>(readCdpEnabled);
+
+  return (
+    <div className="opc-enum-setting" data-cdp-setting>
+      <div className="opc-enum-setting__row">
+        <div className="opc-enum-setting__text">
+          <div className="opc-enum-setting__title">
+            <label className="opc-enum-setting__label" id="opc-cdp-label">
+              {t('settings.cdp.label')}
+            </label>
+          </div>
+          <p className="tc-hint mt-1">{t('settings.cdp.hint')}</p>
+        </div>
+        <span data-cdp-switch>
+          <Switch
+            value={enabled}
+            onChange={v => setEnabled(saveCdpEnabled(!!v))}
+            aria-label={t('settings.cdp.switch')}
+          />
+        </span>
+      </div>
+      <p className="tc-hint mt-2" data-cdp-restart-note>
+        {t('settings.cdp.restartNote')}
+      </p>
+    </div>
+  );
+}
 
 function LinkOpenModeSetting() {
   const { t } = useTranslation();

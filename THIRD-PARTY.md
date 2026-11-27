@@ -24,7 +24,7 @@
 | 包 | 许可 | 说明 |
 |---|---|---|
 | `electron` | MIT | 桌面壳。运行时内含 Chromium 及其依赖，完整声明见 Electron 发行包内的 `LICENSES.chromium.html` |
-| `@tencent-ai/agent-sdk` | MIT（外层） | 腾讯 CodeBuddy Agent SDK。npm 元数据声明 MIT；包内未随附 LICENSE 文件。**其内嵌的 CodeBuddy CLI（`cli/`）随安装包分发**，许可条款无法从包内查证 —— 见下文「安装包里内嵌的第三方 CLI」 |
+| `@tencent-ai/agent-sdk` | MIT（外层） | 腾讯 CodeBuddy Agent SDK。npm 元数据声明 MIT；包内未随附 LICENSE 文件。**其内嵌的 CodeBuddy CLI（`cli/`）随安装包分发**，同目录 `LICENSE` 文件为 MIT 全文，2026-11-23 核实后清单与关于页均按 MIT 标注 —— 见下文「安装包里内嵌的第三方 CLI」 |
 | `@anthropic-ai/claude-agent-sdk` | **非开源**（`All rights reserved`） | Claude Code 的官方 SDK。`package.json` 写 `SEE LICENSE IN README.md`，实际 `LICENSE.md` 是「© Anthropic PBC. All rights reserved.」+ 指向商业条款。其平台二进制（`claude-agent-sdk-win32-x64`，内含 `claude.exe`）**不再随安装包分发**，改为首次使用该 Agent 时从 npm 镜像下载（`<dataDir>/vendor/claude/`），见「非开源许可」 |
 | `@openai/codex-sdk` | Apache-2.0 | Codex 的官方 SDK，依赖 `@openai/codex` 及其平台二进制（`codex-win32-x64`）。Apache-2.0 允许再分发，署名义务已在清单里履行。平台二进制**不再随安装包分发**，改为按需下载到 `<dataDir>/vendor/codex/` |
 | `express` | MIT | 内联后端的 HTTP 框架 |

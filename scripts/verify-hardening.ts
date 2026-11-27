@@ -244,5 +244,60 @@ console.log('\n[4] lucide 图标显式 size（A141 档位）');
   ok(/A141/.test(dialog), '肯定式：注释写明 24 是按钮档、14 是图标档，避免下棒误读');
 }
 
+// ------------------------------------------------- 5 本机 token 不进 Agent 子进程
+console.log('\n[5] 本机 API token 不随 Agent 子进程外泄');
+{
+  const { agentChildEnv } = await import('../server/child-env.js');
+  const saved = process.env.OPC_LOCAL_TOKEN;
+  try {
+    process.env.OPC_LOCAL_TOKEN = 'probe-local-token';
+    const child = agentChildEnv({ NO_COLOR: '1', OPC_KEEP: 'yes' });
+    ok(child.NO_COLOR === '1' && child.OPC_KEEP === 'yes', 'extra 变量照常叠加（净化不是清空环境）');
+    ok(!('OPC_LOCAL_TOKEN' in child), '★ 子进程环境里没有 OPC_LOCAL_TOKEN');
+    ok(process.env.OPC_LOCAL_TOKEN === 'probe-local-token', '净化只作用于子进程副本，不动主进程 env');
+    ok(!('OPC_LOCAL_TOKEN' in agentChildEnv()), '默认路径（无 extra）同样不带 token');
+  } finally {
+    if (saved === undefined) delete process.env.OPC_LOCAL_TOKEN;
+    else process.env.OPC_LOCAL_TOKEN = saved;
+  }
+
+  const source = stripComments(read('server/child-env.ts'));
+  const contract = (s: string) => /delete env\[OPC_LOCAL_TOKEN_ENV\]/.test(s);
+  ok(contract(source), '★ 收口函数在 overlay 之后显式删 token');
+  ok(!contract(source.replace(/delete env\[OPC_LOCAL_TOKEN_ENV\];/g, '')),
+    '★ 反向探针：删掉这一步 → 契约判红');
+
+  const agentFiles = [
+    'server/agents/adapters/acp.ts',
+    'server/agents/adapters/cli.ts',
+    'server/agents/modelAvailability.ts',
+    'server/agents/modelCatalog.ts',
+    'server/agents/probe.ts',
+  ];
+  for (const file of agentFiles) {
+    const src = stripComments(read(file));
+    ok(/agentChildEnv\(/.test(src) && !/\.\.\.process\.env/.test(src),
+      `${file} 子进程环境走收口函数、不再裸继承 process.env`);
+  }
+
+  // B5（2026-11-26）：SDK 通道由厂商自己 spawn（`{...process.env,...options.env}`），
+  // 不走 agentChildEnv。必须在两条 options 路径里都摘掉本机 token。
+  //
+  // 钉不变量、不钉写法：早期实现靠 `[OPC_LOCAL_TOKEN_ENV]: undefined` 覆盖，
+  // 后来改成 `withoutLocalToken()` 解构剔除（因为 one-shot 的 `Options.env`
+  // 类型是 `Record<string, string>` 不收 undefined）。两种写法都满足
+  // 「子进程拿不到 token」，所以断言钉的是「有收口函数、且两条路径都走了它」。
+  const sdk = stripComments(read('server/agents/adapters/sdk.ts'));
+  ok(sdk.includes("OPC_LOCAL_TOKEN_ENV"), 'SDK 适配器导入 token 常量');
+  ok(/function withoutLocalToken\([\s\S]*?\[OPC_LOCAL_TOKEN_ENV\]: _\w*[\s\S]*?\.\.\.rest/.test(sdk),
+    'SDK 侧有收口函数：把 token 从 env 里解构剔除（不留空串，空串仍会传进子进程）');
+  const sdkSpreads = (sdk.match(/env: withoutLocalToken\(/g) ?? []).length;
+  ok(sdkSpreads >= 2,
+    `SDK 会话池 + one-shot 两条路径都用收口函数（实际 ${sdkSpreads} 处）`);
+  ok(!/env:\s*\{\s*\.\.\.this\.runtime\.env\s*\}/.test(sdk),
+    '没有哪条路径直接把 runtime.env 原样交给 SDK（那样 token 会漏）');
+  ok(!sdk.includes("OPC_LOCAL_TOKEN_ENV]: '"), 'SDK 不会用空字符串冒充「剔除」（空串仍会传进子进程）');
+}
+
 console.log(`\n=== ${pass}/${total} 通过 ===`);
 if (pass !== total) process.exit(1);

@@ -96,6 +96,12 @@ function checkContracts() {
   ok(!/pickFreeLoopbackPort|net\.createServer/.test(cdp), '契约：没有自己占端口猜端口号的逻辑');
   ok(cdp.includes("process.env.OPC_CDP === '0'"), '契约：OPC_CDP=0 能关掉调试端口');
 
+  // P0-01（2026-11-26）：默认关闭，偏好/环境变量显式开启才开
+  ok(/export function cdpShouldEnable\(\)/.test(cdp), '契约：CDP 判定有单一出口 cdpShouldEnable()');
+  ok(cdp.includes("process.env.OPC_CDP === '1'"), '契约：OPC_CDP=1 强制开（脚本/闸门用）');
+  ok(cdp.includes('loadPrefs().cdpEnabled === true'), '契约：偏好 cdpEnabled 显式 true 才开（缺键=关）');
+  ok(/if \(!cdpShouldEnable\(\)\)/.test(cdp), '契约：开关层与端点层都走同一判定（默认关）');
+
   // 端点要落地：Agent 是外部子进程，看不见主进程内存
   ok(cdp.includes("CDP_FILE_NAME = 'cdp.json'"), '契约：描述符文件名固定');
   ok(cdp.includes('writeCdpDescriptor'), '契约：描述符会写盘');
@@ -145,9 +151,15 @@ function checkContracts() {
   // 端点怎么到 Agent 手里：主进程写进 process.env，子进程 spawn 时继承。
   // 这条链上任一处改成「显式白名单 env」，OPC_CDP_ENDPOINT 就会静默消失，
   // 而 Agent 侧的表现只是「连不上」—— 所以在这里钉住。
+  // 2026-11-26：token 隔离后适配器不再裸写 `...process.env`，统一走
+  // `agentChildEnv()` 收口。断言钉「走收口 + 收口函数保留全量 env（只删 token）」
+  // 这个不变量，而不是钉 `...process.env` 这个会随重构漂移的实现字面量。
+  const childEnv = read('server/child-env.ts');
+  ok(/\.\.\.process\.env/.test(childEnv), '契约：子进程环境收口函数保留 process.env 全量（CDP 端点因此能到 Agent）');
+  ok(/delete env\[OPC_LOCAL_TOKEN_ENV\]/.test(childEnv), '契约：收口函数只剔除本机 token（不误删 CDP 端点）');
   for (const adapter of ['server/agents/adapters/cli.ts', 'server/agents/adapters/acp.ts']) {
     const src = read(adapter);
-    ok(/\.\.\.process\.env/.test(src), `契约：${path.basename(adapter)} 的子进程继承主进程环境（端点因此能到 Agent 手里）`);
+    ok(/agentChildEnv\(/.test(src), `契约：${path.basename(adapter)} 的子进程走统一环境收口（端点因此能到 Agent 手里）`);
   }
 
   // 面板状态持久化
@@ -294,7 +306,9 @@ async function runSmoke() {
   const probePort = (probe.address() as { port: number }).port;
   const probeUrl = `http://127.0.0.1:${probePort}/`;
 
-  const { child, dataDir, log } = launchApp();
+  // P0-01 后 CDP 默认关：正向用例必须显式 OPC_CDP=1（脚本逃生口），
+  // 否则这里等不到 DevToolsActivePort，整条闸门会红在启动而非产品缺陷。
+  const { child, dataDir, log } = launchApp({ OPC_CDP: '1' });
   harnessTokenFile = path.join(dataDir, 'harness-token.json');
   let harness: Browser | null = null;
   let agent: Browser | null = null;
@@ -454,6 +468,30 @@ async function runSmoke() {
     // 面板里的地址栏要反映同一状态（人机同屏：用户看到的 URL 就是 Agent 驱动的那个）
     const shownUrl = await appPage.inputValue('input[aria-label="预览地址"]');
     ok(shownUrl === probeUrl, '冒烟：面板地址栏与 Agent 驱动的页面一致', `${shownUrl} vs ${probeUrl}`);
+
+    console.log('  · 默认关闭用例（P0-01：不传 env、不写偏好）…');
+    /* ── 默认：全新数据目录、无偏好、无环境变量 → 端口不开 ── */
+    const def = launchApp();
+    try {
+      const defActive = await waitForActivePort(def.dataDir, 8000);
+      ok(defActive === null, '默认：新装用户不写偏好时不写 DevToolsActivePort（端口默认关）');
+      let defDesc: { enabled?: boolean } | null = null;
+      for (let i = 0; i < 30 && !defDesc; i++) {
+        try {
+          defDesc = JSON.parse(fs.readFileSync(path.join(def.dataDir, 'cdp.json'), 'utf8'));
+        } catch {
+          await SLEEP(500);
+        }
+      }
+      ok(defDesc !== null, '默认：描述符仍然落地（UI 能如实显示「关」）');
+      ok(defDesc?.enabled === false, '默认：描述符标记 enabled=false');
+    } finally {
+      try {
+        def.child.kill();
+      } catch {
+        /* 已退 */
+      }
+    }
 
     console.log('  · 负面用例（OPC_CDP=0）…');
     /* ── 负面：OPC_CDP=0 时不开端口 ── */

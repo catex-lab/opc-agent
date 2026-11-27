@@ -6,7 +6,7 @@
  * 再用 Playwright 拦住 /api/** 喂固定数据。
  *
  * 覆盖：
- *   [1] 默认范围是本工作区
+ *   [1] 默认范围是本会话，知识库设置打开即展开
  *   [2] 「本项目 / 全部」默认上锁，必须显式开启并写入范围策略
  *   [3] 来源卡字段：Agent、会话标题、摘要 + snippet、脱敏计数
  *   [4] 「回到原对话」只带 messageIds，不用脱敏正文回填
@@ -104,7 +104,7 @@ const FIXTURE_ENTRY = String.raw`
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
-import { KnowledgeBasePanel } from '../../../src/components/kb/KnowledgeBasePanel';
+import { KnowledgeBasePanel, readSavedKbScope } from '../../../src/components/kb/KnowledgeBasePanel';
 import { ChatHeader } from '../../../src/components/ChatHeader';
 import { GroupChatHeader } from '../../../src/components/GroupChatHeader';
 import './tokens.css';
@@ -257,9 +257,9 @@ window.fetch = async function (input, init) {
   if (url.indexOf('/api/kb/search') >= 0 && method === 'POST') {
     return json({
       query: body ? body.query : '',
-      scope: body ? body.scope : 'workspace',
+      scope: body ? body.scope : 'session',
       mode: 'fts',
-      scopeApplied: body ? body.scope : 'workspace',
+      scopeApplied: body ? body.scope : 'session',
       hits: chunkCount > 0 ? HITS : [],
       tokensUsed: 168,
       filteredOut: 1,
@@ -292,7 +292,8 @@ window.fetch = async function (input, init) {
 };
 
 function Fixture() {
-  const [scope, setScope] = useState('workspace');
+  // 夹具从产品的 readSavedKbScope 取默认值，验证的是产品逻辑而不是夹具自己写死的值。
+  const [scope, setScope] = useState(() => readSavedKbScope('s1'));
   // E1：夹具要能真实反映「关闭」—— 否则 Esc 关不掉也没人发现。
   const [open, setOpen] = useState(true);
   return (
@@ -517,10 +518,10 @@ async function openHeader(mode, width, theme) {
 }
 
 try {
-  console.log('\n[1] 默认范围');
+  console.log('\n[1] 默认范围与设置展开');
   const ready = await openPanel('ready');
   // A1（需求）：检索是主功能，必须排在索引概览之前且首屏可见；
-  // 范围 / 本会话 / 主动检索 / 回填与重建收进默认收起的「知识库设置」。
+  // 用户新要求：打开知识库即展开「知识库设置」，不再让用户多点一次。
   const layout = await ready.evaluate(() => {
     const y = sel => {
       const el = document.querySelector(sel);
@@ -535,13 +536,13 @@ try {
   ok(!!layout.search && !!layout.stats && layout.search < layout.stats, '检索区排在索引概览之前', `search=${layout.search} stats=${layout.stats}`);
   ok(layout.visible, '首屏可直接操作检索输入');
   ok(
-    (await ready.locator('[data-kb-settings-fold]').getAttribute('data-open')) === 'false',
-    '知识库设置默认收起'
+    (await ready.locator('[data-kb-settings-fold]').getAttribute('data-open')) === 'true',
+    '知识库设置默认展开'
   );
-  ok((await ready.locator('[data-kb-settings-body]').count()) === 0, '收起时不渲染设置正文');
+  ok((await ready.locator('[data-kb-settings-body]').count()) === 1, '默认展开时渲染设置正文');
   ok(
-    (await ready.locator('[data-kb-settings-toggle]').getAttribute('aria-expanded')) === 'false',
-    '收起行 aria-expanded=false'
+    (await ready.locator('[data-kb-settings-toggle]').getAttribute('aria-expanded')) === 'true',
+    '展开行 aria-expanded=true'
   );
   // E1（需求）：弹层由标题 id 命名，打开后焦点在面板内。
   ok(
@@ -552,22 +553,30 @@ try {
     await ready.evaluate(() => !!document.activeElement?.closest('[data-kb-panel]')),
     '打开后焦点移入面板'
   );
+  // 默认展开不等于写死：仍可手动收起再展开。
+  await ready.locator('[data-kb-settings-toggle]').click();
+  ok(
+    (await ready.locator('[data-kb-settings-fold]').getAttribute('data-open')) === 'false',
+    '点击后设置收起'
+  );
+  ok((await ready.locator('[data-kb-settings-body]').count()) === 0, '收起时不渲染设置正文');
   await ready.locator('[data-kb-settings-toggle]').click();
   ok(
     (await ready.locator('[data-kb-settings-fold]').getAttribute('data-open')) === 'true',
-    '点击后设置展开'
-  );
-  ok((await ready.locator('[data-kb-settings-body]').count()) === 1, '展开后渲染设置正文');
-  ok(
-    (await ready.locator('[data-kb-scope="workspace"]').getAttribute('aria-checked')) === 'true',
-    '默认选中「本工作区」'
+    '再点恢复展开'
   );
   ok(
-    (await ready.locator('[data-kb-scope="workspace"]').getAttribute('data-kb-scope-locked')) === 'false',
-    '本工作区不需要额外开启'
+    (await ready.locator('[data-kb-scope="session"]').getAttribute('aria-checked')) === 'true',
+    '默认选中「本会话」'
   );
+  ok(
+    (await ready.locator('[data-kb-scope="session"]').getAttribute('data-kb-scope-locked')) === 'false',
+    '本会话不需要额外开启'
+  );
+  const sessionRowText = await ready.locator('[data-kb-scope="session"]').innerText();
+  ok(sessionRowText.includes('默认'), '本会话标注为默认范围');
   const workspaceRowText = await ready.locator('[data-kb-scope="workspace"]').innerText();
-  ok(workspaceRowText.includes('默认'), '本工作区标注为默认范围');
+  ok(!workspaceRowText.includes('默认'), '本工作区不再标注为默认范围');
 
   console.log('\n[2] 越权范围必须显式开启');
   ok(
@@ -594,6 +603,10 @@ try {
     window.__kbCalls.find(c => c.url.indexOf('/api/kb/policy') >= 0 && c.method === 'PATCH')
   );
   ok(!!policyCall && policyCall.body && policyCall.body.allowProject === true, '确认后写入 allowProject=true');
+  // 发消息时 useChat/useGroupChat 读的正是这份 localStorage（readSavedKbScope）。
+  // 钉住它随面板切换同步，否则「面板选了 X、请求体仍带旧值」会静默发生。
+  const savedScope = await ready.evaluate(() => localStorage.getItem('opc.kb.scope.s1'));
+  ok(savedScope === 'project', '范围切换同步写入 localStorage（发消息的 kbScope 来源）', String(savedScope));
 
   console.log('\n[3] 来源卡字段');
   await ready.locator('[data-kb-search-input]').fill('权限中间件');
@@ -617,7 +630,7 @@ try {
 
   console.log('\n[5] 自动停 / 手动关');
   const autoPage = await openPanel('auto');
-  await autoPage.locator('[data-kb-settings-toggle]').click();
+  // 设置默认展开，直接读当前会话状态（旧版这里要先点开折叠层）。
   const autoBadge = await autoPage.locator('[data-kb-stop-reason]').innerText();
   ok(autoBadge.includes('自动停'), '自动停有独立标签');
   ok(
@@ -635,7 +648,6 @@ try {
   ok(!!restoreCall && restoreCall.body.indexed === true, '恢复索引调用 PATCH indexed=true');
 
   const manualPage = await openPanel('manual');
-  await manualPage.locator('[data-kb-settings-toggle]').click();
   const manualText = await manualPage.locator('[data-kb-session-section]').innerText();
   ok(manualText.includes('你手动关'), '手动关有独立标签');
   ok(
@@ -645,9 +657,8 @@ try {
   ok(manualText.includes('恢复索引'), '手动关也提供恢复入口');
 
   console.log('\n[6] 重建提示与空态');
-  // A1 之后回填/重建收在设置分组里，这里新开一页并展开，避免被前面的交互状态干扰。
+  // 设置默认展开，新开一页即可直接读回填/重建入口（避免被前面的交互状态干扰）。
   const rebuildPage = await openPanel('ready');
-  await rebuildPage.locator('[data-kb-settings-toggle]').click();
   ok((await rebuildPage.locator('[data-kb-rebuild]').innerText()).includes('重建索引'), '重建入口可见');
   await rebuildPage.locator('[data-kb-rebuild]').click();
   await rebuildPage.waitForSelector('[data-kb-rebuild-confirm]');

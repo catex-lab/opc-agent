@@ -116,6 +116,9 @@ import { publishRunEvent, runHub } from "./run-hub.js";
 // auth 类错误（401/凭据失效）的自动善后：对该 Agent 立刻 re-probe 一次。
 // 与群聊 turn-runner 走同一个模块 —— 单聊、群聊的口径必须一致。
 import { maybeReprobeOnAuthError } from "./agents/auth-recovery.js";
+// B2：进程级异常兜底 + Express 统一错误中间件。策略「记日志继续跑」由
+// 用户拍板（桌面单窗口：进程一退就是白屏，用户没有自救手段）。
+import { errorMiddleware, installCrashGuard } from "./crash-guard.js";
 
 // A38 记忆层（Hermes 式四层记忆）。注入发生在适配器拼 systemPrompt 时
 // （见 server/memory.ts 的 withMemoryContext），这里只暴露读写与检索。
@@ -298,6 +301,10 @@ let serverPort: number | null = null;
 }
 
 const app = express();
+
+// B2：进程级异常兜底。放在 app 创建之前 —— 越早越好，模块加载期的异步错误
+// （如 registry 的首次探测）也算在内。幂等，被 import 多次不会重复注册。
+installCrashGuard();
 
 /**
  * 监听端口。
@@ -920,6 +927,12 @@ if (fs.existsSync(path.join(webDir, 'index.html'))) {
 } else {
   console.log(`[Web] 未找到前端产物（${webDir}），仅提供 API —— 开发态由 Vite 托管前端`);
 }
+
+// ════════ B2：统一错误出口（必须在所有路由与静态/SPA 兜底之后）════════
+// 四条路由分区各自 try/catch 过的错误不会走到这里；漏接的异步错误（`next(err)`
+// 或 `async` handler 抛错）会落到这里，统一转成 500 JSON，不泄露 stack。
+// 放在 static/SPA 之后：静态请求出错也应返回 JSON 而不是被当成页面路径。
+app.use(errorMiddleware);
 
 /**
  * C1 / 绞杀者第 0 期：后端启动收敛到显式函数。

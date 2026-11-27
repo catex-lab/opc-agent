@@ -42,12 +42,12 @@ export function readSavedKbScope(sessionId: string): KbScope {
   } catch {
     /* localStorage 不可用时回落到默认范围 */
   }
-  return 'workspace';
+  return 'session';
 }
 
 const SCOPE_HINT: Record<KbScope, string> = {
-  session: '只检索当前这条会话里的对话',
-  workspace: '同一工作目录下的会话 · 默认范围',
+  session: '只检索当前这条会话里的对话 · 默认范围',
+  workspace: '同一工作目录下的会话',
   project: '当前项目及其子目录下的会话',
   all: '所有项目的全部会话',
 };
@@ -86,8 +86,8 @@ export function KnowledgeBasePanel({
   const [searchError, setSearchError] = useState('');
   const [busy, setBusy] = useState<BusyKind>('');
   const [confirmRebuild, setConfirmRebuild] = useState(false);
-  /** A1：设置分组默认收起 —— 首屏先给检索，范围/会话/工具/维护按需展开 */
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 用户要求：打开知识库即展开设置，检索范围等配置首屏直接可见。 */
+  const [settingsOpen, setSettingsOpen] = useState(true);
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [toolPolicy, setToolPolicy] = useState<KbToolPolicy | null>(null);
   const [toolBusy, setToolBusy] = useState('');
@@ -162,7 +162,7 @@ export function KnowledgeBasePanel({
     setSearchError('');
     setFeedback(null);
     setConfirmRebuild(false);
-    setSettingsOpen(false);
+    setSettingsOpen(true);
     setToolFeedback('');
     (async () => {
       try {
@@ -191,11 +191,11 @@ export function KnowledgeBasePanel({
     };
   }, [open, sessionId]);
 
-  // 策略没打开时，已保存的范围必须退回本工作区，避免界面显示一个实际检索不到的范围。
+  // 策略没打开时，已保存的范围必须退回默认范围（本会话），避免界面显示一个实际检索不到的范围。
   useEffect(() => {
     if (!status) return;
-    if (scope === 'project' && !status?.policy?.allowProject) onScopeChange('workspace');
-    if (scope === 'all' && !status?.policy?.allowAll) onScopeChange('workspace');
+    if (scope === 'project' && !status?.policy?.allowProject) onScopeChange('session');
+    if (scope === 'all' && !status?.policy?.allowAll) onScopeChange('session');
   }, [status, scope, onScopeChange]);
 
   // 范围变了之后旧结果不再具代表性，清掉避免「范围写 A、结果来自 B」。
@@ -615,7 +615,7 @@ export function KnowledgeBasePanel({
               <section className="kb-section" data-kb-scope-section>
                 <div className="kb-section-head">
                   <h3 className="kb-section-title">检索范围</h3>
-                  <p className="kb-section-desc">默认只在本工作区内检索，跨范围需要你显式打开。</p>
+                  <p className="kb-section-desc">默认只检索本会话，跨范围需要你显式打开。</p>
                 </div>
                 <div className="kb-scope-list" role="radiogroup" aria-label="检索范围">
                   {KB_SCOPE_ORDER.map(item => {
@@ -637,7 +637,7 @@ export function KnowledgeBasePanel({
                         <span className="kb-scope-text">
                           <span className="kb-scope-label">
                             {KB_SCOPE_LABEL[item]}
-                            {item === 'workspace' ? <span className="kb-tag">默认</span> : null}
+                            {item === 'session' ? <span className="kb-tag">默认</span> : null}
                           </span>
                           <span className="kb-scope-hint">{SCOPE_HINT[item]}</span>
                         </span>

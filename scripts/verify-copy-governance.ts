@@ -161,9 +161,48 @@ function contracts(mutatedBanned?: string[]): void {
   }
 }
 
+/** 详情区块标题：英文界面不许再出现硬编码中文（P0-14 的部分整改） */
+function detailHeadings(): void {
+  const src = fs.readFileSync(
+    path.join(ROOT, 'src/components/AgentDetailSections.tsx'), 'utf8'
+  );
+  const zh = fs.readFileSync(path.join(ROOT, 'src/i18n/zh.ts'), 'utf8');
+  const en = fs.readFileSync(path.join(ROOT, 'src/i18n/en.ts'), 'utf8');
+  const keys = [
+    'agentDetail.section.basic', 'agentDetail.section.identity',
+    'agentDetail.section.account', 'agentDetail.section.expertise',
+    'agentDetail.section.capabilityOverview',
+    'agentDetail.section.intro', 'agentDetail.section.tech',
+  ];
+  // 2026-11-26 UI 收口：原「过程能力」「可承接的任务」两个 section 合并为
+  // 「能力概览」，两者降级为卡内的行标签（agentDetail.row.*），也走 i18n。
+  const rowKeys = ['agentDetail.row.process', 'agentDetail.row.tasks'];
+  check('详情区块标题走 i18n，中英两份键齐全（含能力概览与两个行标签）', () => {
+    assert.ok(keys.every(k => src.includes(`t('${k}')`)),
+      '组件里还有标题没走 t()');
+    assert.ok(rowKeys.every(k => src.includes(`t('${k}')`)),
+      '能力概览卡内的行标签没走 t()');
+    assert.ok(keys.concat(rowKeys).every(k => zh.includes(`'${k}':`) && en.includes(`'${k}':`)),
+      '中英语言包有键缺失');
+    assert.ok(!/>\s*(基本信息|身份|账号与权益|擅长领域|过程能力|可承接的任务|介绍|技术信息)\s*</.test(src),
+      '仍有硬编码中文标题节点');
+  });
+  check('可承接的任务行不再挂重复的数据形式图标', () => {
+    // 2026-11-26 收口：modes 由 toAgentInfo 从 capabilities 派生时写死，
+    // 每条 skill 的 ⓘ 点开几乎都是同一句 text/plain，2~6 次重复。
+    // 否定式配肯定式：先证明区块存在，再钉区内无 InfoHint，避免整块删掉也绿。
+    // 区块现在是能力概览卡内的行 div（不再是独立 section），非贪婪匹配到
+    // 卡片所在 section 的收尾为止 —— 能力概览标题的 InfoHint 在它之前，不受影响。
+    const block = src.match(/data-agent-skills[\s\S]*?<\/section>/)?.[0] ?? '';
+    assert.ok(block.length > 0, '找不到可承接的任务区块，断言失效');
+    assert.ok(!block.includes('<InfoHint'), '又给每条 skill 挂回了数据形式说明图标');
+  });
+}
+
 async function run(): Promise<void> {
   console.log(probe ? `UI 文案治理闸门（探针模式：${probe}）` : 'UI 文案治理闸门（AGENTS.md §10）');
   const mutation = probe === 'no-blacklist' ? (list: string[]) => list.filter(w => w !== '本页面') : undefined;
+  detailHeadings();
   contracts(mutation);
   console.log(`\n═══ 结果：${pass} 通过 / ${fail} 失败 ═══`);
   if (probe) {

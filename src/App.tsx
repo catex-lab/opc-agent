@@ -55,6 +55,7 @@ import {
 } from './answer/linkRouter';
 import type { Message } from './types';
 import { api } from './api';
+import { httpErrorText } from './lib/http-error';
 
 /**
  * ChatPage 按需加载。
@@ -339,7 +340,7 @@ function AppContent() {
   // 全局入口以当前会话（没有则最近一条会话）为锚点：检索范围、本会话
   // 索引状态都需要一个具体的 sessionId，这里不发明「无会话」模式。
   const [kbOpen, setKbOpen] = useState(false);
-  const [kbGlobalScope, setKbGlobalScope] = useState<KbScope>('workspace');
+  const [kbGlobalScope, setKbGlobalScope] = useState<KbScope>('session');
   const kbAnchorSession = currentSessionId
     ? sessions.find(item => item.id === currentSessionId)
     : sessions[0];
@@ -537,7 +538,7 @@ function AppContent() {
         const res = await api.get(
           `/api/agents/${encodeURIComponent(currentAgentId)}/models`
         );
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(httpErrorText(res.status));
         const data = await res.json();
         if (!cancelled) {
           setAgentModels(Array.isArray(data.models) ? data.models : []);
@@ -733,18 +734,16 @@ function AppContent() {
        `pickableModels` 为空时下面会走「清空选中」—— 那正是 A151 踩过的
        坑，这次从「切 Agent」这个入口复发。等清单回来再判。 */
     if (agentModelSource.forAgent !== currentAgentId) return;
+    /* A213：configured（本机 CLI 配置 / WorkBuddy 桌面端自定义模型 / 用户自定义
+       路由）是平级可选组，不在平台目录里 —— 放行必须在「空列表清空」之前：
+       目录暂时为空（枚举在途 / 只读 Agent）时，configured 模型仍应留着。
+       A151 的教训是「列表为空」≠「没有」；这里同一纪律。 */
+    if (configuredModels.some(m => m.id === selectedModel)) return;
     if (pickableModels.length === 0) {
       if (selectedModel) setSelectedModel('');
       return;
     }
     if (pickableModels.some(m => m.modelId === selectedModel)) return;
-    /* A213：configured（本机 CLI 配置 / WorkBuddy 桌面端自定义模型）是平级
-       可选组，不在平台目录里 —— 不放行的话，点选后下一帧就被本 effect
-       按上面的规则弹回内置默认，表现为「菜单里点不动」（2026-11-13 真机
-       实测：WorkBuddy 自定义模型两条全中）。与 model-routing 的
-       configuredLookup 放行（A210）必须同源：弹窗层放行、归一化层不放行
-       等于假控件。 */
-    if (configuredModels.some(m => m.id === selectedModel)) return;
     const preferred = pickableModels.some(m => m.modelId === agentDefaultModel)
       ? agentDefaultModel
       : pickableModels[0].modelId;
@@ -881,6 +880,21 @@ function AppContent() {
   }, [fetchSessions]);
 
   /**
+   * B1：设置页「最近删除」里恢复了一条会话 —— 列表必须重拉才看得见。
+   *
+   * 用 window 事件而不是把 fetchSessions 传进设置页：设置页不该依赖聊天
+   * 状态（它现在只依赖 api 层），而事件是这条反向依赖最轻的接线方式。
+   * 顺带把项目计数也重拉 —— 恢复的会话可能带 project_id。
+   */
+  useEffect(() => {
+    const onRestored = () => {
+      void fetchSessions();
+    };
+    window.addEventListener('opc:sessions-changed', onRestored);
+    return () => window.removeEventListener('opc:sessions-changed', onRestored);
+  }, [fetchSessions]);
+
+  /**
    * A117：每次进入项目栏都拉一次项目列表。
    *
    * 为什么不在启动时拉：`GET /api/projects` 要读每个项目的记忆文件来算
@@ -927,13 +941,18 @@ function AppContent() {
 
   const handleDeleteSession = useCallback(
     async (sessionId: string) => {
-      const navigateTo = await deleteSession(sessionId);
+      const { navigateTo, trashId } = await deleteSession(sessionId);
       // A117：删会话会改变它所属项目的 sessionCount，而那个数是后端在
       // GET /api/projects 里算的 —— 重拉一次，项目列表的数字才跟着变。
       // 只在「用户已经用过项目栏」时才拉：从没打开过项目栏的人，不该因为
       // 删了一条会话就多付一次「读所有项目记忆文件」的开销。
       if (projects.length > 0) void fetchProjects();
       if (navigateTo) navigate(navigateTo);
+      // B1：删除是「移到回收站」而不是销毁。给一条明确回执，否则用户
+      // 看到会话消失只会以为数据没了（确认框里也写了保留 30 天）。
+      if (trashId) {
+        MessagePlugin.success('已删除，30 天内可恢复');
+      }
     },
     [deleteSession, navigate, fetchProjects, projects.length]
   );

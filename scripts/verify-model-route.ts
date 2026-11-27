@@ -36,6 +36,12 @@ import {
   type ResolveRouteContext,
   type RouteResolutionResult,
 } from '../server/model-route-resolution.js';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { hasCredentialRef } from '../server/credential-ref.js';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const failures: string[] = [];
 let checks = 0;
@@ -540,6 +546,28 @@ function resolutionContract(resolve: Resolver): boolean {
 
   const leaked = broken.filter(([, api]) => routeContract(api)).map(([label]) => label);
   eq(leaked, [], '★ 反向探针：七种坏实现都必须判红', `漏判：${leaked.join('、') || '无'}`);
+}
+
+// ── 9. 生产接线：凭据闸不能只在 verify 脚本里亮着 ─────────────────
+{
+  // 钉不变量「生产调用点传了查询函数」，不钉具体写法。
+  const acpSource = readFileSync(path.join(ROOT, 'server/agents/adapters/acp.ts'), 'utf8');
+  const call = acpSource.match(/resolveModelRoute\([\s\S]*?\}\)/)?.[0] ?? '';
+  ok(call.length > 0, '生产接线：找到 ACP 的 resolveModelRoute 调用点');
+  ok(/credentialAvailable\s*:/.test(call),
+    '生产接线：ACP 必须传 credentialAvailable（漏传 = 带凭据路由恒被拒）');
+
+  const previous = process.env.__OPC_VERIFY_CREDENTIAL_REF__;
+  try {
+    delete process.env.__OPC_VERIFY_CREDENTIAL_REF__;
+    ok(!hasCredentialRef('__OPC_VERIFY_CREDENTIAL_REF__'), '凭据查询：未设置的引用名判不可用');
+    process.env.__OPC_VERIFY_CREDENTIAL_REF__ = 'probe-value';
+    ok(hasCredentialRef('__OPC_VERIFY_CREDENTIAL_REF__'), '凭据查询：已设置的引用名判可用');
+    ok(!hasCredentialRef('0bad-ref'), '凭据查询：非法引用名一律不可用（不查 env）');
+  } finally {
+    if (previous === undefined) delete process.env.__OPC_VERIFY_CREDENTIAL_REF__;
+    else process.env.__OPC_VERIFY_CREDENTIAL_REF__ = previous;
+  }
 }
 
 console.log(`模型路由断言：${checks - failures.length}/${checks} 通过`);

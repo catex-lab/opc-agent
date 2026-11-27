@@ -54,6 +54,26 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      # CI 发版门禁（2026-11-26）：tag push 曾能绕过 ci.yml 的六步检查直接发版。
+      # 这里在 release job 内重跑同一套（而不是 workflow_run 依赖）——后者拿的是
+      # 默认分支的最新 CI 结果，可能不是这个 tag 对应的提交，等于没门禁。
+      # 注意 verify:ui 整链**不在**这里：它依赖本机 Chrome/Agent CLI，CI runner 上
+      # 红的是环境不是代码；整链是人工发版前动作，见 RELEASE.md。
+      - name: 密钥扫描（发版门禁）
+        run: node scripts/secret-scan.mjs --all
+
+      - name: 类型检查（发版门禁）
+        run: npx tsc -b
+
+      - name: run-hub 离线回归（发版门禁）
+        run: npm run verify:runhub
+
+      - name: 设计令牌与控件尺寸棘轮（发版门禁）
+        run: npm run verify:uiux-tokens
+
+      - name: 模型目录与 Agent 定义一致性（发版门禁）
+        run: npm run verify:model-catalog
+
       - name: 更新链路闸门
         run: npm run verify:a171-update
 

@@ -4,6 +4,7 @@ import { Check, ChevronDown, KeyRound } from 'lucide-react';
 import { AgentCredentialEditor } from './AgentCredentialEditor';
 import { useTranslation } from '../i18n';
 import { api } from '../api';
+import { httpErrorText } from '../lib/http-error';
 
 /**
  * 「Agent API Key」列表 —— 设置页的批量管理视图。
@@ -40,7 +41,7 @@ export function AgentCredentialSettings({ onSaved }: AgentCredentialSettingsProp
     setError(null);
     try {
       const res = await api.get('/api/agent-credentials');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(httpErrorText(res.status));
       const data = await res.json();
       setList(Array.isArray(data.credentials) ? data.credentials : []);
     } catch (err) {

@@ -660,15 +660,15 @@ if (!FULL) {
   }
   ok(ready, '★ 真服务端起来了（HTTP 探活，不认日志文案）', ready ? `:${port}` : errLog.slice(-200));
   if (ready) {
-    // gemini 是 kind:'cli'；claude / codex / workbuddy 都是 kind:'sdk'，
+    // opencode 是 kind:'cli'；claude / codex / workbuddy 都是 kind:'sdk'，
     // 拿它们当反例会把一条真登录流起起来（真机那 10+ 个 pid 就是这么来的）。
-    const statusRes = await fetch(`${base}/api/agents/gemini/login/status`);
+    const statusRes = await fetch(`${base}/api/agents/opencode/login/status`);
     const statusBody = await statusRes.json() as { state?: string };
     ok(statusRes.status === 200 && statusBody.state === 'idle',
       '★★ GET /login/status 落在专用路由上（不是通用 /api/agents/:agentId 的 HTML 兜底）',
       `status=${statusRes.status} state=${statusBody.state}`);
 
-    const startRes = await fetch(`${base}/api/agents/gemini/login/start`, {
+    const startRes = await fetch(`${base}/api/agents/opencode/login/start`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
     });
     const startBody = await startRes.json() as { error?: string };

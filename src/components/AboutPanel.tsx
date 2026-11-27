@@ -179,9 +179,10 @@ const LINKS: Array<{ key: string; href: string; labelKey: MessageKey; hintKey: M
 const THIRD_PARTY: Array<{ name: string; license: string; licenseKey?: MessageKey; holder: string }> = [
   { name: 'Electron', license: 'MIT', holder: 'Electron contributors（运行时含 Chromium）' },
   { name: '@tencent-ai/agent-sdk', license: 'MIT', holder: 'Tencent（含内嵌 CodeBuddy CLI）' },
-  // 内嵌子包，2026-10-31 起随安装包分发（+约 109MB）。它自述「许可见 README.md」
-  // 而 README 没随包发布 —— 页面上如实写「条款缺失」，不替它编一个许可。
-  { name: '@tencent-ai/codebuddy-code', license: '', licenseKey: 'settings.about.licenseMissing', holder: 'Tencent · 内嵌于 agent-sdk/cli' },
+  // 内嵌子包，2026-10-31 起随安装包分发（+约 109MB）。package.json 写
+  // 「SEE LICENSE IN README.md」而 README 没随包，但同目录 LICENSE 是 MIT 全文；
+  // 2026-11-23 核实后不再显示「条款缺失」（那会把 MIT 组件误标成风险）。
+  { name: '@tencent-ai/codebuddy-code', license: 'MIT', holder: 'Tencent · 内嵌于 agent-sdk/cli（依据同目录 LICENSE 推断）' },
   // 2026-10-31：三个 SDK 通道接入后，随包分发的直接依赖多了三项。
   // Claude 那条是**专有许可**，不是 MIT/Apache —— 页面上必须写清楚，
   // 否则读者会以为安装包里全是宽松许可。

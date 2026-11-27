@@ -9,6 +9,7 @@ import {
 } from '../../shared/providerUrl';
 import { useTranslation, type MessageKey } from '../i18n';
 import { api } from '../api';
+import { httpErrorText } from '../lib/http-error';
 
 /**
  * 「自定义模型厂商」（A129）。
@@ -131,7 +132,7 @@ export function ProviderSettings({ onChanged, autoOpen }: ProviderSettingsProps)
     setError(null);
     try {
       const res = await api.get('/api/agents/custom');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(httpErrorText(res.status));
       const data = await res.json();
       setList(Array.isArray(data.agents) ? data.agents : []);
     } catch (err) {

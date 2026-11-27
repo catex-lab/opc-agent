@@ -44,6 +44,11 @@ const AGENTS = [
     // 声明了 thinking_summary / tool / usage；usage 这一轮没出现
     eventCapabilities: ['thinking', 'thinking_summary', 'tool', 'usage', 'cost', 'permission'],
     observedCapabilities: { key: KEY, declared: ['thinking', 'thinking_summary', 'tool', 'usage', 'cost', 'permission'], observed: ['thinking_summary', 'tool'], updatedAt: Date.now() },
+    // 2026-11-26 能力概览收口：带两条有描述的 skills，测「展开说明」交互
+    skills: [
+      { id: 'skill-a', name: '代码评审', description: '对当前工作区做一次结构化评审', tags: ['review', 'git'] },
+      { id: 'skill-b', name: '跑测试', description: '在沙箱里执行测试并汇总失败项' },
+    ],
     status: { availability: 'ready', version: '1' },
   },
   {
@@ -59,6 +64,8 @@ const AGENTS = [
     color: '#7C5CFF', description: 'x', capabilities: ['chat'],
     eventCapabilities: ['tool'],
     // 从没跑过：没有 observedCapabilities
+    // 2026-11-26：一条只有名字的 skill ——「展开说明」不许对裸名字渲染（假控件）
+    skills: [{ id: 'skill-bare', name: '只返回回答' }],
     status: { availability: 'ready', version: '1' },
   },
 ];
@@ -173,8 +180,94 @@ try {
   ok(!!got, '没有观测记录时，声明区块照常渲染');
   ok(got?.note === null, '不显示「最近一次运行」那一行');
   ok(got?.chips.every(c => c.observed === null), '不写 data-observed（不知道 ≠ 观察到 0 项）');
+  const bareSkill = await page.evaluate(() => {
+    const row = document.querySelector('[data-agent-skills]');
+    return { present: !!row, toggle: !!row?.querySelector('[data-skills-detail-toggle]') };
+  });
+  ok(bareSkill.present, '裸名字任务行照常渲染');
+  ok(!bareSkill.toggle, '没有可展开内容时不渲染「展开说明」（假控件比没有更糟）');
 } catch (e) {
   ok(false, '[3] 用例异常', String(e).slice(0, 160));
+}
+
+// ============= [5] 能力概览折叠交互（2026-11-26 收口）============
+/**
+ * 两个板块合并成「能力概览」后，默认态只露结论：不支持项收进
+ * 「+N 项不支持」，任务描述收进「展开说明」。这两次点击要真的展开、
+ * 再点真的收起 —— 且 [1] 的 DOM 契约（7 个 chip 全在）不因折叠而缺失。
+ */
+console.log('\n[5] 能力概览：折叠与展开交互');
+try {
+  await openDetail('codex');
+  ok(
+    await page.evaluate(() => !!document.querySelector('[data-agent-capability-overview]')),
+    '能力概览区块存在（两个板块已合并）',
+  );
+  const collapsed = await page.evaluate(() => {
+    const vis = el => el && getComputedStyle(el).display !== 'none';
+    const sec = document.querySelector('[data-agent-event-capabilities]');
+    const chips = [...sec.querySelectorAll('[data-event-capability]')];
+    const skills = [...document.querySelectorAll('[data-agent-skill]')];
+    const details = [...document.querySelectorAll('[data-skill-detail]')];
+    return {
+      domCount: chips.length,
+      visibleCount: chips.filter(vis).length,
+      unsupportedHidden: chips.filter(c => c.getAttribute('data-supported') === '0').every(c => !vis(c)),
+      toggle: !!document.querySelector('[data-caps-unsupported-toggle]'),
+      skillRows: skills.length,
+      skillBackgrounds: skills.map(el => getComputedStyle(el).backgroundColor),
+      skillTops: skills.map(el => Math.round(el.getBoundingClientRect().top)),
+      detailCount: details.length,
+      descHidden: details.length > 0 && details.every(d => !vis(d)),
+      skillToggle: !!document.querySelector('[data-skills-detail-toggle]'),
+    };
+  });
+  ok(collapsed.domCount === 7 && collapsed.visibleCount === 6, '默认态：7 个 chip 都在 DOM，只露 6 个支持项', `${collapsed.visibleCount}/${collapsed.domCount}`);
+  ok(collapsed.unsupportedHidden, '不支持项默认视觉收起');
+  ok(collapsed.toggle, '有「+N 项不支持」展开钮');
+  ok(collapsed.skillRows === 2, '两条任务名默认可见', String(collapsed.skillRows));
+  ok(
+    collapsed.skillBackgrounds.length === 2 &&
+      collapsed.skillBackgrounds.every(bg => bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)'),
+    '任务名是带底纹的块状 chip（非裸文字）',
+    JSON.stringify(collapsed.skillBackgrounds),
+  );
+  ok(
+    collapsed.skillTops.length === 2 && collapsed.skillTops[0] === collapsed.skillTops[1],
+    '两条任务名横向同排',
+    JSON.stringify(collapsed.skillTops),
+  );
+  ok(collapsed.detailCount === 2, '两条任务描述都在 DOM（折叠只用 hidden 类）', String(collapsed.detailCount));
+  ok(collapsed.skillToggle, '有「展开说明」钮');
+  ok(collapsed.descHidden, '任务描述默认收起');
+
+  await page.click('[data-caps-unsupported-toggle]');
+  await page.click('[data-skills-detail-toggle]');
+  const expanded = await page.evaluate(() => {
+    const vis = el => el && getComputedStyle(el).display !== 'none';
+    const chips = [...document.querySelectorAll('[data-agent-event-capabilities] [data-event-capability]')];
+    return {
+      unsupportedVisible: chips.filter(c => c.getAttribute('data-supported') === '0').every(vis),
+      toggleText: document.querySelector('[data-caps-unsupported-toggle]')?.textContent ?? '',
+      descVisible: [...document.querySelectorAll('[data-skill-detail]')].filter(vis).length,
+      skillToggleText: document.querySelector('[data-skills-detail-toggle]')?.textContent ?? '',
+    };
+  });
+  ok(expanded.unsupportedVisible, '点开后不支持项可见');
+  ok(expanded.toggleText === '收起', '展开钮变成「收起」', expanded.toggleText);
+  ok(expanded.descVisible === 2, '点开后两条任务描述都可见', String(expanded.descVisible));
+  ok(expanded.skillToggleText === '收起说明', '说明钮变成「收起说明」', expanded.skillToggleText);
+
+  await page.click('[data-skills-detail-toggle]');
+  const reCollapsed = await page.evaluate(() => {
+    const vis = el => el && getComputedStyle(el).display !== 'none';
+    const details = [...document.querySelectorAll('[data-skill-detail]')];
+    return details.length === 2 && details.every(d => !vis(d));
+  });
+  ok(reCollapsed, '再点一次描述重新收起');
+  await page.screenshot({ path: join(OUT, 'capability-overview-expanded.png') });
+} catch (e) {
+  ok(false, '[5] 用例异常', String(e).slice(0, 160));
 }
 
 // ============= [4] A159：擅长领域标签在深色下必须看得清 =============

@@ -193,6 +193,10 @@ function launch() {
       ...process.env,
       // 沙箱/EDR 注入环境下必须的软件渲染开关
       OPC_SAFE_GRAPHICS: '1',
+      // 2026-11-26 起 CDP 默认关（338b8b4）。[4] 冒烟要连应用自己的渲染
+      // 进程（CDP），闸门必须显式强制开 —— 产品默认行为不变，只是测试
+      // 环境里开；`OPC_CDP=0` 仍优先，外部想验证「默认关」时可在命令行覆盖。
+      OPC_CDP: process.env.OPC_CDP ?? '1',
       // 用临时目录，绝不碰真实 userData。
       // 注意：必须是 OPC_USER_DATA_DIR（重定向整个 Chromium profile），
       // 不能只用 OPC_DATA_DIR —— 后者只搬 SQLite，profile 仍会写进
@@ -434,11 +438,18 @@ try {
     '每个 Agent 都带 eventCapabilities 数组（A111 清单已进包）',
     `${agents.filter(a => Array.isArray(a.eventCapabilities)).length}/${agents.length}`
   );
-  const httpAgents = agents.filter(a => a.kind === 'http');
+  // 2026-11-26 下架收口：kind:'http' 的唯二定义（doubao / kimicode）都已下架，
+  // 打包版名册里不应再出现 http 类条目 —— 原来钉「http 类清单是空数组」的
+  // 断言在 0 个 http 类时会因 length>0 假红，改成钉「下架条目不随包出现」。
+  // 「[] ≠ 字段缺失」的语义分层由上面 every(Array.isArray) 继续钉住，未来
+  // 若新增 http 类 Agent，那条依然管得住字段是否被序列化截断。
+  const retiredInPack = agents.filter(a =>
+    ['trae', 'gemini', 'doubao', 'kimicode'].includes(a.id)
+  );
   ok(
-    httpAgents.length > 0 && httpAgents.every(a => a.eventCapabilities.length === 0),
-    'http 类的清单是空数组（确实没有过程能力，不是字段缺失）',
-    httpAgents.map(a => `${a.id}:${a.eventCapabilities.length}`).join(',')
+    retiredInPack.length === 0 && agents.length > 0,
+    '已下架 Agent（trae/gemini/doubao/kimicode）不出现在打包版名册',
+    retiredInPack.map(a => a.id).join(',') || `名册 ${agents.length} 条`
   );
   const wbCaps = agents.find(a => a.id === 'workbuddy')?.eventCapabilities ?? [];
   ok(

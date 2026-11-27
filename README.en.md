@@ -14,7 +14,7 @@ A local multi-Agent teamwork desktop app — it treats the AI Agents installed o
 
 ## What problem it solves
 
-Developers often have several Agent CLIs installed locally (Claude Code, Codex, Gemini, Cursor...), each with its own sessions and context. Getting them to relay or divide a task meant manually copy-pasting results between terminals.
+Developers often have several Agent CLIs installed locally (Claude Code, Codex, Cursor...), each with its own sessions and context. Getting them to relay or divide a task meant manually copy-pasting results between terminals.
 
 OPC Agent puts them into one IM-style interface: every Agent is a contact in the address book — pick one on the left, work with it on the right. For collaboration, pull a few into a group and dispatch tasks per member. Each Agent's reads, executions and searches collapse into a single summary line; click to expand the full detail.
 
@@ -43,21 +43,20 @@ OPC Agent puts them into one IM-style interface: every Agent is a contact in the
 
 ## Built-in Agents
 
-16 integration definitions:
+13 built-in Agents available:
 
 | Agent | Agent | Agent | Agent |
 |---|---|---|---|
-| WorkBuddy | Codex | Gemini | OpenCode |
-| Claude Code | Hermes | Cursor | Qoder |
-| Qoder CN | Doubao | ZCode | Kimi |
-| Pi | Antigravity CLI | Kimi Code CLI | Trae (retired) |
+| WorkBuddy | Codex | OpenCode | Claude Code |
+| Hermes | DeepSeek Harness | Cursor | Qoder |
+| Qoder CN | ZCode | Kimi Code CLI | Pi |
+| Antigravity CLI |  |  |  |
 
-Two integration paths, driven by a **fixed allowlist** — no free-form discovery:
+Three integration paths, driven by a **fixed allowlist** — no free-form discovery:
 
-- **CLI probing (13)**: only the command names hardcoded in the definitions, searched in `PATH` and per-Agent known directories. CLIs outside the list are deliberately not auto-discovered, to avoid mistaking IDE graphical launchers for CLIs.
+- **CLI probing (7)**: only the command names hardcoded in the definitions, searched in `PATH` and per-Agent known directories. CLIs outside the list are deliberately not auto-discovered, to avoid mistaking IDE graphical launchers for CLIs.
 - **Official SDK direct (3: WorkBuddy / Claude Code / Codex)**: vendor SDKs ship their own platform binaries independent of `PATH`, so they work out of the box; the cost is installer size (see [THIRD-PARTY.md](./THIRD-PARTY.md) for licensing).
-
-> Trae is currently retired: it only recognizes `traecli` (enterprise edition); the IDE-bundled `trae-cn` is a VS Code shim that would be treated as an executable path and open a graphical window. The definition is kept — restoring it only requires removing the id from `RETIRED_AGENT_IDS`.
+- **ACP (2: Hermes / DeepSeek Harness)**: native ACP session transport, with no vendor SDK bundled into the installer.
 
 ![Contacts](docs/screenshots/01-contacts.png)
 

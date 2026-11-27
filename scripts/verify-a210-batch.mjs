@@ -250,9 +250,12 @@ const defsSrc = code('server/agents/definitions.ts');
 const definedIds = new Set([...defsSrc.matchAll(/^\s*id:\s*'([^']+)'/gm)].map(m => m[1]));
 ok(definedIds.size > 0, '肯定式：确实从 definitions.ts 解析到了真 Agent id');
 ok(list.every(a => !definedIds.has(a.id)), '否定式：占位 id 全部不在 AGENT_DEFS');
-const retiredLine = defsSrc.split('\n').find(l => l.includes('RETIRED_AGENT_IDS'));
-ok(!!retiredLine, '下架机制仍存在');
-ok(list.every(a => !retiredLine.includes(a.id)), '占位清单不复用 RETIRED_AGENT_IDS 的条目');
+// 下架名单已扩成多行，别再只取「含 RETIRED_AGENT_IDS 的那一行」——
+// 数组本身换行后那一行没有 id，断言会静默假绿。
+const retiredDecl = defsSrc.match(/export const RETIRED_AGENT_IDS[^=]*=\s*\[([\s\S]*?)\];/)?.[1] ?? '';
+const retiredSrcIds = [...retiredDecl.matchAll(/'([^']+)'/g)].map(m => m[1]);
+ok(retiredSrcIds.length > 0, '下架机制仍存在', retiredSrcIds.join(','));
+ok(list.every(a => !retiredSrcIds.includes(a.id)), '占位清单不复用 RETIRED_AGENT_IDS 的条目');
 
 // ── 5. 源码契约：接线与隔离 ──────────────────────────────────────────────
 group('5. 源码契约（剥注释、锚行首）');

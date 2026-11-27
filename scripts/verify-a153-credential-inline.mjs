@@ -112,6 +112,79 @@ try {
     const page = await ctx.newPage();
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
+
+    /* WorkBuddy 是唯一保留应用内凭据的条目，但它是 SDK 型：真实 POST 会顺带
+       跑一次 SDK 探测，不适合放在这条 UI 闸门里等。这里只夹具化「保存后的
+       回读 / 探测 / 模型」三段，保存落盘与环境变量注入由 verify:credentials 钉。 */
+    let savedKey = false;
+    await page.route(u => u.pathname === '/api/agent-credentials', async route => {
+      const method = route.request().method();
+      if (method === 'POST') {
+        savedKey = true;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            credential: {
+              agentId,
+              name: agentId === 'workbuddy' ? 'WorkBuddy' : agentId,
+              keyEnv: 'CODEBUDDY_API_KEY',
+              keyEnvs: ['CODEBUDDY_API_KEY'],
+              configured: true,
+              masked: 'cb-tes****456',
+              fromEnv: false,
+              baseUrl: '',
+              hint: 'fixture',
+            },
+            agent: { id: agentId, status: { availability: 'needs-auth' } },
+          }),
+        });
+        return;
+      }
+      if (savedKey) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            credentials: [
+              {
+                agentId,
+                name: agentId === 'workbuddy' ? 'WorkBuddy' : agentId,
+                keyEnv: 'CODEBUDDY_API_KEY',
+                keyEnvs: ['CODEBUDDY_API_KEY'],
+                configured: true,
+                masked: 'cb-tes****456',
+                fromEnv: false,
+                baseUrl: '',
+                hint: 'fixture',
+              },
+            ],
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.route(
+      u => u.pathname === `/api/agents/${agentId}` && u.searchParams.get('probe') === '1',
+      async route => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            agent: { id: agentId, status: { availability: 'needs-auth', message: 'fixture: key rejected' } },
+          }),
+        });
+      }
+    );
+    await page.route(u => u.pathname === `/api/agents/${agentId}/models`, async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ models: [], note: 'fixture: no models' }),
+      });
+    });
+
     await page.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
     const goContacts = page.getByRole('button', { name: '打开通讯录' });
     if (await goContacts.count()) await goContacts.click();
@@ -123,8 +196,8 @@ try {
   };
 
   // ============= [2] 详情页就地编辑器 =============
-  console.log('\n[2] 详情页：豆包就地凭据编辑器');
-  const d = await openDetail('doubao');
+  console.log('\n[2] 详情页：WorkBuddy 就地凭据编辑器');
+  const d = await openDetail('workbuddy');
 
   ok(
     (await d.page.locator('[data-agent-credential-inline]').count()) === 1,
@@ -139,10 +212,10 @@ try {
   // 回来才有。2026-11-11 整条 verify:ui 跑到第 90 段时，瞬时 count() 正好撞上
   // 这个窗口取到 0，单跑却 14/14 绿 —— 是断言早于挂载，不是产品回归。
   // 修法：先等编辑器本体 + 输入框挂载（超时显式判红），再钉死「恰好 1 个」。
-  const keyInput = d.page.locator('[data-credential-key="doubao"]');
+  const keyInput = d.page.locator('[data-credential-key="workbuddy"]');
   let editorReady = true;
   try {
-    await d.page.waitForSelector('[data-credential-editor="doubao"]', { timeout: 15000 });
+    await d.page.waitForSelector('[data-credential-editor="workbuddy"]', { timeout: 15000 });
     await keyInput.first().waitFor({ state: 'attached', timeout: 15000 });
   } catch {
     editorReady = false;
@@ -160,6 +233,69 @@ try {
     '[2] 未配置时保存按钮在（否定式断言的前提：面板真渲染了）',
     actionBtnsBefore.join('|')
   );
+  // 2026-11-26 用户要求：保存按钮贴在输入框右侧，不再独占一行。
+  // 量真实几何而不是看 DOM 顺序 —— 换行/错位用 innerText 看不出来。
+  const saveLayout = await d.page.evaluate(() => {
+    const input = document.querySelector('[data-credential-key="workbuddy"]');
+    const save = document.querySelector('[data-credential-save="workbuddy"]');
+    if (!input || !save) return null;
+    const a = input.getBoundingClientRect();
+    const b = save.getBoundingClientRect();
+    // 内层容器才是真正的留白边界；外层 [data-agent-credential-inline]
+    // 带 1px border-t，量它会把边框算进去。
+    const box = document.querySelector('[data-agent-credential-inline] > div');
+    const c = box?.getBoundingClientRect();
+    // 顶边留白必须量「容器的第一个子元素」，量 input 会把状态行 + label
+    // 的高度一起算进去 —— 那样即使 py-3 被删也会假绿。
+    const first = document.querySelector('[data-credential-editor="workbuddy"] > div');
+    const f = first?.getBoundingClientRect();
+    return {
+      inputRight: Math.round(a.right),
+      saveLeft: Math.round(b.left),
+      inputMid: Math.round((a.top + a.bottom) / 2),
+      saveMid: Math.round((b.top + b.bottom) / 2),
+      saveHeight: Math.round(b.height),
+      padTop: c && f ? Math.round(f.top - c.top) : null,
+      padBottom: c ? Math.round(c.bottom - a.bottom) : null,
+      padLeft: c ? Math.round(a.left - c.left) : null,
+      padRight: c ? Math.round(c.right - b.right) : null,
+    };
+  });
+  ok(!!saveLayout, '[2] 保存按钮有稳定锚点 data-credential-save');
+  ok(
+    !!saveLayout && saveLayout.saveLeft >= saveLayout.inputRight - 1,
+    '[2] 保存按钮在输入框右侧',
+    JSON.stringify(saveLayout),
+  );
+  ok(
+    !!saveLayout && Math.abs(saveLayout.inputMid - saveLayout.saveMid) <= 4,
+    '[2] 保存按钮与输入框垂直居中对齐',
+    JSON.stringify(saveLayout),
+  );
+  ok(
+    !!saveLayout && saveLayout.saveHeight === 32,
+    '[2] 保存按钮走 32px 设计档（--tc-btn-height）',
+    JSON.stringify(saveLayout),
+  );
+  // 2026-11-27 用户反馈「内容挤到边框」：此前凭据区只套 ROW_X（px-4），
+  // 少了 ROW_Y（py-3），输入框/按钮上下边缘贴住容器边。量真实几何，
+  // 上下各钉 >=10px，防止再退回去。
+  ok(
+    !!saveLayout && saveLayout.padTop !== null && saveLayout.padTop >= 10,
+    '[2] API Key 行上方留白 >=10px（不贴边框）',
+    JSON.stringify(saveLayout),
+  );
+  ok(
+    !!saveLayout && saveLayout.padBottom !== null && saveLayout.padBottom >= 10,
+    '[2] API Key 行下方留白 >=10px（不贴边框）',
+    JSON.stringify(saveLayout),
+  );
+  ok(
+    !!saveLayout && saveLayout.padLeft !== null && saveLayout.padLeft >= 12
+      && saveLayout.padRight !== null && saveLayout.padRight >= 12,
+    '[2] API Key 行左右留白 >=12px（px-4）',
+    JSON.stringify(saveLayout),
+  );
   ok(
     !actionBtnsBefore.some(t => t.includes('检测连通性') || t.includes('获取模型')),
     '[2] 未配置时不出现「检测连通性 / 获取模型」按钮',
@@ -167,12 +303,12 @@ try {
   );
 
   // 填假 Key 并保存（TDesign Input 的真实 input 在 wrapper 内层）
-  await d.page.locator('[data-credential-key="doubao"] input').fill('ark-test-key-123456');
+  await d.page.locator('[data-credential-key="workbuddy"] input').fill('cb-test-key-123456');
   await d.page.getByRole('button', { name: '保存' }).click();
   // 保存成功 → 状态变成已配置，掩码出现
-  await d.page.waitForSelector('[data-credential-editor="doubao"] .t-tag--success', { timeout: 10000 });
+  await d.page.waitForSelector('[data-credential-editor="workbuddy"] .t-tag--success', { timeout: 10000 });
   ok(
-    /已配置|\*\*\*\*/.test(await d.page.locator('[data-credential-editor="doubao"]').innerText()),
+    /已配置|\*\*\*\*/.test(await d.page.locator('[data-credential-editor="workbuddy"]').innerText()),
     '[2] 保存后显示已配置 + 掩码'
   );
 
@@ -205,7 +341,7 @@ try {
     '[2] 获取模型后出现结果区'
   );
 
-  await d.page.locator('[data-agent-credential-inline]').screenshot({ path: path.join(SHOTS, 'doubao-editor-after-save.png') });
+  await d.page.locator('[data-agent-credential-inline]').screenshot({ path: path.join(SHOTS, 'workbuddy-editor-after-save.png') });
   ok(d.errors.length === 0, '[2] 详情页无控制台错误', d.errors.slice(0, 2).join(' | '));
   await d.ctx.close();
 
@@ -215,19 +351,19 @@ try {
   const p3 = await ctx3.newPage();
   const errors3 = [];
   p3.on('pageerror', e => errors3.push(e.message));
-  await p3.goto(`${base}/settings?section=login&agent=doubao`, { waitUntil: 'domcontentloaded' });
+  await p3.goto(`${base}/settings?section=login&agent=workbuddy`, { waitUntil: 'domcontentloaded' });
   await p3.waitForSelector('[data-settings-section="login"]', { timeout: 10000 });
   // 分区切换与凭据行渲染都是异步的：waitForSelector 命中的是导航按钮，
   // 行本身可能晚一帧出现。先等行可见再断言，避免把中间态判成走错分区。
   await p3
-    .waitForSelector('[data-credential-row="doubao"]', { state: 'visible', timeout: 10000 })
+    .waitForSelector('[data-credential-row="workbuddy"]', { state: 'visible', timeout: 10000 })
     .catch(() => {});
   // 登录配置区的凭据行只在 section==='login' 时渲染 —— 行可见就证明
   // 落到了正确分区（之前的 bug 是落在外观页，行根本不渲染）。
-  const rowVisible = await p3.locator('[data-credential-row="doubao"]').isVisible();
+  const rowVisible = await p3.locator('[data-credential-row="workbuddy"]').isVisible();
   ok(rowVisible, '[3] ?section=login 落到登录配置区（凭据行可见）');
   // 凭据行存在且可见（不再静默失败）
-  const rowCount = await p3.locator('[data-credential-row="doubao"]').count();
+  const rowCount = await p3.locator('[data-credential-row="workbuddy"]').count();
   ok(rowCount === 1, '[3] 目标 Agent 的凭据行存在', `count=${rowCount}`);
   await p3.screenshot({ path: path.join(SHOTS, 'settings-login-jump.png') });
   ok(errors3.length === 0, '[3] 设置页无控制台错误', errors3.slice(0, 2).join(' | '));

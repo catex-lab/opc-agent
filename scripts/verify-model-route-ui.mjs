@@ -26,6 +26,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { resolveChromePath } from './lib/chrome.mjs';
+import { EXPECTED_SECTIONS } from './lib/settings-sections.mjs';
 
 const ROOT = process.cwd();
 const DIST = join(ROOT, 'dist');
@@ -180,7 +181,11 @@ await page.waitForTimeout(900);
   const panelText = await page.locator('[data-settings-panel="models"]').count();
   ok(panelText > 0, '页面打开并落在「模型清单」分区（先证明页面在，再判没有 X）', String(panelText));
   const navTexts = await page.locator('[data-settings-section]').allInnerTexts();
-  ok(navTexts.length === 8, '导航仍是八项：自定义路由是子块，没有新增分区', String(navTexts.length));
+  // 意图是「自定义路由是子块，没**新开分区**」，不是「分区恰好八项」——
+  // 钉总数会在任何无关分区变动时假红（B1 加「最近删除」时就是这么红的）。
+  // 改成：导航数必须等于契约清单，且其中不含任何「路由」类新分区。
+  ok(navTexts.length === EXPECTED_SECTIONS.length, '导航分区数与契约清单一致（没有为路由新开分区）', `${navTexts.length} vs ${EXPECTED_SECTIONS.length}`);
+  ok(!navTexts.some(t => /路由|Route/i.test(t)), '路由没有作为独立分区出现（它是模型清单里的子块）', navTexts.join(' | '));
 }
 
 // ── [2] 主表瘦身：来源列不回来，但信息也没被删掉 ──

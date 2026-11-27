@@ -37,6 +37,7 @@
 import fs from 'fs';
 import path from 'path';
 import { dataDirPath } from '../paths.js';
+import { agentChildEnv } from '../child-env.js';
 import { findDef } from './definitions.js';
 import { expandPath, findExecutable, resolveAnyLaunchTarget, runCapture } from './probe.js';
 import type { ModelOption } from './modelCatalog.js';
@@ -274,7 +275,7 @@ export async function probeOneModel(
 
   const res = await runCapture(target, args, {
     timeoutMs: PROBE_TIMEOUT_MS,
-    env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0', CI: '1', TERM: 'dumb' },
+    env: agentChildEnv({ NO_COLOR: '1', FORCE_COLOR: '0', CI: '1', TERM: 'dumb' }),
   });
 
   const { verdict, evidence } = classifyProbe(res.stdout, res.stderr, res.code, res.timedOut);

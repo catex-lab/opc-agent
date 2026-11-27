@@ -55,6 +55,11 @@ export interface Prefs {
    * 解析与回落规则见 `shared/interface-language.ts`。
    */
   interfaceLanguage?: InterfaceLanguage;
+  /**
+   * 远程调试端口（CDP / 人机同屏）开关。缺键 = 关（P0-01 后的新默认）。
+   * 重启才生效：Chromium 的调试开关只能在 app ready 之前追加。
+   */
+  cdpEnabled?: boolean;
   /** 单聊过程面板的停靠形态与位置（与服务端 preferences.ts 一一对应） */
   processPanel?: {
     mode: 'right' | 'top' | 'floating' | 'minimized';

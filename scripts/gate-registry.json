@@ -9,7 +9,8 @@
     "needs-built-app": "需要 dist / 浏览器 / 图标等构建产物，不能在主链构建之前跑。",
     "needs-local-cli": "依赖本机 Agent CLI、垫片或真实凭据，换机器结果不同。",
     "known-red": "刻意不挂链的既有红灯，挂进去会让主链长期断在前段。",
-    "retired": "脚本自述已退役，被测 UI 已不存在，保留仅作历史记录。"
+    "retired": "脚本自述已退役，被测 UI 已不存在，保留仅作历史记录。",
+    "mutation-probe": "反向探针：临时把实现退回坏版本再跑闸门，证明断言真会变红；会改工作树并自行恢复，故意不进主链。"
   },
   "entries": {
     "verify:orchestrator": {
@@ -151,6 +152,10 @@
     "verify:a115": {
       "category": "composite",
       "reason": "命令本身就是 npm run verify:a115-identity && npm run verify:a115-ui，两个子闸门各自可查。"
+    },
+    "verify:agent-status-copy-probe": {
+      "category": "mutation-probe",
+      "reason": "真退回状态文案的坏版本再跑闸门，证明新断言不是假绿；会临时改源码并恢复，故不进主链。"
     }
   }
 }
