@@ -233,6 +233,69 @@ try {
     '[2] 未配置时保存按钮在（否定式断言的前提：面板真渲染了）',
     actionBtnsBefore.join('|')
   );
+  // 2026-11-26 用户要求：保存按钮贴在输入框右侧，不再独占一行。
+  // 量真实几何而不是看 DOM 顺序 —— 换行/错位用 innerText 看不出来。
+  const saveLayout = await d.page.evaluate(() => {
+    const input = document.querySelector('[data-credential-key="workbuddy"]');
+    const save = document.querySelector('[data-credential-save="workbuddy"]');
+    if (!input || !save) return null;
+    const a = input.getBoundingClientRect();
+    const b = save.getBoundingClientRect();
+    // 内层容器才是真正的留白边界；外层 [data-agent-credential-inline]
+    // 带 1px border-t，量它会把边框算进去。
+    const box = document.querySelector('[data-agent-credential-inline] > div');
+    const c = box?.getBoundingClientRect();
+    // 顶边留白必须量「容器的第一个子元素」，量 input 会把状态行 + label
+    // 的高度一起算进去 —— 那样即使 py-3 被删也会假绿。
+    const first = document.querySelector('[data-credential-editor="workbuddy"] > div');
+    const f = first?.getBoundingClientRect();
+    return {
+      inputRight: Math.round(a.right),
+      saveLeft: Math.round(b.left),
+      inputMid: Math.round((a.top + a.bottom) / 2),
+      saveMid: Math.round((b.top + b.bottom) / 2),
+      saveHeight: Math.round(b.height),
+      padTop: c && f ? Math.round(f.top - c.top) : null,
+      padBottom: c ? Math.round(c.bottom - a.bottom) : null,
+      padLeft: c ? Math.round(a.left - c.left) : null,
+      padRight: c ? Math.round(c.right - b.right) : null,
+    };
+  });
+  ok(!!saveLayout, '[2] 保存按钮有稳定锚点 data-credential-save');
+  ok(
+    !!saveLayout && saveLayout.saveLeft >= saveLayout.inputRight - 1,
+    '[2] 保存按钮在输入框右侧',
+    JSON.stringify(saveLayout),
+  );
+  ok(
+    !!saveLayout && Math.abs(saveLayout.inputMid - saveLayout.saveMid) <= 4,
+    '[2] 保存按钮与输入框垂直居中对齐',
+    JSON.stringify(saveLayout),
+  );
+  ok(
+    !!saveLayout && saveLayout.saveHeight === 32,
+    '[2] 保存按钮走 32px 设计档（--tc-btn-height）',
+    JSON.stringify(saveLayout),
+  );
+  // 2026-11-27 用户反馈「内容挤到边框」：此前凭据区只套 ROW_X（px-4），
+  // 少了 ROW_Y（py-3），输入框/按钮上下边缘贴住容器边。量真实几何，
+  // 上下各钉 >=10px，防止再退回去。
+  ok(
+    !!saveLayout && saveLayout.padTop !== null && saveLayout.padTop >= 10,
+    '[2] API Key 行上方留白 >=10px（不贴边框）',
+    JSON.stringify(saveLayout),
+  );
+  ok(
+    !!saveLayout && saveLayout.padBottom !== null && saveLayout.padBottom >= 10,
+    '[2] API Key 行下方留白 >=10px（不贴边框）',
+    JSON.stringify(saveLayout),
+  );
+  ok(
+    !!saveLayout && saveLayout.padLeft !== null && saveLayout.padLeft >= 12
+      && saveLayout.padRight !== null && saveLayout.padRight >= 12,
+    '[2] API Key 行左右留白 >=12px（px-4）',
+    JSON.stringify(saveLayout),
+  );
   ok(
     !actionBtnsBefore.some(t => t.includes('检测连通性') || t.includes('获取模型')),
     '[2] 未配置时不出现「检测连通性 / 获取模型」按钮',

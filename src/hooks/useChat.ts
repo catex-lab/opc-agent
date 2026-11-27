@@ -29,6 +29,9 @@ import {
   type TimingSummary,
 } from '../utils/runTiming';
 import { api } from '../api';
+// 知识库面板的检索范围存在 localStorage（按会话）。发消息时带上，
+// 服务端首轮自动注入据此决定是否引用历史：选「本会话」就不注入。
+import { readSavedKbScope } from '../components/kb/KnowledgeBasePanel';
 
 const STORAGE_KEYS = {
   draftInput: 'draftInput',
@@ -652,6 +655,9 @@ export function useChat(options: UseChatOptions) {
           // 后端收到 undefined 就不碰会话里已有的值。
           reasoningEffort: currentReasoning,
           permissionMode: currentPermissionMode,
+          // 知识库面板选的检索范围：服务端首轮注入据此决定是否引用历史。
+          // 选「本会话」时新会话不注入（否则会引用到工作区历史）。
+          kbScope: sessionId ? readSavedKbScope(sessionId) : undefined,
           // 决定后端把这次调用路由到哪个适配器
           agentId: currentAgentId,
           // P4：场景模板 id（后端据此落库，便于刷新后还原场景）

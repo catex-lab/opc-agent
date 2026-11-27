@@ -14,6 +14,8 @@ import {
   type RunEvent,
 } from '../../shared/blocks';
 import { api } from '../api';
+// 与单聊同口径：把知识库面板选的范围带给服务端，首轮注入据此决定是否引用历史。
+import { readSavedKbScope } from '../components/kb/KnowledgeBasePanel';
 import { httpErrorText } from '../lib/http-error';
 // F0-02②：SSE 分帧/解析与单聊共用一份，不再各写一遍。
 import { readSseStream } from '../lib/sse-parse';
@@ -421,6 +423,7 @@ export function useGroupChat(options: UseGroupChatOptions) {
             agentIds,
             orchestration,
             title,
+            kbScope: currentSessionId ? readSavedKbScope(currentSessionId) : undefined,
             // A225/A244：并行隔离开关（sessionFlags 三态）。没动过开关 → undefined
             //（JSON.stringify 会丢弃该字段）→ 服务端走自动策略（并行模式 + git
             // 仓库 → 开）；true/false 是用户的明确选择，服务端原样尊重。

@@ -521,6 +521,10 @@ app.post("/api/chat", async (req, res) => {
     // A210：前端 fetch 发出的时刻（epoch ms）。老客户端不带这个字段时
     // 服务端把 t0 回落成 t1 —— 宁可少一段「请求在途」，也不编时间基准。
     clientSentAt,
+    // 知识库面板选的检索范围（session/workspace/project/all）。
+    // 只用于首轮自动注入：选 session 时不注入，project/all 封顶 workspace。
+    // 老客户端不带 → inject 沿用 workspace，行为不变。
+    kbScope,
   } = req.body;
 
   console.log(`\n[Chat] ========== 新请求 ==========`);
@@ -964,7 +968,7 @@ app.post("/api/chat", async (req, res) => {
   // A175：会话首轮把知识库 top-k 检索结果前置到这一轮的 prompt。
   // 只影响发给适配器的输入，**不改 message**（它已经在上面落库了）；
   // 失败/无库/无命中都不阻断对话，零命中只注入一行状态。
-  const kbInjection = isFirstTurn ? buildKbInjection(session.id, message) : null;
+  const kbInjection = isFirstTurn ? buildKbInjection(session.id, message, kbScope) : null;
   if (kbInjection) {
     writeEvent(projector.kbRefs(kbInjection.citations));
   }
@@ -2028,6 +2032,8 @@ app.post("/api/group-chat", async (req, res) => {
     // 那时会话还没落库（前端是本地空壳），改名只能攒着，随首条消息一起带上。
     // 不带的话，落库时会用「首条消息前 30 字」把用户起的名字盖掉。
     title,
+    // 知识库面板范围，透传首轮注入（与单聊同口径）
+    kbScope,
   } = req.body;
 
   if (!message) {
@@ -2161,6 +2167,7 @@ app.post("/api/group-chat", async (req, res) => {
       // A123：每一棒也要吃会话里存的权限档（请求体没带时兜住），与一对一同一口径
       permissionMode: permissionMode || session.permission_mode || undefined,
       scenarioId,
+      kbScope,
       triggerPrompt: message,
       signal: ac.signal,
       // A244 闸门：并发信号量（默认 3 棒）+ 单棒空闲超时（shared/timing.ts，
@@ -2405,6 +2412,7 @@ app.post("/api/workflow/run", async (req, res) => {
     scenarioId,
     systemPrompt,
     title,
+    kbScope,
   } = req.body ?? {};
 
   // A244：与群聊同口径——成员去重（重复 id 会让同一 Agent 并发跑两次）
@@ -2464,6 +2472,7 @@ app.post("/api/workflow/run", async (req, res) => {
     // A123：同群聊
     permissionMode: permissionMode || session.permission_mode || undefined,
     scenarioId,
+    kbScope,
     triggerPrompt,
     signal: ac.signal,
     // A122：工作流与群聊同一个停止入口

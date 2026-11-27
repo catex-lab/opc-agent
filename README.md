@@ -185,4 +185,4 @@ npm run verify:package # 打包产物逐字节核对
 
 ## 状态
 
-版本 `1.0.24`（`v1.0.24` 已发版；变化见 `CHANGELOG.md`）。
+版本 `1.0.25`（`v1.0.25` 已发版；变化见 `CHANGELOG.md`）。

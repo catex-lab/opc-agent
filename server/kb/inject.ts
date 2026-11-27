@@ -20,6 +20,7 @@ import {
   searchKnowledge,
   DEFAULT_MAX_TOKENS,
   DEFAULT_TOP_K,
+  type KbScope,
   type KbSearchHit,
 } from './search.js';
 
@@ -91,20 +92,36 @@ function renderHit(hit: KbSearchHit, citation: KbCitationRef): string {
 /**
  * 构建首轮注入。返回 `null` = 本轮不注入（失败或无 query），调用方按原 prompt 走。
  *
+ * `scope` 来自用户在知识库面板选的范围（前端随每条消息带上）：
+ *   - `session`（默认）：**首轮不注入**。首轮判定发生在落 user 消息之前，
+ *     但注入发生在落库并索引之后 —— 此时本会话里只有「刚发的这句话自己」，
+ *     注入它等于把用户的原话再喂回去一遍，既非历史又会撑爆 prompt。
+ *     用户选「本会话」本来就表示「别拿别处的内容进来」，直接跳过。
+ *   - `workspace`：沿用 A175 原行为（本会话 + 本工作区）。
+ *   - `project` / `all`：**封顶回 workspace**。自动注入是系统替用户做的决定，
+ *     不替用户放大到项目/全局；真正要跨范围请走面板里的手动检索。
+ *   不传（老客户端 / 内部调用）时沿用 workspace，保持向后兼容。
+ *
  * 注意零命中**不是** `null`：它返回只含状态行的注入，前端据此显示
  * 「本次未检索到相关历史会话」。
  */
-export function buildKbInjection(sessionId: string, query: string): KbInjection | null {
+export function buildKbInjection(
+  sessionId: string,
+  query: string,
+  scope?: KbScope
+): KbInjection | null {
   const q = String(query ?? '').trim();
   if (!q) return null;
+  // 用户明确选了「本会话」→ 首轮没有可引用的历史，直接不注入。
+  if (scope === 'session') return null;
+  // 自动注入不替用户放大范围：project/all 一律封顶 workspace。
+  const injectScope: KbScope = scope === 'project' || scope === 'all' ? 'workspace' : (scope ?? 'workspace');
 
   try {
     const result = searchKnowledge({
       sessionId,
       query: clip(q, 400),
-      // 显式固定为本工作区：本项目/全部必须由用户在面板里显式开启，
-      // 注入路径不替用户做这个决定。
-      scope: 'workspace',
+      scope: injectScope,
       topK: KB_INJECT_TOP_K,
       maxTokens: KB_INJECT_MAX_TOKENS,
     });

@@ -207,13 +207,18 @@ try {
     const vis = el => el && getComputedStyle(el).display !== 'none';
     const sec = document.querySelector('[data-agent-event-capabilities]');
     const chips = [...sec.querySelectorAll('[data-event-capability]')];
+    const skills = [...document.querySelectorAll('[data-agent-skill]')];
+    const details = [...document.querySelectorAll('[data-skill-detail]')];
     return {
       domCount: chips.length,
       visibleCount: chips.filter(vis).length,
       unsupportedHidden: chips.filter(c => c.getAttribute('data-supported') === '0').every(c => !vis(c)),
       toggle: !!document.querySelector('[data-caps-unsupported-toggle]'),
-      skillRows: [...document.querySelectorAll('[data-agent-skill]')].length,
-      descHidden: [...document.querySelectorAll('[data-agent-skill] > div:nth-child(2)')].every(d => !vis(d)),
+      skillRows: skills.length,
+      skillBackgrounds: skills.map(el => getComputedStyle(el).backgroundColor),
+      skillTops: skills.map(el => Math.round(el.getBoundingClientRect().top)),
+      detailCount: details.length,
+      descHidden: details.length > 0 && details.every(d => !vis(d)),
       skillToggle: !!document.querySelector('[data-skills-detail-toggle]'),
     };
   });
@@ -221,6 +226,18 @@ try {
   ok(collapsed.unsupportedHidden, '不支持项默认视觉收起');
   ok(collapsed.toggle, '有「+N 项不支持」展开钮');
   ok(collapsed.skillRows === 2, '两条任务名默认可见', String(collapsed.skillRows));
+  ok(
+    collapsed.skillBackgrounds.length === 2 &&
+      collapsed.skillBackgrounds.every(bg => bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)'),
+    '任务名是带底纹的块状 chip（非裸文字）',
+    JSON.stringify(collapsed.skillBackgrounds),
+  );
+  ok(
+    collapsed.skillTops.length === 2 && collapsed.skillTops[0] === collapsed.skillTops[1],
+    '两条任务名横向同排',
+    JSON.stringify(collapsed.skillTops),
+  );
+  ok(collapsed.detailCount === 2, '两条任务描述都在 DOM（折叠只用 hidden 类）', String(collapsed.detailCount));
   ok(collapsed.skillToggle, '有「展开说明」钮');
   ok(collapsed.descHidden, '任务描述默认收起');
 
@@ -232,7 +249,7 @@ try {
     return {
       unsupportedVisible: chips.filter(c => c.getAttribute('data-supported') === '0').every(vis),
       toggleText: document.querySelector('[data-caps-unsupported-toggle]')?.textContent ?? '',
-      descVisible: [...document.querySelectorAll('[data-agent-skill] > div:nth-child(2)')].filter(vis).length,
+      descVisible: [...document.querySelectorAll('[data-skill-detail]')].filter(vis).length,
       skillToggleText: document.querySelector('[data-skills-detail-toggle]')?.textContent ?? '',
     };
   });
@@ -244,7 +261,8 @@ try {
   await page.click('[data-skills-detail-toggle]');
   const reCollapsed = await page.evaluate(() => {
     const vis = el => el && getComputedStyle(el).display !== 'none';
-    return [...document.querySelectorAll('[data-agent-skill] > div:nth-child(2)')].every(d => !vis(d));
+    const details = [...document.querySelectorAll('[data-skill-detail]')];
+    return details.length === 2 && details.every(d => !vis(d));
   });
   ok(reCollapsed, '再点一次描述重新收起');
   await page.screenshot({ path: join(OUT, 'capability-overview-expanded.png') });

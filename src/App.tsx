@@ -340,7 +340,7 @@ function AppContent() {
   // 全局入口以当前会话（没有则最近一条会话）为锚点：检索范围、本会话
   // 索引状态都需要一个具体的 sessionId，这里不发明「无会话」模式。
   const [kbOpen, setKbOpen] = useState(false);
-  const [kbGlobalScope, setKbGlobalScope] = useState<KbScope>('workspace');
+  const [kbGlobalScope, setKbGlobalScope] = useState<KbScope>('session');
   const kbAnchorSession = currentSessionId
     ? sessions.find(item => item.id === currentSessionId)
     : sessions[0];

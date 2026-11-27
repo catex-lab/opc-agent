@@ -408,8 +408,11 @@ export function AgentDetailSections({
               data-agent-credential-inline
             >
               {/* A222：同理删掉「凭据配置」小标签；编辑器自己的输入框标签
-                  已经说明这一块管什么。 */}
-              <div className={ROW_X}>
+                  已经说明这一块管什么。
+                  ROW_Y：与其它详情行同档的上下 12px 留白。此前只套了
+                  ROW_X，输入框/保存按钮的上下边缘直接贴住分隔线，视觉上
+                  像被挤到边框（实测 input.bottom == 容器.bottom）。 */}
+              <div className={`${ROW_X} ${ROW_Y}`}>
                 <AgentCredentialEditor
                   agentId={agent.id}
                   onSaved={onReprobe ? () => onReprobe(agent.id) : undefined}
@@ -855,19 +858,44 @@ export function AgentDetailSections({
                     {t('agentDetail.row.tasks')}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-col gap-1">
+                    {/* 任务名与过程能力 chip 同构：横向排布 + 9% 品牌底纹
+                        （与「擅长领域」同一档，令牌算出，不写死十六进制）。 */}
+                    <div className="flex flex-wrap items-center gap-2" data-agent-skill-list>
                       {skills.map(skill => (
-                        <div key={skill.id} data-agent-skill={skill.id}>
-                          <div className="text-body" style={{ color: 'var(--td-text-color-primary)' }}>{skill.name}</div>
-                          {showSkillDetail && (
-                            <>
+                        <span
+                          key={skill.id}
+                          data-agent-skill={skill.id}
+                          title={skill.description || skill.name}
+                          className={`${CHIP} box-border border border-transparent`}
+                          style={{
+                            backgroundColor: 'color-mix(in srgb, var(--td-brand-color) 9%, transparent)',
+                            color: 'var(--td-brand-color)',
+                          }}
+                        >
+                          {skill.name}
+                        </span>
+                      ))}
+                    </div>
+                    {/* 描述与 tags 常驻 DOM、只用 hidden 类折叠 —— 与过程能力
+                        不支持项的纪律一致，闸门与读屏看到的是同一份清单。 */}
+                    {skillsHaveDetail && (
+                      <div className="mt-2 space-y-1.5" data-skills-details>
+                        {skills.map(skill => {
+                          const hasDetail = Boolean(skill.description) || (skill.tags?.length ?? 0) > 0;
+                          if (!hasDetail) return null;
+                          return (
+                            <div
+                              key={skill.id}
+                              data-skill-detail={skill.id}
+                              className={showSkillDetail ? '' : 'hidden'}
+                            >
                               {skill.description && (
-                                <div className="mt-0.5 text-body leading-relaxed" style={{ color: 'var(--td-text-color-secondary)' }}>
+                                <div className="text-body leading-relaxed" style={{ color: 'var(--td-text-color-secondary)' }}>
                                   {skill.description}
                                 </div>
                               )}
                               {skill.tags && skill.tags.length > 0 && (
-                                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                <div className="mt-1 flex flex-wrap gap-1.5">
                                   {skill.tags.map(tag => (
                                     <span
                                       key={tag}
@@ -879,11 +907,11 @@ export function AgentDetailSections({
                                   ))}
                                 </div>
                               )}
-                            </>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                     {/* A222 同款纪律：没有可展开的内容就不渲染「展开说明」——
                         假控件比没有控件更糟 */}
                     {skillsHaveDetail && (
